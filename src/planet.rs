@@ -20,7 +20,7 @@ impl Plugin for PlanetPlugin {
             .add_systems(Startup, generate_all)
             .add_systems(
                 Update,
-                (orbit_planets, orbit_stars, orbit_moons, orbit_asteroid_belts, update_flare_voxels, rotate_clouds, regenerate_all, update_lod),
+                (orbit_planets, orbit_stars, orbit_moons, orbit_asteroid_belts, update_flare_voxels, rotate_clouds, regenerate_all, update_lod, update_star_visibility),
             );
     }
 }
@@ -39,6 +39,12 @@ pub struct StarRoot;
 
 #[derive(Component)]
 pub struct StarId(pub usize);
+
+#[derive(Component)]
+pub struct StarBeacon;
+
+#[derive(Component)]
+pub struct StarChunk;
 
 #[derive(Component)]
 pub struct MoonRoot;
@@ -238,12 +244,26 @@ fn spawn_all_bodies(
                             MeshMaterial3d(star_material.clone()),
                             Transform::IDENTITY,
                             NotShadowCaster,
+                            StarChunk,
                         ))
                         .id();
                     commands.entity(star_entity).add_child(chunk);
                 }
             }
         }
+
+        let beacon_radius = star_cfg.radius * 0.8;
+        let beacon = commands
+            .spawn((
+                Mesh3d(meshes.add(Sphere::new(beacon_radius).mesh().ico(3).unwrap())),
+                MeshMaterial3d(star_material.clone()),
+                Transform::IDENTITY,
+                Visibility::Hidden,
+                NotShadowCaster,
+                StarBeacon,
+            ))
+            .id();
+        commands.entity(star_entity).add_child(beacon);
 
         let intensity = star_cfg.intensity * 2_000_000.0 * 100.0;
         let light = commands
@@ -692,12 +712,26 @@ fn spawn_system_bodies(
                             MeshMaterial3d(star_material.clone()),
                             Transform::IDENTITY,
                             NotShadowCaster,
+                            StarChunk,
                         ))
                         .id();
                     commands.entity(star_entity).add_child(child);
                 }
             }
         }
+
+        let beacon_radius = star_cfg.radius * 0.8;
+        let beacon = commands
+            .spawn((
+                Mesh3d(meshes.add(Sphere::new(beacon_radius).mesh().ico(3).unwrap())),
+                MeshMaterial3d(star_material.clone()),
+                Transform::IDENTITY,
+                Visibility::Hidden,
+                NotShadowCaster,
+                StarBeacon,
+            ))
+            .id();
+        commands.entity(star_entity).add_child(beacon);
 
         let r = star_cfg.light_color_r;
         let g = star_cfg.light_color_g;
@@ -1234,6 +1268,31 @@ fn update_lod(
             }
             chunk.current_lod = new_lod;
             updates += 1;
+        }
+    }
+}
+
+const STAR_DETAIL_DIST: f32 = 5000.0;
+
+fn update_star_visibility(
+    camera_q: Query<&GlobalTransform, With<Camera3d>>,
+    star_q: Query<(&GlobalTransform, &Children), With<StarRoot>>,
+    mut chunk_vis_q: Query<&mut Visibility, (With<StarChunk>, Without<StarBeacon>)>,
+    mut beacon_vis_q: Query<&mut Visibility, (With<StarBeacon>, Without<StarChunk>)>,
+) {
+    let cam_pos = camera_q.single().translation();
+
+    for (star_gt, children) in &star_q {
+        let dist = cam_pos.distance(star_gt.translation());
+        let far = dist > STAR_DETAIL_DIST;
+
+        for &child in children.iter() {
+            if let Ok(mut vis) = chunk_vis_q.get_mut(child) {
+                *vis = if far { Visibility::Hidden } else { Visibility::Inherited };
+            }
+            if let Ok(mut vis) = beacon_vis_q.get_mut(child) {
+                *vis = if far { Visibility::Inherited } else { Visibility::Hidden };
+            }
         }
     }
 }
