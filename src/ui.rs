@@ -2555,6 +2555,20 @@ fn handle_astre_edit_actions(
                     _ => {}
                 }
             }
+            AstreEditAction::AdjustComa(target, delta) => {
+                match target {
+                    TargetKind::Comet(i) => if let Some(c) = res.comet_res.comets.get_mut(i) { c.coma_radius = (c.coma_radius + delta).max(1.0); events.comet_events.send(RegenerateComet); },
+                    TargetKind::Meteoroid(i) => if let Some(c) = res.meteor_res.meteoroids.get_mut(i) { c.radius = (c.radius + delta).max(1.0); events.meteor_events.send(RegenerateMeteoroid); },
+                    _ => {}
+                }
+            }
+            AstreEditAction::AdjustDustTail(target, delta) => {
+                match target {
+                    TargetKind::Comet(i) => if let Some(c) = res.comet_res.comets.get_mut(i) { c.dust_tail_length = (c.dust_tail_length + delta).max(0.0); events.comet_events.send(RegenerateComet); },
+                    TargetKind::Meteoroid(i) => if let Some(c) = res.meteor_res.meteoroids.get_mut(i) { c.radius = (c.radius + delta).max(1.0); events.meteor_events.send(RegenerateMeteoroid); },
+                    _ => {}
+                }
+            }
         }
         save_current_astres(&res);
         rebuild.send(RebuildUi);

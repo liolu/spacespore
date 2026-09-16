@@ -97,6 +97,76 @@ impl Default for AsteroidBeltConfig {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+//  Système stellaire
+// ─────────────────────────────────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct StarSystemConfig {
+    pub name: String,
+    pub position: [f32; 3],
+    #[serde(default = "default_stars")]   pub stars:          Vec<StarConfig>,
+    #[serde(default = "default_planets")] pub planets:        Vec<PlanetConfig>,
+    #[serde(default)]                     pub asteroid_belts: Vec<AsteroidBeltConfig>,
+}
+
+impl Default for StarSystemConfig {
+    fn default() -> Self {
+        Self {
+            name: "Systeme Sol".into(),
+            position: [0.0, 0.0, 0.0],
+            stars: default_stars(),
+            planets: default_planets(),
+            asteroid_belts: Vec::new(),
+        }
+    }
+}
+
+impl StarSystemConfig {
+    pub fn center(&self) -> bevy::math::Vec3 {
+        bevy::math::Vec3::new(self.position[0], self.position[1], self.position[2])
+    }
+}
+
+fn default_systems() -> Vec<StarSystemConfig> {
+    vec![
+        StarSystemConfig {
+            name: "Systeme Sol".into(),
+            position: [0.0, 0.0, 0.0],
+            stars: vec![StarConfig::default()],
+            planets: vec![PlanetConfig::default()],
+            asteroid_belts: vec![AsteroidBeltConfig::default()],
+        },
+        StarSystemConfig {
+            name: "Systeme Alpha".into(),
+            position: [25000.0, 0.0, 5000.0],
+            stars: vec![StarConfig {
+                radius: 150.0,
+                light_color_r: 0.7, light_color_g: 0.8, light_color_b: 1.0,
+                ..Default::default()
+            }],
+            planets: vec![
+                PlanetConfig { orbit_distance: 400.0, radius: 40.0, seed: 101, ..Default::default() },
+                PlanetConfig { orbit_distance: 700.0, radius: 65.0, seed: 202, atmosphere: true, ..Default::default() },
+            ],
+            asteroid_belts: Vec::new(),
+        },
+        StarSystemConfig {
+            name: "Systeme Proxima".into(),
+            position: [-18000.0, 3000.0, -20000.0],
+            stars: vec![StarConfig {
+                radius: 80.0, intensity: 8.0,
+                light_color_r: 1.0, light_color_g: 0.5, light_color_b: 0.3,
+                ..Default::default()
+            }],
+            planets: vec![
+                PlanetConfig { orbit_distance: 250.0, radius: 30.0, seed: 333, ..Default::default() },
+            ],
+            asteroid_belts: vec![AsteroidBeltConfig { distance: 500.0, ..Default::default() }],
+        },
+    ]
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 //  Configs légères pour draw_orbits (orbit_distance uniquement nécessaire)
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -123,7 +193,10 @@ pub struct GameSettings {
     #[serde(default)] pub show_orbits:          bool,
     pub planet_chunk_divisions: usize,
 
-    // ── Corps historiques ────────────────────────────────────────────────
+    // ── Systèmes stellaires ─────────────────────────────────────────────
+    #[serde(default = "default_systems")] pub systems: Vec<StarSystemConfig>,
+
+    // ── Corps historiques (rétrocompat, migré vers systems[0]) ───────────
     #[serde(default = "default_planets")] pub planets:       Vec<PlanetConfig>,
     #[serde(default = "default_stars")]   pub stars:         Vec<StarConfig>,
     #[serde(default)]                     pub asteroid_belts: Vec<AsteroidBeltConfig>,
@@ -156,6 +229,7 @@ impl Default for GameSettings {
             keyboard_speed: 2.0, invert_y: true,
             show_light_indicator: false, show_orbits: false,
             planet_chunk_divisions: 6,
+            systems: default_systems(),
             planets: default_planets(), stars: default_stars(),
             asteroid_belts: Vec::new(),
             comets: Vec::new(), meteoroids: Vec::new(),

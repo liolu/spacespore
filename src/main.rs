@@ -3,6 +3,7 @@ mod lod;
 mod mesher;
 mod planet;
 mod settings;
+mod ship;
 mod ui;
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
@@ -12,6 +13,7 @@ use bevy::window::{PrimaryWindow, WindowCloseRequested};
 
 use planet::{MoonId, MoonRoot, PlanetId, PlanetPlugin, PlanetRoot, StarId, StarRoot};
 use settings::GameSettings;
+use ship::{Ship, ShipMode, ShipPlugin};
 use ui::{CameraTarget, MenuState, TargetKind, UiPlugin};
 
 // ── Planètes ──────────────────────────────────────────────────────────────
@@ -189,6 +191,9 @@ fn main() {
             NeutronStarPlugin,
             SupernovaPlugin,
         ))
+
+        // ── Vaisseau ────────────────────────────────────────────────────
+        .add_plugins(ShipPlugin)
 
         // ── UI ──────────────────────────────────────────────────────────
         .add_plugins(UiPlugin)
@@ -451,6 +456,7 @@ fn camera_controller(
     settings: Res<GameSettings>,
     menu_state: Res<MenuState>,
     camera_target: Res<CameraTarget>,
+    ship_mode: Res<ShipMode>,
 
     mut mouse_wheel:
         EventReader<bevy::input::mouse::MouseWheel>,
@@ -463,20 +469,40 @@ fn camera_controller(
 
     queries: TargetQueries,
 
-    mut cam_q:
-        Query<(&mut Transform, &mut CameraController)>,
-) {
-    let target_pos =
-        resolve_target(
-            &camera_target,
-            &queries,
-        );
+    ship_q: Query<&Transform, With<Ship>>,
 
+    mut cam_q:
+        Query<(&mut Transform, &mut CameraController), Without<Ship>>,
+) {
     let Ok((mut transform, mut ctrl)) =
         cam_q.get_single_mut()
     else {
         return;
     };
+
+    // ── Mode libre : caméra derrière le vaisseau ──────────────────────
+    if *ship_mode == ShipMode::Free {
+        mouse_motion.clear();
+
+        if let Ok(ship_tf) = ship_q.get_single() {
+            for ev in mouse_wheel.read() {
+                ctrl.distance -= ev.y * settings.scroll_speed * 0.5;
+            }
+            ctrl.distance = ctrl.distance.clamp(5.0, 200.0);
+
+            let behind = ship_tf.rotation * Vec3::new(0.0, 2.5, ctrl.distance);
+            transform.translation = ship_tf.translation + behind;
+            transform.look_at(ship_tf.translation + ship_tf.rotation * Vec3::NEG_Z * 10.0, Vec3::Y);
+        }
+        return;
+    }
+
+    // ── Mode orbite : comportement normal ─────────────────────────────
+    let target_pos =
+        resolve_target(
+            &camera_target,
+            &queries,
+        );
 
     // ── Menu ouvert ────────────────────────────────────────────────────
     if menu_state.open {
@@ -571,7 +597,6 @@ fn camera_controller(
     // ── Zoom ──────────────────────────────────────────────────────────
 
     for ev in mouse_wheel.read() {
-        // Direction-sensitive zoom factor: out-zoom (down) is significantly faster than in-zoom (up)
         let direction_factor = if ev.y < 0.0 { 2.5 } else { 1.0 };
         let zoom_factor = 1.0 + ctrl.distance.abs() * 0.004 * direction_factor;
         ctrl.distance -=
