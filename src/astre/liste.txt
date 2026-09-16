@@ -1,0 +1,36 @@
+ASTRE
+├── Petit corps
+│   ├── Astéroïde
+│   ├── Comète
+│   └── Météoroïde
+│
+├── Planète
+│   ├── Rocheuse
+│   ├── Océanique
+│   ├── Désertique
+│   ├── Glacée
+│   ├── Lave
+│   ├── Gazeuse
+│   └── Géante de glace
+│
+├── Étoile
+│   ├── Protoétoile
+│   ├── Naine
+│   ├── Séquence principale
+│   ├── Géante
+│   ├── Supergéante
+│   └── Hypergéante
+│
+├── Remnant stellaire
+│   ├── Naine blanche
+│   ├── Étoile à neutrons
+│   ├── Pulsar
+│   ├── Magnétar
+│   └── Trou noir
+│
+└── Structures
+    ├── Nébuleuse
+    ├── Amas stellaire
+    ├── Galaxie
+    ├── Amas de galaxies
+    └── Superamas

@@ -1,0 +1,2696 @@
+=== SPACESPORE - TOUS LES VARIABLES / CONSTANTES / VALEURS ===
+Projet: SpaceSpore | Fichiers analysés: 45 fichiers .rs
+Total entrées: 1273
+Format: Valeur | Texte très court | Emplacement (fichier:ligne)
+
+
+================================================================================
+FILE: save/main.rs
+================================================================================
+
+Vec3::new(orbit_dist, 0.0, 0.0)          | let        | planet_start                   | 
+  Emplacement: save/main.rs:138
+Quat::from_euler(EulerRot::YXZ, ctrl.yaw, ctrl.pitch, 0.0) | let        | rotation                       | 
+  Emplacement: save/main.rs:214
+0.0, 0.0, ctrl.distance                  | vec3       | Vec3::new                      | position 3D
+  Emplacement: save/main.rs:215
+settings.mouse_sensitivity * 0.01        | let        | mouse_sens                     | 
+  Emplacement: save/main.rs:221
+if settings.invert_y { -1.0 } else { 1.0 } | let        | y_mult                         | 
+  Emplacement: save/main.rs:222
+Quat::from_euler(EulerRot::YXZ, ctrl.yaw, ctrl.pitch, 0.0) | let        | rotation                       | 
+  Emplacement: save/main.rs:247
+0.0, 0.0, ctrl.distance                  | vec3       | Vec3::new                      | position 3D
+  Emplacement: save/main.rs:248
+settings.planets.get(i).map(|p| p.radius).unwrap_or(50.0) | let        | r                              | 
+  Emplacement: save/main.rs:370
+settings.stars.get(i).map(|s| s.radius).unwrap_or(200.0) | let        | r                              | 
+  Emplacement: save/main.rs:374
+Color::srgb(1.0, 0.9, 0.2)               | let        | color                          | 
+  Emplacement: save/main.rs:544
+15.0                                     | let        | s                              | 
+  Emplacement: save/main.rs:548
+pp - dir * 20.0                          | let        | tip                            | 
+  Emplacement: save/main.rs:558
+if dir.y.abs() > 0.9 { Vec3::X } else { Vec3::Y } | let        | up                             | 
+  Emplacement: save/main.rs:559
+dir.cross(up).normalize()  * 8.0         | let        | r                              | 
+  Emplacement: save/main.rs:560
+dir.cross(r).normalize()   * 8.0         | let        | u                              | 
+  Emplacement: save/main.rs:561
+128                                      | let        | seg                            | 
+  Emplacement: save/main.rs:577
+i as f32       / seg as f32 * std::f32::consts::TAU | let        | a0                             | 
+  Emplacement: save/main.rs:581
+(i + 1) as f32 / seg as f32 * std::f32::consts::TAU | let        | a1                             | 
+  Emplacement: save/main.rs:582
+Color::srgba(0.30, 0.60, 1.00, 0.40)     | let        | planet_color                   | 
+  Emplacement: save/main.rs:591
+Color::srgba(1.00, 0.75, 0.25, 0.40)     | let        | star_color                     | 
+  Emplacement: save/main.rs:592
+Color::srgba(0.70, 0.55, 0.95, 0.30)     | let        | belt_color                     | 
+  Emplacement: save/main.rs:593
+Color::srgba(0.60, 0.60, 0.70, 0.50)     | let        | moon_color                     | 
+  Emplacement: save/main.rs:594
+Color::srgba(0.50, 0.85, 1.00, 0.30)     | let        | comet_color                    | 
+  Emplacement: save/main.rs:595
+Color::srgba(0.80, 0.30, 0.80, 0.35)     | let        | remnant_color                  | 
+  Emplacement: save/main.rs:596
+Color::srgba(0.90, 0.60, 0.20, 0.35)     | let        | astro_color                    | 
+  Emplacement: save/main.rs:597
+belt.distance - belt.width * 0.5         | let        | r_inner                        | 
+  Emplacement: save/main.rs:622
+belt.distance + belt.width * 0.5         | let        | r_outer                        | 
+  Emplacement: save/main.rs:623
+(comcfg.perihelion + comcfg.aphelion) * 0.5 | let        | r                              | 
+  Emplacement: save/main.rs:630
+
+================================================================================
+FILE: save/ui.rs
+================================================================================
+
+Color::srgba(0.06, 0.06, 0.10, 1.0)      | const      | BG_DARK                        | 
+  Emplacement: save/ui.rs:405
+Color::srgba(0.10, 0.10, 0.16, 1.0)      | const      | BG_CARD                        | 
+  Emplacement: save/ui.rs:406
+Color::srgba(0.13, 0.13, 0.20, 1.0)      | const      | BG_CARD_HEADER                 | 
+  Emplacement: save/ui.rs:407
+Color::srgba(0.12, 0.12, 0.18, 1.0)      | const      | BG_PANEL                       | 
+  Emplacement: save/ui.rs:408
+Color::srgba(0.18, 0.18, 0.26, 1.0)      | const      | BG_SLIDER                      | 
+  Emplacement: save/ui.rs:409
+Color::srgb(0.3, 0.6, 1.0)               | const      | ACCENT                         | 
+  Emplacement: save/ui.rs:410
+Color::srgb(0.4, 0.7, 1.0)               | const      | ACCENT_HOVER                   | 
+  Emplacement: save/ui.rs:411
+Color::srgb(0.9, 0.9, 0.95)              | const      | TEXT_COLOR                     | 
+  Emplacement: save/ui.rs:412
+Color::srgb(0.55, 0.55, 0.62)            | const      | TEXT_DIM                       | 
+  Emplacement: save/ui.rs:413
+Color::srgb(0.35, 0.7, 1.0)              | const      | PLANET_COLOR                   | 
+  Emplacement: save/ui.rs:414
+Color::srgb(1.0, 0.75, 0.25)             | const      | STAR_COLOR                     | 
+  Emplacement: save/ui.rs:415
+Color::srgb(0.7, 0.55, 0.95)             | const      | BELT_COLOR                     | 
+  Emplacement: save/ui.rs:416
+Color::srgb(0.8, 0.5, 1.0)               | const      | REMNANT_COLOR                  | 
+  Emplacement: save/ui.rs:417
+Color::srgb(0.85, 0.35, 0.35)            | const      | RED_SOFT                       | 
+  Emplacement: save/ui.rs:418
+Color::srgb(0.6, 0.6, 0.7)               | let        | moon_color                     | 
+  Emplacement: save/ui.rs:650
+((val - min) / (max - min)).clamp(0.0, 1.0) | let        | frac                           | 
+  Emplacement: save/ui.rs:935
+pct                                      | UI_val     | Val::Percent                   | valeur UI
+  Emplacement: save/ui.rs:1127
+pct / 100.0 * 448.0                      | let        | estimated_width                | 
+  Emplacement: save/ui.rs:1128
+bar_pos.x - estimated_width * 0.5        | let        | bar_left                       | 
+  Emplacement: save/ui.rs:1129
+((cx - bar_left) / estimated_width).clamp(0.0, 1.0) | let        | frac                           | 
+  Emplacement: save/ui.rs:1130
+((val - bar.min) / (bar.max - bar.min)).clamp(0.0, 1.0) | let        | frac                           | 
+  Emplacement: save/ui.rs:1267
+frac * 100.0                             | UI_val     | Val::Percent                   | valeur UI
+  Emplacement: save/ui.rs:1270
+label.0.get(&settings)                   | let        | val                            | 
+  Emplacement: save/ui.rs:1276
+0.0                                      | let        | dy                             | 
+  Emplacement: save/ui.rs:1423
+format!("Rayon {:.0}  -  {:?}", cfg.radius, cfg.dwarf_type) | let        | info                           | 
+  Emplacement: save/ui.rs:1724
+format!("Rayon {:.0}  -  {:?}", cfg.radius, cfg.giant_type) | let        | info                           | 
+  Emplacement: save/ui.rs:1744
+format!("Rayon {:.0}  -  {:?}", cfg.radius, cfg.class) | let        | info                           | 
+  Emplacement: save/ui.rs:1754
+format!("Rayon {:.0}  -  {:?}", cfg.radius, cfg.hg_type) | let        | info                           | 
+  Emplacement: save/ui.rs:1764
+
+================================================================================
+FILE: src/astre/Remnant_stellaire/black_hole.rs
+================================================================================
+
+t.clamp(0.0, 1.0)                        | let        | t                              | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:268
+dist.max(cfg.event_horizon * 0.5)        | let        | d                              | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:278
+(1.0 - dist / max_dist).clamp(0.0, 1.0)  | let        | t                              | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:284
+(cfg.event_horizon / vs) as i32 + 1      | let        | steps                          | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:333
+Vec3::new(gx as f32, gy as f32, gz as f32) * vs | let        | p                              | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:337
+pseudo_hash(cfg.seed as f32, i as f32)   | let        | seed                           | graine
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:368
+(seed * 2.0 - 1.0) * cfg.photon_ring_width * 0.4 | let        | h                              | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:370
+Vec3::new(angle.cos() * r, h, angle.sin() * r) | let        | pos_p                          | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:371
+pseudo_hash(cfg.seed as f32 + 100.0, i as f32) | let        | h1                             | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:392
+pseudo_hash(cfg.seed as f32 + 101.0, i as f32) | let        | h2                             | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:393
+pseudo_hash(cfg.seed as f32 + 102.0, i as f32) | let        | h3                             | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:394
+pseudo_hash(cfg.seed as f32 + 103.0, i as f32) | let        | h4                             | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:395
+h1 * std::f32::consts::TAU               | let        | angle                          | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:397
+(h3 * 2.0 - 1.0) * cfg.accretion_thickness * 0.5 | let        | height                         | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:400
+h4                                       | let        | seed                           | graine
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:401
+cfg.accretion_emissive * (1.0 - color_t * 0.6) | let        | ae                             | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:412
+h1                                       | let        | t                              | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:455
+h2                                       | let        | perp_seed                      | graine
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:456
+pseudo_hash(h1, h2)                      | let        | seed                           | graine
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:457
+radial.cross(Vec3::Y).normalize_or_zero() | let        | tangent                        | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:530
+(tf.scale.x - dt * cfg.spaghetti_speed * 2.0).max(0.05) | let        | shrink                         | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:606
+(1.0 / s.sqrt()).max(0.08)               | let        | compress                       | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:617
+tf.rotation * Vec3::Z                    | let        | current_forward                | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:620
+compress, compress, s                    | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:629
+2.0 + (1.0 - av.color_t) * 4.0           | let        | pulse_speed                    | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:706
+0.5 + av.color_t * 0.8                   | let        | size_factor                    | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:709
+pv.angle + t * 2.8                       | let        | angle                          | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:729
+Vec3::new(angle.cos() * r, h, angle.sin() * r) | let        | pos                            | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:736
+0.6 + (t * 5.0 + pv.seed * 9.0).sin() * 0.4 | let        | shimmer                        | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:740
+perp_angle.cos() * cone_width * 0.5      | let        | perp_x                         | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:773
+perp_angle.sin() * cone_width * 0.5      | let        | perp_z                         | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:774
+(1.0 - local_t).max(0.05)                | let        | fade                           | 
+  Emplacement: src/astre/Remnant_stellaire/black_hole.rs:785
+
+================================================================================
+FILE: src/astre/Remnant_stellaire/magnetar.rs
+================================================================================
+
+t.clamp(0.0, 1.0)                        | let        | t                              | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:300
+tilt.cos().max(0.01)                     | let        | cos_tilt                       | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:330
+std::f32::consts::PI / res_s as f32      | let        | vstep                          | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:398
+std::f32::consts::TAU / (res_s * 2) as f32 | let        | hstep                          | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:399
+-std::f32::consts::FRAC_PI_2             | let        | lat                            | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:404
+0.0_f32                                  | let        | lon                            | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:406
+(lat + std::f32::consts::FRAC_PI_2) / std::f32::consts::PI | let        | lat_norm                       | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:409
+(1.0 - (lat_norm * 2.0 - 1.0).abs()).powf(2.0) | let        | pole_t                         | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:410
+pseudo_hash(cfg.seed as f32, qi as f32 * 3.7) | let        | seed                           | graine
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:446
+pseudo_hash(cfg.seed as f32 + li as f32, 5.5) | let        | seed                           | graine
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:478
+lon_base + (seed - 0.5) * 0.3            | let        | lon                            | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:479
+(li as f32 / cfg.field_line_count as f32 * 3.0).fract() | let        | tilt_t                         | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:482
+0.15 + tilt_t * std::f32::consts::FRAC_PI_2 * 0.9 | let        | tilt                           | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:483
+si as f32 / cfg.field_line_samples as f32 | let        | sample_t                       | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:486
+pseudo_hash(cfg.seed as f32 + 400.0, bi as f32) | let        | h1                             | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:531
+pseudo_hash(cfg.seed as f32 + 401.0, bi as f32) | let        | h2                             | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:532
+pseudo_hash(cfg.seed as f32 + 402.0, bi as f32) | let        | h3                             | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:533
+h1 * std::f32::consts::TAU               | let        | theta                          | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:535
+(h2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | phi                            | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:536
+cfg.radius + h3.sqrt() * cfg.burst_radius | let        | r                              | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:537
+pseudo_hash(cfg.seed as f32 + 500.0, wi as f32) | let        | h1                             | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:569
+pseudo_hash(cfg.seed as f32 + 501.0, wi as f32) | let        | h2                             | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:570
+h1 * std::f32::consts::TAU               | let        | theta                          | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:572
+(h2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | phi                            | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:573
+(t * speed * 0.19 + s * 11.3) * std::f32::consts::TAU | let        | lon                            | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:648
+(0.4 + flicker.abs() * 1.2).max(0.05)    | let        | scale                          | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:657
+Vec3::new(-lon_anim.sin(), 0.0, lon_anim.cos()) | let        | perp                           | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:701
+(sample_t * std::f32::consts::PI).sin()  | let        | opacity                        | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:707
+(opacity * (0.7 + fv.seed * 0.6)).max(0.05) | let        | scale                          | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:708
+bv.theta + t * 0.15                      | let        | theta_anim                     | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:741
+0.5 + (t * speed * 1.3 + bv.seed * 7.0).sin().abs() * 0.8 | let        | s                              | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:752
+(wv.seed * std::f32::consts::TAU).sin() * radius * 0.05 | let        | jitter                         | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:834
+(1.0 - radius / cfg.sgr_max_radius).clamp(0.0, 1.0) | let        | life                           | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:839
+(sgr_elapsed / cfg.sgr_duration).clamp(0.0, 1.0) | let        | shell_t                        | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:841
+life * (0.5 + shell_t * 1.5)             | let        | scale                          | 
+  Emplacement: src/astre/Remnant_stellaire/magnetar.rs:842
+
+================================================================================
+FILE: src/astre/Remnant_stellaire/nebula.rs
+================================================================================
+
+512                                      | const      | NEBULA_BUILD_BATCH             | 
+  Emplacement: src/astre/Remnant_stellaire/nebula.rs:10
+8.0                                      | const      | NEBULA_SNAP_GRID               | 
+  Emplacement: src/astre/Remnant_stellaire/nebula.rs:13
+p.x as f64                               | let        | px                             | 
+  Emplacement: src/astre/Remnant_stellaire/nebula.rs:217
+p.y as f64                               | let        | py                             | 
+  Emplacement: src/astre/Remnant_stellaire/nebula.rs:218
+p.z as f64                               | let        | pz                             | 
+  Emplacement: src/astre/Remnant_stellaire/nebula.rs:219
+cfg.warp_strength as f64                 | let        | w                              | 
+  Emplacement: src/astre/Remnant_stellaire/nebula.rs:226
+(1.0 - dist_norm).clamp(0.0, 1.0)        | let        | t                              | 
+  Emplacement: src/astre/Remnant_stellaire/nebula.rs:246
+Perlin::new(cfg.seed + 2)                | let        | perlin_warp                    | 
+  Emplacement: src/astre/Remnant_stellaire/nebula.rs:294
+cfg.radius * 2.0 / res as f32            | let        | step                           | 
+  Emplacement: src/astre/Remnant_stellaire/nebula.rs:339
+(xi as f32 + 0.5) / res as f32 * 2.0 - 1.0 | let        | lx                             | 
+  Emplacement: src/astre/Remnant_stellaire/nebula.rs:346
+(yi as f32 + 0.5) / res as f32 * 2.0 - 1.0 | let        | ly                             | 
+  Emplacement: src/astre/Remnant_stellaire/nebula.rs:347
+(zi as f32 + 0.5) / res as f32 * 2.0 - 1.0 | let        | lz                             | 
+  Emplacement: src/astre/Remnant_stellaire/nebula.rs:348
+Vec3::new(lx, ly, lz) * cfg.radius       | let        | world_p                        | 
+  Emplacement: src/astre/Remnant_stellaire/nebula.rs:353
+s_shape * falloff as f64                 | let        | effective_density              | 
+  Emplacement: src/astre/Remnant_stellaire/nebula.rs:360
+pseudo_hash(voxel_idx as f32, 99.7)      | let        | drift_seed                     | graine
+  Emplacement: src/astre/Remnant_stellaire/nebula.rs:373
+pseudo_hash(cfg.seed as f32 + i as f32, 1.0) | let        | h1                             | 
+  Emplacement: src/astre/Remnant_stellaire/nebula.rs:441
+pseudo_hash(cfg.seed as f32 + i as f32, 2.0) | let        | h2                             | 
+  Emplacement: src/astre/Remnant_stellaire/nebula.rs:442
+pseudo_hash(cfg.seed as f32 + i as f32, 3.0) | let        | h3                             | 
+  Emplacement: src/astre/Remnant_stellaire/nebula.rs:443
+h1 * std::f32::consts::TAU               | let        | theta                          | 
+  Emplacement: src/astre/Remnant_stellaire/nebula.rs:445
+(h2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | phi                            | 
+  Emplacement: src/astre/Remnant_stellaire/nebula.rs:446
+h3.powf(0.4) * cfg.radius * 0.65         | let        | r                              | 
+  Emplacement: src/astre/Remnant_stellaire/nebula.rs:448
+se * 80_000.0                            | let        | light_intensity                | 
+  Emplacement: src/astre/Remnant_stellaire/nebula.rs:458
+cfg.drift_speed * 2.5                    | let        | speed                          | 
+  Emplacement: src/astre/Remnant_stellaire/nebula.rs:530
+
+================================================================================
+FILE: src/astre/Remnant_stellaire/neutron_star.rs
+================================================================================
+
+t.clamp(0.0, 1.0)                        | let        | t                              | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:408
+cfg.temp_initial * (-age / cfg.tau_cool.max(0.001)).exp() | let        | t                              | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:427
+std::f32::consts::PI / res_s as f32      | let        | vstep                          | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:517
+std::f32::consts::TAU / (res_s * 2) as f32 | let        | hstep                          | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:518
+-std::f32::consts::FRAC_PI_2             | let        | lat                            | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:533
+0.0_f32                                  | let        | lon                            | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:535
+pseudo_hash(cfg.seed as f32 + 10.0, ai as f32) | let        | h1                             | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:569
+pseudo_hash(cfg.seed as f32 + 11.0, ai as f32) | let        | h2                             | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:570
+pseudo_hash(cfg.seed as f32 + 12.0, ai as f32) | let        | h3                             | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:571
+h1 * std::f32::consts::TAU               | let        | theta                          | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:573
+(h2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | phi                            | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:574
+cfg.radius + h3 * cfg.atmosphere_thickness | let        | r                              | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:575
+pseudo_hash(cfg.seed as f32 + 20.0, xi as f32) | let        | h1                             | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:616
+pseudo_hash(cfg.seed as f32 + 21.0, xi as f32) | let        | h2                             | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:617
+pseudo_hash(cfg.seed as f32 + 22.0, xi as f32) | let        | h3                             | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:618
+h1 * std::f32::consts::TAU               | let        | theta                          | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:620
+(h2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | phi                            | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:621
+pseudo_hash(cfg.seed as f32 + 30.0, fi as f32) | let        | seed                           | graine
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:655
+pseudo_hash(seed, 2.0) * std::f32::consts::TAU | let        | lon                            | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:657
+pseudo_hash(cfg.seed as f32 + 40.0, di as f32) | let        | h1                             | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:681
+pseudo_hash(cfg.seed as f32 + 41.0, di as f32) | let        | h2                             | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:682
+pseudo_hash(cfg.seed as f32 + 42.0, di as f32) | let        | h3                             | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:683
+pseudo_hash(cfg.seed as f32 + 43.0, di as f32) | let        | h4                             | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:684
+h1 * std::f32::consts::TAU               | let        | angle                          | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:686
+disk_inner + h2.powf(0.5) * (disk_outer - disk_inner) | let        | radius                         | rayon
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:687
+(h3 * 2.0 - 1.0) * cfg.disk_thickness * 0.5 | let        | height                         | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:688
+cfg.disk_emissive * (1.0 - color_t * 0.55) | let        | de                             | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:692
+h1                                       | let        | t                              | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:736
+pseudo_hash(cfg.seed as f32 + 60.0, si as f32) | let        | h1                             | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:767
+pseudo_hash(cfg.seed as f32 + 61.0, si as f32) | let        | h2                             | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:768
+pseudo_hash(cfg.seed as f32 + 62.0, si as f32) | let        | h3                             | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:769
+h1                                       | let        | t                              | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:770
+Vec2::new(h2 * 2.0 - 1.0, h3 * 2.0 - 1.0) | let        | offset                         | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:771
+ns.lat.abs() / std::f32::consts::FRAC_PI_2 | let        | pole_boost                     | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:876
+(temp + pole_boost * 0.15 * temp).min(1.0) | let        | local_temp                     | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:877
+r, g, b                                  | color      | Color                          | couleur RGB
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:884
+state.temperatures.get(av.idx).copied().unwrap_or(1.0) | let        | temp                           | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:903
+0.8 + temp * 2.5                         | let        | pulse_speed                    | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:906
+av.theta + t * 0.08 * (1.0 + av.seed)    | let        | theta_anim                     | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:910
+state.temperatures.get(xv.idx).copied().unwrap_or(1.0) | let        | temp                           | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:938
+Vec3::ZERO                               | let        | disp                           | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:974
+phases.get(i).copied().unwrap_or(0.0)    | let        | phase                          | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:976
+state.starquake_elapsed.get(fv.idx).copied().unwrap_or(0.0) | let        | elapsed                        | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:1059
+(elapsed * 18.0 + fv.seed * 9.0).sin() * 0.4 + 0.6 | let        | flicker                        | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:1079
+(0.4 + dv.color_t * 0.8) * pulse         | let        | size                           | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:1117
+state.spin_angles.get(cv.idx).copied().unwrap_or(0.0) | let        | spin_angle                     | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:1141
+0.15_f32                                 | let        | tilt                           | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:1144
+((t * cfg.column_speed + cv.t) % 1.0).max(0.0) | let        | local_t                        | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:1152
+local_t * cfg.column_width * 0.5         | let        | cone_w                         | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:1156
+if pole_dir.y.abs() > 0.9 { Vec3::X } else { Vec3::Y } | let        | perp_base                      | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:1158
+(1.0 - local_t * 0.8).max(0.1)           | let        | fade                           | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:1168
+1.0 - local_t                            | let        | inv                            | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:1210
+if stream_dir.y.abs() > 0.9 { Vec3::X } else { Vec3::Y } | let        | perp                           | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:1215
+cfg.stream_voxel_size * 1.5              | let        | width_scale                    | 
+  Emplacement: src/astre/Remnant_stellaire/neutron_star.rs:1217
+
+================================================================================
+FILE: src/astre/Remnant_stellaire/pulsar.rs
+================================================================================
+
+t.clamp(0.0, 1.0)                        | let        | t                              | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:344
+p0 * p0 + 2.0 * cfg.spin_down_rate * elapsed | let        | val                            | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:375
+std::f32::consts::PI / res_s as f32      | let        | vstep                          | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:435
+std::f32::consts::TAU / (res_s * 2) as f32 | let        | hstep                          | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:436
+-std::f32::consts::FRAC_PI_2             | let        | lat                            | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:441
+0.0_f32                                  | let        | lon                            | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:443
+(lat + std::f32::consts::FRAC_PI_2) / std::f32::consts::PI | let        | lat_norm                       | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:445
+(lat_norm * 2.0 - 1.0).abs().powf(1.5)   | let        | pole_t                         | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:446
+ring as f32 / cfg.beam_cone_rings.max(1) as f32 | let        | ring_t                         | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:480
+cfg.beam_emissive * (1.0 - ring_t * 0.75) | let        | be                             | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:482
+pseudo_hash(cfg.seed as f32 + 100.0, pi as f32) | let        | h1                             | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:526
+pseudo_hash(cfg.seed as f32 + 101.0, pi as f32) | let        | h2                             | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:527
+h1 * std::f32::consts::TAU               | let        | theta                          | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:528
+(h2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | phi                            | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:529
+pseudo_hash(cfg.seed as f32 + 200.0, ti as f32) | let        | h1                             | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:560
+pseudo_hash(cfg.seed as f32 + 201.0, ti as f32) | let        | h2                             | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:561
+h1 * std::f32::consts::TAU               | let        | big                            | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:562
+h2 * std::f32::consts::TAU               | let        | small                          | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:563
+pseudo_hash(h1, h2)                      | let        | seed                           | graine
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:564
+pseudo_hash(cfg.seed as f32 + 300.0, pi as f32) | let        | h1                             | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:590
+pseudo_hash(cfg.seed as f32 + 301.0, pi as f32) | let        | h2                             | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:591
+pseudo_hash(cfg.seed as f32 + 302.0, pi as f32) | let        | h3                             | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:592
+pseudo_hash(cfg.seed as f32 + 303.0, pi as f32) | let        | h4                             | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:593
+h1 * std::f32::consts::TAU               | let        | theta                          | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:595
+(h2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | phi                            | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:596
+cfg.pwn_emissive * (1.0 - color_t * 0.6) | let        | we                             | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:603
+pseudo_hash(fi as f32, si as f32 * 2.7)  | let        | seed                           | graine
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:653
+pseudo_hash(cfg.seed as f32 + 400.0, si as f32) | let        | h1                             | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:685
+pseudo_hash(cfg.seed as f32 + 401.0, si as f32) | let        | h2                             | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:686
+pseudo_hash(cfg.seed as f32 + 402.0, si as f32) | let        | h3                             | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:687
+h1 * std::f32::consts::TAU               | let        | angle                          | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:689
+(h3 * 2.0 - 1.0) * cfg.shock_ring_thickness * 0.5 | let        | height                         | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:691
+pseudo_hash(h1, h3)                      | let        | seed                           | graine
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:692
+std::f32::consts::TAU / period.max(0.001) | let        | omega                          | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:759
+if pole_dir.y.abs() > 0.9 { Vec3::X } else { Vec3::Y } | let        | perp_base                      | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:822
+bv.ring_idx as f32 / cfg.beam_cone_rings.max(1) as f32 | let        | ring_t                         | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:827
+bv.seed * std::f32::consts::TAU          | let        | cone_phi                       | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:829
+bv.sample_idx as f32 / cfg.beam_samples as f32 | let        | sample_t                       | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:837
+bv.seed * 17.3 + bv.sample_idx as f32    | let        | flicker_seed                   | graine
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:841
+spin.periods.get(bv.idx).copied().unwrap_or(1.0) | let        | period                         | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:842
+(spin_angle * 8.0 + flicker_seed).sin() * 0.25 + 0.75 | let        | flicker                        | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:843
+((1.0 - sample_t).powf(0.6) * flicker).max(0.0) | let        | fade                           | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:846
+1.0 - (radius / cfg.pulse_max_radius).clamp(0.0, 1.0) | let        | life                           | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:886
+life * (0.5 + pw.seed * 0.8)             | let        | scale                          | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:887
+spin.angles.get(tv.idx).copied().unwrap_or(0.0) | let        | spin_angle                     | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:914
+tv.small_angle + t * cfg.torus_rotation_speed * 3.2 | let        | small_anim                     | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:920
+Vec3::new(local_x, local_y, local_z)     | let        | local                          | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:929
+if mag.y.abs() > 0.9 { Vec3::X } else { Vec3::Y } | let        | up                             | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:932
+0.7 + (t * 2.0 + tv.seed * 6.28).sin() * 0.3 | let        | shimmer                        | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:941
+spin.angles.get(fv.idx).copied().unwrap_or(0.0) | let        | spin_angle                     | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:993
+cfg.pwn_outer_radius * 0.7               | let        | r_max                          | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:1003
+fv.tilt.cos().max(0.01)                  | let        | cos_tilt                       | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:1007
+(t * 0.3 + fv.seed * 9.0 + sample_t * 4.0).sin() * r * 0.04 | let        | wave                           | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:1011
+(sample_t * std::f32::consts::PI).sin()  | let        | opacity                        | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:1021
+spin.angles.get(sv.idx).copied().unwrap_or(0.0) | let        | spin_angle                     | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:1042
+if mag.y.abs() > 0.9 { Vec3::X } else { Vec3::Y } | let        | up                             | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:1046
+3.0 + (1.0 - r_norm) * 4.0               | let        | p_speed                        | 
+  Emplacement: src/astre/Remnant_stellaire/pulsar.rs:1066
+
+================================================================================
+FILE: src/astre/Remnant_stellaire/supernova.rs
+================================================================================
+
+t.clamp(0.0,1.0)                         | let        | t                              | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:238
+h1 * std::f32::consts::TAU               | let        | theta                          | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:245
+(h2*2.0-1.0).clamp(-1.0,1.0).acos()      | let        | phi                            | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:246
+pr,pg,pb                                 | color      | Color                          | couleur RGB
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:282
+std::f32::consts::PI / res_s as f32      | let        | vstep                          | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:286
+std::f32::consts::TAU / (res_s*2) as f32 | let        | hstep                          | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:287
+-std::f32::consts::FRAC_PI_2             | let        | lat                            | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:288
+0.0_f32                                  | let        | lon                            | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:290
+pseudo_hash(lat*10.0+cfg.seed as f32, lon*5.0)*0.12-0.06 | let        | deform                         | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:292
+cfg.progenitor_radius*(1.0+deform)       | let        | r                              | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:293
+fr,fg,fb                                 | color      | Color                          | couleur RGB
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:307
+pseudo_hash(cfg.seed as f32+10.0,i as f32) | let        | h1                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:311
+pseudo_hash(cfg.seed as f32+11.0,i as f32) | let        | h2                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:312
+rand_sphere(h1,h2)                       | let        | dir                            | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:313
+pseudo_hash(cfg.seed as f32+20.0,i as f32) | let        | h1                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:324
+pseudo_hash(cfg.seed as f32+21.0,i as f32) | let        | h2                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:325
+pseudo_hash(cfg.seed as f32+22.0,i as f32) | let        | h3                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:326
+rand_sphere(h1,h2)                       | let        | dir                            | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:327
+h3                                       | let        | color_t                        | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:328
+cfg.fireball_emissive*(1.0-color_t*0.65) | let        | re                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:330
+rr,rg,rb                                 | color      | Color                          | couleur RGB
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:331
+jr,jg,jb                                 | color      | Color                          | couleur RGB
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:343
+pseudo_hash(cfg.seed as f32+30.0+pole*20.0,i as f32) | let        | h1                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:348
+pseudo_hash(cfg.seed as f32+31.0+pole*20.0,i as f32) | let        | h2                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:349
+br,bg,bb                                 | color      | Color                          | couleur RGB
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:361
+pseudo_hash(cfg.seed as f32+40.0,i as f32) | let        | h1                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:365
+pseudo_hash(cfg.seed as f32+41.0,i as f32) | let        | h2                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:366
+er,eg,eb                                 | color      | Color                          | couleur RGB
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:377
+pseudo_hash(cfg.seed as f32+50.0,i as f32) | let        | h1                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:381
+pseudo_hash(cfg.seed as f32+51.0,i as f32) | let        | h2                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:382
+pseudo_hash(cfg.seed as f32+52.0,i as f32) | let        | h3                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:383
+ir,ig,ib                                 | color      | Color                          | couleur RGB
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:394
+pseudo_hash(cfg.seed as f32+60.0,i as f32) | let        | h1                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:398
+pseudo_hash(cfg.seed as f32+61.0,i as f32) | let        | h2                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:399
+pseudo_hash(cfg.seed as f32+70.0,i as f32) | let        | h1                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:411
+pseudo_hash(cfg.seed as f32+71.0,i as f32) | let        | h2                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:412
+pseudo_hash(cfg.seed as f32+72.0,i as f32) | let        | h3                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:413
+pseudo_hash(cfg.seed as f32+73.0,i as f32) | let        | h4                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:414
+rand_sphere(h1,h2)                       | let        | dir                            | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:415
+cfg.snr_emissive*(1.0-color_t*0.5)       | let        | re                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:419
+rr,rg,rb                                 | color      | Color                          | couleur RGB
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:420
+fr,fg,fb                                 | color      | Color                          | couleur RGB
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:430
+pseudo_hash(fi as f32*3.7,si as f32*2.3) | let        | seed                           | graine
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:436
+cr,cg,cb                                 | color      | Color                          | couleur RGB
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:447
+(fv.seed*std::f32::consts::TAU+e*20.0).sin()*r*0.03 | let        | j                              | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:520
+1.0-(r/cfg.flash_max_radius).clamp(0.0,1.0) | let        | life                           | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:522
+0.6+(e*15.0+fv.seed*9.0).sin()*0.4       | let        | sh                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:523
+1.0+fv.polar_t*cfg.fireball_polar_boost  | let        | boost                          | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:535
+0.4+(1.0-fv.color_t)*0.9                 | let        | size                           | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:539
+jv.t*cfg.jet_width*0.5                   | let        | cw                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:555
+jv.perp_seed*std::f32::consts::TAU+t*0.6 | let        | pa                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:556
+pa.cos(                                  | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:557
+(1.0-jv.t*0.75).max(0.05)                | let        | fade                           | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:558
+0.7+(t*3.5+jv.seed*5.0).sin()*0.3        | let        | sh                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:559
+1.0-(r/cfg.blast_max_radius).clamp(0.0,1.0) | let        | life                           | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:575
+0.5+(e*2.0+bv.seed*8.0).sin().abs()*0.5  | let        | sh                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:576
+1.0-(r/cfg.echo_max_radius).clamp(0.0,1.0) | let        | life                           | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:590
+0.4+(e*1.3+ev.seed*6.0).sin().abs()*0.4  | let        | sh                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:591
+(iv.seed*std::f32::consts::TAU).sin()*cfg.ionization_width | let        | j                              | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:604
+(blast_r+j+cfg.ionization_width*0.5).max(0.0) | let        | r                              | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:605
+0.3+(e*4.0+iv.seed*std::f32::consts::TAU).sin().abs()*0.7 | let        | sh                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:607
+1.0-(blast_r/cfg.blast_max_radius).clamp(0.0,1.0) | let        | life                           | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:608
+1.0+e*cfg.snr_expansion_speed*0.001      | let        | expansion                      | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:619
+1.0+(t*0.6+sv.seed*std::f32::consts::TAU).sin()*0.12 | let        | p                              | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:626
+(0.4+(1.0-sv.color_t)*0.8)*p             | let        | sz                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:627
+1.0+e*cfg.snr_expansion_speed*0.0008     | let        | expansion                      | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:638
+fv.sample_idx as f32/cfg.snr_filament_samples.max(1) as f32 | let        | sample_t                       | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:639
+fv.lon+t*0.025                           | let        | lon_a                          | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:640
+fv.tilt.cos().max(0.01)                  | let        | cos_tilt                       | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:641
+(t*0.4+fv.seed*8.0+sample_t*5.0).sin()*r_arc*0.03 | let        | wave                           | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:644
+(sample_t*std::f32::consts::PI).sin()    | let        | op                             | 
+  Emplacement: src/astre/Remnant_stellaire/supernova.rs:648
+
+================================================================================
+FILE: src/astre/black_hole.rs
+================================================================================
+
+t.clamp(0.0, 1.0)                        | let        | t                              | 
+  Emplacement: src/astre/black_hole.rs:268
+dist.max(cfg.event_horizon * 0.5)        | let        | d                              | 
+  Emplacement: src/astre/black_hole.rs:278
+(1.0 - dist / max_dist).clamp(0.0, 1.0)  | let        | t                              | 
+  Emplacement: src/astre/black_hole.rs:284
+(cfg.event_horizon / vs) as i32 + 1      | let        | steps                          | 
+  Emplacement: src/astre/black_hole.rs:333
+Vec3::new(gx as f32, gy as f32, gz as f32) * vs | let        | p                              | 
+  Emplacement: src/astre/black_hole.rs:337
+pseudo_hash(cfg.seed as f32, i as f32)   | let        | seed                           | graine
+  Emplacement: src/astre/black_hole.rs:368
+(seed * 2.0 - 1.0) * cfg.photon_ring_width * 0.4 | let        | h                              | 
+  Emplacement: src/astre/black_hole.rs:370
+Vec3::new(angle.cos() * r, h, angle.sin() * r) | let        | pos_p                          | 
+  Emplacement: src/astre/black_hole.rs:371
+pseudo_hash(cfg.seed as f32 + 100.0, i as f32) | let        | h1                             | 
+  Emplacement: src/astre/black_hole.rs:392
+pseudo_hash(cfg.seed as f32 + 101.0, i as f32) | let        | h2                             | 
+  Emplacement: src/astre/black_hole.rs:393
+pseudo_hash(cfg.seed as f32 + 102.0, i as f32) | let        | h3                             | 
+  Emplacement: src/astre/black_hole.rs:394
+pseudo_hash(cfg.seed as f32 + 103.0, i as f32) | let        | h4                             | 
+  Emplacement: src/astre/black_hole.rs:395
+h1 * std::f32::consts::TAU               | let        | angle                          | 
+  Emplacement: src/astre/black_hole.rs:397
+(h3 * 2.0 - 1.0) * cfg.accretion_thickness * 0.5 | let        | height                         | 
+  Emplacement: src/astre/black_hole.rs:400
+h4                                       | let        | seed                           | graine
+  Emplacement: src/astre/black_hole.rs:401
+cfg.accretion_emissive * (1.0 - color_t * 0.6) | let        | ae                             | 
+  Emplacement: src/astre/black_hole.rs:412
+h1                                       | let        | t                              | 
+  Emplacement: src/astre/black_hole.rs:455
+h2                                       | let        | perp_seed                      | graine
+  Emplacement: src/astre/black_hole.rs:456
+pseudo_hash(h1, h2)                      | let        | seed                           | graine
+  Emplacement: src/astre/black_hole.rs:457
+radial.cross(Vec3::Y).normalize_or_zero() | let        | tangent                        | 
+  Emplacement: src/astre/black_hole.rs:530
+(tf.scale.x - dt * cfg.spaghetti_speed * 2.0).max(0.05) | let        | shrink                         | 
+  Emplacement: src/astre/black_hole.rs:606
+(1.0 / s.sqrt()).max(0.08)               | let        | compress                       | 
+  Emplacement: src/astre/black_hole.rs:617
+tf.rotation * Vec3::Z                    | let        | current_forward                | 
+  Emplacement: src/astre/black_hole.rs:620
+compress, compress, s                    | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/black_hole.rs:629
+2.0 + (1.0 - av.color_t) * 4.0           | let        | pulse_speed                    | 
+  Emplacement: src/astre/black_hole.rs:706
+0.5 + av.color_t * 0.8                   | let        | size_factor                    | 
+  Emplacement: src/astre/black_hole.rs:709
+pv.angle + t * 2.8                       | let        | angle                          | 
+  Emplacement: src/astre/black_hole.rs:729
+Vec3::new(angle.cos() * r, h, angle.sin() * r) | let        | pos                            | 
+  Emplacement: src/astre/black_hole.rs:736
+0.6 + (t * 5.0 + pv.seed * 9.0).sin() * 0.4 | let        | shimmer                        | 
+  Emplacement: src/astre/black_hole.rs:740
+perp_angle.cos() * cone_width * 0.5      | let        | perp_x                         | 
+  Emplacement: src/astre/black_hole.rs:773
+perp_angle.sin() * cone_width * 0.5      | let        | perp_z                         | 
+  Emplacement: src/astre/black_hole.rs:774
+(1.0 - local_t).max(0.05)                | let        | fade                           | 
+  Emplacement: src/astre/black_hole.rs:785
+
+================================================================================
+FILE: src/astre/comet.rs
+================================================================================
+
+(cfg.perihelion + cfg.aphelion) * 0.5    | let        | a                              | 
+  Emplacement: src/astre/comet.rs:253
+a * (1.0 - e * e).sqrt() * eccentric.sin() | let        | y_orb                          | 
+  Emplacement: src/astre/comet.rs:265
+(cfg.perihelion + cfg.aphelion) * 0.5    | let        | a                              | 
+  Emplacement: src/astre/comet.rs:290
+a * (1.0 - e * eccentric.cos())          | let        | r                              | 
+  Emplacement: src/astre/comet.rs:298
+ellipse_position(cfg, 0.0)               | let        | initial_pos                    | 
+  Emplacement: src/astre/comet.rs:324
+Vec3::new(gx as f32, gy as f32, gz as f32) * nv | let        | pos                            | 
+  Emplacement: src/astre/comet.rs:367
+0.7 + corner_seed * 0.55                 | let        | scale_jitter                   | 
+  Emplacement: src/astre/comet.rs:368
+pseudo_hash(cfg.seed as f32 + i as f32, 1.0) | let        | h1                             | 
+  Emplacement: src/astre/comet.rs:398
+pseudo_hash(cfg.seed as f32 + i as f32, 2.0) | let        | h2                             | 
+  Emplacement: src/astre/comet.rs:399
+pseudo_hash(cfg.seed as f32 + i as f32, 3.0) | let        | h3                             | 
+  Emplacement: src/astre/comet.rs:400
+h1 * std::f32::consts::TAU               | let        | theta                          | 
+  Emplacement: src/astre/comet.rs:402
+(h2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | phi                            | 
+  Emplacement: src/astre/comet.rs:403
+h3.powf(0.5) * cfg.coma_radius           | let        | r                              | 
+  Emplacement: src/astre/comet.rs:405
+pseudo_hash(cfg.seed as f32, i as f32 * 1.73) | let        | drift_seed                     | graine
+  Emplacement: src/astre/comet.rs:413
+pseudo_hash(cfg.seed as f32 + i as f32, 10.0) | let        | h1                             | 
+  Emplacement: src/astre/comet.rs:442
+pseudo_hash(cfg.seed as f32 + i as f32, 11.0) | let        | h2                             | 
+  Emplacement: src/astre/comet.rs:443
+pseudo_hash(cfg.seed as f32 + i as f32, 12.0) | let        | h3                             | 
+  Emplacement: src/astre/comet.rs:444
+h1                                       | let        | t                              | 
+  Emplacement: src/astre/comet.rs:447
+t * cfg.dust_tail_width * 0.5            | let        | half_w                         | 
+  Emplacement: src/astre/comet.rs:449
+(h2 * 2.0 - 1.0) * half_w                | let        | perp                           | 
+  Emplacement: src/astre/comet.rs:450
+(h3 * 2.0 - 1.0) * half_w * 0.4          | let        | vert                           | 
+  Emplacement: src/astre/comet.rs:451
+t * t * cfg.dust_curve * cfg.dust_tail_width * 0.5 | let        | curve_offset                   | 
+  Emplacement: src/astre/comet.rs:454
+pseudo_hash(cfg.seed as f32 + 500.0, i as f32 * 2.31) | let        | drift_seed                     | graine
+  Emplacement: src/astre/comet.rs:463
+pseudo_hash(cfg.seed as f32 + i as f32, 20.0) | let        | h1                             | 
+  Emplacement: src/astre/comet.rs:492
+pseudo_hash(cfg.seed as f32 + i as f32, 21.0) | let        | h2                             | 
+  Emplacement: src/astre/comet.rs:493
+h1                                       | let        | t                              | 
+  Emplacement: src/astre/comet.rs:495
+h2 * 2.0 - 1.0                           | let        | perp_offset                    | 
+  Emplacement: src/astre/comet.rs:496
+pseudo_hash(cfg.seed as f32 + 1000.0, i as f32 * 3.17) | let        | drift_seed                     | graine
+  Emplacement: src/astre/comet.rs:497
+ellipse_position(cfg, mean_anomaly + 0.01) | let        | next_pos                       | 
+  Emplacement: src/astre/comet.rs:603
+if dust_dir.y.abs() > 0.9 { Vec3::X } else { Vec3::Y } | let        | up                             | 
+  Emplacement: src/astre/comet.rs:608
+if anti_sun.y.abs() > 0.9 { Vec3::X } else { Vec3::Y } | let        | up                             | 
+  Emplacement: src/astre/comet.rs:635
+ion.perp_offset * cfg.ion_tail_width * 0.5 * ion.t | let        | perp_w                         | 
+  Emplacement: src/astre/comet.rs:639
+(1.0 - vx.t * 0.7).max(0.2)              | let        | size_falloff                   | 
+  Emplacement: src/astre/comet.rs:697
+(1.0 - vx.t * 0.8).max(0.15)             | let        | size_falloff                   | 
+  Emplacement: src/astre/comet.rs:706
+(cfg.jet_samples as f32 * activity) as u32 | let        | active_samples                 | 
+  Emplacement: src/astre/comet.rs:746
+cfg.seed as f32 * 7.3 + jv.jet_idx as f32 * 37.1 | let        | base_seed                      | graine
+  Emplacement: src/astre/comet.rs:754
+pseudo_hash(base_seed, 1.0) * std::f32::consts::TAU | let        | jet_theta                      | 
+  Emplacement: src/astre/comet.rs:755
+1.5 + pseudo_hash(base_seed, 3.0) * 2.0  | let        | cycle_dur                      | 
+  Emplacement: src/astre/comet.rs:765
+pseudo_hash(base_seed, 4.0) * cycle_dur  | let        | offset                         | 
+  Emplacement: src/astre/comet.rs:766
+jv.sample_idx as f32 / cfg.jet_samples as f32 | let        | frac                           | 
+  Emplacement: src/astre/comet.rs:776
+pseudo_hash(base_seed + jv.sample_idx as f32, 5.0) | let        | spread_seed_a                  | graine
+  Emplacement: src/astre/comet.rs:780
+pseudo_hash(base_seed + jv.sample_idx as f32, 6.0) | let        | spread_seed_b                  | graine
+  Emplacement: src/astre/comet.rs:781
+spread_seed_a * std::f32::consts::TAU    | let        | spread_theta                   | 
+  Emplacement: src/astre/comet.rs:782
+if jet_dir.y.abs() > 0.9 { Vec3::X } else { Vec3::Y } | let        | perp                           | 
+  Emplacement: src/astre/comet.rs:785
+snap_grid(pos, cfg.jet_voxel_size.max(1.0)) | let        | snapped                        | 
+  Emplacement: src/astre/comet.rs:797
+(1.0 - frac * 0.7) * life                | let        | s                              | 
+  Emplacement: src/astre/comet.rs:801
+
+================================================================================
+FILE: src/astre/etoile/dwarf_star.rs
+================================================================================
+
+std::f32::consts::PI/rs as f32           | let        | vstep                          | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:193
+-std::f32::consts::FRAC_PI_2             | let        | lat                            | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:196
+0.0_f32                                  | let        | lon                            | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:198
+ph(lat*7.0+cfg.seed as f32,lon*4.0)*0.1-0.05 | let        | n                              | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:200
+cfg.radius*(1.0+n)                       | let        | r                              | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:201
+li as f32/12.0*std::f32::consts::TAU     | let        | lon                            | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:214
+ph(li as f32*3.7,si as f32*2.3)          | let        | seed                           | graine
+  Emplacement: src/astre/etoile/dwarf_star.rs:217
+msh.add(Mesh::from(Cuboid::new(5.0,5.0,5.0))) | let        | xmesh                          | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:227
+ph(cfg.seed as f32+500.0,i as f32)       | let        | h1                             | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:240
+h1*std::f32::consts::TAU                 | let        | theta                          | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:241
+cfg.radius+h3.sqrt()*cfg.atmosphere_radius | let        | r                              | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:242
+state.temps.get(sv.idx).copied().unwrap_or(1.0) | let        | temp                           | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:269
+bt-lo as f32                             | let        | frac                           | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:274
+r,g,b                                    | color      | Color                          | couleur RGB
+  Emplacement: src/astre/etoile/dwarf_star.rs:282
+state.spin_angles.get(mv.idx).copied().unwrap_or(0.0) | let        | spin                           | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:290
+cfg.magneto_count/12                     | let        | n                              | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:291
+mv.sample as f32/n.max(1) as f32         | let        | sample_t                       | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:292
+mv.lon+spin+t*0.15                       | let        | lon_a                          | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:293
+mv.tilt.cos().max(0.01)                  | let        | cos_t                          | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:294
+(t*1.5+mv.seed*8.0+sample_t*5.0).sin()*r*0.04 | let        | wave                           | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:297
+(sample_t*std::f32::consts::PI).sin()    | let        | op                             | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:300
+cfg.seed as f32*5.1+fv.fi as f32*29.3    | let        | base                           | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:310
+((t*cfg.xflare_speed*0.5+off)%cycle).max(0.0) | let        | lt                             | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:312
+0.4                                      | let        | active_frac                    | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:313
+fv.si as f32/cfg.xflare_samples.max(1) as f32 | let        | frac                           | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:315
+ph(base,fv.si as f32*0.7)                | let        | h1                             | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:317
+h1*std::f32::consts::TAU                 | let        | theta                          | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:318
+state.temps.get(av.idx).copied().unwrap_or(1.0) | let        | temp                           | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:329
+av.theta+t*0.05*(1.0+av.seed*0.3)        | let        | th                             | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:330
+1.0+(t*0.7+av.seed*std::f32::consts::TAU).sin()*0.15 | let        | pulse                          | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:331
+r*av.phi.sin(                            | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/etoile/dwarf_star.rs:333
+(0.3+temp*0.8)*(0.5+(t*1.1+av.seed*7.0).sin().abs()*0.5) | let        | s                              | 
+  Emplacement: src/astre/etoile/dwarf_star.rs:334
+
+================================================================================
+FILE: src/astre/etoile/giant_star.rs
+================================================================================
+
+std::f32::consts::PI/rs as f32           | let        | vstep                          | 
+  Emplacement: src/astre/etoile/giant_star.rs:123
+-std::f32::consts::FRAC_PI_2             | let        | lat                            | 
+  Emplacement: src/astre/etoile/giant_star.rs:124
+0.0_f32                                  | let        | lon                            | 
+  Emplacement: src/astre/etoile/giant_star.rs:126
+ph(lat*5.0+cfg.seed as f32,lon*3.0)*0.12-0.06 | let        | noise                          | 
+  Emplacement: src/astre/etoile/giant_star.rs:128
+cfg.radius*(1.0+noise)                   | let        | r                              | 
+  Emplacement: src/astre/etoile/giant_star.rs:129
+(lat+std::f32::consts::FRAC_PI_2)/std::f32::consts::PI | let        | t2                             | 
+  Emplacement: src/astre/etoile/giant_star.rs:130
+cfg.emissive*(0.7+t2*0.5)                | let        | se                             | 
+  Emplacement: src/astre/etoile/giant_star.rs:132
+ph(cfg.seed as f32+100.0,i as f32)       | let        | h1                             | 
+  Emplacement: src/astre/etoile/giant_star.rs:144
+h1*std::f32::consts::TAU                 | let        | theta                          | 
+  Emplacement: src/astre/etoile/giant_star.rs:145
+cfg.radius+h3*cfg.convection_depth       | let        | r                              | 
+  Emplacement: src/astre/etoile/giant_star.rs:146
+ph(cfg.seed as f32+200.0,i as f32)       | let        | h1                             | 
+  Emplacement: src/astre/etoile/giant_star.rs:160
+h1*std::f32::consts::TAU                 | let        | theta                          | 
+  Emplacement: src/astre/etoile/giant_star.rs:161
+ph(cfg.seed as f32+300.0,i as f32)       | let        | h1                             | 
+  Emplacement: src/astre/etoile/giant_star.rs:173
+h1*std::f32::consts::TAU                 | let        | theta                          | 
+  Emplacement: src/astre/etoile/giant_star.rs:174
+cfg.shell_radius+(h3*2.0-1.0)*cfg.shell_thickness*0.5 | let        | r                              | 
+  Emplacement: src/astre/etoile/giant_star.rs:176
+ph(cfg.seed as f32+400.0,i as f32)       | let        | h1                             | 
+  Emplacement: src/astre/etoile/giant_star.rs:186
+h1*std::f32::consts::TAU                 | let        | theta                          | 
+  Emplacement: src/astre/etoile/giant_star.rs:187
+cfg.radius+h3.sqrt()*cfg.corona_radius   | let        | r                              | 
+  Emplacement: src/astre/etoile/giant_star.rs:188
+(t*cfg.convection_speed+gv.phase).sin()*0.5+0.5 | let        | cycle                          | 
+  Emplacement: src/astre/etoile/giant_star.rs:211
+cfg.convection_emissive*(0.4+cycle*0.8)  | let        | ge                             | 
+  Emplacement: src/astre/etoile/giant_star.rs:216
+rr,rg,rb                                 | color      | Color                          | couleur RGB
+  Emplacement: src/astre/etoile/giant_star.rs:217
+0.6+cycle*0.7                            | let        | s                              | 
+  Emplacement: src/astre/etoile/giant_star.rs:218
+((t*cfg.wind_speed/cfg.wind_radius+wv.t)%1.0).max(0.0) | let        | local_t                        | 
+  Emplacement: src/astre/etoile/giant_star.rs:226
+(1.0-local_t*0.8).max(0.02)              | let        | fade                           | 
+  Emplacement: src/astre/etoile/giant_star.rs:230
+1.0+(t*0.3+sv.seed*std::f32::consts::TAU).sin()*0.05 | let        | pulse                          | 
+  Emplacement: src/astre/etoile/giant_star.rs:239
+0.5+(t*0.8+sv.seed*5.0).sin().abs()*0.5  | let        | s                              | 
+  Emplacement: src/astre/etoile/giant_star.rs:242
+1.0+(t*0.7+cv.seed*std::f32::consts::TAU).sin()*0.2 | let        | pulse                          | 
+  Emplacement: src/astre/etoile/giant_star.rs:249
+r*cv.phi.sin(                            | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/etoile/giant_star.rs:251
+
+================================================================================
+FILE: src/astre/etoile/hypergiant_star.rs
+================================================================================
+
+std::f32::consts::PI/rs as f32           | let        | vstep                          | 
+  Emplacement: src/astre/etoile/hypergiant_star.rs:98
+-std::f32::consts::FRAC_PI_2             | let        | lat                            | 
+  Emplacement: src/astre/etoile/hypergiant_star.rs:99
+0.0_f32                                  | let        | lon                            | 
+  Emplacement: src/astre/etoile/hypergiant_star.rs:101
+ph(lat*3.5+cfg.seed as f32,lon*2.0)*0.18-0.09 | let        | noise                          | 
+  Emplacement: src/astre/etoile/hypergiant_star.rs:103
+cfg.radius*(1.0+noise)                   | let        | r                              | 
+  Emplacement: src/astre/etoile/hypergiant_star.rs:104
+(lat+std::f32::consts::FRAC_PI_2)/std::f32::consts::PI | let        | t2                             | 
+  Emplacement: src/astre/etoile/hypergiant_star.rs:105
+cfg.emissive*(0.55+t2*0.65)              | let        | se                             | 
+  Emplacement: src/astre/etoile/hypergiant_star.rs:107
+ph(cfg.seed as f32+100.0,i as f32)       | let        | h1                             | 
+  Emplacement: src/astre/etoile/hypergiant_star.rs:118
+h1*std::f32::consts::TAU                 | let        | theta                          | 
+  Emplacement: src/astre/etoile/hypergiant_star.rs:119
+cfg.radius+h3*cfg.convection_voxel*2.0   | let        | r                              | 
+  Emplacement: src/astre/etoile/hypergiant_star.rs:120
+ph(cfg.seed as f32+200.0,i as f32)       | let        | h1                             | 
+  Emplacement: src/astre/etoile/hypergiant_star.rs:131
+h1*std::f32::consts::TAU                 | let        | theta                          | 
+  Emplacement: src/astre/etoile/hypergiant_star.rs:132
+ph(cfg.seed as f32+300.0+si as f32*50.0,i as f32) | let        | h1                             | 
+  Emplacement: src/astre/etoile/hypergiant_star.rs:143
+h1*std::f32::consts::TAU                 | let        | theta                          | 
+  Emplacement: src/astre/etoile/hypergiant_star.rs:144
+shell_r+(h3*2.0-1.0)*shell_t*0.5         | let        | r                              | 
+  Emplacement: src/astre/etoile/hypergiant_star.rs:146
+ph(cfg.seed as f32+400.0+pole*30.0,i as f32) | let        | h1                             | 
+  Emplacement: src/astre/etoile/hypergiant_star.rs:157
+ph(cfg.seed as f32+500.0,i as f32)       | let        | h1                             | 
+  Emplacement: src/astre/etoile/hypergiant_star.rs:168
+h1*std::f32::consts::TAU                 | let        | theta                          | 
+  Emplacement: src/astre/etoile/hypergiant_star.rs:169
+cfg.radius+h3.sqrt()*cfg.ionization_radius | let        | r                              | 
+  Emplacement: src/astre/etoile/hypergiant_star.rs:170
+ph(cfg.seed as f32+600.0,i as f32)       | let        | h1                             | 
+  Emplacement: src/astre/etoile/hypergiant_star.rs:179
+h1*std::f32::consts::TAU                 | let        | theta                          | 
+  Emplacement: src/astre/etoile/hypergiant_star.rs:180
+cfg.radius+h3.sqrt()*cfg.corona_radius   | let        | r                              | 
+  Emplacement: src/astre/etoile/hypergiant_star.rs:181
+rr,rg,rb                                 | color      | Color                          | couleur RGB
+  Emplacement: src/astre/etoile/hypergiant_star.rs:193
+(t*cfg.convection_speed*0.7+gv.seed*11.0 | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/etoile/hypergiant_star.rs:193
+(t*0.1+wv.seed*7.0                       | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/etoile/hypergiant_star.rs:195
+pa.cos(                                  | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/etoile/hypergiant_star.rs:197
+r*iv.phi.sin(                            | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/etoile/hypergiant_star.rs:198
+r*cv.phi.sin(                            | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/etoile/hypergiant_star.rs:199
+
+================================================================================
+FILE: src/astre/etoile/main_sequence_star.rs
+================================================================================
+
+std::f32::consts::PI/rs as f32           | let        | vstep                          | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:152
+-std::f32::consts::FRAC_PI_2             | let        | lat                            | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:153
+0.0_f32                                  | let        | lon                            | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:155
+ph(lat*7.0+cfg.seed as f32,lon*4.0)*0.07-0.035 | let        | noise                          | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:157
+r*(1.0+noise)                            | let        | rv                             | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:158
+(lat+std::f32::consts::FRAC_PI_2)/std::f32::consts::PI | let        | lat_t                          | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:159
+1.0-(1.0-lat_t.min(1.0-lat_t)*2.0).abs().powf(0.4)*0.35 | let        | limb                           | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:160
+msh.add(Mesh::from(Cuboid::new(vs*1.4,vs*0.3,vs*1.4))) | let        | sp_mesh                        | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:170
+ph(cfg.seed as f32+i as f32,1.0)         | let        | h1                             | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:174
+(h1*2.0-1.0).clamp(-1.0,1.0).asin()*0.65 | let        | slat                           | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:175
+msh.add(Mesh::from(Cuboid::new(vs*0.8,vs*0.8,vs*0.8))) | let        | chmesh                         | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:183
+ph(cfg.seed as f32+10.0,i as f32)        | let        | h1                             | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:185
+h1*std::f32::consts::TAU                 | let        | theta                          | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:186
+r+h3*cfg.chromosphere_height             | let        | rv                             | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:187
+ph(cfg.seed as f32+20.0,i as f32)        | let        | h1                             | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:196
+h1*std::f32::consts::TAU                 | let        | theta                          | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:197
+r+h3*cfg.granule_voxel*0.5               | let        | rv                             | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:198
+ph(cfg.seed as f32+30.0,i as f32)        | let        | h1                             | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:211
+h1*std::f32::consts::TAU                 | let        | theta                          | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:212
+r+h3.sqrt()*cfg.corona_radius            | let        | rv                             | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:213
+msh.add(Mesh::from(Cuboid::new(5.0,5.0,5.0))) | let        | amesh2                         | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:221
+ph(cfg.seed as f32+50.0,i as f32)        | let        | h1                             | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:232
+h1*std::f32::consts::TAU                 | let        | theta                          | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:233
+(t*cfg.granule_speed+gv.phase).sin()*0.5+0.5 | let        | cycle                          | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:255
+0.6+cycle*0.6                            | let        | s                              | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:258
+1.0+(t*1.2+cv.seed*std::f32::consts::TAU).sin()*0.2 | let        | pulse                          | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:266
+rv*cv.phi.sin(                           | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/etoile/main_sequence_star.rs:268
+(cv.r-r)/cfg.chromosphere_height.max(1.0) | let        | op                             | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:269
+(1.0-op)*0.8                             | let        | s                              | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:270
+1.0+(t*0.9+cv.seed*std::f32::consts::TAU).sin()*0.22 | let        | pulse                          | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:278
+rv*cv.phi.sin(                           | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/etoile/main_sequence_star.rs:280
+1.0-((rv-r)/cfg.corona_radius.max(1.0)).clamp(0.0,1.0) | let        | life                           | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:281
+0.3+life*0.8                             | let        | s                              | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:282
+cfg.seed as f32*6.1+av.ai as f32*41.3    | let        | base                           | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:291
+3.0+ph(base,1.0)*5.0                     | let        | cycle                          | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:292
+((t*cfg.arc_speed*0.4+off)%cycle).max(0.0) | let        | lt                             | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:293
+av.si as f32/cfg.arc_samples.max(1) as f32 | let        | frac                           | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:296
+ph(base,av.si as f32*0.7)                | let        | h1                             | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:297
+ph(base,3.0)*std::f32::consts::TAU       | let        | theta                          | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:298
+foot*ph(base,5.0)*0.3                    | let        | off2                           | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:301
+1.0-frac                                 | let        | inv                            | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:302
+((t*cfg.wind_speed/cfg.wind_max_radius+wv.t)%1.0).max(0.0) | let        | local_t                        | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:313
+(1.0-local_t*0.85).max(0.02)             | let        | fade                           | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:317
+1.0-sv.lat.abs()/std::f32::consts::FRAC_PI_2*0.25 | let        | diff                           | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:326
+1.0+(t*1.5+sv.seed*6.28).sin()*0.1       | let        | pulse                          | 
+  Emplacement: src/astre/etoile/main_sequence_star.rs:328
+
+================================================================================
+FILE: src/astre/etoile/protostar.rs
+================================================================================
+
+std::f32::consts::PI/rs as f32           | let        | vstep                          | 
+  Emplacement: src/astre/etoile/protostar.rs:125
+-std::f32::consts::FRAC_PI_2             | let        | lat                            | 
+  Emplacement: src/astre/etoile/protostar.rs:127
+0.0_f32                                  | let        | lon                            | 
+  Emplacement: src/astre/etoile/protostar.rs:129
+ph(lat*6.0+cfg.seed as f32,lon*3.0)*0.15-0.07 | let        | noise                          | 
+  Emplacement: src/astre/etoile/protostar.rs:131
+cfg.radius*(1.0+noise)                   | let        | r                              | 
+  Emplacement: src/astre/etoile/protostar.rs:132
+(lat+std::f32::consts::FRAC_PI_2)/std::f32::consts::PI | let        | lt                             | 
+  Emplacement: src/astre/etoile/protostar.rs:133
+cfg.emissive_core*(0.7+lt*0.6)           | let        | ce                             | 
+  Emplacement: src/astre/etoile/protostar.rs:135
+ph(cfg.seed as f32+100.0,i as f32)       | let        | h1                             | 
+  Emplacement: src/astre/etoile/protostar.rs:149
+h1*std::f32::consts::TAU                 | let        | theta                          | 
+  Emplacement: src/astre/etoile/protostar.rs:150
+cfg.radius+h3.sqrt()*(cfg.envelope_radius-cfg.radius) | let        | r                              | 
+  Emplacement: src/astre/etoile/protostar.rs:151
+ph(cfg.seed as f32+200.0,i as f32)       | let        | h1                             | 
+  Emplacement: src/astre/etoile/protostar.rs:160
+h1*std::f32::consts::TAU                 | let        | angle                          | 
+  Emplacement: src/astre/etoile/protostar.rs:161
+cfg.disk_emissive*(1.0-ct*0.6)           | let        | de                             | 
+  Emplacement: src/astre/etoile/protostar.rs:166
+Vec3::new(angle.cos()*radius,height,angle.sin()*radius) | let        | pos                            | 
+  Emplacement: src/astre/etoile/protostar.rs:168
+ph(cfg.seed as f32+300.0+pole*20.0,i as f32) | let        | h1                             | 
+  Emplacement: src/astre/etoile/protostar.rs:180
+ph(cfg.seed as f32+400.0,i as f32)       | let        | h1                             | 
+  Emplacement: src/astre/etoile/protostar.rs:193
+h1*std::f32::consts::TAU                 | let        | theta                          | 
+  Emplacement: src/astre/etoile/protostar.rs:194
+r*ev.phi.sin(                            | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/etoile/protostar.rs:216
+0.4+(t*0.9+ev.seed*6.0).sin().abs()*0.7  | let        | s                              | 
+  Emplacement: src/astre/etoile/protostar.rs:217
+cfg.disk_speed*(cfg.disk_inner/dv.radius.max(1.0)).sqrt() | let        | kepler                         | 
+  Emplacement: src/astre/etoile/protostar.rs:224
+(t*1.4+dv.seed*std::f32::consts::TAU).sin()*5.0*(1.0-dv.ct) | let        | turb                           | 
+  Emplacement: src/astre/etoile/protostar.rs:226
+angle.cos(                               | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/etoile/protostar.rs:227
+(0.5+dv.ct*0.7)*(1.0+(t*2.0+dv.seed*5.0).sin()*0.12) | let        | s                              | 
+  Emplacement: src/astre/etoile/protostar.rs:228
+((t*cfg.jet_speed*0.3+jv.t)%1.0).max(0.0) | let        | local_t                        | 
+  Emplacement: src/astre/etoile/protostar.rs:237
+(local_t*cfg.jet_knot_count as f32)%1.0  | let        | knot_t                         | 
+  Emplacement: src/astre/etoile/protostar.rs:238
+(knot_t*std::f32::consts::TAU).sin().abs() | let        | knot_bright                    | 
+  Emplacement: src/astre/etoile/protostar.rs:240
+local_t*cfg.jet_width*0.5                | let        | cone                           | 
+  Emplacement: src/astre/etoile/protostar.rs:242
+jv.perp*std::f32::consts::TAU+t*0.4      | let        | pa                             | 
+  Emplacement: src/astre/etoile/protostar.rs:243
+pa.cos(                                  | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/etoile/protostar.rs:244
+(1.0-local_t*0.8).max(0.05)*(0.5+knot_bright*0.6) | let        | fade                           | 
+  Emplacement: src/astre/etoile/protostar.rs:245
+((t*cfg.accretion_speed+av.t)%1.0).max(0.0) | let        | local_t                        | 
+  Emplacement: src/astre/etoile/protostar.rs:254
+cfg.radius+cfg.voxel_size*0.5            | let        | to_r                           | 
+  Emplacement: src/astre/etoile/protostar.rs:256
+(1.0-local_t*0.7).max(0.1)               | let        | fade                           | 
+  Emplacement: src/astre/etoile/protostar.rs:259
+
+================================================================================
+FILE: src/astre/etoile/star.rs
+================================================================================
+
+std::f32::consts::PI/res_s as f32        | let        | vstep                          | 
+  Emplacement: src/astre/etoile/star.rs:125
+std::f32::consts::TAU/(res_s*2) as f32   | let        | hstep                          | 
+  Emplacement: src/astre/etoile/star.rs:126
+-std::f32::consts::FRAC_PI_2             | let        | lat                            | 
+  Emplacement: src/astre/etoile/star.rs:127
+0.0_f32                                  | let        | lon                            | 
+  Emplacement: src/astre/etoile/star.rs:129
+(lat+std::f32::consts::FRAC_PI_2)/std::f32::consts::PI | let        | t                              | 
+  Emplacement: src/astre/etoile/star.rs:131
+ph(lat*8.0+cfg.seed as f32, lon*4.0)*0.08-0.04 | let        | noise                          | 
+  Emplacement: src/astre/etoile/star.rs:132
+cfg.radius*(1.0+noise)                   | let        | r                              | 
+  Emplacement: src/astre/etoile/star.rs:133
+msh.add(Mesh::from(Cuboid::new(vs*1.3,vs*0.4,vs*1.3))) | let        | sp_mesh                        | 
+  Emplacement: src/astre/etoile/star.rs:145
+ph(cfg.seed as f32+i as f32,1.0)         | let        | h1                             | 
+  Emplacement: src/astre/etoile/star.rs:149
+(h1*2.0-1.0).clamp(-1.0,1.0).asin()*0.6  | let        | lat                            | 
+  Emplacement: src/astre/etoile/star.rs:150
+h2*std::f32::consts::TAU                 | let        | lon                            | 
+  Emplacement: src/astre/etoile/star.rs:151
+snap(sph(lat,lon,cfg.radius+vs*0.1),vs)  | let        | pos                            | 
+  Emplacement: src/astre/etoile/star.rs:152
+ph(cfg.seed as f32+200.0,i as f32)       | let        | h1                             | 
+  Emplacement: src/astre/etoile/star.rs:161
+h1*std::f32::consts::TAU                 | let        | theta                          | 
+  Emplacement: src/astre/etoile/star.rs:162
+cfg.radius+h3*cfg.granule_voxel_size*0.5 | let        | r                              | 
+  Emplacement: src/astre/etoile/star.rs:163
+ph(cfg.seed as f32+300.0,i as f32)       | let        | h1                             | 
+  Emplacement: src/astre/etoile/star.rs:178
+h1*std::f32::consts::TAU                 | let        | theta                          | 
+  Emplacement: src/astre/etoile/star.rs:179
+cfg.radius+h3.sqrt()*cfg.corona_radius   | let        | r                              | 
+  Emplacement: src/astre/etoile/star.rs:180
+msh.add(Mesh::from(Cuboid::new(6.0,6.0,6.0))) | let        | fm                             | 
+  Emplacement: src/astre/etoile/star.rs:187
+1.0+(t*1.2+sp.seed*6.28).sin()*0.08      | let        | pulse                          | 
+  Emplacement: src/astre/etoile/star.rs:217
+cfg.radius+cfg.surface_voxel_size*0.05   | let        | r                              | 
+  Emplacement: src/astre/etoile/star.rs:218
+(t*cfg.granule_speed+gv.phase).sin()*0.5+0.5 | let        | cycle                          | 
+  Emplacement: src/astre/etoile/star.rs:228
+cfg.granule_emissive*(0.5+cycle*0.7)     | let        | ge                             | 
+  Emplacement: src/astre/etoile/star.rs:233
+rr,rg,rb                                 | color      | Color                          | couleur RGB
+  Emplacement: src/astre/etoile/star.rs:234
+0.7+cycle*0.5                            | let        | scale                          | 
+  Emplacement: src/astre/etoile/star.rs:235
+cv.theta+t*0.07                          | let        | th                             | 
+  Emplacement: src/astre/etoile/star.rs:245
+r*cv.phi.sin(                            | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/etoile/star.rs:246
+cfg.seed as f32*7.3+fv.flare_idx as f32*37.1 | let        | base                           | 
+  Emplacement: src/astre/etoile/star.rs:256
+2.0+ph(base,1.0)*3.0                     | let        | rise                           | 
+  Emplacement: src/astre/etoile/star.rs:257
+((t*cfg.flare_speed+off)%total).max(0.0) | let        | lt                             | 
+  Emplacement: src/astre/etoile/star.rs:259
+fv.sample_idx as f32/cfg.flare_samples as f32 | let        | frac                           | 
+  Emplacement: src/astre/etoile/star.rs:262
+ph(base,fv.sample_idx as f32*0.7)        | let        | h1                             | 
+  Emplacement: src/astre/etoile/star.rs:264
+h1*std::f32::consts::TAU                 | let        | theta                          | 
+  Emplacement: src/astre/etoile/star.rs:265
+15.0*0.5                                 | let        | spread                         | 
+  Emplacement: src/astre/etoile/star.rs:269
+1.0-frac                                 | let        | inv                            | 
+  Emplacement: src/astre/etoile/star.rs:271
+
+================================================================================
+FILE: src/astre/etoile/supergiant_star.rs
+================================================================================
+
+std::f32::consts::PI/rs as f32           | let        | vstep                          | 
+  Emplacement: src/astre/etoile/supergiant_star.rs:75
+-std::f32::consts::FRAC_PI_2             | let        | lat                            | 
+  Emplacement: src/astre/etoile/supergiant_star.rs:76
+0.0_f32                                  | let        | lon                            | 
+  Emplacement: src/astre/etoile/supergiant_star.rs:78
+ph(lat*4.0+cfg.seed as f32,lon*2.5)*0.15-0.075 | let        | noise                          | 
+  Emplacement: src/astre/etoile/supergiant_star.rs:80
+cfg.radius*(1.0+noise)                   | let        | r                              | 
+  Emplacement: src/astre/etoile/supergiant_star.rs:81
+(lat+std::f32::consts::FRAC_PI_2)/std::f32::consts::PI | let        | t2                             | 
+  Emplacement: src/astre/etoile/supergiant_star.rs:82
+cfg.emissive*(0.6+t2*0.6)                | let        | se                             | 
+  Emplacement: src/astre/etoile/supergiant_star.rs:84
+ph(cfg.seed as f32+100.0,i as f32)       | let        | h1                             | 
+  Emplacement: src/astre/etoile/supergiant_star.rs:95
+h1*std::f32::consts::TAU                 | let        | theta                          | 
+  Emplacement: src/astre/etoile/supergiant_star.rs:96
+cfg.radius+h3*cfg.convection_voxel*1.5   | let        | r                              | 
+  Emplacement: src/astre/etoile/supergiant_star.rs:97
+ph(cfg.seed as f32+200.0,i as f32)       | let        | h1                             | 
+  Emplacement: src/astre/etoile/supergiant_star.rs:108
+h1*std::f32::consts::TAU                 | let        | theta                          | 
+  Emplacement: src/astre/etoile/supergiant_star.rs:109
+ph(cfg.seed as f32+300.0,i as f32)       | let        | h1                             | 
+  Emplacement: src/astre/etoile/supergiant_star.rs:118
+h1*std::f32::consts::TAU                 | let        | theta                          | 
+  Emplacement: src/astre/etoile/supergiant_star.rs:119
+ph(cfg.seed as f32+400.0,i as f32)       | let        | h1                             | 
+  Emplacement: src/astre/etoile/supergiant_star.rs:129
+h1*std::f32::consts::TAU                 | let        | theta                          | 
+  Emplacement: src/astre/etoile/supergiant_star.rs:130
+cfg.radius+h3.sqrt()*cfg.corona_radius   | let        | r                              | 
+  Emplacement: src/astre/etoile/supergiant_star.rs:131
+ph(cfg.seed as f32+500.0+pole*20.0,i as f32) | let        | h1                             | 
+  Emplacement: src/astre/etoile/supergiant_star.rs:141
+rr,rg,rb                                 | color      | Color                          | couleur RGB
+  Emplacement: src/astre/etoile/supergiant_star.rs:155
+(t*cfg.convection_speed*0.7+gv.seed*11.0 | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/etoile/supergiant_star.rs:155
+(t*0.15+wv.seed*7.0                      | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/etoile/supergiant_star.rs:157
+(t*0.1+ev.seed*6.0                       | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/etoile/supergiant_star.rs:158
+r*cv.phi.sin(                            | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/etoile/supergiant_star.rs:159
+pa.cos(                                  | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/etoile/supergiant_star.rs:160
+
+================================================================================
+FILE: src/astre/meteoroid.rs
+================================================================================
+
+t.clamp(0.0, 1.0)                        | let        | t                              | 
+  Emplacement: src/astre/meteoroid.rs:507
+cfg.seed as f32                          | let        | seed                           | graine
+  Emplacement: src/astre/meteoroid.rs:519
+0.0_f32                                  | let        | n                              | 
+  Emplacement: src/astre/meteoroid.rs:525
+1.0_f32                                  | let        | amp                            | 
+  Emplacement: src/astre/meteoroid.rs:526
+1.0_f32                                  | let        | freq                           | 
+  Emplacement: src/astre/meteoroid.rs:527
+pn.x * freq + seed * 0.1 + oct as f32 * 3.7 | let        | sx                             | 
+  Emplacement: src/astre/meteoroid.rs:529
+pn.y * freq + seed * 0.2 + oct as f32 * 7.1 | let        | sy                             | 
+  Emplacement: src/astre/meteoroid.rs:530
+pn.z * freq + seed * 0.3 + oct as f32 * 5.3 | let        | sz                             | 
+  Emplacement: src/astre/meteoroid.rs:531
+r * (1.0 + n * deform_strength)          | let        | deformed_r                     | 
+  Emplacement: src/astre/meteoroid.rs:537
+(dist / deformed_r.max(0.01)).clamp(0.0, 1.0) | let        | surf_t                         | 
+  Emplacement: src/astre/meteoroid.rs:539
+Vec3::new(p.x / scale_x, p.y / scale_y, p.z / scale_z) | let        | scaled                         | 
+  Emplacement: src/astre/meteoroid.rs:544
+Vec3::new(-sep * 0.5, 0.0, 0.0)          | let        | p1                             | 
+  Emplacement: src/astre/meteoroid.rs:553
+Vec3::new( sep * 0.5, 0.0, 0.0)          | let        | p2                             | 
+  Emplacement: src/astre/meteoroid.rs:554
+(p - p1).length()                        | let        | d1                             | 
+  Emplacement: src/astre/meteoroid.rs:555
+(p - p2).length()                        | let        | d2                             | 
+  Emplacement: src/astre/meteoroid.rs:556
+d1 <= r1                                 | let        | in1                            | 
+  Emplacement: src/astre/meteoroid.rs:557
+d2 <= r2                                 | let        | in2                            | 
+  Emplacement: src/astre/meteoroid.rs:558
+((d1 / r1).min(d2 / r2)).clamp(0.0, 1.0) | let        | surf_t                         | 
+  Emplacement: src/astre/meteoroid.rs:559
+r * (1.0 - flatness.clamp(0.0, 0.95))    | let        | half_h                         | 
+  Emplacement: src/astre/meteoroid.rs:564
+r * (1.0 + flatness * 0.5)               | let        | r_xz                           | 
+  Emplacement: src/astre/meteoroid.rs:565
+0.0_f32                                  | let        | max_spike                      | 
+  Emplacement: src/astre/meteoroid.rs:579
+pseudo_hash(seed + i as f32, 1.0)        | let        | sh1                            | 
+  Emplacement: src/astre/meteoroid.rs:581
+pseudo_hash(seed + i as f32, 2.0)        | let        | sh2                            | 
+  Emplacement: src/astre/meteoroid.rs:582
+sh1 * std::f32::consts::TAU              | let        | theta                          | 
+  Emplacement: src/astre/meteoroid.rs:583
+(sh2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | phi                            | 
+  Emplacement: src/astre/meteoroid.rs:584
+pn.dot(spike_dir).max(0.0).powf(8.0)     | let        | alignment                      | 
+  Emplacement: src/astre/meteoroid.rs:590
+r * (1.0 + max_spike * spike_strength)   | let        | deformed_r                     | 
+  Emplacement: src/astre/meteoroid.rs:593
+(dist / deformed_r.max(0.01)).clamp(0.0, 1.0) | let        | surf_t                         | 
+  Emplacement: src/astre/meteoroid.rs:594
+r * (1.0 - hole_ratio) * 0.5             | let        | r_tube                         | 
+  Emplacement: src/astre/meteoroid.rs:600
+((xz - r_big * hole_ratio).powi(2) + p.y * p.y).sqrt() | let        | d                              | 
+  Emplacement: src/astre/meteoroid.rs:602
+(d / r_tube.max(0.01)).clamp(0.0, 1.0)   | let        | surf_t                         | 
+  Emplacement: src/astre/meteoroid.rs:603
+r * 0.85                                 | let        | half_l                         | 
+  Emplacement: src/astre/meteoroid.rs:608
+r * 0.55                                 | let        | r_end                          | 
+  Emplacement: src/astre/meteoroid.rs:609
+Vec3::new(0.0,  half_l, 0.0)             | let        | p1                             | 
+  Emplacement: src/astre/meteoroid.rs:611
+Vec3::new(0.0, -half_l, 0.0)             | let        | p2                             | 
+  Emplacement: src/astre/meteoroid.rs:612
+(p - p1).length()                        | let        | d1                             | 
+  Emplacement: src/astre/meteoroid.rs:613
+(p - p2).length()                        | let        | d2                             | 
+  Emplacement: src/astre/meteoroid.rs:614
+1.0 - (p.y / half_l).abs()               | let        | neck_t                         | 
+  Emplacement: src/astre/meteoroid.rs:618
+r_neck + (r_end - r_neck) * (1.0 - neck_t).powi(2) | let        | r_at_y                         | 
+  Emplacement: src/astre/meteoroid.rs:619
+d1 <= r_end                              | let        | in_end1                        | 
+  Emplacement: src/astre/meteoroid.rs:621
+d2 <= r_end                              | let        | in_end2                        | 
+  Emplacement: src/astre/meteoroid.rs:622
+in_neck || in_end1 || in_end2            | let        | inside                         | 
+  Emplacement: src/astre/meteoroid.rs:623
+(cfg.crater_density * 20.0) as u32       | let        | n_craters                      | 
+  Emplacement: src/astre/meteoroid.rs:634
+0.0_f32                                  | let        | total                          | 
+  Emplacement: src/astre/meteoroid.rs:635
+pseudo_hash(cfg.seed as f32 + 100.0 + i as f32, 1.0) | let        | ch1                            | 
+  Emplacement: src/astre/meteoroid.rs:638
+pseudo_hash(cfg.seed as f32 + 100.0 + i as f32, 2.0) | let        | ch2                            | 
+  Emplacement: src/astre/meteoroid.rs:639
+pseudo_hash(cfg.seed as f32 + 100.0 + i as f32, 3.0) | let        | ch3                            | 
+  Emplacement: src/astre/meteoroid.rs:640
+ch1 * std::f32::consts::TAU              | let        | theta                          | 
+  Emplacement: src/astre/meteoroid.rs:642
+(ch2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | phi                            | 
+  Emplacement: src/astre/meteoroid.rs:643
+0.05 + ch3 * 0.25                        | let        | c_r                            | 
+  Emplacement: src/astre/meteoroid.rs:645
+p_norm.dot(c_dir).clamp(-1.0, 1.0).acos() | let        | alignment                      | 
+  Emplacement: src/astre/meteoroid.rs:647
+(1.0 - t * t).sin() * 0.3                | let        | rim                            | 
+  Emplacement: src/astre/meteoroid.rs:651
+-(1.0 - t * t).powi(2) * cfg.crater_depth | let        | depth                          | 
+  Emplacement: src/astre/meteoroid.rs:652
+(cfg.radius * 2.0 / cfg.voxel_size) as i32 + 2 | let        | steps                          | 
+  Emplacement: src/astre/meteoroid.rs:716
+0u32                                     | let        | voxel_idx                      | 
+  Emplacement: src/astre/meteoroid.rs:717
+Vec3::new(gx as f32, gy as f32, gz as f32) * cfg.voxel_size | let        | p                              | 
+  Emplacement: src/astre/meteoroid.rs:722
+pseudo_hash(cfg.seed as f32 + vi as f32 * 17.3, 8.0) | let        | vh1                            | 
+  Emplacement: src/astre/meteoroid.rs:738
+pseudo_hash(cfg.seed as f32 + vi as f32 * 17.3, 9.0) | let        | vh2                            | 
+  Emplacement: src/astre/meteoroid.rs:739
+vh1 * std::f32::consts::TAU              | let        | vein_theta                     | 
+  Emplacement: src/astre/meteoroid.rs:740
+(vh2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | vein_phi                       | 
+  Emplacement: src/astre/meteoroid.rs:741
+p_norm.dot(vein_dir).clamp(0.0, 1.0)     | let        | t_proj                         | 
+  Emplacement: src/astre/meteoroid.rs:748
+pseudo_hash(voxel_idx as f32, 3.14)      | let        | seed_v                         | graine
+  Emplacement: src/astre/meteoroid.rs:761
+pseudo_hash(cfg.seed as f32 + 200.0, di as f32) | let        | h1                             | 
+  Emplacement: src/astre/meteoroid.rs:795
+pseudo_hash(cfg.seed as f32 + 201.0, di as f32) | let        | h2                             | 
+  Emplacement: src/astre/meteoroid.rs:796
+pseudo_hash(cfg.seed as f32 + 202.0, di as f32) | let        | h3                             | 
+  Emplacement: src/astre/meteoroid.rs:797
+h1 * std::f32::consts::TAU               | let        | theta                          | 
+  Emplacement: src/astre/meteoroid.rs:799
+(h2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | phi                            | 
+  Emplacement: src/astre/meteoroid.rs:800
+cfg.radius + h3.sqrt() * cfg.dust_radius | let        | r                              | 
+  Emplacement: src/astre/meteoroid.rs:801
+pseudo_hash(cfg.seed as f32 + 300.0 + ji as f32, 1.0) | let        | jh1                            | 
+  Emplacement: src/astre/meteoroid.rs:836
+pseudo_hash(cfg.seed as f32 + 300.0 + ji as f32, 2.0) | let        | jh2                            | 
+  Emplacement: src/astre/meteoroid.rs:837
+jh1 * std::f32::consts::TAU              | let        | jtheta                         | 
+  Emplacement: src/astre/meteoroid.rs:838
+(jh2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | jphi                           | 
+  Emplacement: src/astre/meteoroid.rs:839
+si as f32 / cfg.outgassing_count as f32  | let        | sample_t                       | 
+  Emplacement: src/astre/meteoroid.rs:847
+pseudo_hash(ji as f32, si as f32 * 1.73) | let        | seed                           | graine
+  Emplacement: src/astre/meteoroid.rs:848
+dv.theta + t * speed * (1.0 + dv.seed * 0.5) | let        | theta_a                        | 
+  Emplacement: src/astre/meteoroid.rs:910
+((t * cfg.outgassing_speed + ov.sample_t) % 1.0).max(0.0) | let        | local_t                        | 
+  Emplacement: src/astre/meteoroid.rs:944
+ov.seed * std::f32::consts::TAU + t * 0.5 | let        | spread_angle                   | 
+  Emplacement: src/astre/meteoroid.rs:948
+local_t * cfg.radius * 0.25              | let        | spread_r                       | 
+  Emplacement: src/astre/meteoroid.rs:949
+if ov.jet_dir.y.abs() > 0.9 { Vec3::X } else { Vec3::Y } | let        | perp                           | 
+  Emplacement: src/astre/meteoroid.rs:950
+(1.0 - local_t).max(0.05)                | let        | fade                           | 
+  Emplacement: src/astre/meteoroid.rs:960
+vel.0                                    | let        | impact_vel                     | 
+  Emplacement: src/astre/meteoroid.rs:991
+pseudo_hash(cfg.seed as f32 + fi as f32, 10.0) | let        | h1                             | 
+  Emplacement: src/astre/meteoroid.rs:1028
+pseudo_hash(cfg.seed as f32 + fi as f32, 11.0) | let        | h2                             | 
+  Emplacement: src/astre/meteoroid.rs:1029
+pseudo_hash(cfg.seed as f32 + fi as f32, 12.0) | let        | h3                             | 
+  Emplacement: src/astre/meteoroid.rs:1030
+pseudo_hash(cfg.seed as f32 + fi as f32, 13.0) | let        | h4                             | 
+  Emplacement: src/astre/meteoroid.rs:1031
+pseudo_hash(cfg.seed as f32 + fi as f32, 14.0) | let        | h5                             | 
+  Emplacement: src/astre/meteoroid.rs:1032
+h1 * std::f32::consts::TAU               | let        | theta                          | 
+  Emplacement: src/astre/meteoroid.rs:1035
+(h2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | phi                            | 
+  Emplacement: src/astre/meteoroid.rs:1036
+cfg.fragment_eject_speed * (0.4 + h3 * 0.8) | let        | speed                          | 
+  Emplacement: src/astre/meteoroid.rs:1038
+base_vel * 0.3 + eject_dir * speed       | let        | frag_vel                       | 
+  Emplacement: src/astre/meteoroid.rs:1039
+h5                                       | let        | exposed                        | 
+  Emplacement: src/astre/meteoroid.rs:1049
+cfg.composition.impact_emissive() * exposed * 0.5 | let        | fe                             | 
+  Emplacement: src/astre/meteoroid.rs:1051
+size * (0.6 + pseudo_hash(h1, 3.3) * 0.8) | let        | sx                             | 
+  Emplacement: src/astre/meteoroid.rs:1061
+size * (0.5 + pseudo_hash(h2, 3.3) * 0.7) | let        | sy                             | 
+  Emplacement: src/astre/meteoroid.rs:1062
+size * (0.55 + pseudo_hash(h3, 3.3) * 0.75) | let        | sz                             | 
+  Emplacement: src/astre/meteoroid.rs:1063
+eject_dir * cfg.radius * 0.3             | let        | offset                         | 
+  Emplacement: src/astre/meteoroid.rs:1066
+pseudo_hash(cfg.seed as f32 + 500.0, ei as f32) | let        | h1                             | 
+  Emplacement: src/astre/meteoroid.rs:1108
+pseudo_hash(cfg.seed as f32 + 501.0, ei as f32) | let        | h2                             | 
+  Emplacement: src/astre/meteoroid.rs:1109
+pseudo_hash(cfg.seed as f32 + 502.0, ei as f32) | let        | h3                             | 
+  Emplacement: src/astre/meteoroid.rs:1110
+h1 * std::f32::consts::TAU               | let        | theta                          | 
+  Emplacement: src/astre/meteoroid.rs:1112
+(h2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | phi                            | 
+  Emplacement: src/astre/meteoroid.rs:1113
+cfg.explosion_speed * (0.5 + h3 * 0.8)   | let        | speed                          | 
+  Emplacement: src/astre/meteoroid.rs:1115
+(frag.lifetime / frag.max_lifetime).clamp(0.0, 1.0) | let        | life_t                         | 
+  Emplacement: src/astre/meteoroid.rs:1166
+(1.0 - life_t * life_t).max(0.05)        | let        | fade                           | 
+  Emplacement: src/astre/meteoroid.rs:1167
+1.0 - (ev.elapsed / ev.duration).clamp(0.0, 1.0) | let        | life                           | 
+  Emplacement: src/astre/meteoroid.rs:1203
+life * (0.3 + ev.seed * 0.8)             | let        | scale                          | 
+  Emplacement: src/astre/meteoroid.rs:1204
+
+================================================================================
+FILE: src/astre/planet.rs
+================================================================================
+
+0.03                                     | const      | ORBIT_SPEED                    | vitesse orbite
+  Emplacement: src/astre/planet.rs:9
+0.015                                    | const      | STAR_ORBIT_SPEED               | vitesse orbite
+  Emplacement: src/astre/planet.rs:10
+0.08                                     | const      | MOON_ORBIT_SPEED               | vitesse orbite
+  Emplacement: src/astre/planet.rs:11
+4                                        | const      | STAR_DIVISIONS                 | 
+  Emplacement: src/astre/planet.rs:12
+3                                        | const      | MOON_DIVISIONS                 | 
+  Emplacement: src/astre/planet.rs:13
+1.0, v, -u                               | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/planet.rs:134
+-1.0, v, u                               | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/planet.rs:135
+u, 1.0, -v                               | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/planet.rs:136
+u, -1.0, v                               | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/planet.rs:137
+u, v, 1.0                                | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/planet.rs:138
+-u, v, -1.0                              | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/planet.rs:139
+LodLevel::Lod2                           | let        | star_lod                       | 
+  Emplacement: src/astre/planet.rs:182
+6.0                                      | let        | voxel_size                     | 
+  Emplacement: src/astre/planet.rs:247
+64_u32                                   | let        | samples_per_flare              | 
+  Emplacement: src/astre/planet.rs:248
+Vec3::new(pcfg.orbit_distance, 0.0, 0.0) | let        | planet_world_pos               | 
+  Emplacement: src/astre/planet.rs:283
+(gx as f32 + 0.5) / divs as f32          | let        | u                              | 
+  Emplacement: src/astre/planet.rs:300
+(gy as f32 + 0.5) / divs as f32          | let        | v                              | 
+  Emplacement: src/astre/planet.rs:301
+pcfg.cloud_density.clamp(0.1, 1.0)       | let        | density                        | 
+  Emplacement: src/astre/planet.rs:349
+Perlin::new(pcfg.seed + 500)             | let        | perlin                         | 
+  Emplacement: src/astre/planet.rs:353
+Perlin::new(pcfg.seed + 501)             | let        | perlin2                        | 
+  Emplacement: src/astre/planet.rs:354
+20 + (density * 30.0) as u32             | let        | patch_count                    | 
+  Emplacement: src/astre/planet.rs:356
+16_i32                                   | let        | patch_grid                     | 
+  Emplacement: src/astre/planet.rs:357
+pcfg.radius * 0.03                       | let        | cell                           | 
+  Emplacement: src/astre/planet.rs:358
+pseudo_hash(pcfg.seed as f32, ci as f32 * 3.7) | let        | seed_a                         | graine
+  Emplacement: src/astre/planet.rs:361
+pseudo_hash(pcfg.seed as f32, ci as f32 * 7.1) | let        | seed_b                         | graine
+  Emplacement: src/astre/planet.rs:362
+seed_a * std::f32::consts::TAU           | let        | theta_c                        | 
+  Emplacement: src/astre/planet.rs:363
+(seed_b * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | phi_c                          | 
+  Emplacement: src/astre/planet.rs:364
+if center_dir.y.abs() > 0.9 { Vec3::X } else { Vec3::Y } | let        | up                             | 
+  Emplacement: src/astre/planet.rs:372
+vec![0_u32                               | let        | grid                           | 
+  Emplacement: src/astre/planet.rs:377
+0.1 - density as f64 * 0.15              | let        | threshold                      | 
+  Emplacement: src/astre/planet.rs:378
+(gx as f32 - patch_grid as f32 * 0.5) * cell | let        | lx                             | 
+  Emplacement: src/astre/planet.rs:382
+(gz as f32 - patch_grid as f32 * 0.5) * cell | let        | lz                             | 
+  Emplacement: src/astre/planet.rs:383
+wd.x as f64                              | let        | nx                             | 
+  Emplacement: src/astre/planet.rs:387
+wd.y as f64                              | let        | ny                             | 
+  Emplacement: src/astre/planet.rs:388
+wd.z as f64                              | let        | nz                             | 
+  Emplacement: src/astre/planet.rs:389
+n1 * 0.65 + n2 * 0.35                    | let        | n                              | 
+  Emplacement: src/astre/planet.rs:393
+1.0 - (dx * dx + dz * dz).sqrt().min(1.0) | let        | edge                           | 
+  Emplacement: src/astre/planet.rs:398
+(1 + ((n - threshold) * 3.0) as u32).min(4) | let        | h                              | 
+  Emplacement: src/astre/planet.rs:401
+(gx as f32 - patch_grid as f32 * 0.5) * cell | let        | x0                             | 
+  Emplacement: src/astre/planet.rs:422
+(gz as f32 - patch_grid as f32 * 0.5) * cell | let        | z0                             | 
+  Emplacement: src/astre/planet.rs:423
+x0 + cell                                | let        | x1                             | 
+  Emplacement: src/astre/planet.rs:424
+z0 + cell                                | let        | z1                             | 
+  Emplacement: src/astre/planet.rs:425
+y_layer as f32 * cell * 0.5              | let        | y0                             | 
+  Emplacement: src/astre/planet.rs:428
+y0 + cell * 0.5                          | let        | y1                             | 
+  Emplacement: src/astre/planet.rs:429
+positions.len() as u32                   | let        | vi                             | 
+  Emplacement: src/astre/planet.rs:433
+positions.len() as u32                   | let        | vi                             | 
+  Emplacement: src/astre/planet.rs:443
+positions.len() as u32                   | let        | vi                             | 
+  Emplacement: src/astre/planet.rs:453
+positions.len() as u32                   | let        | vi                             | 
+  Emplacement: src/astre/planet.rs:463
+positions.len() as u32                   | let        | vi                             | 
+  Emplacement: src/astre/planet.rs:473
+positions.len() as u32                   | let        | vi                             | 
+  Emplacement: src/astre/planet.rs:483
+Quat::from_rotation_arc(Vec3::Y, center_dir) | let        | rotation                       | 
+  Emplacement: src/astre/planet.rs:504
+LodLevel::Lod2                           | let        | moon_lod                       | 
+  Emplacement: src/astre/planet.rs:531
+Vec3::new(mcfg.orbit_distance, 0.0, 0.0) | let        | offset                         | 
+  Emplacement: src/astre/planet.rs:535
+rng.gen::<f32>() * std::f32::consts::TAU | let        | angle                          | 
+  Emplacement: src/astre/planet.rs:595
+(rng.gen::<f32>() - 0.5) * belt.width    | let        | dist_offset                    | 
+  Emplacement: src/astre/planet.rs:596
+(rng.gen::<f32>() - 0.5) * belt.width * 0.3 | let        | y_offset                       | 
+  Emplacement: src/astre/planet.rs:598
+Vec3::new(angle.cos() * dist, y_offset, angle.sin() * dist) | let        | pos                            | 
+  Emplacement: src/astre/planet.rs:602
+Mesh::from(Cuboid::new(size, size * 0.7, size * 0.85)) | let        | mesh                           | 
+  Emplacement: src/astre/planet.rs:611
+settings.planets.len().max(1) as f32     | let        | n                              | 
+  Emplacement: src/astre/planet.rs:630
+settings.stars.len().max(1) as f32       | let        | n                              | 
+  Emplacement: src/astre/planet.rs:646
+64_u32                                   | let        | max_samples                    | 
+  Emplacement: src/astre/planet.rs:714
+dist / scfg.radius.max(1.0)              | let        | ratio                          | 
+  Emplacement: src/astre/planet.rs:736
+2.0 + pseudo_hash(base_seed, 1.0) * 3.0  | let        | rise_dur                       | 
+  Emplacement: src/astre/planet.rs:756
+0.5 + pseudo_hash(base_seed, 2.0) * 1.5  | let        | hold_dur                       | 
+  Emplacement: src/astre/planet.rs:757
+2.0 + pseudo_hash(base_seed, 3.0) * 3.0  | let        | fall_dur                       | 
+  Emplacement: src/astre/planet.rs:758
+1.0 + pseudo_hash(base_seed, 4.0) * 4.0  | let        | pause_dur                      | 
+  Emplacement: src/astre/planet.rs:759
+pseudo_hash(base_seed, 5.0) * total_dur  | let        | offset                         | 
+  Emplacement: src/astre/planet.rs:761
+((t + offset) % total_dur).max(0.0)      | let        | local_t                        | 
+  Emplacement: src/astre/planet.rs:762
+pseudo_hash(base_seed, cycle_id * 3.1)   | let        | h1                             | 
+  Emplacement: src/astre/planet.rs:781
+pseudo_hash(base_seed, cycle_id * 7.3)   | let        | h2                             | 
+  Emplacement: src/astre/planet.rs:782
+h1 * std::f32::consts::TAU               | let        | theta                          | 
+  Emplacement: src/astre/planet.rs:784
+(h2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | phi                            | 
+  Emplacement: src/astre/planet.rs:785
+scfg.flare_distance.max(5.0) * 0.5       | let        | half_spread                    | 
+  Emplacement: src/astre/planet.rs:801
+fv.sample_idx as f32 / active_samples as f32 | let        | frac                           | 
+  Emplacement: src/astre/planet.rs:809
+1.0 - frac                               | let        | inv                            | 
+  Emplacement: src/astre/planet.rs:817
+snap_grid(point, voxel_size.max(1.0))    | let        | snapped                        | 
+  Emplacement: src/astre/planet.rs:819
+voxel_size / 6.0                         | let        | s                              | 
+  Emplacement: src/astre/planet.rs:823
+4                                        | const      | MAX_LOD_UPDATES_PER_FRAME      | 
+  Emplacement: src/astre/planet.rs:912
+0                                        | let        | updates                        | 
+  Emplacement: src/astre/planet.rs:922
+(chunk.grid_x as f32 + 0.5) / divs as f32 | let        | u                              | 
+  Emplacement: src/astre/planet.rs:941
+(chunk.grid_y as f32 + 0.5) / divs as f32 | let        | v                              | 
+  Emplacement: src/astre/planet.rs:942
+
+================================================================================
+FILE: src/astre/planete/comet.rs
+================================================================================
+
+(cfg.perihelion + cfg.aphelion) * 0.5    | let        | a                              | 
+  Emplacement: src/astre/planete/comet.rs:253
+a * (1.0 - e * e).sqrt() * eccentric.sin() | let        | y_orb                          | 
+  Emplacement: src/astre/planete/comet.rs:265
+(cfg.perihelion + cfg.aphelion) * 0.5    | let        | a                              | 
+  Emplacement: src/astre/planete/comet.rs:290
+a * (1.0 - e * eccentric.cos())          | let        | r                              | 
+  Emplacement: src/astre/planete/comet.rs:298
+ellipse_position(cfg, 0.0)               | let        | initial_pos                    | 
+  Emplacement: src/astre/planete/comet.rs:324
+Vec3::new(gx as f32, gy as f32, gz as f32) * nv | let        | pos                            | 
+  Emplacement: src/astre/planete/comet.rs:367
+0.7 + corner_seed * 0.55                 | let        | scale_jitter                   | 
+  Emplacement: src/astre/planete/comet.rs:368
+pseudo_hash(cfg.seed as f32 + i as f32, 1.0) | let        | h1                             | 
+  Emplacement: src/astre/planete/comet.rs:398
+pseudo_hash(cfg.seed as f32 + i as f32, 2.0) | let        | h2                             | 
+  Emplacement: src/astre/planete/comet.rs:399
+pseudo_hash(cfg.seed as f32 + i as f32, 3.0) | let        | h3                             | 
+  Emplacement: src/astre/planete/comet.rs:400
+h1 * std::f32::consts::TAU               | let        | theta                          | 
+  Emplacement: src/astre/planete/comet.rs:402
+(h2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | phi                            | 
+  Emplacement: src/astre/planete/comet.rs:403
+h3.powf(0.5) * cfg.coma_radius           | let        | r                              | 
+  Emplacement: src/astre/planete/comet.rs:405
+pseudo_hash(cfg.seed as f32, i as f32 * 1.73) | let        | drift_seed                     | graine
+  Emplacement: src/astre/planete/comet.rs:413
+pseudo_hash(cfg.seed as f32 + i as f32, 10.0) | let        | h1                             | 
+  Emplacement: src/astre/planete/comet.rs:442
+pseudo_hash(cfg.seed as f32 + i as f32, 11.0) | let        | h2                             | 
+  Emplacement: src/astre/planete/comet.rs:443
+pseudo_hash(cfg.seed as f32 + i as f32, 12.0) | let        | h3                             | 
+  Emplacement: src/astre/planete/comet.rs:444
+h1                                       | let        | t                              | 
+  Emplacement: src/astre/planete/comet.rs:447
+t * cfg.dust_tail_width * 0.5            | let        | half_w                         | 
+  Emplacement: src/astre/planete/comet.rs:449
+(h2 * 2.0 - 1.0) * half_w                | let        | perp                           | 
+  Emplacement: src/astre/planete/comet.rs:450
+(h3 * 2.0 - 1.0) * half_w * 0.4          | let        | vert                           | 
+  Emplacement: src/astre/planete/comet.rs:451
+t * t * cfg.dust_curve * cfg.dust_tail_width * 0.5 | let        | curve_offset                   | 
+  Emplacement: src/astre/planete/comet.rs:454
+pseudo_hash(cfg.seed as f32 + 500.0, i as f32 * 2.31) | let        | drift_seed                     | graine
+  Emplacement: src/astre/planete/comet.rs:463
+pseudo_hash(cfg.seed as f32 + i as f32, 20.0) | let        | h1                             | 
+  Emplacement: src/astre/planete/comet.rs:492
+pseudo_hash(cfg.seed as f32 + i as f32, 21.0) | let        | h2                             | 
+  Emplacement: src/astre/planete/comet.rs:493
+h1                                       | let        | t                              | 
+  Emplacement: src/astre/planete/comet.rs:495
+h2 * 2.0 - 1.0                           | let        | perp_offset                    | 
+  Emplacement: src/astre/planete/comet.rs:496
+pseudo_hash(cfg.seed as f32 + 1000.0, i as f32 * 3.17) | let        | drift_seed                     | graine
+  Emplacement: src/astre/planete/comet.rs:497
+ellipse_position(cfg, mean_anomaly + 0.01) | let        | next_pos                       | 
+  Emplacement: src/astre/planete/comet.rs:603
+if dust_dir.y.abs() > 0.9 { Vec3::X } else { Vec3::Y } | let        | up                             | 
+  Emplacement: src/astre/planete/comet.rs:608
+if anti_sun.y.abs() > 0.9 { Vec3::X } else { Vec3::Y } | let        | up                             | 
+  Emplacement: src/astre/planete/comet.rs:635
+ion.perp_offset * cfg.ion_tail_width * 0.5 * ion.t | let        | perp_w                         | 
+  Emplacement: src/astre/planete/comet.rs:639
+(1.0 - vx.t * 0.7).max(0.2)              | let        | size_falloff                   | 
+  Emplacement: src/astre/planete/comet.rs:697
+(1.0 - vx.t * 0.8).max(0.15)             | let        | size_falloff                   | 
+  Emplacement: src/astre/planete/comet.rs:706
+(cfg.jet_samples as f32 * activity) as u32 | let        | active_samples                 | 
+  Emplacement: src/astre/planete/comet.rs:746
+cfg.seed as f32 * 7.3 + jv.jet_idx as f32 * 37.1 | let        | base_seed                      | graine
+  Emplacement: src/astre/planete/comet.rs:754
+pseudo_hash(base_seed, 1.0) * std::f32::consts::TAU | let        | jet_theta                      | 
+  Emplacement: src/astre/planete/comet.rs:755
+1.5 + pseudo_hash(base_seed, 3.0) * 2.0  | let        | cycle_dur                      | 
+  Emplacement: src/astre/planete/comet.rs:765
+pseudo_hash(base_seed, 4.0) * cycle_dur  | let        | offset                         | 
+  Emplacement: src/astre/planete/comet.rs:766
+jv.sample_idx as f32 / cfg.jet_samples as f32 | let        | frac                           | 
+  Emplacement: src/astre/planete/comet.rs:776
+pseudo_hash(base_seed + jv.sample_idx as f32, 5.0) | let        | spread_seed_a                  | graine
+  Emplacement: src/astre/planete/comet.rs:780
+pseudo_hash(base_seed + jv.sample_idx as f32, 6.0) | let        | spread_seed_b                  | graine
+  Emplacement: src/astre/planete/comet.rs:781
+spread_seed_a * std::f32::consts::TAU    | let        | spread_theta                   | 
+  Emplacement: src/astre/planete/comet.rs:782
+if jet_dir.y.abs() > 0.9 { Vec3::X } else { Vec3::Y } | let        | perp                           | 
+  Emplacement: src/astre/planete/comet.rs:785
+snap_grid(pos, cfg.jet_voxel_size.max(1.0)) | let        | snapped                        | 
+  Emplacement: src/astre/planete/comet.rs:797
+(1.0 - frac * 0.7) * life                | let        | s                              | 
+  Emplacement: src/astre/planete/comet.rs:801
+
+================================================================================
+FILE: src/astre/planete/gas_planet.rs
+================================================================================
+
+t.clamp(0.0, 1.0)                        | let        | t                              | 
+  Emplacement: src/astre/planete/gas_planet.rs:324
+(eff_lat * cfg.band_count).sin() * 0.5 + 0.5 | let        | band_t                         | 
+  Emplacement: src/astre/planete/gas_planet.rs:365
+band_t * (n as f32 - 1.0)                | let        | idx_f                          | 
+  Emplacement: src/astre/planete/gas_planet.rs:369
+(idx_f as usize).min(n - 2)              | let        | idx_lo                         | 
+  Emplacement: src/astre/planete/gas_planet.rs:370
+idx_lo + 1                               | let        | idx_hi                         | 
+  Emplacement: src/astre/planete/gas_planet.rs:371
+idx_f - idx_lo as f32                    | let        | frac                           | 
+  Emplacement: src/astre/planete/gas_planet.rs:372
+(frac + detail * 0.18).clamp(0.0, 1.0)   | let        | detail_frac                    | 
+  Emplacement: src/astre/planete/gas_planet.rs:380
+Vec3::new(cfg.orbit_distance, 0.0, 0.0)  | let        | initial_pos                    | 
+  Emplacement: src/astre/planete/gas_planet.rs:413
+std::f32::consts::PI / res as f32        | let        | vstep                          | 
+  Emplacement: src/astre/planete/gas_planet.rs:423
+std::f32::consts::TAU / (res * 2) as f32 | let        | hstep                          | 
+  Emplacement: src/astre/planete/gas_planet.rs:424
+0u32                                     | let        | lon_i                          | 
+  Emplacement: src/astre/planete/gas_planet.rs:432
+0.0_f32                                  | let        | lon                            | 
+  Emplacement: src/astre/planete/gas_planet.rs:433
+-std::f32::consts::FRAC_PI_2             | let        | lat                            | 
+  Emplacement: src/astre/planete/gas_planet.rs:435
+0u32                                     | let        | lat_i                          | 
+  Emplacement: src/astre/planete/gas_planet.rs:436
+pseudo_hash(lon_i as f32, lat_i as f32 + 0.5) | let        | seed_val                       | graine
+  Emplacement: src/astre/planete/gas_planet.rs:455
+pseudo_hash(cfg.seed as f32 + si as f32 * 13.7, vi as f32) | let        | h1                             | 
+  Emplacement: src/astre/planete/gas_planet.rs:488
+h1.sqrt()                                | let        | local_r                        | 
+  Emplacement: src/astre/planete/gas_planet.rs:491
+h2 * std::f32::consts::TAU               | let        | local_angle                    | 
+  Emplacement: src/astre/planete/gas_planet.rs:492
+pseudo_hash(si as f32, vi as f32 * 2.31) | let        | seed_val                       | graine
+  Emplacement: src/astre/planete/gas_planet.rs:493
+pseudo_hash(cfg.seed as f32 + 200.0, i as f32) | let        | h1                             | 
+  Emplacement: src/astre/planete/gas_planet.rs:553
+pseudo_hash(cfg.seed as f32 + 201.0, i as f32) | let        | h2                             | 
+  Emplacement: src/astre/planete/gas_planet.rs:554
+pseudo_hash(cfg.seed as f32 + 202.0, i as f32) | let        | h3                             | 
+  Emplacement: src/astre/planete/gas_planet.rs:555
+pseudo_hash(cfg.seed as f32 + 203.0, i as f32) | let        | h4                             | 
+  Emplacement: src/astre/planete/gas_planet.rs:556
+h1 * std::f32::consts::TAU               | let        | angle                          | 
+  Emplacement: src/astre/planete/gas_planet.rs:558
+(h3 * 2.0 - 1.0) * ring.thickness * 0.5  | let        | height                         | 
+  Emplacement: src/astre/planete/gas_planet.rs:560
+h4                                       | let        | seed_v                         | graine
+  Emplacement: src/astre/planete/gas_planet.rs:561
+pseudo_hash(cfg.seed as f32 + 300.0, i as f32) | let        | h1                             | 
+  Emplacement: src/astre/planete/gas_planet.rs:595
+pseudo_hash(cfg.seed as f32 + 301.0, i as f32) | let        | h2                             | 
+  Emplacement: src/astre/planete/gas_planet.rs:596
+pseudo_hash(cfg.seed as f32 + 302.0, i as f32) | let        | h3                             | 
+  Emplacement: src/astre/planete/gas_planet.rs:597
+pseudo_hash(cfg.seed as f32 + 303.0, i as f32) | let        | h4                             | 
+  Emplacement: src/astre/planete/gas_planet.rs:598
+pseudo_hash(cfg.seed as f32 + 304.0, i as f32) | let        | h5                             | 
+  Emplacement: src/astre/planete/gas_planet.rs:599
+h1 * std::f32::consts::TAU               | let        | angle                          | 
+  Emplacement: src/astre/planete/gas_planet.rs:601
+(h3 * 2.0 - 1.0) * belt.thickness * 0.5  | let        | height                         | 
+  Emplacement: src/astre/planete/gas_planet.rs:603
+belt.min_size + h4 * (belt.max_size - belt.min_size) | let        | size                           | 
+  Emplacement: src/astre/planete/gas_planet.rs:604
+r, g, b                                  | color      | Color                          | couleur RGB
+  Emplacement: src/astre/planete/gas_planet.rs:687
+1.0 + (t * 0.8 + vx.seed * 6.28).sin() * 0.012 | let        | pulse                          | 
+  Emplacement: src/astre/planete/gas_planet.rs:696
+sv.local_r * storm.angular_radius * spin_angle.cos() * 1.0 | let        | oval_x                         | 
+  Emplacement: src/astre/planete/gas_planet.rs:723
+sv.local_r * storm.angular_radius * spin_angle.sin() * 0.65 | let        | oval_y                         | 
+  Emplacement: src/astre/planete/gas_planet.rs:724
+storm_lon + oval_x / lat_s.cos().max(0.1) | let        | lon_s                          | 
+  Emplacement: src/astre/planete/gas_planet.rs:728
+cfg.radius + storm.voxel_size * (0.25 + sv.local_r * 0.15) | let        | r                              | 
+  Emplacement: src/astre/planete/gas_planet.rs:730
+(1.0 - sv.local_r * 0.6).max(0.2) * pulse | let        | size                           | 
+  Emplacement: src/astre/planete/gas_planet.rs:737
+
+================================================================================
+FILE: src/astre/planete/meteoroid.rs
+================================================================================
+
+t.clamp(0.0, 1.0)                        | let        | t                              | 
+  Emplacement: src/astre/planete/meteoroid.rs:507
+cfg.seed as f32                          | let        | seed                           | graine
+  Emplacement: src/astre/planete/meteoroid.rs:519
+0.0_f32                                  | let        | n                              | 
+  Emplacement: src/astre/planete/meteoroid.rs:525
+1.0_f32                                  | let        | amp                            | 
+  Emplacement: src/astre/planete/meteoroid.rs:526
+1.0_f32                                  | let        | freq                           | 
+  Emplacement: src/astre/planete/meteoroid.rs:527
+pn.x * freq + seed * 0.1 + oct as f32 * 3.7 | let        | sx                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:529
+pn.y * freq + seed * 0.2 + oct as f32 * 7.1 | let        | sy                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:530
+pn.z * freq + seed * 0.3 + oct as f32 * 5.3 | let        | sz                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:531
+r * (1.0 + n * deform_strength)          | let        | deformed_r                     | 
+  Emplacement: src/astre/planete/meteoroid.rs:537
+(dist / deformed_r.max(0.01)).clamp(0.0, 1.0) | let        | surf_t                         | 
+  Emplacement: src/astre/planete/meteoroid.rs:539
+Vec3::new(p.x / scale_x, p.y / scale_y, p.z / scale_z) | let        | scaled                         | 
+  Emplacement: src/astre/planete/meteoroid.rs:544
+Vec3::new(-sep * 0.5, 0.0, 0.0)          | let        | p1                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:553
+Vec3::new( sep * 0.5, 0.0, 0.0)          | let        | p2                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:554
+(p - p1).length()                        | let        | d1                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:555
+(p - p2).length()                        | let        | d2                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:556
+d1 <= r1                                 | let        | in1                            | 
+  Emplacement: src/astre/planete/meteoroid.rs:557
+d2 <= r2                                 | let        | in2                            | 
+  Emplacement: src/astre/planete/meteoroid.rs:558
+((d1 / r1).min(d2 / r2)).clamp(0.0, 1.0) | let        | surf_t                         | 
+  Emplacement: src/astre/planete/meteoroid.rs:559
+r * (1.0 - flatness.clamp(0.0, 0.95))    | let        | half_h                         | 
+  Emplacement: src/astre/planete/meteoroid.rs:564
+r * (1.0 + flatness * 0.5)               | let        | r_xz                           | 
+  Emplacement: src/astre/planete/meteoroid.rs:565
+0.0_f32                                  | let        | max_spike                      | 
+  Emplacement: src/astre/planete/meteoroid.rs:579
+pseudo_hash(seed + i as f32, 1.0)        | let        | sh1                            | 
+  Emplacement: src/astre/planete/meteoroid.rs:581
+pseudo_hash(seed + i as f32, 2.0)        | let        | sh2                            | 
+  Emplacement: src/astre/planete/meteoroid.rs:582
+sh1 * std::f32::consts::TAU              | let        | theta                          | 
+  Emplacement: src/astre/planete/meteoroid.rs:583
+(sh2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | phi                            | 
+  Emplacement: src/astre/planete/meteoroid.rs:584
+pn.dot(spike_dir).max(0.0).powf(8.0)     | let        | alignment                      | 
+  Emplacement: src/astre/planete/meteoroid.rs:590
+r * (1.0 + max_spike * spike_strength)   | let        | deformed_r                     | 
+  Emplacement: src/astre/planete/meteoroid.rs:593
+(dist / deformed_r.max(0.01)).clamp(0.0, 1.0) | let        | surf_t                         | 
+  Emplacement: src/astre/planete/meteoroid.rs:594
+r * (1.0 - hole_ratio) * 0.5             | let        | r_tube                         | 
+  Emplacement: src/astre/planete/meteoroid.rs:600
+((xz - r_big * hole_ratio).powi(2) + p.y * p.y).sqrt() | let        | d                              | 
+  Emplacement: src/astre/planete/meteoroid.rs:602
+(d / r_tube.max(0.01)).clamp(0.0, 1.0)   | let        | surf_t                         | 
+  Emplacement: src/astre/planete/meteoroid.rs:603
+r * 0.85                                 | let        | half_l                         | 
+  Emplacement: src/astre/planete/meteoroid.rs:608
+r * 0.55                                 | let        | r_end                          | 
+  Emplacement: src/astre/planete/meteoroid.rs:609
+Vec3::new(0.0,  half_l, 0.0)             | let        | p1                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:611
+Vec3::new(0.0, -half_l, 0.0)             | let        | p2                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:612
+(p - p1).length()                        | let        | d1                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:613
+(p - p2).length()                        | let        | d2                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:614
+1.0 - (p.y / half_l).abs()               | let        | neck_t                         | 
+  Emplacement: src/astre/planete/meteoroid.rs:618
+r_neck + (r_end - r_neck) * (1.0 - neck_t).powi(2) | let        | r_at_y                         | 
+  Emplacement: src/astre/planete/meteoroid.rs:619
+d1 <= r_end                              | let        | in_end1                        | 
+  Emplacement: src/astre/planete/meteoroid.rs:621
+d2 <= r_end                              | let        | in_end2                        | 
+  Emplacement: src/astre/planete/meteoroid.rs:622
+in_neck || in_end1 || in_end2            | let        | inside                         | 
+  Emplacement: src/astre/planete/meteoroid.rs:623
+(cfg.crater_density * 20.0) as u32       | let        | n_craters                      | 
+  Emplacement: src/astre/planete/meteoroid.rs:634
+0.0_f32                                  | let        | total                          | 
+  Emplacement: src/astre/planete/meteoroid.rs:635
+pseudo_hash(cfg.seed as f32 + 100.0 + i as f32, 1.0) | let        | ch1                            | 
+  Emplacement: src/astre/planete/meteoroid.rs:638
+pseudo_hash(cfg.seed as f32 + 100.0 + i as f32, 2.0) | let        | ch2                            | 
+  Emplacement: src/astre/planete/meteoroid.rs:639
+pseudo_hash(cfg.seed as f32 + 100.0 + i as f32, 3.0) | let        | ch3                            | 
+  Emplacement: src/astre/planete/meteoroid.rs:640
+ch1 * std::f32::consts::TAU              | let        | theta                          | 
+  Emplacement: src/astre/planete/meteoroid.rs:642
+(ch2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | phi                            | 
+  Emplacement: src/astre/planete/meteoroid.rs:643
+0.05 + ch3 * 0.25                        | let        | c_r                            | 
+  Emplacement: src/astre/planete/meteoroid.rs:645
+p_norm.dot(c_dir).clamp(-1.0, 1.0).acos() | let        | alignment                      | 
+  Emplacement: src/astre/planete/meteoroid.rs:647
+(1.0 - t * t).sin() * 0.3                | let        | rim                            | 
+  Emplacement: src/astre/planete/meteoroid.rs:651
+-(1.0 - t * t).powi(2) * cfg.crater_depth | let        | depth                          | 
+  Emplacement: src/astre/planete/meteoroid.rs:652
+(cfg.radius * 2.0 / cfg.voxel_size) as i32 + 2 | let        | steps                          | 
+  Emplacement: src/astre/planete/meteoroid.rs:716
+0u32                                     | let        | voxel_idx                      | 
+  Emplacement: src/astre/planete/meteoroid.rs:717
+Vec3::new(gx as f32, gy as f32, gz as f32) * cfg.voxel_size | let        | p                              | 
+  Emplacement: src/astre/planete/meteoroid.rs:722
+pseudo_hash(cfg.seed as f32 + vi as f32 * 17.3, 8.0) | let        | vh1                            | 
+  Emplacement: src/astre/planete/meteoroid.rs:738
+pseudo_hash(cfg.seed as f32 + vi as f32 * 17.3, 9.0) | let        | vh2                            | 
+  Emplacement: src/astre/planete/meteoroid.rs:739
+vh1 * std::f32::consts::TAU              | let        | vein_theta                     | 
+  Emplacement: src/astre/planete/meteoroid.rs:740
+(vh2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | vein_phi                       | 
+  Emplacement: src/astre/planete/meteoroid.rs:741
+p_norm.dot(vein_dir).clamp(0.0, 1.0)     | let        | t_proj                         | 
+  Emplacement: src/astre/planete/meteoroid.rs:748
+pseudo_hash(voxel_idx as f32, 3.14)      | let        | seed_v                         | graine
+  Emplacement: src/astre/planete/meteoroid.rs:761
+pseudo_hash(cfg.seed as f32 + 200.0, di as f32) | let        | h1                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:795
+pseudo_hash(cfg.seed as f32 + 201.0, di as f32) | let        | h2                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:796
+pseudo_hash(cfg.seed as f32 + 202.0, di as f32) | let        | h3                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:797
+h1 * std::f32::consts::TAU               | let        | theta                          | 
+  Emplacement: src/astre/planete/meteoroid.rs:799
+(h2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | phi                            | 
+  Emplacement: src/astre/planete/meteoroid.rs:800
+cfg.radius + h3.sqrt() * cfg.dust_radius | let        | r                              | 
+  Emplacement: src/astre/planete/meteoroid.rs:801
+pseudo_hash(cfg.seed as f32 + 300.0 + ji as f32, 1.0) | let        | jh1                            | 
+  Emplacement: src/astre/planete/meteoroid.rs:836
+pseudo_hash(cfg.seed as f32 + 300.0 + ji as f32, 2.0) | let        | jh2                            | 
+  Emplacement: src/astre/planete/meteoroid.rs:837
+jh1 * std::f32::consts::TAU              | let        | jtheta                         | 
+  Emplacement: src/astre/planete/meteoroid.rs:838
+(jh2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | jphi                           | 
+  Emplacement: src/astre/planete/meteoroid.rs:839
+si as f32 / cfg.outgassing_count as f32  | let        | sample_t                       | 
+  Emplacement: src/astre/planete/meteoroid.rs:847
+pseudo_hash(ji as f32, si as f32 * 1.73) | let        | seed                           | graine
+  Emplacement: src/astre/planete/meteoroid.rs:848
+dv.theta + t * speed * (1.0 + dv.seed * 0.5) | let        | theta_a                        | 
+  Emplacement: src/astre/planete/meteoroid.rs:910
+((t * cfg.outgassing_speed + ov.sample_t) % 1.0).max(0.0) | let        | local_t                        | 
+  Emplacement: src/astre/planete/meteoroid.rs:944
+ov.seed * std::f32::consts::TAU + t * 0.5 | let        | spread_angle                   | 
+  Emplacement: src/astre/planete/meteoroid.rs:948
+local_t * cfg.radius * 0.25              | let        | spread_r                       | 
+  Emplacement: src/astre/planete/meteoroid.rs:949
+if ov.jet_dir.y.abs() > 0.9 { Vec3::X } else { Vec3::Y } | let        | perp                           | 
+  Emplacement: src/astre/planete/meteoroid.rs:950
+(1.0 - local_t).max(0.05)                | let        | fade                           | 
+  Emplacement: src/astre/planete/meteoroid.rs:960
+vel.0                                    | let        | impact_vel                     | 
+  Emplacement: src/astre/planete/meteoroid.rs:990
+pseudo_hash(cfg.seed as f32 + fi as f32, 10.0) | let        | h1                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:1027
+pseudo_hash(cfg.seed as f32 + fi as f32, 11.0) | let        | h2                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:1028
+pseudo_hash(cfg.seed as f32 + fi as f32, 12.0) | let        | h3                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:1029
+pseudo_hash(cfg.seed as f32 + fi as f32, 13.0) | let        | h4                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:1030
+pseudo_hash(cfg.seed as f32 + fi as f32, 14.0) | let        | h5                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:1031
+h1 * std::f32::consts::TAU               | let        | theta                          | 
+  Emplacement: src/astre/planete/meteoroid.rs:1034
+(h2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | phi                            | 
+  Emplacement: src/astre/planete/meteoroid.rs:1035
+cfg.fragment_eject_speed * (0.4 + h3 * 0.8) | let        | speed                          | 
+  Emplacement: src/astre/planete/meteoroid.rs:1037
+base_vel * 0.3 + eject_dir * speed       | let        | frag_vel                       | 
+  Emplacement: src/astre/planete/meteoroid.rs:1038
+h5                                       | let        | exposed                        | 
+  Emplacement: src/astre/planete/meteoroid.rs:1048
+cfg.composition.impact_emissive() * exposed * 0.5 | let        | fe                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:1050
+size * (0.6 + pseudo_hash(h1, 3.3) * 0.8) | let        | sx                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:1060
+size * (0.5 + pseudo_hash(h2, 3.3) * 0.7) | let        | sy                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:1061
+size * (0.55 + pseudo_hash(h3, 3.3) * 0.75) | let        | sz                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:1062
+eject_dir * cfg.radius * 0.3             | let        | offset                         | 
+  Emplacement: src/astre/planete/meteoroid.rs:1065
+pseudo_hash(cfg.seed as f32 + 500.0, ei as f32) | let        | h1                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:1107
+pseudo_hash(cfg.seed as f32 + 501.0, ei as f32) | let        | h2                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:1108
+pseudo_hash(cfg.seed as f32 + 502.0, ei as f32) | let        | h3                             | 
+  Emplacement: src/astre/planete/meteoroid.rs:1109
+h1 * std::f32::consts::TAU               | let        | theta                          | 
+  Emplacement: src/astre/planete/meteoroid.rs:1111
+(h2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | phi                            | 
+  Emplacement: src/astre/planete/meteoroid.rs:1112
+cfg.explosion_speed * (0.5 + h3 * 0.8)   | let        | speed                          | 
+  Emplacement: src/astre/planete/meteoroid.rs:1114
+(frag.lifetime / frag.max_lifetime).clamp(0.0, 1.0) | let        | life_t                         | 
+  Emplacement: src/astre/planete/meteoroid.rs:1165
+(1.0 - life_t * life_t).max(0.05)        | let        | fade                           | 
+  Emplacement: src/astre/planete/meteoroid.rs:1166
+1.0 - (ev.elapsed / ev.duration).clamp(0.0, 1.0) | let        | life                           | 
+  Emplacement: src/astre/planete/meteoroid.rs:1202
+life * (0.3 + ev.seed * 0.8)             | let        | scale                          | 
+  Emplacement: src/astre/planete/meteoroid.rs:1203
+
+================================================================================
+FILE: src/astre/supernova.rs
+================================================================================
+
+t.clamp(0.0,1.0)                         | let        | t                              | 
+  Emplacement: src/astre/supernova.rs:238
+h1 * std::f32::consts::TAU               | let        | theta                          | 
+  Emplacement: src/astre/supernova.rs:245
+(h2*2.0-1.0).clamp(-1.0,1.0).acos()      | let        | phi                            | 
+  Emplacement: src/astre/supernova.rs:246
+pr,pg,pb                                 | color      | Color                          | couleur RGB
+  Emplacement: src/astre/supernova.rs:282
+std::f32::consts::PI / res_s as f32      | let        | vstep                          | 
+  Emplacement: src/astre/supernova.rs:286
+std::f32::consts::TAU / (res_s*2) as f32 | let        | hstep                          | 
+  Emplacement: src/astre/supernova.rs:287
+-std::f32::consts::FRAC_PI_2             | let        | lat                            | 
+  Emplacement: src/astre/supernova.rs:288
+0.0_f32                                  | let        | lon                            | 
+  Emplacement: src/astre/supernova.rs:290
+pseudo_hash(lat*10.0+cfg.seed as f32, lon*5.0)*0.12-0.06 | let        | deform                         | 
+  Emplacement: src/astre/supernova.rs:292
+cfg.progenitor_radius*(1.0+deform)       | let        | r                              | 
+  Emplacement: src/astre/supernova.rs:293
+fr,fg,fb                                 | color      | Color                          | couleur RGB
+  Emplacement: src/astre/supernova.rs:307
+pseudo_hash(cfg.seed as f32+10.0,i as f32) | let        | h1                             | 
+  Emplacement: src/astre/supernova.rs:311
+pseudo_hash(cfg.seed as f32+11.0,i as f32) | let        | h2                             | 
+  Emplacement: src/astre/supernova.rs:312
+rand_sphere(h1,h2)                       | let        | dir                            | 
+  Emplacement: src/astre/supernova.rs:313
+pseudo_hash(cfg.seed as f32+20.0,i as f32) | let        | h1                             | 
+  Emplacement: src/astre/supernova.rs:324
+pseudo_hash(cfg.seed as f32+21.0,i as f32) | let        | h2                             | 
+  Emplacement: src/astre/supernova.rs:325
+pseudo_hash(cfg.seed as f32+22.0,i as f32) | let        | h3                             | 
+  Emplacement: src/astre/supernova.rs:326
+rand_sphere(h1,h2)                       | let        | dir                            | 
+  Emplacement: src/astre/supernova.rs:327
+h3                                       | let        | color_t                        | 
+  Emplacement: src/astre/supernova.rs:328
+cfg.fireball_emissive*(1.0-color_t*0.65) | let        | re                             | 
+  Emplacement: src/astre/supernova.rs:330
+rr,rg,rb                                 | color      | Color                          | couleur RGB
+  Emplacement: src/astre/supernova.rs:331
+jr,jg,jb                                 | color      | Color                          | couleur RGB
+  Emplacement: src/astre/supernova.rs:343
+pseudo_hash(cfg.seed as f32+30.0+pole*20.0,i as f32) | let        | h1                             | 
+  Emplacement: src/astre/supernova.rs:348
+pseudo_hash(cfg.seed as f32+31.0+pole*20.0,i as f32) | let        | h2                             | 
+  Emplacement: src/astre/supernova.rs:349
+br,bg,bb                                 | color      | Color                          | couleur RGB
+  Emplacement: src/astre/supernova.rs:361
+pseudo_hash(cfg.seed as f32+40.0,i as f32) | let        | h1                             | 
+  Emplacement: src/astre/supernova.rs:365
+pseudo_hash(cfg.seed as f32+41.0,i as f32) | let        | h2                             | 
+  Emplacement: src/astre/supernova.rs:366
+er,eg,eb                                 | color      | Color                          | couleur RGB
+  Emplacement: src/astre/supernova.rs:377
+pseudo_hash(cfg.seed as f32+50.0,i as f32) | let        | h1                             | 
+  Emplacement: src/astre/supernova.rs:381
+pseudo_hash(cfg.seed as f32+51.0,i as f32) | let        | h2                             | 
+  Emplacement: src/astre/supernova.rs:382
+pseudo_hash(cfg.seed as f32+52.0,i as f32) | let        | h3                             | 
+  Emplacement: src/astre/supernova.rs:383
+ir,ig,ib                                 | color      | Color                          | couleur RGB
+  Emplacement: src/astre/supernova.rs:394
+pseudo_hash(cfg.seed as f32+60.0,i as f32) | let        | h1                             | 
+  Emplacement: src/astre/supernova.rs:398
+pseudo_hash(cfg.seed as f32+61.0,i as f32) | let        | h2                             | 
+  Emplacement: src/astre/supernova.rs:399
+pseudo_hash(cfg.seed as f32+70.0,i as f32) | let        | h1                             | 
+  Emplacement: src/astre/supernova.rs:411
+pseudo_hash(cfg.seed as f32+71.0,i as f32) | let        | h2                             | 
+  Emplacement: src/astre/supernova.rs:412
+pseudo_hash(cfg.seed as f32+72.0,i as f32) | let        | h3                             | 
+  Emplacement: src/astre/supernova.rs:413
+pseudo_hash(cfg.seed as f32+73.0,i as f32) | let        | h4                             | 
+  Emplacement: src/astre/supernova.rs:414
+rand_sphere(h1,h2)                       | let        | dir                            | 
+  Emplacement: src/astre/supernova.rs:415
+cfg.snr_emissive*(1.0-color_t*0.5)       | let        | re                             | 
+  Emplacement: src/astre/supernova.rs:419
+rr,rg,rb                                 | color      | Color                          | couleur RGB
+  Emplacement: src/astre/supernova.rs:420
+fr,fg,fb                                 | color      | Color                          | couleur RGB
+  Emplacement: src/astre/supernova.rs:430
+pseudo_hash(fi as f32*3.7,si as f32*2.3) | let        | seed                           | graine
+  Emplacement: src/astre/supernova.rs:436
+cr,cg,cb                                 | color      | Color                          | couleur RGB
+  Emplacement: src/astre/supernova.rs:447
+(fv.seed*std::f32::consts::TAU+e*20.0).sin()*r*0.03 | let        | j                              | 
+  Emplacement: src/astre/supernova.rs:520
+1.0-(r/cfg.flash_max_radius).clamp(0.0,1.0) | let        | life                           | 
+  Emplacement: src/astre/supernova.rs:522
+0.6+(e*15.0+fv.seed*9.0).sin()*0.4       | let        | sh                             | 
+  Emplacement: src/astre/supernova.rs:523
+1.0+fv.polar_t*cfg.fireball_polar_boost  | let        | boost                          | 
+  Emplacement: src/astre/supernova.rs:535
+0.4+(1.0-fv.color_t)*0.9                 | let        | size                           | 
+  Emplacement: src/astre/supernova.rs:539
+jv.t*cfg.jet_width*0.5                   | let        | cw                             | 
+  Emplacement: src/astre/supernova.rs:555
+jv.perp_seed*std::f32::consts::TAU+t*0.6 | let        | pa                             | 
+  Emplacement: src/astre/supernova.rs:556
+pa.cos(                                  | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/astre/supernova.rs:557
+(1.0-jv.t*0.75).max(0.05)                | let        | fade                           | 
+  Emplacement: src/astre/supernova.rs:558
+0.7+(t*3.5+jv.seed*5.0).sin()*0.3        | let        | sh                             | 
+  Emplacement: src/astre/supernova.rs:559
+1.0-(r/cfg.blast_max_radius).clamp(0.0,1.0) | let        | life                           | 
+  Emplacement: src/astre/supernova.rs:575
+0.5+(e*2.0+bv.seed*8.0).sin().abs()*0.5  | let        | sh                             | 
+  Emplacement: src/astre/supernova.rs:576
+1.0-(r/cfg.echo_max_radius).clamp(0.0,1.0) | let        | life                           | 
+  Emplacement: src/astre/supernova.rs:590
+0.4+(e*1.3+ev.seed*6.0).sin().abs()*0.4  | let        | sh                             | 
+  Emplacement: src/astre/supernova.rs:591
+(iv.seed*std::f32::consts::TAU).sin()*cfg.ionization_width | let        | j                              | 
+  Emplacement: src/astre/supernova.rs:604
+(blast_r+j+cfg.ionization_width*0.5).max(0.0) | let        | r                              | 
+  Emplacement: src/astre/supernova.rs:605
+0.3+(e*4.0+iv.seed*std::f32::consts::TAU).sin().abs()*0.7 | let        | sh                             | 
+  Emplacement: src/astre/supernova.rs:607
+1.0-(blast_r/cfg.blast_max_radius).clamp(0.0,1.0) | let        | life                           | 
+  Emplacement: src/astre/supernova.rs:608
+1.0+e*cfg.snr_expansion_speed*0.001      | let        | expansion                      | 
+  Emplacement: src/astre/supernova.rs:619
+1.0+(t*0.6+sv.seed*std::f32::consts::TAU).sin()*0.12 | let        | p                              | 
+  Emplacement: src/astre/supernova.rs:626
+(0.4+(1.0-sv.color_t)*0.8)*p             | let        | sz                             | 
+  Emplacement: src/astre/supernova.rs:627
+1.0+e*cfg.snr_expansion_speed*0.0008     | let        | expansion                      | 
+  Emplacement: src/astre/supernova.rs:638
+fv.sample_idx as f32/cfg.snr_filament_samples.max(1) as f32 | let        | sample_t                       | 
+  Emplacement: src/astre/supernova.rs:639
+fv.lon+t*0.025                           | let        | lon_a                          | 
+  Emplacement: src/astre/supernova.rs:640
+fv.tilt.cos().max(0.01)                  | let        | cos_tilt                       | 
+  Emplacement: src/astre/supernova.rs:641
+(t*0.4+fv.seed*8.0+sample_t*5.0).sin()*r_arc*0.03 | let        | wave                           | 
+  Emplacement: src/astre/supernova.rs:644
+(sample_t*std::f32::consts::PI).sin()    | let        | op                             | 
+  Emplacement: src/astre/supernova.rs:648
+
+================================================================================
+FILE: src/main.rs
+================================================================================
+
+current_moon.map_or(0, |index| (index + 1) % moons.len()) | let        | next                           | 
+  Emplacement: src/main.rs:433
+if ev.y < 0.0 { 2.5 } else { 1.0 }       | let        | direction_factor               | 
+  Emplacement: src/main.rs:576
+1.0 + ctrl.distance.abs() * 0.004 * direction_factor | let        | zoom_factor                    | 
+  Emplacement: src/main.rs:577
+15.0                                     | let        | s                              | 
+  Emplacement: src/main.rs:1286
+128                                      | let        | seg                            | 
+  Emplacement: src/main.rs:1415
+
+================================================================================
+FILE: src/mesher.rs
+================================================================================
+
+positions.len() as u32                   | let        | base                           | 
+  Emplacement: src/mesher.rs:27
+4usize                                   | let        | max_greedy                     | 
+  Emplacement: src/mesher.rs:54
+grid_x as f32 / divisions as f32         | let        | chunk_u_start                  | 
+  Emplacement: src/mesher.rs:56
+grid_y as f32 / divisions as f32         | let        | chunk_v_start                  | 
+  Emplacement: src/mesher.rs:57
+1.0 / divisions as f32                   | let        | chunk_size                     | 
+  Emplacement: src/mesher.rs:58
+radius - terrain_height - 1.0            | let        | r_min                          | 
+  Emplacement: src/mesher.rs:61
+radius + terrain_height + 1.0            | let        | r_max                          | 
+  Emplacement: src/mesher.rs:62
+Perlin::new(seed.wrapping_add(300))      | let        | color_perlin                   | 
+  Emplacement: src/mesher.rs:68
+Perlin::new(seed.wrapping_add(500))      | let        | spot_perlin                    | 
+  Emplacement: src/mesher.rs:69
+vec![vec![0.0_f32                        | let        | terrain_heights                | 
+  Emplacement: src/mesher.rs:71
+vec![vec![0.0_f32                        | let        | height_blend                   | 
+  Emplacement: src/mesher.rs:72
+vec![vec![Vec3::ZERO                     | let        | cell_dirs                      | 
+  Emplacement: src/mesher.rs:73
+vec![vec![0.0_f32                        | let        | cell_color_var                 | 
+  Emplacement: src/mesher.rs:74
+vec![vec![0.0_f32                        | let        | cell_spot                      | 
+  Emplacement: src/mesher.rs:75
+fbm.get([s.x as f64, s.y as f64, s.z as f64]) as f32 | let        | n_val                          | 
+  Emplacement: src/mesher.rs:98
+((n_val + det + 1.0) * 0.5).clamp(0.0, 1.0) | let        | height_val                     | 
+  Emplacement: src/mesher.rs:104
+chunk_u_start + (ix as f32 / res as f32) * chunk_size | let        | u                              | 
+  Emplacement: src/mesher.rs:140
+chunk_v_start + (iy as f32 / res as f32) * chunk_size | let        | v                              | 
+  Emplacement: src/mesher.rs:141
+|ix: usize, iy: usize| -> [f32           | let        | cell_col                       | 
+  Emplacement: src/mesher.rs:145
+ix.min(res - 1)                          | let        | cix                            | 
+  Emplacement: src/mesher.rs:146
+iy.min(res - 1)                          | let        | ciy                            | 
+  Emplacement: src/mesher.rs:147
+cell_spot[cix][ciy] * 0.06               | let        | spot                           | 
+  Emplacement: src/mesher.rs:150
+r_min + (layer as f32 / layers as f32) * (r_max - r_min) | let        | r_lo                           | 
+  Emplacement: src/mesher.rs:160
+1usize                                   | let        | w                              | 
+  Emplacement: src/mesher.rs:173
+1usize                                   | let        | h                              | 
+  Emplacement: src/mesher.rs:177
+ix + w / 2                               | let        | mid_ix                         | 
+  Emplacement: src/mesher.rs:188
+iy + h / 2                               | let        | mid_iy                         | 
+  Emplacement: src/mesher.rs:189
+1usize                                   | let        | w                              | 
+  Emplacement: src/mesher.rs:208
+1usize                                   | let        | h                              | 
+  Emplacement: src/mesher.rs:212
+ix + w / 2                               | let        | mid_ix                         | 
+  Emplacement: src/mesher.rs:223
+iy + h / 2                               | let        | mid_iy                         | 
+  Emplacement: src/mesher.rs:224
+corner_pos(e0u, e0v, r_lo)               | let        | p0_lo                          | 
+  Emplacement: src/mesher.rs:248
+corner_pos(e1u, e1v, r_lo)               | let        | p1_lo                          | 
+  Emplacement: src/mesher.rs:249
+corner_pos(e0u, e0v, r_hi)               | let        | p0_hi                          | 
+  Emplacement: src/mesher.rs:250
+corner_pos(e1u, e1v, r_hi)               | let        | p1_hi                          | 
+  Emplacement: src/mesher.rs:251
+(p1_lo - p0_lo).normalize()              | let        | tangent                        | 
+  Emplacement: src/mesher.rs:252
+grid_x as f32 / divisions as f32         | let        | chunk_u_start                  | 
+  Emplacement: src/mesher.rs:286
+grid_y as f32 / divisions as f32         | let        | chunk_v_start                  | 
+  Emplacement: src/mesher.rs:287
+1.0 / divisions as f32                   | let        | chunk_size                     | 
+  Emplacement: src/mesher.rs:288
+radius - sl * th - 2.0                   | let        | r_min                          | 
+  Emplacement: src/mesher.rs:293
+radius + (1.0 - sl) * th + 2.0           | let        | r_max                          | 
+  Emplacement: src/mesher.rs:294
+temperature < -50.0                      | let        | frozen                         | 
+  Emplacement: src/mesher.rs:296
+Perlin::new(seed.wrapping_add(200))      | let        | color_perlin                   | 
+  Emplacement: src/mesher.rs:313
+vec![vec![0.0f32                         | let        | terrain_heights                | 
+  Emplacement: src/mesher.rs:315
+vec![vec![Vec3::ZERO                     | let        | cell_dirs                      | 
+  Emplacement: src/mesher.rs:317
+vec![vec![0.0f32                         | let        | cell_color_var                 | 
+  Emplacement: src/mesher.rs:318
+fbm.get([s.x as f64, s.y as f64, s.z as f64]) as f32 | let        | continent                      | 
+  Emplacement: src/mesher.rs:335
+detail_scale as f64                      | let        | ds                             | 
+  Emplacement: src/mesher.rs:336
+((continent + det + 1.0) * 0.5).clamp(0.0, 1.0) | let        | height_val                     | 
+  Emplacement: src/mesher.rs:341
+chunk_u_start + (ix as f32 / res as f32) * chunk_size | let        | u                              | 
+  Emplacement: src/mesher.rs:408
+chunk_v_start + (iy as f32 / res as f32) * chunk_size | let        | v                              | 
+  Emplacement: src/mesher.rs:409
+|vtype: VoxelType, ix: usize, iy: usize, r_hi: f32| -> [f32 | let        | cell_color                     | 
+  Emplacement: src/mesher.rs:414
+cell_color_var[ix.min(res - 1)][iy.min(res - 1)] | let        | var                            | 
+  Emplacement: src/mesher.rs:416
+r_min + (layer as f32 / layers as f32) * (r_max - r_min) | let        | r_lo                           | 
+  Emplacement: src/mesher.rs:434
+1usize                                   | let        | w                              | 
+  Emplacement: src/mesher.rs:455
+1usize                                   | let        | h                              | 
+  Emplacement: src/mesher.rs:465
+ix + w / 2                               | let        | mid_ix                         | 
+  Emplacement: src/mesher.rs:489
+iy + h / 2                               | let        | mid_iy                         | 
+  Emplacement: src/mesher.rs:490
+6usize                                   | let        | mg_bot                         | 
+  Emplacement: src/mesher.rs:515
+1usize                                   | let        | w                              | 
+  Emplacement: src/mesher.rs:532
+1usize                                   | let        | h                              | 
+  Emplacement: src/mesher.rs:542
+ix + w / 2                               | let        | mid_ix                         | 
+  Emplacement: src/mesher.rs:566
+iy + h / 2                               | let        | mid_iy                         | 
+  Emplacement: src/mesher.rs:567
+corner_pos(e0u, e0v, r_lo)               | let        | p0_lo                          | 
+  Emplacement: src/mesher.rs:612
+corner_pos(e1u, e1v, r_lo)               | let        | p1_lo                          | 
+  Emplacement: src/mesher.rs:613
+corner_pos(e0u, e0v, r_hi)               | let        | p0_hi                          | 
+  Emplacement: src/mesher.rs:614
+corner_pos(e1u, e1v, r_hi)               | let        | p1_hi                          | 
+  Emplacement: src/mesher.rs:615
+(p1_lo - p0_lo).normalize()              | let        | tangent                        | 
+  Emplacement: src/mesher.rs:617
+
+================================================================================
+FILE: src/planet.rs
+================================================================================
+
+0.03                                     | const      | ORBIT_SPEED                    | vitesse orbite
+  Emplacement: src/planet.rs:9
+0.015                                    | const      | STAR_ORBIT_SPEED               | vitesse orbite
+  Emplacement: src/planet.rs:10
+0.08                                     | const      | MOON_ORBIT_SPEED               | vitesse orbite
+  Emplacement: src/planet.rs:11
+4                                        | const      | STAR_DIVISIONS                 | 
+  Emplacement: src/planet.rs:12
+3                                        | const      | MOON_DIVISIONS                 | 
+  Emplacement: src/planet.rs:13
+1.0, v, -u                               | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/planet.rs:134
+-1.0, v, u                               | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/planet.rs:135
+u, 1.0, -v                               | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/planet.rs:136
+u, -1.0, v                               | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/planet.rs:137
+u, v, 1.0                                | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/planet.rs:138
+-u, v, -1.0                              | vec3       | Vec3::new                      | position 3D
+  Emplacement: src/planet.rs:139
+LodLevel::Lod2                           | let        | star_lod                       | 
+  Emplacement: src/planet.rs:182
+star_cfg.intensity * 2_000_000.0 * 100.0 | let        | intensity                      | 
+  Emplacement: src/planet.rs:229
+6.0                                      | let        | voxel_size                     | 
+  Emplacement: src/planet.rs:247
+64_u32                                   | let        | samples_per_flare              | 
+  Emplacement: src/planet.rs:248
+Vec3::new(pcfg.orbit_distance, 0.0, 0.0) | let        | planet_world_pos               | 
+  Emplacement: src/planet.rs:283
+(gx as f32 + 0.5) / divs as f32          | let        | u                              | 
+  Emplacement: src/planet.rs:300
+(gy as f32 + 0.5) / divs as f32          | let        | v                              | 
+  Emplacement: src/planet.rs:301
+pcfg.cloud_density.clamp(0.1, 1.0)       | let        | density                        | 
+  Emplacement: src/planet.rs:349
+Perlin::new(pcfg.seed + 500)             | let        | perlin                         | 
+  Emplacement: src/planet.rs:353
+Perlin::new(pcfg.seed + 501)             | let        | perlin2                        | 
+  Emplacement: src/planet.rs:354
+20 + (density * 30.0) as u32             | let        | patch_count                    | 
+  Emplacement: src/planet.rs:356
+16_i32                                   | let        | patch_grid                     | 
+  Emplacement: src/planet.rs:357
+pcfg.radius * 0.03                       | let        | cell                           | 
+  Emplacement: src/planet.rs:358
+pseudo_hash(pcfg.seed as f32, ci as f32 * 3.7) | let        | seed_a                         | graine
+  Emplacement: src/planet.rs:361
+pseudo_hash(pcfg.seed as f32, ci as f32 * 7.1) | let        | seed_b                         | graine
+  Emplacement: src/planet.rs:362
+seed_a * std::f32::consts::TAU           | let        | theta_c                        | 
+  Emplacement: src/planet.rs:363
+(seed_b * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | phi_c                          | 
+  Emplacement: src/planet.rs:364
+if center_dir.y.abs() > 0.9 { Vec3::X } else { Vec3::Y } | let        | up                             | 
+  Emplacement: src/planet.rs:372
+vec![0_u32                               | let        | grid                           | 
+  Emplacement: src/planet.rs:377
+0.1 - density as f64 * 0.15              | let        | threshold                      | 
+  Emplacement: src/planet.rs:378
+(gx as f32 - patch_grid as f32 * 0.5) * cell | let        | lx                             | 
+  Emplacement: src/planet.rs:382
+(gz as f32 - patch_grid as f32 * 0.5) * cell | let        | lz                             | 
+  Emplacement: src/planet.rs:383
+wd.x as f64                              | let        | nx                             | 
+  Emplacement: src/planet.rs:387
+wd.y as f64                              | let        | ny                             | 
+  Emplacement: src/planet.rs:388
+wd.z as f64                              | let        | nz                             | 
+  Emplacement: src/planet.rs:389
+n1 * 0.65 + n2 * 0.35                    | let        | n                              | 
+  Emplacement: src/planet.rs:393
+1.0 - (dx * dx + dz * dz).sqrt().min(1.0) | let        | edge                           | 
+  Emplacement: src/planet.rs:398
+(1 + ((n - threshold) * 3.0) as u32).min(4) | let        | h                              | 
+  Emplacement: src/planet.rs:401
+(gx as f32 - patch_grid as f32 * 0.5) * cell | let        | x0                             | 
+  Emplacement: src/planet.rs:422
+(gz as f32 - patch_grid as f32 * 0.5) * cell | let        | z0                             | 
+  Emplacement: src/planet.rs:423
+x0 + cell                                | let        | x1                             | 
+  Emplacement: src/planet.rs:424
+z0 + cell                                | let        | z1                             | 
+  Emplacement: src/planet.rs:425
+y_layer as f32 * cell * 0.5              | let        | y0                             | 
+  Emplacement: src/planet.rs:428
+y0 + cell * 0.5                          | let        | y1                             | 
+  Emplacement: src/planet.rs:429
+positions.len() as u32                   | let        | vi                             | 
+  Emplacement: src/planet.rs:433
+positions.len() as u32                   | let        | vi                             | 
+  Emplacement: src/planet.rs:443
+positions.len() as u32                   | let        | vi                             | 
+  Emplacement: src/planet.rs:453
+positions.len() as u32                   | let        | vi                             | 
+  Emplacement: src/planet.rs:463
+positions.len() as u32                   | let        | vi                             | 
+  Emplacement: src/planet.rs:473
+positions.len() as u32                   | let        | vi                             | 
+  Emplacement: src/planet.rs:483
+Quat::from_rotation_arc(Vec3::Y, center_dir) | let        | rotation                       | 
+  Emplacement: src/planet.rs:504
+LodLevel::Lod2                           | let        | moon_lod                       | 
+  Emplacement: src/planet.rs:531
+Vec3::new(mcfg.orbit_distance, 0.0, 0.0) | let        | offset                         | 
+  Emplacement: src/planet.rs:535
+rng.gen::<f32>() * std::f32::consts::TAU | let        | angle                          | 
+  Emplacement: src/planet.rs:595
+(rng.gen::<f32>() - 0.5) * belt.width    | let        | dist_offset                    | 
+  Emplacement: src/planet.rs:596
+(rng.gen::<f32>() - 0.5) * belt.width * 0.3 | let        | y_offset                       | 
+  Emplacement: src/planet.rs:598
+Vec3::new(angle.cos() * dist, y_offset, angle.sin() * dist) | let        | pos                            | 
+  Emplacement: src/planet.rs:602
+Mesh::from(Cuboid::new(size, size * 0.7, size * 0.85)) | let        | mesh                           | 
+  Emplacement: src/planet.rs:611
+settings.planets.len().max(1) as f32     | let        | n                              | 
+  Emplacement: src/planet.rs:630
+settings.stars.len().max(1) as f32       | let        | n                              | 
+  Emplacement: src/planet.rs:646
+64_u32                                   | let        | max_samples                    | 
+  Emplacement: src/planet.rs:714
+dist / scfg.radius.max(1.0)              | let        | ratio                          | 
+  Emplacement: src/planet.rs:736
+2.0 + pseudo_hash(base_seed, 1.0) * 3.0  | let        | rise_dur                       | 
+  Emplacement: src/planet.rs:756
+0.5 + pseudo_hash(base_seed, 2.0) * 1.5  | let        | hold_dur                       | 
+  Emplacement: src/planet.rs:757
+2.0 + pseudo_hash(base_seed, 3.0) * 3.0  | let        | fall_dur                       | 
+  Emplacement: src/planet.rs:758
+1.0 + pseudo_hash(base_seed, 4.0) * 4.0  | let        | pause_dur                      | 
+  Emplacement: src/planet.rs:759
+pseudo_hash(base_seed, 5.0) * total_dur  | let        | offset                         | 
+  Emplacement: src/planet.rs:761
+((t + offset) % total_dur).max(0.0)      | let        | local_t                        | 
+  Emplacement: src/planet.rs:762
+pseudo_hash(base_seed, cycle_id * 3.1)   | let        | h1                             | 
+  Emplacement: src/planet.rs:781
+pseudo_hash(base_seed, cycle_id * 7.3)   | let        | h2                             | 
+  Emplacement: src/planet.rs:782
+h1 * std::f32::consts::TAU               | let        | theta                          | 
+  Emplacement: src/planet.rs:784
+(h2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos() | let        | phi                            | 
+  Emplacement: src/planet.rs:785
+scfg.flare_distance.max(5.0) * 0.5       | let        | half_spread                    | 
+  Emplacement: src/planet.rs:801
+fv.sample_idx as f32 / active_samples as f32 | let        | frac                           | 
+  Emplacement: src/planet.rs:809
+1.0 - frac                               | let        | inv                            | 
+  Emplacement: src/planet.rs:817
+snap_grid(point, voxel_size.max(1.0))    | let        | snapped                        | 
+  Emplacement: src/planet.rs:819
+voxel_size / 6.0                         | let        | s                              | 
+  Emplacement: src/planet.rs:823
+4                                        | const      | MAX_LOD_UPDATES_PER_FRAME      | 
+  Emplacement: src/planet.rs:912
+0                                        | let        | updates                        | 
+  Emplacement: src/planet.rs:922
+(chunk.grid_x as f32 + 0.5) / divs as f32 | let        | u                              | 
+  Emplacement: src/planet.rs:941
+(chunk.grid_y as f32 + 0.5) / divs as f32 | let        | v                              | 
+  Emplacement: src/planet.rs:942
+
+================================================================================
+FILE: src/ui.rs
+================================================================================
+
+Color::srgba(0.06, 0.06, 0.10, 1.0)      | const      | BG_DARK                        | 
+  Emplacement: src/ui.rs:569
+Color::srgba(0.10, 0.10, 0.16, 1.0)      | const      | BG_CARD                        | 
+  Emplacement: src/ui.rs:570
+Color::srgba(0.13, 0.13, 0.20, 1.0)      | const      | BG_CARD_HEADER                 | 
+  Emplacement: src/ui.rs:571
+Color::srgba(0.12, 0.12, 0.18, 1.0)      | const      | BG_PANEL                       | 
+  Emplacement: src/ui.rs:572
+Color::srgba(0.18, 0.18, 0.26, 1.0)      | const      | BG_SLIDER                      | 
+  Emplacement: src/ui.rs:573
+Color::srgb(0.3, 0.6, 1.0)               | const      | ACCENT                         | 
+  Emplacement: src/ui.rs:574
+Color::srgb(0.4, 0.7, 1.0)               | const      | ACCENT_HOVER                   | 
+  Emplacement: src/ui.rs:575
+Color::srgb(0.9, 0.9, 0.95)              | const      | TEXT_COLOR                     | 
+  Emplacement: src/ui.rs:576
+Color::srgb(0.55, 0.55, 0.62)            | const      | TEXT_DIM                       | 
+  Emplacement: src/ui.rs:577
+Color::srgb(0.35, 0.7, 1.0)              | const      | PLANET_COLOR                   | 
+  Emplacement: src/ui.rs:578
+Color::srgb(1.0, 0.75, 0.25)             | const      | STAR_COLOR                     | 
+  Emplacement: src/ui.rs:579
+Color::srgb(0.7, 0.55, 0.95)             | const      | BELT_COLOR                     | 
+  Emplacement: src/ui.rs:580
+Color::srgb(0.8, 0.5, 1.0)               | const      | REMNANT_COLOR                  | 
+  Emplacement: src/ui.rs:581
+Color::srgb(0.85, 0.35, 0.35)            | const      | RED_SOFT                       | 
+  Emplacement: src/ui.rs:582
+Color::srgb(0.6, 0.6, 0.7)               | let        | moon_color                     | 
+  Emplacement: src/ui.rs:839
+((val - min) / (max - min)).clamp(0.0, 1.0) | let        | frac                           | 
+  Emplacement: src/ui.rs:1175
+pct                                      | UI_val     | Val::Percent                   | valeur UI
+  Emplacement: src/ui.rs:1394
+pct / 100.0 * 448.0                      | let        | estimated_width                | 
+  Emplacement: src/ui.rs:1395
+bar_pos.x - estimated_width * 0.5        | let        | bar_left                       | 
+  Emplacement: src/ui.rs:1396
+((cx - bar_left) / estimated_width).clamp(0.0, 1.0) | let        | frac                           | 
+  Emplacement: src/ui.rs:1397
+((val - bar.min) / (bar.max - bar.min)).clamp(0.0, 1.0) | let        | frac                           | 
+  Emplacement: src/ui.rs:1537
+frac * 100.0                             | UI_val     | Val::Percent                   | valeur UI
+  Emplacement: src/ui.rs:1540
+label.0.get(&settings)                   | let        | val                            | 
+  Emplacement: src/ui.rs:1546
+0.0                                      | let        | dy                             | 
+  Emplacement: src/ui.rs:1718
+format!("Rayon {:.0}  -  {:?}", cfg.radius, cfg.dwarf_type) | let        | info                           | 
+  Emplacement: src/ui.rs:2031
+format!("Rayon {:.0}  -  {:?}", cfg.radius, cfg.giant_type) | let        | info                           | 
+  Emplacement: src/ui.rs:2055
+format!("Rayon {:.0}  -  {:?}", cfg.radius, cfg.class) | let        | info                           | 
+  Emplacement: src/ui.rs:2067
+format!("Rayon {:.0}  -  {:?}", cfg.radius, cfg.hg_type) | let        | info                           | 
+  Emplacement: src/ui.rs:2079
+
+================================================================================
+FILE: target/debug/build/crunchy-f24ad5e4eb51f598/out/lib.rs
+================================================================================
+
+128 / 4                                  | let        | start                          | 
+  Emplacement: target/debug/build/crunchy-f24ad5e4eb51f598/out/lib.rs:910
+start * 3                                | let        | end                            | 
+  Emplacement: target/debug/build/crunchy-f24ad5e4eb51f598/out/lib.rs:911
+128 / 4                                  | let        | start                          | 
+  Emplacement: target/debug/build/crunchy-f24ad5e4eb51f598/out/lib.rs:930
+start * 3                                | let        | end                            | 
+  Emplacement: target/debug/build/crunchy-f24ad5e4eb51f598/out/lib.rs:931
+
+================================================================================
+FILE: target/release/build/crunchy-8522857f9f5c6e2b/out/lib.rs
+================================================================================
+
+128 / 4                                  | let        | start                          | 
+  Emplacement: target/release/build/crunchy-8522857f9f5c6e2b/out/lib.rs:910
+start * 3                                | let        | end                            | 
+  Emplacement: target/release/build/crunchy-8522857f9f5c6e2b/out/lib.rs:911
+128 / 4                                  | let        | start                          | 
+  Emplacement: target/release/build/crunchy-8522857f9f5c6e2b/out/lib.rs:930
+start * 3                                | let        | end                            | 
+  Emplacement: target/release/build/crunchy-8522857f9f5c6e2b/out/lib.rs:931
