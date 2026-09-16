@@ -173,8 +173,10 @@ fn generate_all(
     );
 
     // Systèmes supplémentaires (à partir de l'index 1)
-    for sys in settings.systems.iter().skip(1) {
+    warn!("=== SYSTEMS COUNT: {} ===", settings.systems.len());
+    for (si, sys) in settings.systems.iter().skip(1).enumerate() {
         let center = sys.center();
+        warn!("=== SPAWNING SYSTEM {} '{}' at {:?} — stars:{} planets:{} ===", si+1, sys.name, center, sys.stars.len(), sys.planets.len());
         let sys_cam = center + Vec3::new(0.0, 80.0, 200.0);
         spawn_system_bodies(
             &mut commands,
@@ -1276,15 +1278,20 @@ const STAR_DETAIL_DIST: f32 = 5000.0;
 
 fn update_star_visibility(
     camera_q: Query<&GlobalTransform, With<Camera3d>>,
-    star_q: Query<(&GlobalTransform, &Children), With<StarRoot>>,
+    star_q: Query<(&GlobalTransform, &Children, &StarId), With<StarRoot>>,
     mut chunk_vis_q: Query<&mut Visibility, (With<StarChunk>, Without<StarBeacon>)>,
     mut beacon_vis_q: Query<&mut Visibility, (With<StarBeacon>, Without<StarChunk>)>,
+    mut frame: Local<u32>,
 ) {
     let cam_pos = camera_q.single().translation();
+    *frame += 1;
 
-    for (star_gt, children) in &star_q {
+    for (star_gt, children, sid) in &star_q {
         let dist = cam_pos.distance(star_gt.translation());
         let far = dist > STAR_DETAIL_DIST;
+        if *frame % 300 == 1 {
+            warn!("Star id={} pos={:?} dist={:.0} far={} children={}", sid.0, star_gt.translation(), dist, far, children.len());
+        }
 
         for &child in children.iter() {
             if let Ok(mut vis) = chunk_vis_q.get_mut(child) {
