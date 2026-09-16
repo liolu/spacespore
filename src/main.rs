@@ -295,6 +295,10 @@ fn setup_scene(
     // Caméra
     commands.spawn((
         Camera3d::default(),
+        Projection::Perspective(PerspectiveProjection {
+            far: 100_000.0,
+            ..default()
+        }),
 
         Transform::from_translation(
             planet_start + Vec3::new(
