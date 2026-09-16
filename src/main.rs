@@ -296,7 +296,7 @@ fn setup_scene(
     commands.spawn((
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
-            far: 100_000.0,
+            far: 10_000_000.0,
             ..default()
         }),
 
