@@ -1,5 +1,6 @@
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
+use crate::astre::{AstreLodRoot, ReloadAstre};
 
 /// Hypergéantes — les plus grandes étoiles connues (R136a1, UY Scuti, VY CMa…)
 #[derive(Clone,Debug,PartialEq)]
@@ -60,16 +61,38 @@ impl HypergiantConfig {
     pub fn wolf_rayet(seed:u32,pos:Vec3)->Self{Self{position:pos,hg_type:HypergiantType::WolfRayet,radius:300.0,voxel_size:18.0,color_core:[0.4,0.7,1.0],color_surface:[0.2,0.5,1.0],emissive:25.0,wind_speed:80.0,wind_radius:10000.0,shells:vec![],ionization_enabled:true,ionization_count:400,ionization_voxel:14.0,ionization_color:[0.2,0.9,1.0],ionization_emissive:12.0,ionization_radius:1500.0,light_intensity:3_000_000_000.0,light_range:120000.0,seed,..Default::default()}}
 }
 
+pub const SPAWN_PROPS: crate::system_gen::SpawnProps = crate::system_gen::SpawnProps {
+    category:  crate::system_gen::AstreCategory::Star,
+    weight:    0.04,
+    orbit_min: 0.0,
+    orbit_max: 0.0,
+};
+
+pub fn generate_random(rng: &mut crate::system_gen::SeedRng, stars: &mut Vec<HypergiantConfig>) {
+    let seed = rng.u32();
+    let roll = rng.f32();
+    let config = if roll < 0.50 {
+        HypergiantConfig { position: Vec3::ZERO, seed, ..Default::default() }
+    } else if roll < 0.80 {
+        HypergiantConfig::eta_carinae(seed, Vec3::ZERO)
+    } else {
+        HypergiantConfig::wolf_rayet(seed, Vec3::ZERO)
+    };
+    stars.push(config);
+}
+
 pub struct HypergiantPlugin;
 impl Plugin for HypergiantPlugin {
     fn build(&self,app:&mut App){
         app.init_resource::<HypergiantRes>().add_event::<RegenerateHypergiant>()
            .add_systems(Startup,spawn_hypergiants)
-           .add_systems(Update,(orbit_hg,animate_hg_body,animate_hg_convection,animate_hg_wind,animate_hg_shells,animate_homunculus,animate_ionization,animate_hg_corona,regenerate_hg).chain());
+           .add_systems(Update,(orbit_hg,animate_hg_body,animate_hg_convection,animate_hg_wind,animate_hg_shells,animate_homunculus,animate_ionization,animate_hg_corona,regenerate_hg,reload_hg).chain());
     }
 }
 #[derive(Resource)] pub struct HypergiantRes{pub stars:Vec<HypergiantConfig>}
-impl Default for HypergiantRes{fn default()->Self{Self{stars:vec![HypergiantConfig::default()]}}}
+impl Default for HypergiantRes{fn default()->Self{Self{stars:vec![
+    HypergiantConfig{position:Vec3::new(0.0,0.0,16000.0),..Default::default()},
+]}}}
 #[derive(Event)] pub struct RegenerateHypergiant;
 #[derive(Component)] pub struct HgRoot      {pub idx:usize}
 #[derive(Component)] pub struct HgBody      {pub idx:usize}
@@ -90,7 +113,7 @@ fn spawn_hypergiants(mut cmd:Commands,res:Res<HypergiantRes>,mut msh:ResMut<Asse
 }
 fn build_hg(cmd:&mut Commands,cfg:&HypergiantConfig,idx:usize,msh:&mut ResMut<Assets<Mesh>>,mat:&mut ResMut<Assets<StandardMaterial>>){
     let pos=if cfg.orbit_distance>1.0{Vec3::new(cfg.orbit_distance,0.0,0.0)}else{cfg.position};
-    let root=cmd.spawn((Transform::from_translation(pos),Visibility::default(),HgRoot{idx})).id();
+    let root=cmd.spawn((Transform::from_translation(pos),Visibility::default(),HgRoot{idx},AstreLodRoot{cull_dist:25000.0, radius: cfg.radius, streamable: true, label: "Hypergiant"})).id();
     let body=cmd.spawn((Transform::IDENTITY,Visibility::default(),HgBody{idx})).id();
     cmd.entity(root).add_child(body);
     let vs=cfg.voxel_size;let rs=cfg.resolution;
@@ -197,4 +220,21 @@ fn animate_hg_shells(time:Res<Time>,res:Res<HypergiantRes>,mut q:Query<(&HgShell
 fn animate_homunculus(time:Res<Time>,res:Res<HypergiantRes>,mut q:Query<(&HgHomunculus,&mut Transform,&mut Visibility)>){let t=time.elapsed_secs();for (hv,mut tf,mut vis) in &mut q{let Some(cfg)=res.stars.get(hv.idx) else{*vis=Visibility::Hidden;continue;};if !cfg.homunculus_enabled{*vis=Visibility::Hidden;continue;}let lt=((t*0.12+hv.t)%1.0).max(0.0);let along=cfg.radius+lt*cfg.homunculus_length;let cw=lt.powf(0.4)*cfg.homunculus_width*0.5;let pa=hv.perp*std::f32::consts::TAU+t*0.08;tf.translation=snap(Vec3::new(pa.cos()*cw,hv.pole*along,pa.sin()*cw),cfg.homunculus_voxel);let fade=(1.0-lt*0.75).max(0.02);let pulse=0.4+(t*0.6+hv.seed*5.0).sin().abs()*0.7;tf.scale=Vec3::splat(fade*pulse);*vis=Visibility::Visible;}}
 fn animate_ionization(time:Res<Time>,res:Res<HypergiantRes>,mut q:Query<(&HgIonize,&mut Transform)>){let t=time.elapsed_secs();for (iv,mut tf) in &mut q{let Some(cfg)=res.stars.get(iv.idx) else{continue;};if !cfg.ionization_enabled{continue;}let pulse=1.0+(t*2.5+iv.seed*std::f32::consts::TAU).sin()*0.3;let r=iv.r*pulse;let th=iv.theta+t*0.2;tf.translation=snap(Vec3::new(r*iv.phi.sin()*th.cos(),r*iv.phi.cos(),r*iv.phi.sin()*th.sin()),cfg.ionization_voxel);let life=1.0-((r-cfg.radius)/cfg.ionization_radius.max(1.0)).clamp(0.0,1.0);let s=0.3+(t*3.0+iv.seed*7.0).sin().abs()*0.8*life;tf.scale=Vec3::splat(s.max(0.02));}}
 fn animate_hg_corona(time:Res<Time>,res:Res<HypergiantRes>,mut q:Query<(&HgCorona,&mut Transform)>){let t=time.elapsed_secs();for (cv,mut tf) in &mut q{let Some(cfg)=res.stars.get(cv.idx) else{continue;};let pulse=1.0+(t*0.45+cv.seed*std::f32::consts::TAU).sin()*0.2;let r=cv.r*pulse;let th=cv.theta+t*0.02;tf.translation=snap(Vec3::new(r*cv.phi.sin()*th.cos(),r*cv.phi.cos(),r*cv.phi.sin()*th.sin()),cfg.corona_voxel);let life=1.0-((r-cfg.radius)/cfg.corona_radius.max(1.0)).clamp(0.0,1.0);tf.scale=Vec3::splat((0.3+life*1.0).max(0.02));}}
+fn reload_hg(
+    mut cmd: Commands,
+    mut events: EventReader<ReloadAstre>,
+    res: Res<HypergiantRes>,
+    roots: Query<(Entity, &HgRoot)>,
+    mut msh: ResMut<Assets<Mesh>>,
+    mut mat: ResMut<Assets<StandardMaterial>>,
+) {
+    for ev in events.read() {
+        let Ok((entity, root)) = roots.get(ev.0) else { continue };
+        let idx = root.idx;
+        let Some(cfg) = res.stars.get(idx) else { continue };
+        cmd.entity(entity).despawn_recursive();
+        build_hg(&mut cmd, cfg, idx, &mut msh, &mut mat);
+    }
+}
+
 fn regenerate_hg(mut cmd:Commands,mut ev:EventReader<RegenerateHypergiant>,res:Res<HypergiantRes>,rq:Query<Entity,With<HgRoot>>,mut msh:ResMut<Assets<Mesh>>,mut mat:ResMut<Assets<StandardMaterial>>){let mut f=false;for _ in ev.read(){f=true;}if !f{return;}for e in &rq{cmd.entity(e).despawn_recursive();}for (i,cfg) in res.stars.iter().enumerate(){build_hg(&mut cmd,cfg,i,&mut msh,&mut mat);}}

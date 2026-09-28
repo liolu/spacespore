@@ -1,15 +1,23 @@
+[workspace]
+resolver = "2"
+members = [".", "tools/common", "tools/installer", "tools/updater"]
+
 [package]
 name = "spacespore"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
 
 [dependencies]
+spacespore-common = { path = "tools/common" }
 bevy = "0.15"
 noise = "0.9"
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "5"
+chrono = "0.4"
+ureq = { version = "3", features = ["native-tls"], default-features = false }
+zip = "2"
 
 [profile.dev]
 opt-level = 1

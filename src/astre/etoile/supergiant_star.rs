@@ -1,5 +1,6 @@
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
+use crate::astre::{AstreLodRoot, ReloadAstre};
 
 #[derive(Clone,Debug,PartialEq)]
 pub enum SupergiantClass { RedA, RedB, BlueA, BlueB, YellowHypergiant }
@@ -38,16 +39,38 @@ impl SupergiantConfig {
     pub fn lbv(seed:u32,pos:Vec3)->Self{Self{position:pos,class:SupergiantClass::YellowHypergiant,radius:550.0,voxel_size:26.0,color_core:[1.0,0.9,0.4],color_surface:[0.9,0.75,0.25],emissive:14.0,ejecta_radius:2500.0,bipolar_nebula:true,nebula_count:300,nebula_voxel:20.0,nebula_length:2000.0,nebula_color:[0.7,0.6,0.9],nebula_emissive:4.0,seed,..Default::default()}}
 }
 
+pub const SPAWN_PROPS: crate::system_gen::SpawnProps = crate::system_gen::SpawnProps {
+    category:  crate::system_gen::AstreCategory::Star,
+    weight:    0.06,
+    orbit_min: 0.0,
+    orbit_max: 0.0,
+};
+
+pub fn generate_random(rng: &mut crate::system_gen::SeedRng, stars: &mut Vec<SupergiantConfig>) {
+    let seed = rng.u32();
+    let roll = rng.f32();
+    let config = if roll < 0.50 {
+        SupergiantConfig { position: Vec3::ZERO, seed, ..Default::default() }
+    } else if roll < 0.80 {
+        SupergiantConfig::blue(seed, Vec3::ZERO)
+    } else {
+        SupergiantConfig::lbv(seed, Vec3::ZERO)
+    };
+    stars.push(config);
+}
+
 pub struct SupergiantPlugin;
 impl Plugin for SupergiantPlugin {
     fn build(&self,app:&mut App){
         app.init_resource::<SupergiantRes>().add_event::<RegenerateSupergiant>()
            .add_systems(Startup,spawn_supergiants)
-           .add_systems(Update,(orbit_sg,animate_sg_body,animate_sg_convection,animate_sg_wind,animate_sg_ejecta,animate_sg_corona,animate_bipolar_nebula,regenerate_sg).chain());
+           .add_systems(Update,(orbit_sg,animate_sg_body,animate_sg_convection,animate_sg_wind,animate_sg_ejecta,animate_sg_corona,animate_bipolar_nebula,regenerate_sg,reload_sg).chain());
     }
 }
 #[derive(Resource)] pub struct SupergiantRes{pub stars:Vec<SupergiantConfig>}
-impl Default for SupergiantRes{fn default()->Self{Self{stars:vec![SupergiantConfig::default()]}}}
+impl Default for SupergiantRes{fn default()->Self{Self{stars:vec![
+    SupergiantConfig{position:Vec3::new(0.0,0.0,12000.0),..Default::default()},
+]}}}
 #[derive(Event)] pub struct RegenerateSupergiant;
 #[derive(Component)] pub struct SgRoot    {pub idx:usize}
 #[derive(Component)] pub struct SgBody    {pub idx:usize}
@@ -67,7 +90,7 @@ fn spawn_supergiants(mut cmd:Commands,res:Res<SupergiantRes>,mut msh:ResMut<Asse
 }
 fn build_sg(cmd:&mut Commands,cfg:&SupergiantConfig,idx:usize,msh:&mut ResMut<Assets<Mesh>>,mat:&mut ResMut<Assets<StandardMaterial>>){
     let pos=if cfg.orbit_distance>1.0{Vec3::new(cfg.orbit_distance,0.0,0.0)}else{cfg.position};
-    let root=cmd.spawn((Transform::from_translation(pos),Visibility::default(),SgRoot{idx})).id();
+    let root=cmd.spawn((Transform::from_translation(pos),Visibility::default(),SgRoot{idx},AstreLodRoot{cull_dist:15000.0, radius: cfg.radius, streamable: true, label: "Supergiant"})).id();
     let body=cmd.spawn((Transform::IDENTITY,Visibility::default(),SgBody{idx})).id();
     cmd.entity(root).add_child(body);
     let vs=cfg.voxel_size; let rs=cfg.resolution;
@@ -158,4 +181,21 @@ fn animate_sg_wind(time:Res<Time>,res:Res<SupergiantRes>,mut q:Query<(&SgWind,&m
 fn animate_sg_ejecta(time:Res<Time>,res:Res<SupergiantRes>,mut q:Query<(&SgEjecta,&mut Transform,&mut Visibility)>){let t=time.elapsed_secs();for (ev,mut tf,mut vis) in &mut q{let Some(cfg)=res.stars.get(ev.idx) else{*vis=Visibility::Hidden;continue;};if !cfg.ejecta_enabled{*vis=Visibility::Hidden;continue;}let local_t=((t*cfg.wind_speed*0.5/cfg.ejecta_radius+ev.t)%1.0).max(0.0);let dist=cfg.radius+local_t*cfg.ejecta_radius;let jit=Vec3::new((t*0.1+ev.seed*6.0).sin(),(t*0.12+ev.seed*4.0).cos(),(t*0.11+ev.seed*8.0).sin())*dist*0.04;tf.translation=snap(ev.dir*dist+jit,cfg.ejecta_voxel);let fade=(1.0-local_t*0.85).max(0.02);let pulse=0.6+(t*0.6+ev.seed*std::f32::consts::TAU).sin().abs()*0.5;tf.scale=Vec3::splat(fade*pulse);*vis=Visibility::Visible;}}
 fn animate_sg_corona(time:Res<Time>,res:Res<SupergiantRes>,mut q:Query<(&SgCorona,&mut Transform)>){let t=time.elapsed_secs();for (cv,mut tf) in &mut q{let Some(cfg)=res.stars.get(cv.idx) else{continue;};let pulse=1.0+(t*0.6+cv.seed*std::f32::consts::TAU).sin()*0.22;let r=cv.r*pulse;let th=cv.theta+t*0.03;tf.translation=snap(Vec3::new(r*cv.phi.sin()*th.cos(),r*cv.phi.cos(),r*cv.phi.sin()*th.sin()),cfg.corona_voxel);let life=1.0-((r-cfg.radius)/cfg.corona_radius.max(1.0)).clamp(0.0,1.0);tf.scale=Vec3::splat((0.3+life*0.9).max(0.02));}}
 fn animate_bipolar_nebula(time:Res<Time>,res:Res<SupergiantRes>,mut q:Query<(&SgNebula,&mut Transform,&mut Visibility)>){let t=time.elapsed_secs();for (nv,mut tf,mut vis) in &mut q{let Some(cfg)=res.stars.get(nv.idx) else{*vis=Visibility::Hidden;continue;};if !cfg.bipolar_nebula{*vis=Visibility::Hidden;continue;}let local_t=((t*0.2+nv.t)%1.0).max(0.0);let cone=local_t*cfg.nebula_length;let cw=local_t*cfg.corona_radius*0.8;let pa=nv.perp*std::f32::consts::TAU+t*0.15;tf.translation=snap(Vec3::new(pa.cos()*cw,nv.pole*(cfg.radius+cone),pa.sin()*cw),cfg.nebula_voxel);let fade=(1.0-local_t*0.8).max(0.02);let pulse=0.5+(t*0.8+nv.seed*5.0).sin().abs()*0.6;tf.scale=Vec3::splat(fade*pulse);*vis=Visibility::Visible;}}
+fn reload_sg(
+    mut cmd: Commands,
+    mut events: EventReader<ReloadAstre>,
+    res: Res<SupergiantRes>,
+    roots: Query<(Entity, &SgRoot)>,
+    mut msh: ResMut<Assets<Mesh>>,
+    mut mat: ResMut<Assets<StandardMaterial>>,
+) {
+    for ev in events.read() {
+        let Ok((entity, root)) = roots.get(ev.0) else { continue };
+        let idx = root.idx;
+        let Some(cfg) = res.stars.get(idx) else { continue };
+        cmd.entity(entity).despawn_recursive();
+        build_sg(&mut cmd, cfg, idx, &mut msh, &mut mat);
+    }
+}
+
 fn regenerate_sg(mut cmd:Commands,mut ev:EventReader<RegenerateSupergiant>,res:Res<SupergiantRes>,rq:Query<Entity,With<SgRoot>>,mut msh:ResMut<Assets<Mesh>>,mut mat:ResMut<Assets<StandardMaterial>>){let mut f=false;for _ in ev.read(){f=true;}if !f{return;}for e in &rq{cmd.entity(e).despawn_recursive();}for (i,cfg) in res.stars.iter().enumerate(){build_sg(&mut cmd,cfg,i,&mut msh,&mut mat);}}

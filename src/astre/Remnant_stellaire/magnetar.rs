@@ -1,5 +1,6 @@
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
+use crate::astre::{AstreLodRoot, ReloadAstre};
 
 // ─────────────────────────────────────────────
 //  Config
@@ -153,6 +154,7 @@ impl Plugin for MagnetarPlugin {
                 apply_magnetic_field,
                 animate_crust_quakes,
                 regenerate_magnetars,
+                reload_magnetars,
             ).chain());
     }
 }
@@ -168,7 +170,7 @@ pub struct MagnetarRes {
 
 impl Default for MagnetarRes {
     fn default() -> Self {
-        Self { magnetars: vec![MagnetarConfig::default()] }
+        Self { magnetars: vec![MagnetarConfig { position: Vec3::new(-2000.0, 0.0, -5000.0), ..Default::default() }] }
     }
 }
 
@@ -383,6 +385,7 @@ fn build_magnetar(
         Transform::from_translation(init_pos),
         Visibility::default(),
         MagnetarRoot { idx },
+        AstreLodRoot { cull_dist: 5000.0, radius: cfg.radius, streamable: true, label: "Magnetar" },
         MagnetarTimer { idx, time_since_sgr: 0.0, sgr_active: false, sgr_elapsed: 0.0 },
     )).id();
 
@@ -918,6 +921,23 @@ fn apply_magnetic_field(
 // ─────────────────────────────────────────────
 //  Régénération à chaud
 // ─────────────────────────────────────────────
+
+fn reload_magnetars(
+    mut commands:  Commands,
+    mut events:    EventReader<ReloadAstre>,
+    res:           Res<MagnetarRes>,
+    roots:         Query<(Entity, &MagnetarRoot)>,
+    mut meshes:    ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for ev in events.read() {
+        let Ok((entity, root)) = roots.get(ev.0) else { continue };
+        let idx = root.idx;
+        let Some(cfg) = res.magnetars.get(idx) else { continue };
+        commands.entity(entity).despawn_recursive();
+        build_magnetar(&mut commands, cfg, idx, &mut meshes, &mut materials);
+    }
+}
 
 fn regenerate_magnetars(
     mut commands:  Commands,

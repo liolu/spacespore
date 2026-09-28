@@ -1,5 +1,6 @@
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
+use crate::astre::{AstreLodRoot, ReloadAstre};
 
 #[derive(Clone,Debug,PartialEq)]
 pub enum GiantType { Red, Orange, Blue, AGB }  // AGB = géante asymptotique (pré-nébuleuse)
@@ -82,6 +83,26 @@ impl GiantStarConfig {
     pub fn blue(seed:u32,pos:Vec3)->Self{Self{position:pos,giant_type:GiantType::Blue,radius:250.0,voxel_size:16.0,color_core:[0.6,0.75,1.0],color_surface:[0.4,0.6,1.0],emissive:16.0,pulsation_enabled:false,convection_cells:40,wind_speed:40.0,wind_radius:1200.0,light_intensity:40_000_000.0,light_range:18000.0,seed,..Default::default()}}
 }
 
+pub const SPAWN_PROPS: crate::system_gen::SpawnProps = crate::system_gen::SpawnProps {
+    category:  crate::system_gen::AstreCategory::Star,
+    weight:    0.10,
+    orbit_min: 0.0,
+    orbit_max: 0.0,
+};
+
+pub fn generate_random(rng: &mut crate::system_gen::SeedRng, stars: &mut Vec<GiantStarConfig>) {
+    let seed = rng.u32();
+    let roll = rng.f32();
+    let config = if roll < 0.60 {
+        GiantStarConfig { position: Vec3::ZERO, seed, ..Default::default() }
+    } else if roll < 0.85 {
+        GiantStarConfig::blue(seed, Vec3::ZERO)
+    } else {
+        GiantStarConfig::agb(seed, Vec3::ZERO)
+    };
+    stars.push(config);
+}
+
 pub struct GiantStarPlugin;
 impl Plugin for GiantStarPlugin {
     fn build(&self,app:&mut App){
@@ -89,13 +110,15 @@ impl Plugin for GiantStarPlugin {
            .add_event::<RegenerateGiantStar>()
            .add_systems(Startup,spawn_giants)
            .add_systems(Update,(orbit_giants,animate_giant_pulse,animate_convection_giant,
-               animate_giant_wind,animate_giant_shell,animate_giant_corona,regenerate_giants).chain());
+               animate_giant_wind,animate_giant_shell,animate_giant_corona,regenerate_giants,reload_giants).chain());
     }
 }
 
 #[derive(Resource)]
 pub struct GiantStarRes{pub stars:Vec<GiantStarConfig>}
-impl Default for GiantStarRes{fn default()->Self{Self{stars:vec![GiantStarConfig::default()]}}}
+impl Default for GiantStarRes{fn default()->Self{Self{stars:vec![
+    GiantStarConfig{position:Vec3::new(0.0,0.0,9000.0),..Default::default()},
+]}}}
 #[derive(Event)] pub struct RegenerateGiantStar;
 
 #[derive(Component)] pub struct GiantRoot    {pub idx:usize}
@@ -115,7 +138,7 @@ fn spawn_giants(mut cmd:Commands,res:Res<GiantStarRes>,mut msh:ResMut<Assets<Mes
 }
 fn build_giant(cmd:&mut Commands,cfg:&GiantStarConfig,idx:usize,msh:&mut ResMut<Assets<Mesh>>,mat:&mut ResMut<Assets<StandardMaterial>>){
     let pos=if cfg.orbit_distance>1.0{Vec3::new(cfg.orbit_distance,0.0,0.0)}else{cfg.position};
-    let root=cmd.spawn((Transform::from_translation(pos),Visibility::default(),GiantRoot{idx})).id();
+    let root=cmd.spawn((Transform::from_translation(pos),Visibility::default(),GiantRoot{idx},AstreLodRoot{cull_dist:10000.0, radius: cfg.radius, streamable: true, label: "GiantStar"})).id();
     let body=cmd.spawn((Transform::IDENTITY,Visibility::default(),GiantBody{idx})).id();
     cmd.entity(root).add_child(body);
     let vs=cfg.voxel_size; let rs=cfg.resolution;
@@ -253,6 +276,23 @@ fn animate_giant_corona(time:Res<Time>,res:Res<GiantStarRes>,mut q:Query<(&Giant
         tf.scale=Vec3::splat((0.4+life*0.8).max(0.02));
     }
 }
+fn reload_giants(
+    mut cmd: Commands,
+    mut events: EventReader<ReloadAstre>,
+    res: Res<GiantStarRes>,
+    roots: Query<(Entity, &GiantRoot)>,
+    mut msh: ResMut<Assets<Mesh>>,
+    mut mat: ResMut<Assets<StandardMaterial>>,
+) {
+    for ev in events.read() {
+        let Ok((entity, root)) = roots.get(ev.0) else { continue };
+        let idx = root.idx;
+        let Some(cfg) = res.stars.get(idx) else { continue };
+        cmd.entity(entity).despawn_recursive();
+        build_giant(&mut cmd, cfg, idx, &mut msh, &mut mat);
+    }
+}
+
 fn regenerate_giants(mut cmd:Commands,mut ev:EventReader<RegenerateGiantStar>,res:Res<GiantStarRes>,rq:Query<Entity,With<GiantRoot>>,mut msh:ResMut<Assets<Mesh>>,mut mat:ResMut<Assets<StandardMaterial>>){
     let mut f=false;for _ in ev.read(){f=true;}if !f{return;}
     for e in &rq{cmd.entity(e).despawn_recursive();}

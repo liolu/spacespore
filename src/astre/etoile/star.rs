@@ -1,5 +1,6 @@
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
+use crate::astre::{AstreLodRoot, ReloadAstre};
 
 // ── Config ────────────────────────────────────────────────────────────────
 
@@ -74,6 +75,22 @@ impl Default for StarConfig {
 
 // ── Plugin ────────────────────────────────────────────────────────────────
 
+pub const SPAWN_PROPS: crate::system_gen::SpawnProps = crate::system_gen::SpawnProps {
+    category:  crate::system_gen::AstreCategory::Star,
+    weight:    0.15,
+    orbit_min: 0.0,
+    orbit_max: 0.0,
+};
+
+pub fn generate_random(rng: &mut crate::system_gen::SeedRng, stars: &mut Vec<StarConfig>) {
+    stars.push(StarConfig {
+        position: Vec3::ZERO,
+        orbit_distance: 0.0,
+        seed: rng.u32(),
+        ..Default::default()
+    });
+}
+
 pub struct StarPlugin;
 impl Plugin for StarPlugin {
     fn build(&self, app: &mut App) {
@@ -81,13 +98,15 @@ impl Plugin for StarPlugin {
            .add_event::<RegenerateStar>()
            .add_systems(Startup, spawn_stars)
            .add_systems(Update, (orbit_stars, spin_stars, animate_granules,
-               animate_corona, animate_flares, animate_sunspots, regenerate_stars).chain());
+               animate_corona, animate_flares, animate_sunspots, regenerate_stars, reload_stars).chain());
     }
 }
 
 #[derive(Resource)]
 pub struct StarRes { pub stars: Vec<StarConfig> }
-impl Default for StarRes { fn default() -> Self { Self { stars: vec![StarConfig::default()] } } }
+impl Default for StarRes { fn default() -> Self { Self { stars: vec![
+    StarConfig { position: Vec3::new(0.0, 0.0, 5000.0), seed: 7, ..Default::default() },
+] } } }
 
 #[derive(Event)] pub struct RegenerateStar;
 
@@ -114,7 +133,7 @@ fn spawn_stars(mut cmd: Commands, res: Res<StarRes>, mut msh: ResMut<Assets<Mesh
 
 fn build_star(cmd:&mut Commands,cfg:&StarConfig,idx:usize,msh:&mut ResMut<Assets<Mesh>>,mat:&mut ResMut<Assets<StandardMaterial>>) {
     let pos = if cfg.orbit_distance>1.0{Vec3::new(cfg.orbit_distance,0.0,0.0)}else{cfg.position};
-    let root=cmd.spawn((Transform::from_translation(pos),Visibility::default(),StarRoot{idx})).id();
+    let root=cmd.spawn((Transform::from_translation(pos),Visibility::default(),StarRoot{idx},AstreLodRoot{cull_dist:5000.0, radius: cfg.radius, streamable: true, label: "VoxelStar"})).id();
     let body=cmd.spawn((Transform::IDENTITY,Visibility::default(),StarBody{idx})).id();
     cmd.entity(root).add_child(body);
 
@@ -271,6 +290,25 @@ fn animate_flares(time:Res<Time>,res:Res<StarRes>,mut q:Query<(&StarFlare,&mut T
         let inv=1.0-frac; let pt=e*inv*inv+s*2.0*inv*frac+c*frac*frac;
         tf.translation=snap(pt,6.0); tf.scale=Vec3::splat((frac).max(0.05));
         *vis=Visibility::Visible;
+    }
+}
+
+fn reload_stars(
+    mut cmd: Commands,
+    mut events: EventReader<ReloadAstre>,
+    res: Res<StarRes>,
+    roots: Query<(Entity, &StarRoot)>,
+    flares: Query<(Entity, &StarFlare)>,
+    mut msh: ResMut<Assets<Mesh>>,
+    mut mat: ResMut<Assets<StandardMaterial>>,
+) {
+    for ev in events.read() {
+        let Ok((entity, root)) = roots.get(ev.0) else { continue };
+        let idx = root.idx;
+        let Some(cfg) = res.stars.get(idx) else { continue };
+        for (fe, fv) in &flares { if fv.idx == idx { cmd.entity(fe).despawn_recursive(); } }
+        cmd.entity(entity).despawn_recursive();
+        build_star(&mut cmd, cfg, idx, &mut msh, &mut mat);
     }
 }
 

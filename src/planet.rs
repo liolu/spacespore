@@ -2,13 +2,11 @@ use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
 use rand::Rng;
 
+use crate::kepler::{OrbitalElements, DEFAULT_MU};
 use crate::lod::{compute_lod_level, LodChunk, LodLevel};
 use crate::mesher::{build_celestial_chunk_mesh, build_chunk_mesh};
 use crate::settings::GameSettings;
-
-const ORBIT_SPEED: f32 = 0.03;
-const STAR_ORBIT_SPEED: f32 = 0.015;
-const MOON_ORBIT_SPEED: f32 = 0.08;
+use crate::astre::{AstreLodRoot, ReloadAstre};
 const STAR_DIVISIONS: usize = 4;
 const MOON_DIVISIONS: usize = 3;
 
@@ -20,7 +18,7 @@ impl Plugin for PlanetPlugin {
             .add_systems(Startup, generate_all)
             .add_systems(
                 Update,
-                (orbit_planets, orbit_stars, orbit_moons, orbit_asteroid_belts, update_flare_voxels, rotate_clouds, regenerate_all, update_lod, update_star_visibility),
+                (orbit_planets, orbit_stars, orbit_moons, orbit_asteroid_belts, update_flare_voxels, rotate_clouds, regenerate_all, update_lod, update_star_visibility, reload_stars, reload_planets, reload_moons, reload_asteroid_belts, cleanup_hidden_toplevel),
             );
     }
 }
@@ -64,6 +62,9 @@ pub struct FlareVoxel {
 
 #[derive(Component)]
 pub struct SystemOffset(pub Vec3);
+
+#[derive(Component)]
+pub struct SystemIdx(pub usize);
 
 #[derive(Component)]
 pub struct AsteroidBeltRoot;
@@ -157,31 +158,14 @@ fn generate_all(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let cam_pos = settings
-        .planets
-        .first()
-        .map(|p| Vec3::new(p.orbit_distance, 80.0, 200.0))
-        .unwrap_or(Vec3::new(450.0, 80.0, 200.0));
-
-    // Système legacy (system[0] = planets/stars du GameSettings racine)
-    spawn_all_bodies(
-        &mut commands,
-        &settings,
-        &mut meshes,
-        &mut materials,
-        cam_pos,
-    );
-
-    // Systèmes supplémentaires (à partir de l'index 1)
-    warn!("=== SYSTEMS COUNT: {} ===", settings.systems.len());
-    for (si, sys) in settings.systems.iter().skip(1).enumerate() {
+    for (si, sys) in settings.systems.iter().enumerate() {
         let center = sys.center();
-        warn!("=== SPAWNING SYSTEM {} '{}' at {:?} — stars:{} planets:{} ===", si+1, sys.name, center, sys.stars.len(), sys.planets.len());
         let sys_cam = center + Vec3::new(0.0, 80.0, 200.0);
         spawn_system_bodies(
             &mut commands,
             sys,
             &settings,
+            si,
             &mut meshes,
             &mut materials,
             sys_cam,
@@ -394,9 +378,9 @@ fn spawn_all_bodies(
             let perlin = Perlin::new(pcfg.seed + 500);
             let perlin2 = Perlin::new(pcfg.seed + 501);
 
-            let patch_count = 20 + (density * 30.0) as u32;
+            let patch_count = 40 + (density * 60.0) as u32;
             let patch_grid = 16_i32;
-            let cell = pcfg.radius * 0.03;
+            let cell = cloud_r * 0.04;
 
             for ci in 0..patch_count {
                 let seed_a = pseudo_hash(pcfg.seed as f32, ci as f32 * 3.7);
@@ -629,10 +613,13 @@ fn spawn_all_bodies(
                 Visibility::default(),
                 AsteroidBeltRoot,
                 AsteroidBeltId(i),
+                SystemIdx(0),
+                SystemOffset(Vec3::ZERO),
+                AstreLodRoot { cull_dist: 30000.0, radius: belt.distance, streamable: true, label: "AsteroidBelt" },
             ))
             .id();
 
-        for _ in 0..belt.count.min(300) {
+        for _ in 0..belt.count.min(500) {
             let angle = rng.gen::<f32>() * std::f32::consts::TAU;
             let dist_offset = (rng.gen::<f32>() - 0.5) * belt.width;
             let dist = belt.distance + dist_offset;
@@ -667,22 +654,27 @@ fn spawn_system_bodies(
     commands: &mut Commands,
     sys: &crate::settings::StarSystemConfig,
     settings: &GameSettings,
+    sys_idx: usize,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     cam_pos: Vec3,
     center: Vec3,
 ) {
-    let star_material = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        emissive: LinearRgba::new(12.0, 10.0, 3.0, 1.0),
-        unlit: true,
-        ..default()
-    });
-    let star_color_low: [f32; 4] = [0.85, 0.35, 0.05, 1.0];
-    let star_color_high: [f32; 4] = [1.0, 0.95, 0.55, 1.0];
-    let star_lod = LodLevel::Lod2;
+    let id_base = sys_idx * 1000;
+    let star_lod = LodLevel::Lod0;
 
     for (i, star_cfg) in sys.stars.iter().enumerate() {
+        let r = star_cfg.light_color_r;
+        let g = star_cfg.light_color_g;
+        let b = star_cfg.light_color_b;
+        let star_material = materials.add(StandardMaterial {
+            base_color: Color::srgb(r, g, b),
+            emissive: LinearRgba::new(r * 12.0, g * 10.0, b * 3.0, 1.0),
+            unlit: true,
+            ..default()
+        });
+        let star_color_low: [f32; 4] = [r * 0.85, g * 0.4, b * 0.15, 1.0];
+        let star_color_high: [f32; 4] = [r, g, b, 1.0];
         let pos = center + if star_cfg.orbit_distance > 1.0 {
             Vec3::new(star_cfg.orbit_distance, 0.0, 0.0)
         } else {
@@ -694,8 +686,10 @@ fn spawn_system_bodies(
                 Transform::from_translation(pos),
                 Visibility::default(),
                 StarRoot,
-                StarId(10000 + i),
+                StarId(id_base + i),
+                SystemIdx(sys_idx),
                 SystemOffset(center),
+                AstreLodRoot { cull_dist: 50000.0, radius: star_cfg.radius, streamable: true, label: "Star" },
             ))
             .id();
 
@@ -738,7 +732,7 @@ fn spawn_system_bodies(
         let r = star_cfg.light_color_r;
         let g = star_cfg.light_color_g;
         let b = star_cfg.light_color_b;
-        let intensity = star_cfg.intensity * 2_000_000.0 * (star_cfg.radius / 200.0).powi(2).max(0.1);
+        let intensity = star_cfg.intensity * 2_000_000.0 * 100.0;
         let light = commands
             .spawn((
                 PointLight {
@@ -754,6 +748,30 @@ fn spawn_system_bodies(
             ))
             .id();
         commands.entity(star_entity).add_child(light);
+
+        // Flare voxels
+        let voxel_size = 6.0;
+        let samples_per_flare = 64_u32;
+        let flare_material = materials.add(StandardMaterial {
+            base_color: Color::srgb(r * 1.0, g * 0.7, b * 0.4),
+            emissive: LinearRgba::new(r * 2.0, g * 1.2, b * 0.5, 1.0),
+            unlit: true,
+            ..default()
+        });
+        let flare_mesh = meshes.add(Mesh::from(Cuboid::new(voxel_size, voxel_size, voxel_size)));
+
+        for fi in 0..star_cfg.flare_count {
+            for si in 0..samples_per_flare {
+                commands.spawn((
+                    Mesh3d(flare_mesh.clone()),
+                    MeshMaterial3d(flare_material.clone()),
+                    Transform::from_translation(pos).with_scale(Vec3::ZERO),
+                    Visibility::default(),
+                    FlareVoxel { star_idx: id_base + i, flare_idx: fi, sample_idx: si },
+                    NotShadowCaster,
+                ));
+            }
+        }
     }
 
     let planet_material = materials.add(StandardMaterial {
@@ -772,8 +790,10 @@ fn spawn_system_bodies(
                 Transform::from_translation(planet_world_pos),
                 Visibility::default(),
                 PlanetRoot,
-                PlanetId(10000 + i),
+                PlanetId(id_base + i),
+                SystemIdx(sys_idx),
                 SystemOffset(center),
+                AstreLodRoot { cull_dist: 20000.0, radius: pcfg.radius, streamable: true, label: "Planet" },
             ))
             .id();
 
@@ -796,11 +816,190 @@ fn spawn_system_bodies(
                             Mesh3d(meshes.add(mesh)),
                             MeshMaterial3d(planet_material.clone()),
                             Transform::IDENTITY,
+                            PlanetChunk {
+                                face,
+                                grid_x: gx,
+                                grid_y: gy,
+                                current_lod: lod,
+                                planet_id: id_base + i,
+                            },
                             LodChunk,
                         ))
                         .id();
                     commands.entity(root).add_child(child);
                 }
+            }
+        }
+
+        // Atmosphere clouds
+        if pcfg.atmosphere {
+            let cloud_material = materials.add(StandardMaterial {
+                base_color: Color::srgb(0.95, 0.95, 0.97),
+                alpha_mode: AlphaMode::Opaque,
+                unlit: false,
+                perceptual_roughness: 1.0,
+                ..default()
+            });
+            let density = pcfg.cloud_density.clamp(0.1, 1.0);
+            let cloud_r = pcfg.radius + pcfg.terrain_height + pcfg.cloud_altitude;
+
+            use noise::{NoiseFn, Perlin};
+            let perlin = Perlin::new(pcfg.seed + 500);
+            let perlin2 = Perlin::new(pcfg.seed + 501);
+
+            let patch_count = 40 + (density * 60.0) as u32;
+            let patch_grid = 16_i32;
+            let cell = cloud_r * 0.04;
+
+            for ci in 0..patch_count {
+                let seed_a = pseudo_hash(pcfg.seed as f32, ci as f32 * 3.7);
+                let seed_b = pseudo_hash(pcfg.seed as f32, ci as f32 * 7.1);
+                let theta_c = seed_a * std::f32::consts::TAU;
+                let phi_c = (seed_b * 2.0 - 1.0).clamp(-1.0, 1.0).acos();
+
+                let center_dir = Vec3::new(
+                    theta_c.cos() * phi_c.sin(),
+                    phi_c.cos(),
+                    theta_c.sin() * phi_c.sin(),
+                ).normalize();
+
+                let up = if center_dir.y.abs() > 0.9 { Vec3::X } else { Vec3::Y };
+                let tangent_u = center_dir.cross(up).normalize();
+                let tangent_v = center_dir.cross(tangent_u).normalize();
+
+                let mut grid = vec![0_u32; (patch_grid * patch_grid) as usize];
+                let threshold = 0.1 - density as f64 * 0.15;
+
+                for gx in 0..patch_grid {
+                    for gz in 0..patch_grid {
+                        let lx = (gx as f32 - patch_grid as f32 * 0.5) * cell;
+                        let lz = (gz as f32 - patch_grid as f32 * 0.5) * cell;
+
+                        let world = center_dir * cloud_r + tangent_u * lx + tangent_v * lz;
+                        let wd = world.normalize();
+                        let nx = wd.x as f64;
+                        let ny = wd.y as f64;
+                        let nz = wd.z as f64;
+
+                        let n1 = perlin.get([nx * 4.0 + ci as f64 * 10.0, ny * 4.0, nz * 4.0]);
+                        let n2 = perlin2.get([nx * 8.0 + ci as f64 * 5.0, ny * 8.0, nz * 8.0]);
+                        let n = n1 * 0.65 + n2 * 0.35;
+
+                        let dx = (gx as f32 - patch_grid as f32 * 0.5).abs() / (patch_grid as f32 * 0.5);
+                        let dz = (gz as f32 - patch_grid as f32 * 0.5).abs() / (patch_grid as f32 * 0.5);
+                        let edge = 1.0 - (dx * dx + dz * dz).sqrt().min(1.0);
+
+                        if n > threshold && edge as f64 > 0.2 {
+                            let h = (1 + ((n - threshold) * 3.0) as u32).min(4);
+                            grid[(gx * patch_grid + gz) as usize] = h;
+                        }
+                    }
+                }
+
+                let mut positions: Vec<[f32; 3]> = Vec::new();
+                let mut normals: Vec<[f32; 3]> = Vec::new();
+                let mut indices: Vec<u32> = Vec::new();
+
+                let get_h = |x: i32, z: i32| -> u32 {
+                    if x < 0 || x >= patch_grid || z < 0 || z >= patch_grid { return 0; }
+                    grid[(x * patch_grid + z) as usize]
+                };
+
+                for gx in 0..patch_grid {
+                    for gz in 0..patch_grid {
+                        let h = get_h(gx, gz);
+                        if h == 0 { continue; }
+
+                        let x0 = (gx as f32 - patch_grid as f32 * 0.5) * cell;
+                        let z0 = (gz as f32 - patch_grid as f32 * 0.5) * cell;
+                        let x1 = x0 + cell;
+                        let z1 = z0 + cell;
+
+                        for y_layer in 0..h {
+                            let y0 = y_layer as f32 * cell * 0.5;
+                            let y1 = y0 + cell * 0.5;
+
+                            if y_layer == h - 1 {
+                                let vi = positions.len() as u32;
+                                positions.extend_from_slice(&[
+                                    [x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0],
+                                ]);
+                                normals.extend_from_slice(&[[0.0,1.0,0.0]; 4]);
+                                indices.extend_from_slice(&[vi, vi+1, vi+2, vi, vi+2, vi+3]);
+                            }
+
+                            if y_layer == 0 {
+                                let vi = positions.len() as u32;
+                                positions.extend_from_slice(&[
+                                    [x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1],
+                                ]);
+                                normals.extend_from_slice(&[[0.0,-1.0,0.0]; 4]);
+                                indices.extend_from_slice(&[vi, vi+1, vi+2, vi, vi+2, vi+3]);
+                            }
+
+                            if get_h(gx - 1, gz) <= y_layer {
+                                let vi = positions.len() as u32;
+                                positions.extend_from_slice(&[
+                                    [x0, y0, z0], [x0, y1, z0], [x0, y1, z1], [x0, y0, z1],
+                                ]);
+                                normals.extend_from_slice(&[[-1.0,0.0,0.0]; 4]);
+                                indices.extend_from_slice(&[vi, vi+1, vi+2, vi, vi+2, vi+3]);
+                            }
+
+                            if get_h(gx + 1, gz) <= y_layer {
+                                let vi = positions.len() as u32;
+                                positions.extend_from_slice(&[
+                                    [x1, y0, z1], [x1, y1, z1], [x1, y1, z0], [x1, y0, z0],
+                                ]);
+                                normals.extend_from_slice(&[[1.0,0.0,0.0]; 4]);
+                                indices.extend_from_slice(&[vi, vi+1, vi+2, vi, vi+2, vi+3]);
+                            }
+
+                            if get_h(gx, gz - 1) <= y_layer {
+                                let vi = positions.len() as u32;
+                                positions.extend_from_slice(&[
+                                    [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [x0, y0, z0],
+                                ]);
+                                normals.extend_from_slice(&[[0.0,0.0,-1.0]; 4]);
+                                indices.extend_from_slice(&[vi, vi+1, vi+2, vi, vi+2, vi+3]);
+                            }
+
+                            if get_h(gx, gz + 1) <= y_layer {
+                                let vi = positions.len() as u32;
+                                positions.extend_from_slice(&[
+                                    [x0, y0, z1], [x0, y1, z1], [x1, y1, z1], [x1, y0, z1],
+                                ]);
+                                normals.extend_from_slice(&[[0.0,0.0,1.0]; 4]);
+                                indices.extend_from_slice(&[vi, vi+1, vi+2, vi, vi+2, vi+3]);
+                            }
+                        }
+                    }
+                }
+
+                if positions.is_empty() { continue; }
+
+                let mut mesh = Mesh::new(
+                    bevy::render::mesh::PrimitiveTopology::TriangleList,
+                    bevy::render::render_asset::RenderAssetUsages::default(),
+                );
+                mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+                mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+                mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
+
+                let rotation = Quat::from_rotation_arc(Vec3::Y, center_dir);
+                let cloud_pos = planet_world_pos + center_dir * cloud_r;
+
+                commands.spawn((
+                    Mesh3d(meshes.add(mesh)),
+                    MeshMaterial3d(cloud_material.clone()),
+                    Transform::from_translation(cloud_pos).with_rotation(rotation),
+                    CloudVoxel {
+                        planet_idx: id_base + i,
+                        theta: theta_c,
+                        phi: phi_c,
+                        altitude: cloud_r,
+                    },
+                ));
             }
         }
 
@@ -811,8 +1010,10 @@ fn spawn_system_bodies(
                     Transform::from_translation(planet_world_pos + offset),
                     Visibility::default(),
                     MoonRoot,
-                    MoonId { planet_idx: 10000 + i, moon_idx: mi },
+                    MoonId { planet_idx: id_base + i, moon_idx: mi },
+                    SystemIdx(sys_idx),
                     SystemOffset(center),
+                    AstreLodRoot { cull_dist: 10000.0, radius: mcfg.radius, streamable: true, label: "Moon" },
                 ))
                 .id();
 
@@ -852,12 +1053,14 @@ fn spawn_system_bodies(
                 Transform::from_translation(center),
                 Visibility::default(),
                 AsteroidBeltRoot,
-                AsteroidBeltId(10000 + i),
+                AsteroidBeltId(id_base + i),
+                SystemIdx(sys_idx),
                 SystemOffset(center),
+                AstreLodRoot { cull_dist: 30000.0, radius: belt.distance, streamable: true, label: "AsteroidBelt" },
             ))
             .id();
 
-        for _ in 0..belt.count.min(300) {
+        for _ in 0..belt.count.min(500) {
             let angle = rng.gen::<f32>() * std::f32::consts::TAU;
             let dist_offset = (rng.gen::<f32>() - 0.5) * belt.width;
             let dist = belt.distance + dist_offset;
@@ -886,71 +1089,46 @@ fn spawn_system_bodies(
 fn orbit_planets(
     time: Res<Time>,
     settings: Res<GameSettings>,
-    mut planet_q: Query<(&mut Transform, &PlanetId, Option<&SystemOffset>), With<PlanetRoot>>,
+    mut planet_q: Query<(&mut Transform, &PlanetId, &SystemIdx), With<PlanetRoot>>,
 ) {
-    let n = settings.planets.len().max(1) as f32;
-    for (mut tf, pid, sys_off) in &mut planet_q {
-        let center = sys_off.map(|s| s.0).unwrap_or(Vec3::ZERO);
-        if pid.0 < 10000 {
-            if let Some(cfg) = settings.planets.get(pid.0) {
-                let angle = time.elapsed_secs() * ORBIT_SPEED
-                    + pid.0 as f32 * std::f32::consts::TAU / n;
-                tf.translation.x = center.x + angle.cos() * cfg.orbit_distance;
-                tf.translation.z = center.z + angle.sin() * cfg.orbit_distance;
-                tf.translation.y = center.y;
-            }
-        } else {
-            let local_idx = pid.0 - 10000;
-            for sys in settings.systems.iter().skip(1) {
-                if let Some(cfg) = sys.planets.get(local_idx) {
-                    let sc = sys.center();
-                    let pn = sys.planets.len().max(1) as f32;
-                    let angle = time.elapsed_secs() * ORBIT_SPEED
-                        + local_idx as f32 * std::f32::consts::TAU / pn;
-                    tf.translation.x = sc.x + angle.cos() * cfg.orbit_distance;
-                    tf.translation.z = sc.z + angle.sin() * cfg.orbit_distance;
-                    tf.translation.y = sc.y;
-                    break;
-                }
-            }
-        }
+    let t = time.elapsed_secs();
+    for (mut tf, pid, si) in &mut planet_q {
+        let Some(sys) = settings.systems.get(si.0) else { continue };
+        let local_idx = pid.0 - si.0 * 1000;
+        let Some(cfg) = sys.planets.get(local_idx) else { continue };
+        let sc = sys.center();
+        let elems = OrbitalElements {
+            a: cfg.orbit_distance,
+            e: cfg.eccentricity,
+            i: cfg.inclination,
+            omega_big: cfg.ascending_node,
+            omega: cfg.arg_periapsis,
+            m0: cfg.mean_anomaly_0,
+        };
+        let pos = elems.position(t, DEFAULT_MU);
+        tf.translation = sc + pos;
     }
 }
 
 fn orbit_stars(
     time: Res<Time>,
     settings: Res<GameSettings>,
-    mut star_q: Query<(&mut Transform, &StarId, Option<&SystemOffset>), With<StarRoot>>,
+    mut star_q: Query<(&mut Transform, &StarId, &SystemIdx), With<StarRoot>>,
 ) {
-    let n = settings.stars.len().max(1) as f32;
-    for (mut tf, sid, sys_off) in &mut star_q {
-        let center = sys_off.map(|s| s.0).unwrap_or(Vec3::ZERO);
-        if sid.0 < 10000 {
-            if let Some(cfg) = settings.stars.get(sid.0) {
-                if cfg.orbit_distance > 1.0 {
-                    let angle = time.elapsed_secs() * STAR_ORBIT_SPEED
-                        + sid.0 as f32 * std::f32::consts::TAU / n;
-                    tf.translation.x = center.x + angle.cos() * cfg.orbit_distance;
-                    tf.translation.z = center.z + angle.sin() * cfg.orbit_distance;
-                    tf.translation.y = center.y;
-                }
-            }
-        } else {
-            let local_idx = sid.0 - 10000;
-            for sys in settings.systems.iter().skip(1) {
-                if let Some(cfg) = sys.stars.get(local_idx) {
-                    if cfg.orbit_distance > 1.0 {
-                        let sc = sys.center();
-                        let sn = sys.stars.len().max(1) as f32;
-                        let angle = time.elapsed_secs() * STAR_ORBIT_SPEED
-                            + local_idx as f32 * std::f32::consts::TAU / sn;
-                        tf.translation.x = sc.x + angle.cos() * cfg.orbit_distance;
-                        tf.translation.z = sc.z + angle.sin() * cfg.orbit_distance;
-                        tf.translation.y = sc.y;
-                    }
-                    break;
-                }
-            }
+    let t = time.elapsed_secs();
+    for (mut tf, sid, si) in &mut star_q {
+        let Some(sys) = settings.systems.get(si.0) else { continue };
+        let local_idx = sid.0 - si.0 * 1000;
+        let Some(cfg) = sys.stars.get(local_idx) else { continue };
+        if cfg.orbit_distance > 1.0 {
+            let sc = sys.center();
+            let sn = sys.stars.len().max(1) as f32;
+            let elems = OrbitalElements::circular(
+                cfg.orbit_distance,
+                local_idx as f32 * std::f32::consts::TAU / sn,
+            );
+            let pos = elems.position(t, DEFAULT_MU);
+            tf.translation = sc + pos;
         }
     }
 }
@@ -959,32 +1137,33 @@ fn orbit_moons(
     time: Res<Time>,
     settings: Res<GameSettings>,
     planet_q: Query<(&GlobalTransform, &PlanetId), With<PlanetRoot>>,
-    mut moon_q: Query<(&mut Transform, &MoonId), With<MoonRoot>>,
+    mut moon_q: Query<(&mut Transform, &MoonId, &SystemIdx), With<MoonRoot>>,
 ) {
-    for (mut tf, mid) in &mut moon_q {
+    let t = time.elapsed_secs();
+    let moon_mu = DEFAULT_MU * 0.001;
+    for (mut tf, mid, si) in &mut moon_q {
         let planet_pos = planet_q
             .iter()
             .find(|(_, pid)| pid.0 == mid.planet_idx)
             .map(|(gt, _)| gt.translation())
             .unwrap_or_default();
 
-        let mcfg = if mid.planet_idx < 10000 {
-            settings.planets
-                .get(mid.planet_idx)
-                .and_then(|p| p.moons.get(mid.moon_idx))
-        } else {
-            let local_idx = mid.planet_idx - 10000;
-            settings.systems.iter().skip(1)
-                .find_map(|sys| sys.planets.get(local_idx))
-                .and_then(|p| p.moons.get(mid.moon_idx))
-        };
+        let local_planet = mid.planet_idx - si.0 * 1000;
+        let mcfg = settings.systems.get(si.0)
+            .and_then(|sys| sys.planets.get(local_planet))
+            .and_then(|p| p.moons.get(mid.moon_idx));
 
         if let Some(mcfg) = mcfg {
-            let angle = time.elapsed_secs() * MOON_ORBIT_SPEED
-                + mid.moon_idx as f32 * std::f32::consts::TAU / 4.0;
-            tf.translation.x = planet_pos.x + angle.cos() * mcfg.orbit_distance;
-            tf.translation.y = planet_pos.y;
-            tf.translation.z = planet_pos.z + angle.sin() * mcfg.orbit_distance;
+            let elems = OrbitalElements {
+                a: mcfg.orbit_distance,
+                e: mcfg.eccentricity,
+                i: mcfg.inclination,
+                omega_big: mcfg.ascending_node,
+                omega: mcfg.arg_periapsis,
+                m0: mcfg.mean_anomaly_0,
+            };
+            let pos = elems.position(t, moon_mu);
+            tf.translation = planet_pos + pos;
         }
     }
 }
@@ -1021,7 +1200,9 @@ fn update_flare_voxels(
     let cam_pos = cam_q.iter().next().map(|gt| gt.translation()).unwrap_or_default();
 
     for (fv, mut tf, mut vis) in &mut flare_q {
-        let Some(scfg) = settings.stars.get(fv.star_idx) else {
+        let sys_i = fv.star_idx / 1000;
+        let local_i = fv.star_idx % 1000;
+        let Some(scfg) = settings.systems.get(sys_i).and_then(|s| s.stars.get(local_i)) else {
             *vis = Visibility::Hidden;
             continue;
         };
@@ -1140,7 +1321,9 @@ fn rotate_clouds(
     let t = time.elapsed_secs();
 
     for (cloud, mut tf) in &mut cloud_q {
-        let Some(pcfg) = settings.planets.get(cloud.planet_idx) else {
+        let sys_i = cloud.planet_idx / 1000;
+        let local_i = cloud.planet_idx % 1000;
+        let Some(pcfg) = settings.systems.get(sys_i).and_then(|s| s.planets.get(local_i)) else {
             continue;
         };
 
@@ -1206,13 +1389,20 @@ fn regenerate_all(
     for entity in &belt_q {
         commands.entity(entity).despawn_recursive();
     }
-    spawn_all_bodies(
-        &mut commands,
-        &settings,
-        &mut meshes,
-        &mut materials,
-        cam_pos,
-    );
+    for (si, sys) in settings.systems.iter().enumerate() {
+        let center = sys.center();
+        let sys_cam = center + Vec3::new(0.0, 80.0, 200.0);
+        spawn_system_bodies(
+            &mut commands,
+            sys,
+            &settings,
+            si,
+            &mut meshes,
+            &mut materials,
+            sys_cam,
+            center,
+        );
+    }
 }
 
 const MAX_LOD_UPDATES_PER_FRAME: usize = 4;
@@ -1232,7 +1422,9 @@ fn update_lod(
             break;
         }
 
-        let Some(pcfg) = settings.planets.get(chunk.planet_id) else {
+        let sys_i = chunk.planet_id / 1000;
+        let local_i = chunk.planet_id % 1000;
+        let Some(pcfg) = settings.systems.get(sys_i).and_then(|s| s.planets.get(local_i)) else {
             continue;
         };
 
@@ -1274,32 +1466,452 @@ fn update_lod(
     }
 }
 
-const STAR_DETAIL_DIST: f32 = 5000.0;
+const STAR_DETAIL_DIST: f32 = 16000.0;
 
 fn update_star_visibility(
     camera_q: Query<&GlobalTransform, With<Camera3d>>,
-    star_q: Query<(&GlobalTransform, &Children, &StarId), With<StarRoot>>,
+    star_q: Query<(&GlobalTransform, &Children), With<StarRoot>>,
     mut chunk_vis_q: Query<&mut Visibility, (With<StarChunk>, Without<StarBeacon>)>,
-    mut beacon_vis_q: Query<&mut Visibility, (With<StarBeacon>, Without<StarChunk>)>,
-    mut frame: Local<u32>,
+    mut beacon_q: Query<(&mut Visibility, &mut Transform), (With<StarBeacon>, Without<StarChunk>)>,
 ) {
     let cam_pos = camera_q.single().translation();
-    *frame += 1;
 
-    for (star_gt, children, sid) in &star_q {
+    for (star_gt, children) in &star_q {
         let dist = cam_pos.distance(star_gt.translation());
         let far = dist > STAR_DETAIL_DIST;
-        if *frame % 300 == 1 {
-            warn!("Star id={} pos={:?} dist={:.0} far={} children={}", sid.0, star_gt.translation(), dist, far, children.len());
-        }
 
         for &child in children.iter() {
             if let Ok(mut vis) = chunk_vis_q.get_mut(child) {
                 *vis = if far { Visibility::Hidden } else { Visibility::Inherited };
             }
-            if let Ok(mut vis) = beacon_vis_q.get_mut(child) {
+            if let Ok((mut vis, mut tf)) = beacon_q.get_mut(child) {
                 *vis = if far { Visibility::Inherited } else { Visibility::Hidden };
+                if far {
+                    let scale_factor = (dist / STAR_DETAIL_DIST).clamp(1.0, 10.0);
+                    tf.scale = Vec3::splat(scale_factor);
+                } else {
+                    tf.scale = Vec3::ONE;
+                }
             }
+        }
+    }
+}
+
+fn cleanup_hidden_toplevel(
+    mut commands: Commands,
+    hidden_stars: Query<&StarId, With<crate::astre::AstreUnloaded>>,
+    hidden_planets: Query<&PlanetId, With<crate::astre::AstreUnloaded>>,
+    flare_q: Query<(Entity, &FlareVoxel)>,
+    cloud_q: Query<(Entity, &CloudVoxel)>,
+) {
+    for sid in &hidden_stars {
+        for (e, fv) in &flare_q {
+            if fv.star_idx == sid.0 {
+                commands.entity(e).despawn_recursive();
+            }
+        }
+    }
+    for pid in &hidden_planets {
+        for (e, cv) in &cloud_q {
+            if cv.planet_idx == pid.0 {
+                commands.entity(e).despawn_recursive();
+            }
+        }
+    }
+}
+
+fn reload_stars(
+    mut commands: Commands,
+    mut events: EventReader<ReloadAstre>,
+    settings: Res<GameSettings>,
+    roots: Query<(Entity, &StarId, &SystemIdx, &GlobalTransform), With<StarRoot>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for ev in events.read() {
+        let Ok((entity, sid, si, gt)) = roots.get(ev.0) else { continue };
+        let local_i = sid.0 % 1000;
+        let Some(sys) = settings.systems.get(si.0) else { continue };
+        let Some(star_cfg) = sys.stars.get(local_i) else { continue };
+
+        let r = star_cfg.light_color_r;
+        let g = star_cfg.light_color_g;
+        let b = star_cfg.light_color_b;
+        let star_material = materials.add(StandardMaterial {
+            base_color: Color::srgb(r, g, b),
+            emissive: LinearRgba::new(r * 12.0, g * 10.0, b * 3.0, 1.0),
+            unlit: true,
+            ..default()
+        });
+        let star_color_low: [f32; 4] = [r * 0.85, g * 0.4, b * 0.15, 1.0];
+        let star_color_high: [f32; 4] = [r, g, b, 1.0];
+        let star_lod = LodLevel::Lod0;
+
+        for face in CubeFace::all() {
+            for gx in 0..STAR_DIVISIONS {
+                for gy in 0..STAR_DIVISIONS {
+                    let mesh = build_celestial_chunk_mesh(
+                        face, gx, gy, STAR_DIVISIONS,
+                        star_cfg.radius, 5.0,
+                        99 + local_i as u32, 2.0,
+                        star_color_low, star_color_high, star_lod,
+                    );
+                    let child = commands.spawn((
+                        Mesh3d(meshes.add(mesh)),
+                        MeshMaterial3d(star_material.clone()),
+                        Transform::IDENTITY,
+                        NotShadowCaster,
+                        StarChunk,
+                    )).id();
+                    commands.entity(entity).add_child(child);
+                }
+            }
+        }
+
+        let beacon_radius = star_cfg.radius * 0.8;
+        let beacon = commands.spawn((
+            Mesh3d(meshes.add(Sphere::new(beacon_radius).mesh().ico(3).unwrap())),
+            MeshMaterial3d(star_material.clone()),
+            Transform::IDENTITY,
+            Visibility::Hidden,
+            NotShadowCaster,
+            StarBeacon,
+        )).id();
+        commands.entity(entity).add_child(beacon);
+
+        let intensity = star_cfg.intensity * 2_000_000.0 * 100.0;
+        let light = commands.spawn((
+            PointLight {
+                intensity,
+                range: star_cfg.light_range,
+                shadows_enabled: true,
+                shadow_depth_bias: 0.02,
+                shadow_normal_bias: 1.0,
+                color: Color::srgb(r, g, b),
+                ..default()
+            },
+            Transform::IDENTITY,
+        )).id();
+        commands.entity(entity).add_child(light);
+
+        let pos = gt.translation();
+        let flare_material = materials.add(StandardMaterial {
+            base_color: Color::srgb(r * 1.0, g * 0.7, b * 0.4),
+            emissive: LinearRgba::new(r * 2.0, g * 1.2, b * 0.5, 1.0),
+            unlit: true,
+            ..default()
+        });
+        let voxel_size = 6.0;
+        let flare_mesh = meshes.add(Mesh::from(Cuboid::new(voxel_size, voxel_size, voxel_size)));
+        let samples_per_flare = 64_u32;
+        for fi in 0..star_cfg.flare_count {
+            for si_f in 0..samples_per_flare {
+                commands.spawn((
+                    Mesh3d(flare_mesh.clone()),
+                    MeshMaterial3d(flare_material.clone()),
+                    Transform::from_translation(pos).with_scale(Vec3::ZERO),
+                    Visibility::default(),
+                    FlareVoxel { star_idx: sid.0, flare_idx: fi, sample_idx: si_f },
+                    NotShadowCaster,
+                ));
+            }
+        }
+    }
+}
+
+fn reload_planets(
+    mut commands: Commands,
+    mut events: EventReader<ReloadAstre>,
+    settings: Res<GameSettings>,
+    roots: Query<(Entity, &PlanetId, &SystemIdx, &GlobalTransform), With<PlanetRoot>>,
+    camera_q: Query<&Transform, With<Camera3d>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for ev in events.read() {
+        let Ok((entity, pid, si, gt)) = roots.get(ev.0) else { continue };
+        let local_i = pid.0 % 1000;
+        let Some(sys) = settings.systems.get(si.0) else { continue };
+        let Some(pcfg) = sys.planets.get(local_i) else { continue };
+
+        let planet_material = materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            perceptual_roughness: 0.9,
+            ..default()
+        });
+
+        let planet_world_pos = gt.translation();
+        let cam_pos = camera_q.single().translation;
+        let cam_local = cam_pos - planet_world_pos;
+        let divs = settings.planet_chunk_divisions;
+        let temp = pcfg.temperature();
+
+        for face in CubeFace::all() {
+            for gx in 0..divs {
+                for gy in 0..divs {
+                    let u = (gx as f32 + 0.5) / divs as f32;
+                    let v = (gy as f32 + 0.5) / divs as f32;
+                    let chunk_center = face.to_sphere_pos(u, v) * pcfg.radius;
+                    let lod = compute_lod_level(cam_local, chunk_center, pcfg.radius);
+
+                    let mesh = build_chunk_mesh(
+                        face, gx, gy, divs,
+                        pcfg.radius, pcfg.sea_level, pcfg.terrain_height,
+                        pcfg.seed, pcfg.noise_scale, pcfg.detail_scale, lod, temp,
+                    );
+                    let child = commands.spawn((
+                        Mesh3d(meshes.add(mesh)),
+                        MeshMaterial3d(planet_material.clone()),
+                        Transform::IDENTITY,
+                        PlanetChunk {
+                            face,
+                            grid_x: gx,
+                            grid_y: gy,
+                            current_lod: lod,
+                            planet_id: pid.0,
+                        },
+                        LodChunk,
+                    )).id();
+                    commands.entity(entity).add_child(child);
+                }
+            }
+        }
+
+        if pcfg.atmosphere {
+            let cloud_material = materials.add(StandardMaterial {
+                base_color: Color::srgb(0.95, 0.95, 0.97),
+                alpha_mode: AlphaMode::Opaque,
+                unlit: false,
+                perceptual_roughness: 1.0,
+                ..default()
+            });
+            let density = pcfg.cloud_density.clamp(0.1, 1.0);
+            let cloud_r = pcfg.radius + pcfg.terrain_height + pcfg.cloud_altitude;
+
+            use noise::{NoiseFn, Perlin};
+            let perlin = Perlin::new(pcfg.seed + 500);
+            let perlin2 = Perlin::new(pcfg.seed + 501);
+
+            let patch_count = 40 + (density * 60.0) as u32;
+            let patch_grid = 16_i32;
+            let cell = cloud_r * 0.04;
+
+            for ci in 0..patch_count {
+                let seed_a = pseudo_hash(pcfg.seed as f32, ci as f32 * 3.7);
+                let seed_b = pseudo_hash(pcfg.seed as f32, ci as f32 * 7.1);
+                let theta_c = seed_a * std::f32::consts::TAU;
+                let phi_c = (seed_b * 2.0 - 1.0).clamp(-1.0, 1.0).acos();
+
+                let center_dir = Vec3::new(
+                    theta_c.cos() * phi_c.sin(),
+                    phi_c.cos(),
+                    theta_c.sin() * phi_c.sin(),
+                ).normalize();
+
+                let up = if center_dir.y.abs() > 0.9 { Vec3::X } else { Vec3::Y };
+                let tangent_u = center_dir.cross(up).normalize();
+                let tangent_v = center_dir.cross(tangent_u).normalize();
+
+                let mut grid = vec![0_u32; (patch_grid * patch_grid) as usize];
+                let threshold = 0.1 - density as f64 * 0.15;
+
+                for gx in 0..patch_grid {
+                    for gz in 0..patch_grid {
+                        let lx = (gx as f32 - patch_grid as f32 * 0.5) * cell;
+                        let lz = (gz as f32 - patch_grid as f32 * 0.5) * cell;
+                        let world = center_dir * cloud_r + tangent_u * lx + tangent_v * lz;
+                        let wd = world.normalize();
+                        let nx = wd.x as f64;
+                        let ny = wd.y as f64;
+                        let nz = wd.z as f64;
+                        let n1 = perlin.get([nx * 4.0 + ci as f64 * 10.0, ny * 4.0, nz * 4.0]);
+                        let n2 = perlin2.get([nx * 8.0 + ci as f64 * 5.0, ny * 8.0, nz * 8.0]);
+                        let n = n1 * 0.65 + n2 * 0.35;
+                        let dx = (gx as f32 - patch_grid as f32 * 0.5).abs() / (patch_grid as f32 * 0.5);
+                        let dz = (gz as f32 - patch_grid as f32 * 0.5).abs() / (patch_grid as f32 * 0.5);
+                        let edge = 1.0 - (dx * dx + dz * dz).sqrt().min(1.0);
+                        if n > threshold && edge as f64 > 0.2 {
+                            let h = (1 + ((n - threshold) * 3.0) as u32).min(4);
+                            grid[(gx * patch_grid + gz) as usize] = h;
+                        }
+                    }
+                }
+
+                let get_h = |x: i32, z: i32| -> u32 {
+                    if x < 0 || x >= patch_grid || z < 0 || z >= patch_grid { return 0; }
+                    grid[(x * patch_grid + z) as usize]
+                };
+
+                let mut positions: Vec<[f32; 3]> = Vec::new();
+                let mut normals: Vec<[f32; 3]> = Vec::new();
+                let mut indices: Vec<u32> = Vec::new();
+
+                for gx in 0..patch_grid {
+                    for gz in 0..patch_grid {
+                        let h = get_h(gx, gz);
+                        if h == 0 { continue; }
+                        let x0 = (gx as f32 - patch_grid as f32 * 0.5) * cell;
+                        let z0 = (gz as f32 - patch_grid as f32 * 0.5) * cell;
+                        let x1 = x0 + cell;
+                        let z1 = z0 + cell;
+                        for y_layer in 0..h {
+                            let y0 = y_layer as f32 * cell * 0.5;
+                            let y1 = y0 + cell * 0.5;
+                            if y_layer == h - 1 {
+                                let vi = positions.len() as u32;
+                                positions.extend_from_slice(&[[x0,y1,z1],[x1,y1,z1],[x1,y1,z0],[x0,y1,z0]]);
+                                normals.extend_from_slice(&[[0.0,1.0,0.0];4]);
+                                indices.extend_from_slice(&[vi,vi+1,vi+2,vi,vi+2,vi+3]);
+                            }
+                            if y_layer == 0 {
+                                let vi = positions.len() as u32;
+                                positions.extend_from_slice(&[[x0,y0,z0],[x1,y0,z0],[x1,y0,z1],[x0,y0,z1]]);
+                                normals.extend_from_slice(&[[0.0,-1.0,0.0];4]);
+                                indices.extend_from_slice(&[vi,vi+1,vi+2,vi,vi+2,vi+3]);
+                            }
+                            if get_h(gx-1,gz) <= y_layer {
+                                let vi = positions.len() as u32;
+                                positions.extend_from_slice(&[[x0,y0,z0],[x0,y1,z0],[x0,y1,z1],[x0,y0,z1]]);
+                                normals.extend_from_slice(&[[-1.0,0.0,0.0];4]);
+                                indices.extend_from_slice(&[vi,vi+1,vi+2,vi,vi+2,vi+3]);
+                            }
+                            if get_h(gx+1,gz) <= y_layer {
+                                let vi = positions.len() as u32;
+                                positions.extend_from_slice(&[[x1,y0,z1],[x1,y1,z1],[x1,y1,z0],[x1,y0,z0]]);
+                                normals.extend_from_slice(&[[1.0,0.0,0.0];4]);
+                                indices.extend_from_slice(&[vi,vi+1,vi+2,vi,vi+2,vi+3]);
+                            }
+                            if get_h(gx,gz-1) <= y_layer {
+                                let vi = positions.len() as u32;
+                                positions.extend_from_slice(&[[x1,y0,z0],[x1,y1,z0],[x0,y1,z0],[x0,y0,z0]]);
+                                normals.extend_from_slice(&[[0.0,0.0,-1.0];4]);
+                                indices.extend_from_slice(&[vi,vi+1,vi+2,vi,vi+2,vi+3]);
+                            }
+                            if get_h(gx,gz+1) <= y_layer {
+                                let vi = positions.len() as u32;
+                                positions.extend_from_slice(&[[x0,y0,z1],[x0,y1,z1],[x1,y1,z1],[x1,y0,z1]]);
+                                normals.extend_from_slice(&[[0.0,0.0,1.0];4]);
+                                indices.extend_from_slice(&[vi,vi+1,vi+2,vi,vi+2,vi+3]);
+                            }
+                        }
+                    }
+                }
+
+                if positions.is_empty() { continue; }
+                let mut mesh = Mesh::new(
+                    bevy::render::mesh::PrimitiveTopology::TriangleList,
+                    bevy::render::render_asset::RenderAssetUsages::default(),
+                );
+                mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+                mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+                mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
+
+                let rotation = Quat::from_rotation_arc(Vec3::Y, center_dir);
+                let cloud_pos = planet_world_pos + center_dir * cloud_r;
+
+                commands.spawn((
+                    Mesh3d(meshes.add(mesh)),
+                    MeshMaterial3d(cloud_material.clone()),
+                    Transform::from_translation(cloud_pos).with_rotation(rotation),
+                    CloudVoxel {
+                        planet_idx: pid.0,
+                        theta: theta_c,
+                        phi: phi_c,
+                        altitude: cloud_r,
+                    },
+                ));
+            }
+        }
+    }
+}
+
+fn reload_moons(
+    mut commands: Commands,
+    mut events: EventReader<ReloadAstre>,
+    settings: Res<GameSettings>,
+    roots: Query<(Entity, &MoonId, &SystemIdx), With<MoonRoot>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for ev in events.read() {
+        let Ok((entity, mid, si)) = roots.get(ev.0) else { continue };
+        let local_planet = mid.planet_idx % 1000;
+        let Some(sys) = settings.systems.get(si.0) else { continue };
+        let Some(pcfg) = sys.planets.get(local_planet) else { continue };
+        let Some(mcfg) = pcfg.moons.get(mid.moon_idx) else { continue };
+
+        let planet_material = materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            perceptual_roughness: 0.9,
+            ..default()
+        });
+
+        for face in CubeFace::all() {
+            for gx in 0..MOON_DIVISIONS {
+                for gy in 0..MOON_DIVISIONS {
+                    let mesh = build_celestial_chunk_mesh(
+                        face, gx, gy, MOON_DIVISIONS,
+                        mcfg.radius, 2.0, mcfg.seed, 1.5,
+                        [0.45, 0.44, 0.42, 1.0], [0.7, 0.68, 0.65, 1.0],
+                        LodLevel::Lod2,
+                    );
+                    let child = commands.spawn((
+                        Mesh3d(meshes.add(mesh)),
+                        MeshMaterial3d(planet_material.clone()),
+                        Transform::IDENTITY,
+                    )).id();
+                    commands.entity(entity).add_child(child);
+                }
+            }
+        }
+    }
+}
+
+fn reload_asteroid_belts(
+    mut commands: Commands,
+    mut events: EventReader<ReloadAstre>,
+    settings: Res<GameSettings>,
+    roots: Query<(Entity, &AsteroidBeltId, &SystemIdx), With<AsteroidBeltRoot>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    use rand::Rng;
+
+    for ev in events.read() {
+        let Ok((entity, bid, si)) = roots.get(ev.0) else { continue };
+        let local_i = bid.0 % 1000;
+        let Some(sys) = settings.systems.get(si.0) else { continue };
+        let Some(belt) = sys.asteroid_belts.get(local_i) else { continue };
+
+        let asteroid_material = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.45, 0.42, 0.38),
+            perceptual_roughness: 0.95,
+            ..default()
+        });
+        let mut rng = rand::thread_rng();
+
+        for _ in 0..belt.count.min(500) {
+            let angle = rng.gen::<f32>() * std::f32::consts::TAU;
+            let dist_offset = (rng.gen::<f32>() - 0.5) * belt.width;
+            let dist = belt.distance + dist_offset;
+            let y_offset = (rng.gen::<f32>() - 0.5) * belt.width * 0.3;
+            let size = belt.min_size + rng.gen::<f32>() * (belt.max_size - belt.min_size);
+            let pos = Vec3::new(angle.cos() * dist, y_offset, angle.sin() * dist);
+            let rotation = Quat::from_euler(
+                EulerRot::XYZ,
+                rng.gen::<f32>() * std::f32::consts::TAU,
+                rng.gen::<f32>() * std::f32::consts::TAU,
+                rng.gen::<f32>() * std::f32::consts::TAU,
+            );
+            let mesh = Mesh::from(Cuboid::new(size, size * 0.7, size * 0.85));
+            let asteroid = commands
+                .spawn((
+                    Mesh3d(meshes.add(mesh)),
+                    MeshMaterial3d(asteroid_material.clone()),
+                    Transform::from_translation(pos).with_rotation(rotation),
+                ))
+                .id();
+            commands.entity(entity).add_child(asteroid);
         }
     }
 }

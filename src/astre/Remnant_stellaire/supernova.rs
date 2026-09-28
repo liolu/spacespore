@@ -1,5 +1,6 @@
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
+use crate::astre::{AstreLodRoot, ReloadAstre};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum SupernovaType { TypeIa, TypeII }
@@ -197,6 +198,7 @@ impl Plugin for SupernovaPlugin {
                 animate_remnant_core,
                 handle_trigger_explosion,
                 regenerate_supernovae,
+                reload_supernovae,
             ).chain());
     }
 }
@@ -205,7 +207,7 @@ impl Plugin for SupernovaPlugin {
 pub struct SupernovaRes { pub supernovae: Vec<SupernovaConfig> }
 impl Default for SupernovaRes {
     fn default() -> Self {
-        Self { supernovae: vec![SupernovaConfig::type_ii(42, Vec3::new(0.0, 0.0, -3000.0))] }
+        Self { supernovae: vec![SupernovaConfig::type_ii(42, Vec3::new(0.0, 0.0, -9000.0))] }
     }
 }
 
@@ -274,7 +276,7 @@ fn build_supernova(
     meshes: &mut ResMut<Assets<Mesh>>, materials: &mut ResMut<Assets<StandardMaterial>>,
 ) {
     let init_pos = if cfg.orbit_distance > 1.0 { Vec3::new(cfg.orbit_distance,0.0,0.0) } else { cfg.position };
-    let root = commands.spawn((Transform::from_translation(init_pos), Visibility::default(), SupernovaRoot{idx})).id();
+    let root = commands.spawn((Transform::from_translation(init_pos), Visibility::default(), SupernovaRoot{idx}, AstreLodRoot{cull_dist:10000.0, radius: cfg.blast_max_radius.max(cfg.progenitor_radius), streamable: true, label: "Supernova"})).id();
 
     // ── Progéniteur ───────────────────────────────────────────────────────
     {
@@ -659,6 +661,41 @@ fn animate_remnant_core(time:Res<Time>,res:Res<SupernovaRes>,state:Res<Supernova
         tf.rotation=Quat::from_rotation_y(t*4.5)*Quat::from_rotation_x(t*1.2);
         tf.scale=Vec3::splat(1.0+(t*6.0).sin()*0.15);
         *vis=Visibility::Visible;
+    }
+}
+
+fn reload_supernovae(
+    mut commands: Commands,
+    mut events: EventReader<ReloadAstre>,
+    res: Res<SupernovaRes>,
+    roots: Query<(Entity, &SupernovaRoot)>,
+    flash_q: Query<(Entity, &FlashVoxel)>,
+    fireball_q: Query<(Entity, &FireballVoxel)>,
+    jet_q: Query<(Entity, &SnovaJetVoxel)>,
+    blast_q: Query<(Entity, &BlastWaveVoxel)>,
+    echo_q: Query<(Entity, &LightEchoVoxel)>,
+    ion_q: Query<(Entity, &IonizationVoxel)>,
+    snr_q: Query<(Entity, &SnrVoxel)>,
+    fil_q: Query<(Entity, &SnrFilament)>,
+    core_q: Query<(Entity, &RemnantCore)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for ev in events.read() {
+        let Ok((entity, root)) = roots.get(ev.0) else { continue };
+        let idx = root.idx;
+        let Some(cfg) = res.supernovae.get(idx) else { continue };
+        for (e, v) in &flash_q { if v.idx == idx { commands.entity(e).despawn_recursive(); } }
+        for (e, v) in &fireball_q { if v.idx == idx { commands.entity(e).despawn_recursive(); } }
+        for (e, v) in &jet_q { if v.idx == idx { commands.entity(e).despawn_recursive(); } }
+        for (e, v) in &blast_q { if v.idx == idx { commands.entity(e).despawn_recursive(); } }
+        for (e, v) in &echo_q { if v.idx == idx { commands.entity(e).despawn_recursive(); } }
+        for (e, v) in &ion_q { if v.idx == idx { commands.entity(e).despawn_recursive(); } }
+        for (e, v) in &snr_q { if v.idx == idx { commands.entity(e).despawn_recursive(); } }
+        for (e, v) in &fil_q { if v.idx == idx { commands.entity(e).despawn_recursive(); } }
+        for (e, v) in &core_q { if v.idx == idx { commands.entity(e).despawn_recursive(); } }
+        commands.entity(entity).despawn_recursive();
+        build_supernova(&mut commands, cfg, idx, &mut meshes, &mut materials);
     }
 }
 

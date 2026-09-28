@@ -7,7 +7,7 @@ echo    SpaceSpore - Voxel Planet Launcher
 echo ========================================
 if not exist "target\release\spacespore.exe" (
     echo Compilation initiale en cours...
-    cargo build --release 2>&1
+    cargo build --release -p spacespore 2>&1
     if %errorlevel% neq 0 (
         echo.
         echo [ERREUR] La compilation a echoue.

@@ -1,2 +1,28 @@
-/target
+# Build
+/target/
+
+# Archives & backups
 *.rar
+*.zip
+/archive/
+/save/
+
+# Logs
+/logs/
+
+# Documentation sensible (clés API, vidéos, notes perso)
+/doc info/
+/data info/
+
+# IDE
+/.idea/
+/.vscode/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Rust
+**/*.rs.bk
+*.env

@@ -1,5 +1,6 @@
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
+use crate::astre::{AstreLodRoot, ReloadAstre};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum DwarfType {
@@ -141,6 +142,34 @@ impl DwarfStarConfig {
     }
 }
 
+pub const SPAWN_PROPS: crate::system_gen::SpawnProps = crate::system_gen::SpawnProps {
+    category:  crate::system_gen::AstreCategory::Star,
+    weight:    0.25,
+    orbit_min: 0.0,
+    orbit_max: 0.0,
+};
+
+pub fn generate_random(rng: &mut crate::system_gen::SeedRng, stars: &mut Vec<DwarfStarConfig>) {
+    let seed = rng.u32();
+    let roll = rng.f32();
+    let config = if roll < 0.45 {
+        DwarfStarConfig::red(seed, Vec3::ZERO)
+    } else if roll < 0.70 {
+        DwarfStarConfig {
+            position: Vec3::ZERO,
+            orbit_distance: 0.0,
+            dwarf_type: DwarfType::Orange,
+            radius: 65.0, voxel_size: 7.0, resolution: 18,
+            color_core: [1.0, 0.7, 0.25], color_surface: [0.9, 0.5, 0.15],
+            emissive: 6.5, light_intensity: 1_500_000.0, light_range: 4500.0,
+            seed, ..DwarfStarConfig::red(seed, Vec3::ZERO)
+        }
+    } else {
+        DwarfStarConfig::yellow(seed, Vec3::ZERO)
+    };
+    stars.push(config);
+}
+
 pub struct DwarfStarPlugin;
 impl Plugin for DwarfStarPlugin {
     fn build(&self, app: &mut App) {
@@ -150,13 +179,18 @@ impl Plugin for DwarfStarPlugin {
            .add_systems(Startup, spawn_dwarfs)
            .add_systems(Update, (orbit_dwarfs, spin_dwarfs, tick_cooling_dwarf,
                animate_dwarf_surface, animate_magneto, animate_xflares,
-               animate_dwarf_atmosphere, regenerate_dwarfs).chain());
+               animate_dwarf_atmosphere, regenerate_dwarfs, reload_dwarfs).chain());
     }
 }
 
 #[derive(Resource)]
 pub struct DwarfStarRes { pub stars: Vec<DwarfStarConfig> }
-impl Default for DwarfStarRes { fn default() -> Self { Self { stars: vec![DwarfStarConfig::red(5,Vec3::ZERO)] } } }
+impl Default for DwarfStarRes { fn default() -> Self { Self { stars: vec![
+    DwarfStarConfig::red(5, Vec3::new(2000.0, 0.0, 5000.0)),
+    DwarfStarConfig::yellow(6, Vec3::new(2000.0, 0.0, 6500.0)),
+    DwarfStarConfig::white(7, Vec3::new(2000.0, 0.0, 8000.0)),
+    DwarfStarConfig::brown(8, Vec3::new(2000.0, 0.0, 9500.0)),
+] } } }
 
 #[derive(Resource, Default)]
 pub struct DwarfStarState { pub ages: Vec<f32>, pub temps: Vec<f32>, pub spin_angles: Vec<f32> }
@@ -184,7 +218,7 @@ fn spawn_dwarfs(mut cmd:Commands,res:Res<DwarfStarRes>,mut state:ResMut<DwarfSta
 
 fn build_dwarf(cmd:&mut Commands,cfg:&DwarfStarConfig,idx:usize,msh:&mut ResMut<Assets<Mesh>>,mat:&mut ResMut<Assets<StandardMaterial>>) {
     let pos=if cfg.orbit_distance>1.0{Vec3::new(cfg.orbit_distance,0.0,0.0)}else{cfg.position};
-    let root=cmd.spawn((Transform::from_translation(pos),Visibility::default(),DwarfRoot{idx})).id();
+    let root=cmd.spawn((Transform::from_translation(pos),Visibility::default(),DwarfRoot{idx},AstreLodRoot{cull_dist:3000.0, radius: cfg.radius, streamable: true, label: "DwarfStar"})).id();
     let body=cmd.spawn((Transform::IDENTITY,Visibility::default(),DwarfBody{idx})).id();
     cmd.entity(root).add_child(body);
     // Surface
@@ -334,6 +368,25 @@ fn animate_dwarf_atmosphere(time:Res<Time>,res:Res<DwarfStarRes>,state:Res<Dwarf
         let s=(0.3+temp*0.8)*(0.5+(t*1.1+av.seed*7.0).sin().abs()*0.5); tf.scale=Vec3::splat(s.max(0.02));
     }
 }
+fn reload_dwarfs(
+    mut cmd: Commands,
+    mut events: EventReader<ReloadAstre>,
+    res: Res<DwarfStarRes>,
+    roots: Query<(Entity, &DwarfRoot)>,
+    xflares: Query<(Entity, &DwarfXFlare)>,
+    mut msh: ResMut<Assets<Mesh>>,
+    mut mat: ResMut<Assets<StandardMaterial>>,
+) {
+    for ev in events.read() {
+        let Ok((entity, root)) = roots.get(ev.0) else { continue };
+        let idx = root.idx;
+        let Some(cfg) = res.stars.get(idx) else { continue };
+        for (fe, fv) in &xflares { if fv.idx == idx { cmd.entity(fe).despawn_recursive(); } }
+        cmd.entity(entity).despawn_recursive();
+        build_dwarf(&mut cmd, cfg, idx, &mut msh, &mut mat);
+    }
+}
+
 fn regenerate_dwarfs(mut cmd:Commands,mut ev:EventReader<RegenerateDwarfStar>,res:Res<DwarfStarRes>,mut state:ResMut<DwarfStarState>,rq:Query<Entity,With<DwarfRoot>>,mut msh:ResMut<Assets<Mesh>>,mut mat:ResMut<Assets<StandardMaterial>>) {
     let mut f=false;for _ in ev.read(){f=true;}if !f{return;}
     for e in &rq{cmd.entity(e).despawn_recursive();}

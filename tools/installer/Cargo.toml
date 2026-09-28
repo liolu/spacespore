@@ -1,0 +1,13 @@
+[package]
+name = "spacespore-installer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+spacespore-common = { path = "../common" }
+ureq = { version = "3", features = ["native-tls"], default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+zip = "2"
+mslnk = "0.1"
+dirs = "5"

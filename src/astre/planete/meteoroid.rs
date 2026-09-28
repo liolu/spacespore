@@ -1,5 +1,6 @@
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
+use crate::astre::{AstreLodRoot, ReloadAstre};
 
 // ─────────────────────────────────────────────
 //  Types de composition
@@ -363,6 +364,7 @@ impl Plugin for MeteoroidPlugin {
                 animate_fragments,
                 animate_explosion,
                 regenerate_meteoroids,
+                reload_meteoroids,
             ).chain());
     }
 }
@@ -380,12 +382,12 @@ impl Default for MeteoroidRes {
     fn default() -> Self {
         Self {
             meteoroids: vec![
-                MeteoroidConfig::rocky(11, 40.0, Vec3::new(500.0, 20.0, 0.0)),
-                MeteoroidConfig::icy(22, 28.0, Vec3::new(-400.0, 0.0, 200.0)),
-                MeteoroidConfig::metallic(33, 25.0, Vec3::new(0.0, 100.0, 600.0)),
-                MeteoroidConfig::carbonaceous(44, 35.0, Vec3::new(300.0, -50.0, -300.0)),
-                MeteoroidConfig::StonyIron(55, 32.0, Vec3::new(-600.0, 30.0, 100.0)),
-                MeteoroidConfig::IcyRocky(66, 22.0, Vec3::new(100.0, 200.0, -500.0)),
+                MeteoroidConfig::rocky(11, 40.0, Vec3::new(3000.0, 20.0, 3000.0)),
+                MeteoroidConfig::icy(22, 28.0, Vec3::new(3600.0, 0.0, 3500.0)),
+                MeteoroidConfig::metallic(33, 25.0, Vec3::new(2400.0, 100.0, 3800.0)),
+                MeteoroidConfig::carbonaceous(44, 35.0, Vec3::new(3300.0, -50.0, 2500.0)),
+                MeteoroidConfig::StonyIron(55, 32.0, Vec3::new(2700.0, 30.0, 4000.0)),
+                MeteoroidConfig::IcyRocky(66, 22.0, Vec3::new(3100.0, 200.0, 2800.0)),
             ],
         }
     }
@@ -682,6 +684,7 @@ fn build_meteoroid(
         Transform::from_translation(cfg.position),
         Visibility::default(),
         MeteoroidRoot { idx },
+        AstreLodRoot { cull_dist: 3000.0, radius: cfg.radius, streamable: true, label: "Meteoroid" },
         MeteoroidVelocity(cfg.velocity),
         MeteoroidTumble {
             spin:  cfg.spin,
@@ -858,6 +861,27 @@ fn build_meteoroid(
                 commands.entity(root).add_child(ov);
             }
         }
+    }
+}
+
+// ─────────────────────────────────────────────
+//  Reload (streaming)
+// ─────────────────────────────────────────────
+
+fn reload_meteoroids(
+    mut commands:  Commands,
+    mut events:    EventReader<ReloadAstre>,
+    res:           Res<MeteoroidRes>,
+    roots:         Query<(Entity, &MeteoroidRoot)>,
+    mut meshes:    ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for ev in events.read() {
+        let Ok((entity, root)) = roots.get(ev.0) else { continue };
+        let idx = root.idx;
+        let Some(cfg) = res.meteoroids.get(idx) else { continue };
+        commands.entity(entity).despawn_recursive();
+        build_meteoroid(&mut commands, cfg, idx, &mut meshes, &mut materials);
     }
 }
 

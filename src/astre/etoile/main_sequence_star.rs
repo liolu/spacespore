@@ -1,5 +1,6 @@
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
+use crate::astre::{AstreLodRoot, ReloadAstre};
 
 /// Classes spectrales O B A F G K M
 #[derive(Clone, Debug, PartialEq)]
@@ -102,6 +103,41 @@ impl Default for MainSequenceConfig {
     }
 }
 
+// ── Spawn descriptor (read by system_gen) ──────────────────────────────
+pub const SPAWN_PROPS: crate::system_gen::SpawnProps = crate::system_gen::SpawnProps {
+    category:  crate::system_gen::AstreCategory::Star,
+    weight:    0.40,
+    orbit_min: 0.0,
+    orbit_max: 0.0,
+};
+
+pub fn generate_random(rng: &mut crate::system_gen::SeedRng, stars: &mut Vec<MainSequenceConfig>) {
+    let class_roll = rng.f32();
+    let spectral = if class_roll < 0.45 {
+        SpectralClass::M
+    } else if class_roll < 0.65 {
+        SpectralClass::K
+    } else if class_roll < 0.80 {
+        SpectralClass::G
+    } else if class_roll < 0.90 {
+        SpectralClass::F
+    } else if class_roll < 0.95 {
+        SpectralClass::A
+    } else if class_roll < 0.98 {
+        SpectralClass::B
+    } else {
+        SpectralClass::O
+    };
+    stars.push(MainSequenceConfig {
+        position: Vec3::ZERO,
+        orbit_distance: 0.0,
+        spectral_class: spectral,
+        base_radius: rng.range_f32(80.0, 140.0),
+        seed: rng.u32(),
+        ..Default::default()
+    });
+}
+
 pub struct MainSequencePlugin;
 impl Plugin for MainSequencePlugin {
     fn build(&self, app: &mut App) {
@@ -110,13 +146,15 @@ impl Plugin for MainSequencePlugin {
            .add_systems(Startup, spawn_ms)
            .add_systems(Update, (orbit_ms, spin_ms, animate_ms_granules, animate_chromosphere,
                animate_corona_ms, animate_convection_arcs, animate_solar_wind,
-               animate_sunspots_ms, regenerate_ms).chain());
+               animate_sunspots_ms, regenerate_ms, reload_ms).chain());
     }
 }
 
 #[derive(Resource)]
 pub struct MainSequenceRes { pub stars: Vec<MainSequenceConfig> }
-impl Default for MainSequenceRes { fn default() -> Self { Self { stars: vec![MainSequenceConfig::default()] } } }
+impl Default for MainSequenceRes { fn default() -> Self { Self { stars: vec![
+    MainSequenceConfig { position: Vec3::new(-2000.0, 0.0, 5000.0), ..Default::default() },
+] } } }
 #[derive(Event)] pub struct RegenerateMainSequence;
 
 #[derive(Component)] pub struct MsRoot      { pub idx: usize }
@@ -140,7 +178,7 @@ fn spawn_ms(mut cmd:Commands,res:Res<MainSequenceRes>,mut msh:ResMut<Assets<Mesh
 
 fn build_ms(cmd:&mut Commands,cfg:&MainSequenceConfig,idx:usize,msh:&mut ResMut<Assets<Mesh>>,mat:&mut ResMut<Assets<StandardMaterial>>) {
     let pos=if cfg.orbit_distance>1.0{Vec3::new(cfg.orbit_distance,0.0,0.0)}else{cfg.position};
-    let root=cmd.spawn((Transform::from_translation(pos),Visibility::default(),MsRoot{idx})).id();
+    let root=cmd.spawn((Transform::from_translation(pos),Visibility::default(),MsRoot{idx},AstreLodRoot{cull_dist:6000.0, radius: cfg.base_radius * cfg.spectral_class.radius_factor(), streamable: true, label: "MainSequence"})).id();
     let body=cmd.spawn((Transform::IDENTITY,Visibility::default(),MsBody{idx})).id();
     cmd.entity(root).add_child(body);
     let r=cfg.base_radius*cfg.spectral_class.radius_factor();
@@ -330,6 +368,25 @@ fn animate_sunspots_ms(time:Res<Time>,res:Res<MainSequenceRes>,mut q:Query<(&MsS
         tf.scale=Vec3::splat(pulse);
     }
 }
+fn reload_ms(
+    mut cmd: Commands,
+    mut events: EventReader<ReloadAstre>,
+    res: Res<MainSequenceRes>,
+    roots: Query<(Entity, &MsRoot)>,
+    arcs: Query<(Entity, &MsArc)>,
+    mut msh: ResMut<Assets<Mesh>>,
+    mut mat: ResMut<Assets<StandardMaterial>>,
+) {
+    for ev in events.read() {
+        let Ok((entity, root)) = roots.get(ev.0) else { continue };
+        let idx = root.idx;
+        let Some(cfg) = res.stars.get(idx) else { continue };
+        for (ae, av) in &arcs { if av.idx == idx { cmd.entity(ae).despawn_recursive(); } }
+        cmd.entity(entity).despawn_recursive();
+        build_ms(&mut cmd, cfg, idx, &mut msh, &mut mat);
+    }
+}
+
 fn regenerate_ms(mut cmd:Commands,mut ev:EventReader<RegenerateMainSequence>,res:Res<MainSequenceRes>,rq:Query<Entity,With<MsRoot>>,mut msh:ResMut<Assets<Mesh>>,mut mat:ResMut<Assets<StandardMaterial>>) {
     let mut f=false;for _ in ev.read(){f=true;}if !f{return;}
     for e in &rq{cmd.entity(e).despawn_recursive();}

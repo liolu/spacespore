@@ -1,10 +1,13 @@
 mod astre;
+mod kepler;
 mod lod;
 mod mesher;
 mod planet;
 mod settings;
 mod ship;
+mod system_gen;
 mod ui;
+mod update_checker;
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::ecs::system::SystemParam;
@@ -17,6 +20,7 @@ use ship::{Ship, ShipMode, ShipPlugin};
 use ui::{CameraTarget, MenuState, TargetKind, UiPlugin};
 
 // ── Planètes ──────────────────────────────────────────────────────────────
+use astre::{astre_lod_cull, process_pending_reloads, profiling_snapshot, toggle_profiling, ProfilingLog, ReloadAstre};
 use astre::planete::gas_planet::{GasPlanetPlugin, GasPlanetRoot};
 use astre::planete::comet::{CometPlugin, CometRoot};
 use astre::planete::meteoroid::{MeteoroidPlugin, MeteoroidRoot};
@@ -145,6 +149,7 @@ pub struct TargetQueries<'w, 's> {
 
 fn main() {
     let settings = GameSettings::load();
+    let update_state = update_checker::spawn_update_check();
 
     App::new()
         .add_plugins(
@@ -161,6 +166,8 @@ fn main() {
         .add_plugins(FrameTimeDiagnosticsPlugin)
 
         .insert_resource(settings)
+        .insert_resource(update_state)
+        .add_plugins(update_checker::UpdateCheckerPlugin)
 
         // ── Planètes & corps ────────────────────────────────────────────
         .add_plugins(PlanetPlugin)
@@ -198,6 +205,18 @@ fn main() {
         // ── UI ──────────────────────────────────────────────────────────
         .add_plugins(UiPlugin)
 
+        .add_event::<ReloadAstre>()
+        .init_resource::<ProfilingLog>()
+
+        // ── PreStartup : seed generation then saved overrides ───────────
+        .add_systems(
+            PreStartup,
+            (
+                system_gen::populate_from_seed,
+                ui::load_saved_astres,
+            ).chain(),
+        )
+
         // ── Startup ─────────────────────────────────────────────────────
         .add_systems(
             Startup,
@@ -216,9 +235,14 @@ fn main() {
                 camera_controller,
                 update_sun_direction,
                 update_fps_display,
+                update_system_hud,
                 draw_light_indicator,
                 draw_orbits,
                 close_game_when_primary_window_closes,
+                toggle_profiling,
+                profiling_snapshot,
+                astre_lod_cull,
+                process_pending_reloads,
             ),
         )
 
@@ -275,18 +299,19 @@ fn setup_scene(
                 0.25,
                 0.35,
             ),
-            brightness: 60.0,
+            brightness: 300.0,
         },
     );
 
-    // Distance orbitale initiale
-    let orbit_dist = settings
-        .planets
-        .first()
+    // Distance orbitale initiale (système 0)
+    let sys0 = settings.systems.first();
+    let sys0_center = sys0.map(|s| s.center()).unwrap_or(Vec3::ZERO);
+    let orbit_dist = sys0
+        .and_then(|s| s.planets.first())
         .map(|p| p.orbit_distance)
         .unwrap_or(450.0);
 
-    let planet_start = Vec3::new(
+    let planet_start = sys0_center + Vec3::new(
         orbit_dist,
         0.0,
         0.0,
@@ -432,7 +457,9 @@ fn select_next_moon(
         TargetKind::Moon(planet_idx, moon_idx) => (planet_idx, Some(moon_idx)),
         _ => return,
     };
-    let Some(moons) = settings.planets.get(planet_idx).map(|planet| &planet.moons) else {
+    let sys_i = planet_idx / 1000;
+    let local_i = planet_idx % 1000;
+    let Some(moons) = settings.systems.get(sys_i).and_then(|s| s.planets.get(local_i)).map(|p| &p.moons) else {
         return;
     };
     if moons.is_empty() {
@@ -1046,6 +1073,9 @@ struct FpsText;
 #[derive(Component)]
 struct TempText;
 
+#[derive(Component)]
+struct SystemHudText;
+
 
 fn setup_fps_display(
     mut commands: Commands,
@@ -1116,6 +1146,26 @@ fn setup_fps_display(
                 TempText,
             ));
         });
+
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(12.0),
+            left: Val::Px(0.0),
+            right: Val::Px(0.0),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            row_gap: Val::Px(2.0),
+            ..default()
+        },
+    )).with_children(|p| {
+        p.spawn((
+            Text::new(""),
+            TextFont { font_size: 18.0, ..default() },
+            TextColor(Color::srgba(0.9, 0.85, 0.6, 0.9)),
+            SystemHudText,
+        ));
+    });
 }
 
 
@@ -1123,6 +1173,8 @@ fn update_fps_display(
     diagnostics: Res<DiagnosticsStore>,
     settings: Res<GameSettings>,
     camera_target: Res<CameraTarget>,
+    queries: TargetQueries,
+    cam_q: Query<&GlobalTransform, With<CameraController>>,
 
     mut fps_q:
         Query<
@@ -1142,7 +1194,15 @@ fn update_fps_display(
             ),
         >,
 ) {
-    // ── FPS ────────────────────────────────────────────────────────────
+    // ── FPS + distance ────────────────────────────────────────────────
+
+    let dist_str = if let Ok(cam_gt) = cam_q.get_single() {
+        let tp = resolve_target(&camera_target, &queries);
+        let d = cam_gt.translation().distance(tp);
+        format!("  Dist: {:.0}", d)
+    } else {
+        String::new()
+    };
 
     for mut text in &mut fps_q {
         if let Some(fps) =
@@ -1155,8 +1215,8 @@ fn update_fps_display(
             {
                 **text =
                     format!(
-                        "FPS: {:.0}",
-                        v,
+                        "FPS: {:.0}{}",
+                        v, dist_str,
                     );
             }
         }
@@ -1166,15 +1226,23 @@ fn update_fps_display(
 
     let temp: f32 =
         match camera_target.0 {
-            TargetKind::Planet(i) =>
-                settings
-                    .planets
-                    .get(i)
+            TargetKind::Planet(id) => {
+                let si = id / 1000;
+                let li = id % 1000;
+                settings.systems.get(si)
+                    .and_then(|s| s.planets.get(li))
                     .map(|p| p.temperature())
-                    .unwrap_or(15.0),
+                    .unwrap_or(15.0)
+            }
 
-            TargetKind::Star(_) =>
-                5_000.0,
+            TargetKind::Star(id) => {
+                let si = id / 1000;
+                let li = id % 1000;
+                settings.systems.get(si)
+                    .and_then(|s| s.stars.get(li))
+                    .map(|s| s.temperature())
+                    .unwrap_or(5_000.0)
+            }
 
             TargetKind::VoxelStar(_) =>
                 5_800.0,
@@ -1269,6 +1337,60 @@ fn temp_label(
     }
 }
 
+
+fn update_system_hud(
+    settings: Res<GameSettings>,
+    camera_target: Res<CameraTarget>,
+    mut hud_q: Query<&mut Text, With<SystemHudText>>,
+) {
+    let (sys_idx, body_label) = match camera_target.0 {
+        TargetKind::Star(id) => {
+            let si = id / 1000;
+            (Some(si), settings.systems.get(si).map(|s| s.name.clone()))
+        }
+        TargetKind::Planet(id) => {
+            let si = id / 1000;
+            let li = id % 1000;
+            let label = settings.systems.get(si).map(|s| format!("{} {}", s.name, li + 1));
+            (Some(si), label)
+        }
+        TargetKind::Moon(planet_id, moon_idx) => {
+            let si = planet_id / 1000;
+            let li = planet_id % 1000;
+            let label = settings.systems.get(si).map(|s| {
+                format!("{} {} lune {}", s.name, li + 1, moon_idx + 1)
+            });
+            (Some(si), label)
+        }
+        _ => (None, None),
+    };
+
+    let label = if let (Some(si), Some(body)) = (sys_idx, body_label) {
+        if let Some(sys) = settings.systems.get(si) {
+            let mut full = body;
+            full.push('\n');
+            full.push_str(&sys.name);
+            let mut planets_line = String::new();
+            for (i, _) in sys.planets.iter().enumerate() {
+                if !planets_line.is_empty() { planets_line.push_str("   "); }
+                planets_line.push_str(&format!("{} {}", sys.name, i + 1));
+            }
+            if !planets_line.is_empty() {
+                full.push_str(" | ");
+                full.push_str(&planets_line);
+            }
+            full
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
+    for mut text in &mut hud_q {
+        **text = label.clone();
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 //  Gizmos — indicateur de lumière
@@ -1436,6 +1558,41 @@ fn draw_orbits(
             With<PlanetRoot>,
         >,
 ) {
+    // ── Chunks (grille de systèmes stellaires) ─────────────────────────
+    if settings.show_systems {
+        use crate::settings::{SYSTEM_GRID_SIZE, SYSTEM_CELL_SIZE};
+        let chunk_color = Color::srgba(0.2, 1.0, 0.4, 0.25);
+        let star_dot = Color::srgba(1.0, 0.3, 0.2, 0.6);
+        let cols = SYSTEM_GRID_SIZE;
+        let rows = SYSTEM_GRID_SIZE;
+        let cell = SYSTEM_CELL_SIZE;
+        let half_x = cols as f32 * cell / 2.0;
+        let half_z = rows as f32 * cell / 2.0;
+
+        for col in 0..=cols {
+            let x = col as f32 * cell - half_x;
+            gizmos.line(
+                Vec3::new(x, 0.0, -half_z),
+                Vec3::new(x, 0.0, half_z),
+                chunk_color,
+            );
+        }
+        for row in 0..=rows {
+            let z = row as f32 * cell - half_z;
+            gizmos.line(
+                Vec3::new(-half_x, 0.0, z),
+                Vec3::new(half_x, 0.0, z),
+                chunk_color,
+            );
+        }
+        for sys in &settings.systems {
+            let c = sys.center();
+            gizmos.line(c - Vec3::Y * 500.0, c + Vec3::Y * 500.0, star_dot);
+            gizmos.line(c - Vec3::X * 500.0, c + Vec3::X * 500.0, star_dot);
+            gizmos.line(c - Vec3::Z * 500.0, c + Vec3::Z * 500.0, star_dot);
+        }
+    }
+
     if !settings.show_orbits {
         return;
     }
@@ -1537,82 +1694,41 @@ fn draw_orbits(
         );
 
 
-    // ── Planètes & lunes ──────────────────────────────────────────────
+    // ── Planètes, étoiles, lunes, ceintures (tous systèmes) ─────────
 
-    for (pi, pcfg) in
-        settings.planets.iter().enumerate()
-    {
-        let r =
-            pcfg.orbit_distance;
+    for (si, sys) in settings.systems.iter().enumerate() {
+        let sc = sys.center();
 
-        if r >= 1.0 {
-            draw_ring(
-                &mut gizmos,
-                r,
-                planet_color,
-                Vec3::ZERO,
-            );
-        }
+        for (pi, pcfg) in sys.planets.iter().enumerate() {
+            let r = pcfg.orbit_distance;
+            if r >= 1.0 {
+                draw_ring(&mut gizmos, r, planet_color, sc);
+            }
 
-        let planet_pos =
-            planet_q
+            let id = si * 1000 + pi;
+            let planet_pos = planet_q
                 .iter()
-                .find(|(_, pid)| pid.0 == pi)
+                .find(|(_, pid)| pid.0 == id)
                 .map(|(gt, _)| gt.translation())
-                .unwrap_or_default();
+                .unwrap_or(sc + Vec3::new(r, 0.0, 0.0));
 
-        for mcfg in &pcfg.moons {
-            draw_ring(
-                &mut gizmos,
-                mcfg.orbit_distance,
-                moon_color,
-                planet_pos,
-            );
+            for mcfg in &pcfg.moons {
+                draw_ring(&mut gizmos, mcfg.orbit_distance, moon_color, planet_pos);
+            }
         }
-    }
 
-
-    // ── Étoiles ───────────────────────────────────────────────────────
-
-    for scfg in &settings.stars {
-        let r =
-            scfg.orbit_distance;
-
-        if r >= 1.0 {
-            draw_ring(
-                &mut gizmos,
-                r,
-                star_color,
-                Vec3::ZERO,
-            );
+        for scfg in &sys.stars {
+            if scfg.orbit_distance >= 1.0 {
+                draw_ring(&mut gizmos, scfg.orbit_distance, star_color, sc);
+            }
         }
-    }
 
-
-    // ── Ceintures d'astéroïdes ────────────────────────────────────────
-
-    for belt in &settings.asteroid_belts {
-        let r_inner =
-            belt.distance
-            - belt.width * 1.5;
-
-        let r_outer =
-            belt.distance
-            + belt.width * 1.5;
-
-        draw_ring(
-            &mut gizmos,
-            r_inner,
-            belt_color,
-            Vec3::ZERO,
-        );
-
-        draw_ring(
-            &mut gizmos,
-            r_outer,
-            belt_color,
-            Vec3::ZERO,
-        );
+        for belt in &sys.asteroid_belts {
+            let r_inner = belt.distance - belt.width * 1.5;
+            let r_outer = belt.distance + belt.width * 1.5;
+            draw_ring(&mut gizmos, r_inner, belt_color, sc);
+            draw_ring(&mut gizmos, r_outer, belt_color, sc);
+        }
     }
 
 
@@ -1786,4 +1902,5 @@ fn draw_orbits(
             );
         }
     }
+
 }

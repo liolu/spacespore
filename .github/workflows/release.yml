@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build game (release)
+        run: cargo build --release -p spacespore
+
+      - name: Build updater (release)
+        run: cargo build --release -p spacespore-updater
+
+      - name: Build installer (release)
+        run: cargo build --release -p spacespore-installer
+
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Create distribution zip
+        shell: pwsh
+        run: |
+          $dir = "spacespore-v${{ steps.version.outputs.VERSION }}-windows"
+          New-Item -ItemType Directory -Path $dir
+          Copy-Item target/release/spacespore.exe $dir/
+          Copy-Item target/release/spacespore-updater.exe $dir/
+          Compress-Archive -Path $dir -DestinationPath "$dir.zip"
+
+      - name: Update version.json
+        shell: bash
+        run: |
+          cat > docs/version.json << EOF
+          {
+            "version": "${{ steps.version.outputs.VERSION }}",
+            "version_code": ${{ github.run_number }},
+            "release_date": "$(date -u +%Y-%m-%d)",
+            "download_url": "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.VERSION }}/spacespore-v${{ steps.version.outputs.VERSION }}-windows.zip",
+            "release_notes": "See release page for details",
+            "min_updater_version": 1
+          }
+          EOF
+
+      - name: Commit version.json update
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/version.json
+          git diff --cached --quiet || git commit -m "Update version.json for v${{ steps.version.outputs.VERSION }}"
+          git push origin HEAD:main
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            spacespore-v${{ steps.version.outputs.VERSION }}-windows.zip
+            target/release/spacespore-installer.exe
+          generate_release_notes: true

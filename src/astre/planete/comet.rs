@@ -1,5 +1,6 @@
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
+use crate::astre::{AstreLodRoot, ReloadAstre};
 
 // ─────────────────────────────────────────────
 //  Config procédurale
@@ -137,6 +138,27 @@ impl Default for CometConfig {
     }
 }
 
+// ── Spawn descriptor (read by system_gen) ──────────────────────────────
+pub const SPAWN_PROPS: crate::system_gen::SpawnProps = crate::system_gen::SpawnProps {
+    category:  crate::system_gen::AstreCategory::Comet,
+    weight:    0.40,
+    orbit_min: 0.0,
+    orbit_max: f32::MAX,
+};
+
+pub fn generate_random(
+    rng: &mut crate::system_gen::SeedRng,
+    comets: &mut Vec<CometConfig>,
+    outer_orbit: f32,
+) {
+    comets.push(CometConfig {
+        perihelion: rng.range_f32(800.0, 2000.0),
+        aphelion: outer_orbit + rng.range_f32(2000.0, 5000.0),
+        seed: rng.u32(),
+        ..Default::default()
+    });
+}
+
 // ─────────────────────────────────────────────
 //  Plugin
 // ─────────────────────────────────────────────
@@ -156,6 +178,7 @@ impl Plugin for CometPlugin {
                 animate_tails,
                 animate_jets,
                 regenerate_comets,
+                reload_comets,
             ));
     }
 }
@@ -171,7 +194,9 @@ pub struct CometRes {
 
 impl Default for CometRes {
     fn default() -> Self {
-        Self { comets: vec![CometConfig::default()] }
+        Self { comets: vec![
+            CometConfig { perihelion: 3000.0, aphelion: 5500.0, seed: 7, ..Default::default() },
+        ]}
     }
 }
 
@@ -250,39 +275,16 @@ fn snap_grid(v: Vec3, grid: f32) -> Vec3 {
 /// Position sur une orbite elliptique de Kepler (approximation)
 /// t_norm ∈ [0, TAU] — angle moyen
 fn ellipse_position(cfg: &CometConfig, mean_anomaly: f32) -> Vec3 {
-    let a = (cfg.perihelion + cfg.aphelion) * 0.5; // demi-grand axe
-    let e = (cfg.aphelion - cfg.perihelion) / (cfg.aphelion + cfg.perihelion); // excentricité
-
-    // Résolution de l'équation de Kepler par itération (Newton-Raphson)
-    let mut eccentric = mean_anomaly;
-    for _ in 0..8 {
-        eccentric -= (eccentric - e * eccentric.sin() - mean_anomaly)
-            / (1.0 - e * eccentric.cos());
-    }
-
-    // Position dans le plan orbital
-    let x_orb = a * (eccentric.cos() - e);
-    let y_orb = a * (1.0 - e * e).sqrt() * eccentric.sin();
-
-    // Vitesse angulaire variable (2ème loi de Kepler)
-    // pas besoin explicitement — la position suffit
-
-    // Rotation : argument du périhélie → nœud ascendant → inclinaison
-    let cos_w = cfg.arg_perihelion.cos();
-    let sin_w = cfg.arg_perihelion.sin();
-    let cos_o = cfg.ascending_node.cos();
-    let sin_o = cfg.ascending_node.sin();
-    let cos_i = cfg.inclination.cos();
-    let sin_i = cfg.inclination.sin();
-
-    // Passage plan orbital → plan de référence (3D)
-    let x3 = (cos_o * cos_w - sin_o * sin_w * cos_i) * x_orb
-            + (-cos_o * sin_w - sin_o * cos_w * cos_i) * y_orb;
-    let y3 = (sin_o * cos_w + cos_o * sin_w * cos_i) * x_orb
-            + (-sin_o * sin_w + cos_o * cos_w * cos_i) * y_orb;
-    let z3 = (sin_w * sin_i) * x_orb + (cos_w * sin_i) * y_orb;
-
-    Vec3::new(x3, z3, y3) // Y-up Bevy
+    let a = (cfg.perihelion + cfg.aphelion) * 0.5;
+    let e = (cfg.aphelion - cfg.perihelion) / (cfg.aphelion + cfg.perihelion);
+    let elems = crate::kepler::OrbitalElements {
+        a, e,
+        i: cfg.inclination,
+        omega_big: cfg.ascending_node,
+        omega: cfg.arg_perihelion,
+        m0: mean_anomaly,
+    };
+    elems.position(0.0, crate::kepler::DEFAULT_MU)
 }
 
 /// Vitesse angulaire de Kepler — plus rapide au périhélie
@@ -328,6 +330,7 @@ fn build_comet(
         Transform::from_translation(initial_pos),
         Visibility::default(),
         CometRoot { idx },
+        AstreLodRoot { cull_dist: 10000.0, radius: cfg.dust_tail_length.max(cfg.coma_radius), streamable: true, label: "Comet" },
     )).id();
 
     // ── Noyau ──────────────────────────────────────────────────────────────
@@ -541,6 +544,33 @@ fn build_comet(
                 CometJetVoxel { comet_idx: idx, jet_idx: fi, sample_idx: si },
             ));
         }
+    }
+}
+
+// ─────────────────────────────────────────────
+//  Reload (streaming)
+// ─────────────────────────────────────────────
+
+fn reload_comets(
+    mut commands:  Commands,
+    mut events:    EventReader<ReloadAstre>,
+    res:           Res<CometRes>,
+    roots:         Query<(Entity, &CometRoot)>,
+    jets:          Query<(Entity, &CometJetVoxel)>,
+    mut meshes:    ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for ev in events.read() {
+        let Ok((entity, root)) = roots.get(ev.0) else { continue };
+        let idx = root.idx;
+        let Some(cfg) = res.comets.get(idx) else { continue };
+        for (jet_e, jv) in &jets {
+            if jv.comet_idx == idx {
+                commands.entity(jet_e).despawn_recursive();
+            }
+        }
+        commands.entity(entity).despawn_recursive();
+        build_comet(&mut commands, cfg, idx, &mut meshes, &mut materials);
     }
 }
 

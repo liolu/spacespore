@@ -1,5 +1,6 @@
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
+use crate::astre::{AstreLodRoot, ReloadAstre};
 
 // ─────────────────────────────────────────────
 //  Config
@@ -194,6 +195,7 @@ impl Plugin for PulsarPlugin {
                 animate_pwn_filaments,
                 animate_shock_ring,
                 regenerate_pulsars,
+                reload_pulsars,
             ).chain());
     }
 }
@@ -209,7 +211,7 @@ pub struct PulsarRes {
 
 impl Default for PulsarRes {
     fn default() -> Self {
-        Self { pulsars: vec![PulsarConfig::default()] }
+        Self { pulsars: vec![PulsarConfig { position: Vec3::new(2000.0, 0.0, -5000.0), ..Default::default() }] }
     }
 }
 
@@ -421,6 +423,7 @@ fn build_pulsar(
         Transform::from_translation(init_pos),
         Visibility::default(),
         PulsarRoot { idx },
+        AstreLodRoot { cull_dist: 5000.0, radius: cfg.radius, streamable: true, label: "Pulsar" },
     )).id();
 
     // ── Corps stellaire ────────────────────────────────────────────────────
@@ -1072,6 +1075,23 @@ fn animate_shock_ring(
 // ─────────────────────────────────────────────
 //  Régénération à chaud
 // ─────────────────────────────────────────────
+
+fn reload_pulsars(
+    mut commands:  Commands,
+    mut events:    EventReader<ReloadAstre>,
+    res:           Res<PulsarRes>,
+    roots:         Query<(Entity, &PulsarRoot)>,
+    mut meshes:    ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for ev in events.read() {
+        let Ok((entity, root)) = roots.get(ev.0) else { continue };
+        let idx = root.idx;
+        let Some(cfg) = res.pulsars.get(idx) else { continue };
+        commands.entity(entity).despawn_recursive();
+        build_pulsar(&mut commands, cfg, idx, &mut meshes, &mut materials);
+    }
+}
 
 fn regenerate_pulsars(
     mut commands:  Commands,

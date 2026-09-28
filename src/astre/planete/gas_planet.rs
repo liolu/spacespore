@@ -1,5 +1,6 @@
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
+use crate::astre::{AstreLodRoot, ReloadAstre};
 use noise::{NoiseFn, Perlin, Fbm, MultiFractal};
 
 // ─────────────────────────────────────────────
@@ -78,6 +79,12 @@ pub struct GasPlanetConfig {
     pub orbit_distance:     f32,
     pub orbit_speed:        f32,
     pub radius:             f32,
+    // --- Éléments orbitaux ---
+    pub eccentricity:       f32,
+    pub inclination:        f32,
+    pub ascending_node:     f32,
+    pub arg_periapsis:      f32,
+    pub mean_anomaly_0:     f32,
 
     // --- Couleurs de bandes ---
     /// Couleurs des bandes (alternées selon latitude)
@@ -117,6 +124,11 @@ impl Default for GasPlanetConfig {
             orbit_distance:     1200.0,
             orbit_speed:        0.018,
             radius:             220.0,
+            eccentricity:       0.0,
+            inclination:        0.0,
+            ascending_node:     0.0,
+            arg_periapsis:      0.0,
+            mean_anomaly_0:     0.0,
 
             band_colors: vec![
                 [0.85, 0.55, 0.25],  // ocre
@@ -204,6 +216,100 @@ impl Default for GasPlanetConfig {
     }
 }
 
+// ── Spawn descriptor (read by system_gen) ──────────────────────────────
+pub const SPAWN_PROPS: crate::system_gen::SpawnProps = crate::system_gen::SpawnProps {
+    category:  crate::system_gen::AstreCategory::GasPlanet,
+    weight:    0.40,
+    orbit_min: 3000.0,
+    orbit_max: f32::MAX,
+};
+
+pub fn generate_random(
+    rng: &mut crate::system_gen::SeedRng,
+    planets: &mut Vec<GasPlanetConfig>,
+    orbit: f32,
+) {
+    let gas_seed = rng.u32();
+    let radius = rng.range_f32(180.0, 400.0);
+
+    let num_bands = rng.range_u32(4, 8);
+    let mut band_colors = Vec::new();
+    for _ in 0..num_bands {
+        band_colors.push([
+            rng.range_f32(0.3, 1.0),
+            rng.range_f32(0.2, 0.9),
+            rng.range_f32(0.05, 0.7),
+        ]);
+    }
+
+    let num_storms = rng.range_u32(0, 4);
+    let mut storms = Vec::new();
+    for si in 0..num_storms {
+        let eye_r = rng.range_f32(0.5, 1.0);
+        let eye_g = rng.range_f32(0.2, 0.8);
+        let eye_b = rng.range_f32(0.05, 0.5);
+        storms.push(StormConfig {
+            latitude: rng.range_f32(-1.2, 1.2),
+            longitude: rng.range_f32(0.0, std::f32::consts::TAU),
+            drift_speed: rng.range_f32(-0.015, 0.015),
+            angular_radius: rng.range_f32(0.08, 0.28),
+            color_eye: [eye_r, eye_g, eye_b],
+            color_edge: [eye_r * 0.7, eye_g * 0.5, eye_b * 0.4],
+            emissive: rng.range_f32(0.4, 0.9),
+            spin_speed: rng.range_f32(-0.4, 0.4),
+            voxel_size: rng.range_f32(7.0, 12.0),
+            voxel_count: rng.range_u32(60, 200) * (si + 1).min(2),
+        });
+    }
+
+    let has_ring = rng.f32() < 0.45;
+    let gas_ring = if has_ring {
+        Some(GasRingConfig {
+            inner_radius: radius + rng.range_f32(50.0, 100.0),
+            outer_radius: radius + rng.range_f32(200.0, 400.0),
+            thickness: rng.range_f32(10.0, 25.0),
+            voxel_size: rng.range_f32(10.0, 16.0),
+            count: rng.range_u32(600, 1400),
+            color: [
+                rng.range_f32(0.5, 0.8),
+                rng.range_f32(0.4, 0.7),
+                rng.range_f32(0.3, 0.6),
+            ],
+            emissive: rng.range_f32(0.2, 0.5),
+            opacity: rng.range_f32(0.4, 0.7),
+            rotation_speed: rng.range_f32(0.015, 0.035),
+        })
+    } else {
+        None
+    };
+
+    planets.push(GasPlanetConfig {
+        seed: gas_seed,
+        orbit_distance: orbit,
+        orbit_speed: rng.range_f32(0.008, 0.025),
+        radius,
+        eccentricity: rng.range_f32(0.0, 0.08),
+        inclination: rng.range_f32(-0.06, 0.06),
+        ascending_node: rng.range_f32(0.0, std::f32::consts::TAU),
+        arg_periapsis: rng.range_f32(0.0, std::f32::consts::TAU),
+        mean_anomaly_0: rng.range_f32(0.0, std::f32::consts::TAU),
+        band_colors,
+        band_count: num_bands as f32,
+        band_emissive: rng.range_f32(0.2, 0.5),
+        band_speed_equator: rng.range_f32(0.06, 0.15),
+        band_speed_pole: rng.range_f32(0.01, 0.05),
+        swirl_enabled: true,
+        swirl_frequency: rng.range_f32(2.0, 5.0) as f64,
+        swirl_strength: rng.range_f32(0.1, 0.25),
+        swirl_speed: rng.range_f32(0.02, 0.06),
+        surface_voxel_size: rng.range_f32(12.0, 20.0),
+        surface_resolution: rng.range_u32(30, 45),
+        storms,
+        gas_ring,
+        asteroid_ring: None,
+    });
+}
+
 // ─────────────────────────────────────────────
 //  Plugin
 // ─────────────────────────────────────────────
@@ -223,6 +329,7 @@ impl Plugin for GasPlanetPlugin {
                 rotate_gas_rings,
                 rotate_asteroid_rings,
                 regenerate_gas_planets,
+                reload_gas_planets,
             ));
     }
 }
@@ -238,7 +345,9 @@ pub struct GasPlanetRes {
 
 impl Default for GasPlanetRes {
     fn default() -> Self {
-        Self { planets: vec![GasPlanetConfig::default()] }
+        Self { planets: vec![
+            GasPlanetConfig { orbit_distance: 4500.0, seed: 3, ..Default::default() },
+        ]}
     }
 }
 
@@ -416,6 +525,7 @@ fn build_gas_planet(
         Transform::from_translation(initial_pos),
         Visibility::default(),
         GasPlanetRoot { idx },
+        AstreLodRoot { cull_dist: 8000.0, radius: cfg.radius, streamable: true, label: "GasPlanet" },
     )).id();
 
     // ── Surface voxels ─────────────────────────────────────────────────────
@@ -626,6 +736,27 @@ fn build_gas_planet(
 }
 
 // ─────────────────────────────────────────────
+//  Reload (streaming)
+// ─────────────────────────────────────────────
+
+fn reload_gas_planets(
+    mut commands:  Commands,
+    mut events:    EventReader<ReloadAstre>,
+    res:           Res<GasPlanetRes>,
+    roots:         Query<(Entity, &GasPlanetRoot)>,
+    mut meshes:    ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for ev in events.read() {
+        let Ok((entity, root)) = roots.get(ev.0) else { continue };
+        let idx = root.idx;
+        let Some(cfg) = res.planets.get(idx) else { continue };
+        commands.entity(entity).despawn_recursive();
+        build_gas_planet(&mut commands, cfg, idx, &mut meshes, &mut materials);
+    }
+}
+
+// ─────────────────────────────────────────────
 //  Orbite
 // ─────────────────────────────────────────────
 
@@ -634,12 +765,19 @@ fn orbit_gas_planets(
     res:       Res<GasPlanetRes>,
     mut root_q: Query<(&mut Transform, &GasPlanetRoot)>,
 ) {
+    use crate::kepler::{OrbitalElements, DEFAULT_MU};
     let t = time.elapsed_secs();
     for (mut tf, root) in &mut root_q {
         let Some(cfg) = res.planets.get(root.idx) else { continue; };
-        let angle = t * cfg.orbit_speed + root.idx as f32 * std::f32::consts::TAU / 3.0;
-        tf.translation.x = angle.cos() * cfg.orbit_distance;
-        tf.translation.z = angle.sin() * cfg.orbit_distance;
+        let elems = OrbitalElements {
+            a: cfg.orbit_distance,
+            e: cfg.eccentricity,
+            i: cfg.inclination,
+            omega_big: cfg.ascending_node,
+            omega: cfg.arg_periapsis,
+            m0: cfg.mean_anomaly_0,
+        };
+        tf.translation = elems.position(t, DEFAULT_MU);
     }
 }
 

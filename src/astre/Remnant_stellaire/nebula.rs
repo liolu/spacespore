@@ -1,5 +1,6 @@
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
+use crate::astre::{AstreLodRoot, ReloadAstre};
 use noise::{NoiseFn, Perlin, Fbm, MultiFractal};
 
 // ─────────────────────────────────────────────
@@ -132,6 +133,7 @@ impl Plugin for NebulaPlugin {
             .add_systems(Update, (
                 animate_nebula_voxels,
                 regenerate_nebula,
+                reload_nebula_stream,
             ));
     }
 }
@@ -150,7 +152,7 @@ pub struct NebulaRes {
 
 impl Default for NebulaRes {
     fn default() -> Self {
-        Self { enabled: true, config: NebulaConfig::default() }
+        Self { enabled: true, config: NebulaConfig { position: Vec3::new(0.0, 0.0, -12000.0), ..Default::default() } }
     }
 }
 
@@ -298,6 +300,7 @@ fn build_nebula(
         Transform::from_translation(cfg.position),
         Visibility::default(),
         NebulaRoot,
+        AstreLodRoot { cull_dist: 10000.0, radius: cfg.radius, streamable: true, label: "Nebula" },
     )).id();
 
     // --- Matériaux ---
@@ -540,6 +543,23 @@ fn animate_nebula_voxels(
 // ─────────────────────────────────────────────
 //  Régénération à chaud
 // ─────────────────────────────────────────────
+
+fn reload_nebula_stream(
+    mut commands:  Commands,
+    mut events:    EventReader<ReloadAstre>,
+    nebula_res:    Res<NebulaRes>,
+    roots:         Query<Entity, With<NebulaRoot>>,
+    mut meshes:    ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for ev in events.read() {
+        let Ok(entity) = roots.get(ev.0) else { continue };
+        commands.entity(entity).despawn_recursive();
+        if nebula_res.enabled {
+            build_nebula(&mut commands, &nebula_res.config, &mut meshes, &mut materials);
+        }
+    }
+}
 
 fn regenerate_nebula(
     mut commands:   Commands,

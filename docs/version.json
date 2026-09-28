@@ -1,0 +1,8 @@
+{
+  "version": "0.3.0",
+  "version_code": 300,
+  "release_date": "2026-09-28",
+  "download_url": "https://github.com/liolu/spacespore/releases/download/v0.3.0/spacespore-v0.3.0-windows.zip",
+  "release_notes": "Initial GitHub release",
+  "min_updater_version": 1
+}

@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use crate::planet::RegeneratePlanet;
 use crate::settings::{AsteroidBeltConfig, GameSettings, PlanetConfig, StarConfig};
+use crate::astre::{AstreLodRoot, AstreUnloaded};
 use crate::astre::planete::gas_planet::{GasPlanetRes, RegenerateGasPlanet};
 
 #[allow(non_snake_case)]
@@ -42,12 +43,39 @@ struct AstresWindowCam;
 #[derive(Component)]
 struct AstresUiRoot;
 
+#[derive(Component)]
+struct RadarWindowCam;
+
+#[derive(Component)]
+struct RadarRoot;
+
+#[derive(Component)]
+struct RadarArea;
+
+#[derive(Component)]
+struct RadarDot(Entity);
+
+#[derive(Component)]
+struct RadarCamIndicator;
+
+#[derive(Component)]
+struct RadarCamDir;
+
+#[derive(Component)]
+struct RadarInfoText;
+
 #[derive(Resource, Clone, Copy, PartialEq, Eq)]
 enum AstresTab {
-    Planets,
-    Stars,
-    Remnants,
+    Liste,
+    Editer,
+    Ajouter,
 }
+
+#[derive(Resource, Default)]
+struct SelectedAstre(Option<TargetKind>);
+
+#[derive(Component, Clone, Copy)]
+struct SelectAstre(TargetKind);
 
 #[derive(Component, Clone, Copy)]
 struct AstresTabButton(AstresTab);
@@ -146,36 +174,43 @@ impl Plugin for UiPlugin {
         app
             .insert_resource(MenuState { open: false })
             .insert_resource(CameraTarget(TargetKind::Planet(0)))
-            .insert_resource(OptionsTabState { active: OptionsTab::General })
-            .insert_resource(AstresTabState { active: AstresTab::Planets })
+            .insert_resource(AstresTabState { active: AstresTab::Liste })
+            .insert_resource(SelectedAstre::default())
             .add_event::<RebuildUi>()
-            .add_systems(PreStartup, load_saved_astres)
             .add_systems(
                 Startup,
-                (setup_game_ui, setup_options_window, setup_astres_window),
+                (setup_game_ui, setup_astres_window, setup_radar_window),
             )
             .add_systems(
                 Update,
                 (
                     toggle_menu,
                     handle_options_button,
-                    handle_options_tabs,
                     handle_astres_tabs,
                     update_menu_visibility,
                     handle_slider_interactions,
+                    handle_astre_sliders,
                     handle_toggle_button,
                     handle_toggle_show_light,
                     handle_toggle_show_orbits,
+                    handle_toggle_show_systems,
                     handle_toggle_atmosphere,
                     handle_apply_button,
                     handle_center_buttons,
+                    handle_select_astre,
+                ),
+            )
+            .add_systems(
+                Update,
+                (
                     update_slider_visuals,
+                    update_astre_slider_visuals,
                     handle_body_actions,
-                    rebuild_options_ui,
                     rebuild_astres_ui,
                     scroll_options_panel,
                     handle_astre_regen_buttons,
                     handle_astre_edit_actions,
+                    update_radar,
                 ),
             );
     }
@@ -246,21 +281,6 @@ pub struct MenuState {
     pub open: bool,
 }
 
-#[derive(Resource, Clone, Copy, PartialEq, Eq)]
-enum OptionsTab {
-    General,
-    Planets,
-    Stars,
-    Belts,
-}
-
-#[derive(Component, Clone, Copy)]
-struct OptionsTabButton(OptionsTab);
-
-#[derive(Resource)]
-struct OptionsTabState {
-    active: OptionsTab,
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TargetKind {
@@ -307,11 +327,6 @@ struct OptionsButton;
 #[derive(Component)]
 struct MenuRoot;
 
-#[derive(Component)]
-struct OptionsWindowCam;
-
-#[derive(Component)]
-struct OptionsUiRoot;
 
 #[derive(Component)]
 struct SliderBar {
@@ -334,6 +349,9 @@ struct ToggleShowLight;
 
 #[derive(Component)]
 struct ToggleShowOrbits;
+
+#[derive(Component)]
+struct ToggleShowSystems;
 
 #[derive(Component)]
 struct ToggleAtmosphere(usize);
@@ -396,36 +414,36 @@ impl SettingKey {
             Self::MouseSensitivity => s.mouse_sensitivity,
             Self::ScrollSpeed => s.scroll_speed,
             Self::KeyboardSpeed => s.keyboard_speed,
-            Self::PlanetOrbitDistance(i) => s.planets.get(i).map(|p| p.orbit_distance).unwrap_or(0.0),
-            Self::PlanetRadius(i) => s.planets.get(i).map(|p| p.radius).unwrap_or(50.0),
-            Self::PlanetSeaLevel(i) => s.planets.get(i).map(|p| p.sea_level).unwrap_or(0.4),
-            Self::PlanetTerrainHeight(i) => s.planets.get(i).map(|p| p.terrain_height).unwrap_or(22.0),
-            Self::PlanetSeed(i) => s.planets.get(i).map(|p| p.seed as f32).unwrap_or(42.0),
-            Self::PlanetNoiseScale(i) => s.planets.get(i).map(|p| p.noise_scale).unwrap_or(2.0),
-            Self::PlanetDetailScale(i) => s.planets.get(i).map(|p| p.detail_scale).unwrap_or(4.0),
-            Self::PlanetCloudDensity(i) => s.planets.get(i).map(|p| p.cloud_density).unwrap_or(0.5),
-            Self::PlanetCloudAltitude(i) => s.planets.get(i).map(|p| p.cloud_altitude).unwrap_or(8.0),
-            Self::PlanetCloudSpeed(i) => s.planets.get(i).map(|p| p.cloud_speed).unwrap_or(0.02),
-            Self::StarOrbitDistance(i) => s.stars.get(i).map(|st| st.orbit_distance).unwrap_or(0.0),
-            Self::StarRadius(i) => s.stars.get(i).map(|st| st.radius).unwrap_or(200.0),
-            Self::StarIntensity(i) => s.stars.get(i).map(|st| st.intensity).unwrap_or(20.0),
-            Self::StarLightRange(i) => s.stars.get(i).map(|st| st.light_range).unwrap_or(10000.0),
-            Self::StarColorR(i) => s.stars.get(i).map(|st| st.light_color_r).unwrap_or(1.0),
-            Self::StarColorG(i) => s.stars.get(i).map(|st| st.light_color_g).unwrap_or(0.92),
-            Self::StarColorB(i) => s.stars.get(i).map(|st| st.light_color_b).unwrap_or(0.65),
-            Self::StarFlareCount(i) => s.stars.get(i).map(|st| st.flare_count as f32).unwrap_or(5.0),
-            Self::StarFlareHeight(i) => s.stars.get(i).map(|st| st.flare_height).unwrap_or(60.0),
-            Self::StarFlareSpeed(i) => s.stars.get(i).map(|st| st.flare_speed).unwrap_or(1.0),
-            Self::StarFlareSize(i) => s.stars.get(i).map(|st| st.flare_size).unwrap_or(6.0),
-            Self::StarFlareDistance(i) => s.stars.get(i).map(|st| st.flare_distance).unwrap_or(0.0),
-            Self::BeltDistance(i) => s.asteroid_belts.get(i).map(|b| b.distance).unwrap_or(300.0),
-            Self::BeltWidth(i) => s.asteroid_belts.get(i).map(|b| b.width).unwrap_or(80.0),
-            Self::BeltMinSize(i) => s.asteroid_belts.get(i).map(|b| b.min_size).unwrap_or(1.0),
-            Self::BeltMaxSize(i) => s.asteroid_belts.get(i).map(|b| b.max_size).unwrap_or(5.0),
-            Self::BeltCount(i) => s.asteroid_belts.get(i).map(|b| b.count as f32).unwrap_or(100.0),
-            Self::MoonOrbitDistance(pi, mi) => s.planets.get(pi).and_then(|p| p.moons.get(mi)).map(|m| m.orbit_distance).unwrap_or(80.0),
-            Self::MoonRadius(pi, mi) => s.planets.get(pi).and_then(|p| p.moons.get(mi)).map(|m| m.radius).unwrap_or(12.0),
-            Self::MoonSeed(pi, mi) => s.planets.get(pi).and_then(|p| p.moons.get(mi)).map(|m| m.seed as f32).unwrap_or(77.0),
+            Self::PlanetOrbitDistance(i) => s.systems.first().and_then(|sys| sys.planets.get(i)).map(|p| p.orbit_distance).unwrap_or(0.0),
+            Self::PlanetRadius(i) => s.systems.first().and_then(|sys| sys.planets.get(i)).map(|p| p.radius).unwrap_or(50.0),
+            Self::PlanetSeaLevel(i) => s.systems.first().and_then(|sys| sys.planets.get(i)).map(|p| p.sea_level).unwrap_or(0.4),
+            Self::PlanetTerrainHeight(i) => s.systems.first().and_then(|sys| sys.planets.get(i)).map(|p| p.terrain_height).unwrap_or(22.0),
+            Self::PlanetSeed(i) => s.systems.first().and_then(|sys| sys.planets.get(i)).map(|p| p.seed as f32).unwrap_or(42.0),
+            Self::PlanetNoiseScale(i) => s.systems.first().and_then(|sys| sys.planets.get(i)).map(|p| p.noise_scale).unwrap_or(2.0),
+            Self::PlanetDetailScale(i) => s.systems.first().and_then(|sys| sys.planets.get(i)).map(|p| p.detail_scale).unwrap_or(4.0),
+            Self::PlanetCloudDensity(i) => s.systems.first().and_then(|sys| sys.planets.get(i)).map(|p| p.cloud_density).unwrap_or(0.5),
+            Self::PlanetCloudAltitude(i) => s.systems.first().and_then(|sys| sys.planets.get(i)).map(|p| p.cloud_altitude).unwrap_or(8.0),
+            Self::PlanetCloudSpeed(i) => s.systems.first().and_then(|sys| sys.planets.get(i)).map(|p| p.cloud_speed).unwrap_or(0.02),
+            Self::StarOrbitDistance(i) => s.systems.first().and_then(|sys| sys.stars.get(i)).map(|st| st.orbit_distance).unwrap_or(0.0),
+            Self::StarRadius(i) => s.systems.first().and_then(|sys| sys.stars.get(i)).map(|st| st.radius).unwrap_or(200.0),
+            Self::StarIntensity(i) => s.systems.first().and_then(|sys| sys.stars.get(i)).map(|st| st.intensity).unwrap_or(20.0),
+            Self::StarLightRange(i) => s.systems.first().and_then(|sys| sys.stars.get(i)).map(|st| st.light_range).unwrap_or(10000.0),
+            Self::StarColorR(i) => s.systems.first().and_then(|sys| sys.stars.get(i)).map(|st| st.light_color_r).unwrap_or(1.0),
+            Self::StarColorG(i) => s.systems.first().and_then(|sys| sys.stars.get(i)).map(|st| st.light_color_g).unwrap_or(0.92),
+            Self::StarColorB(i) => s.systems.first().and_then(|sys| sys.stars.get(i)).map(|st| st.light_color_b).unwrap_or(0.65),
+            Self::StarFlareCount(i) => s.systems.first().and_then(|sys| sys.stars.get(i)).map(|st| st.flare_count as f32).unwrap_or(5.0),
+            Self::StarFlareHeight(i) => s.systems.first().and_then(|sys| sys.stars.get(i)).map(|st| st.flare_height).unwrap_or(60.0),
+            Self::StarFlareSpeed(i) => s.systems.first().and_then(|sys| sys.stars.get(i)).map(|st| st.flare_speed).unwrap_or(1.0),
+            Self::StarFlareSize(i) => s.systems.first().and_then(|sys| sys.stars.get(i)).map(|st| st.flare_size).unwrap_or(6.0),
+            Self::StarFlareDistance(i) => s.systems.first().and_then(|sys| sys.stars.get(i)).map(|st| st.flare_distance).unwrap_or(0.0),
+            Self::BeltDistance(i) => s.systems.first().and_then(|sys| sys.asteroid_belts.get(i)).map(|b| b.distance).unwrap_or(300.0),
+            Self::BeltWidth(i) => s.systems.first().and_then(|sys| sys.asteroid_belts.get(i)).map(|b| b.width).unwrap_or(80.0),
+            Self::BeltMinSize(i) => s.systems.first().and_then(|sys| sys.asteroid_belts.get(i)).map(|b| b.min_size).unwrap_or(1.0),
+            Self::BeltMaxSize(i) => s.systems.first().and_then(|sys| sys.asteroid_belts.get(i)).map(|b| b.max_size).unwrap_or(5.0),
+            Self::BeltCount(i) => s.systems.first().and_then(|sys| sys.asteroid_belts.get(i)).map(|b| b.count as f32).unwrap_or(100.0),
+            Self::MoonOrbitDistance(pi, mi) => s.systems.first().and_then(|sys| sys.planets.get(pi)).and_then(|p| p.moons.get(mi)).map(|m| m.orbit_distance).unwrap_or(80.0),
+            Self::MoonRadius(pi, mi) => s.systems.first().and_then(|sys| sys.planets.get(pi)).and_then(|p| p.moons.get(mi)).map(|m| m.radius).unwrap_or(12.0),
+            Self::MoonSeed(pi, mi) => s.systems.first().and_then(|sys| sys.planets.get(pi)).and_then(|p| p.moons.get(mi)).map(|m| m.seed as f32).unwrap_or(77.0),
         }
     }
 
@@ -435,94 +453,94 @@ impl SettingKey {
             Self::ScrollSpeed => s.scroll_speed = val,
             Self::KeyboardSpeed => s.keyboard_speed = val,
             Self::PlanetOrbitDistance(i) => {
-                if let Some(p) = s.planets.get_mut(i) { p.orbit_distance = val; }
+                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(i)) { p.orbit_distance = val; }
             }
             Self::PlanetRadius(i) => {
-                if let Some(p) = s.planets.get_mut(i) { p.radius = val; }
+                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(i)) { p.radius = val; }
             }
             Self::PlanetSeaLevel(i) => {
-                if let Some(p) = s.planets.get_mut(i) { p.sea_level = val; }
+                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(i)) { p.sea_level = val; }
             }
             Self::PlanetTerrainHeight(i) => {
-                if let Some(p) = s.planets.get_mut(i) { p.terrain_height = val; }
+                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(i)) { p.terrain_height = val; }
             }
             Self::PlanetSeed(i) => {
-                if let Some(p) = s.planets.get_mut(i) { p.seed = val as u32; }
+                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(i)) { p.seed = val as u32; }
             }
             Self::PlanetNoiseScale(i) => {
-                if let Some(p) = s.planets.get_mut(i) { p.noise_scale = val; }
+                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(i)) { p.noise_scale = val; }
             }
             Self::PlanetDetailScale(i) => {
-                if let Some(p) = s.planets.get_mut(i) { p.detail_scale = val; }
+                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(i)) { p.detail_scale = val; }
             }
             Self::PlanetCloudDensity(i) => {
-                if let Some(p) = s.planets.get_mut(i) { p.cloud_density = val; }
+                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(i)) { p.cloud_density = val; }
             }
             Self::PlanetCloudAltitude(i) => {
-                if let Some(p) = s.planets.get_mut(i) { p.cloud_altitude = val; }
+                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(i)) { p.cloud_altitude = val; }
             }
             Self::PlanetCloudSpeed(i) => {
-                if let Some(p) = s.planets.get_mut(i) { p.cloud_speed = val; }
+                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(i)) { p.cloud_speed = val; }
             }
             Self::StarOrbitDistance(i) => {
-                if let Some(st) = s.stars.get_mut(i) { st.orbit_distance = val; }
+                if let Some(st) = s.systems.first_mut().and_then(|sys| sys.stars.get_mut(i)) { st.orbit_distance = val; }
             }
             Self::StarRadius(i) => {
-                if let Some(st) = s.stars.get_mut(i) { st.radius = val; }
+                if let Some(st) = s.systems.first_mut().and_then(|sys| sys.stars.get_mut(i)) { st.radius = val; }
             }
             Self::StarIntensity(i) => {
-                if let Some(st) = s.stars.get_mut(i) { st.intensity = val; }
+                if let Some(st) = s.systems.first_mut().and_then(|sys| sys.stars.get_mut(i)) { st.intensity = val; }
             }
             Self::StarLightRange(i) => {
-                if let Some(st) = s.stars.get_mut(i) { st.light_range = val; }
+                if let Some(st) = s.systems.first_mut().and_then(|sys| sys.stars.get_mut(i)) { st.light_range = val; }
             }
             Self::StarColorR(i) => {
-                if let Some(st) = s.stars.get_mut(i) { st.light_color_r = val; }
+                if let Some(st) = s.systems.first_mut().and_then(|sys| sys.stars.get_mut(i)) { st.light_color_r = val; }
             }
             Self::StarColorG(i) => {
-                if let Some(st) = s.stars.get_mut(i) { st.light_color_g = val; }
+                if let Some(st) = s.systems.first_mut().and_then(|sys| sys.stars.get_mut(i)) { st.light_color_g = val; }
             }
             Self::StarColorB(i) => {
-                if let Some(st) = s.stars.get_mut(i) { st.light_color_b = val; }
+                if let Some(st) = s.systems.first_mut().and_then(|sys| sys.stars.get_mut(i)) { st.light_color_b = val; }
             }
             Self::StarFlareCount(i) => {
-                if let Some(st) = s.stars.get_mut(i) { st.flare_count = val as u32; }
+                if let Some(st) = s.systems.first_mut().and_then(|sys| sys.stars.get_mut(i)) { st.flare_count = val as u32; }
             }
             Self::StarFlareHeight(i) => {
-                if let Some(st) = s.stars.get_mut(i) { st.flare_height = val; }
+                if let Some(st) = s.systems.first_mut().and_then(|sys| sys.stars.get_mut(i)) { st.flare_height = val; }
             }
             Self::StarFlareSpeed(i) => {
-                if let Some(st) = s.stars.get_mut(i) { st.flare_speed = val; }
+                if let Some(st) = s.systems.first_mut().and_then(|sys| sys.stars.get_mut(i)) { st.flare_speed = val; }
             }
             Self::StarFlareSize(i) => {
-                if let Some(st) = s.stars.get_mut(i) { st.flare_size = val; }
+                if let Some(st) = s.systems.first_mut().and_then(|sys| sys.stars.get_mut(i)) { st.flare_size = val; }
             }
             Self::StarFlareDistance(i) => {
-                if let Some(st) = s.stars.get_mut(i) { st.flare_distance = val; }
+                if let Some(st) = s.systems.first_mut().and_then(|sys| sys.stars.get_mut(i)) { st.flare_distance = val; }
             }
             Self::BeltDistance(i) => {
-                if let Some(b) = s.asteroid_belts.get_mut(i) { b.distance = val; }
+                if let Some(b) = s.systems.first_mut().and_then(|sys| sys.asteroid_belts.get_mut(i)) { b.distance = val; }
             }
             Self::BeltWidth(i) => {
-                if let Some(b) = s.asteroid_belts.get_mut(i) { b.width = val; }
+                if let Some(b) = s.systems.first_mut().and_then(|sys| sys.asteroid_belts.get_mut(i)) { b.width = val; }
             }
             Self::BeltMinSize(i) => {
-                if let Some(b) = s.asteroid_belts.get_mut(i) { b.min_size = val; }
+                if let Some(b) = s.systems.first_mut().and_then(|sys| sys.asteroid_belts.get_mut(i)) { b.min_size = val; }
             }
             Self::BeltMaxSize(i) => {
-                if let Some(b) = s.asteroid_belts.get_mut(i) { b.max_size = val; }
+                if let Some(b) = s.systems.first_mut().and_then(|sys| sys.asteroid_belts.get_mut(i)) { b.max_size = val; }
             }
             Self::BeltCount(i) => {
-                if let Some(b) = s.asteroid_belts.get_mut(i) { b.count = val as u32; }
+                if let Some(b) = s.systems.first_mut().and_then(|sys| sys.asteroid_belts.get_mut(i)) { b.count = val as u32; }
             }
             Self::MoonOrbitDistance(pi, mi) => {
-                if let Some(m) = s.planets.get_mut(pi).and_then(|p| p.moons.get_mut(mi)) { m.orbit_distance = val; }
+                if let Some(m) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(pi)).and_then(|p| p.moons.get_mut(mi)) { m.orbit_distance = val; }
             }
             Self::MoonRadius(pi, mi) => {
-                if let Some(m) = s.planets.get_mut(pi).and_then(|p| p.moons.get_mut(mi)) { m.radius = val; }
+                if let Some(m) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(pi)).and_then(|p| p.moons.get_mut(mi)) { m.radius = val; }
             }
             Self::MoonSeed(pi, mi) => {
-                if let Some(m) = s.planets.get_mut(pi).and_then(|p| p.moons.get_mut(mi)) { m.seed = val as u32; }
+                if let Some(m) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(pi)).and_then(|p| p.moons.get_mut(mi)) { m.seed = val as u32; }
             }
         }
     }
@@ -565,6 +583,193 @@ impl SettingKey {
         }
     }
 }
+
+// ── AstreField: sliders for resource-based astres ──
+
+#[derive(Clone, Copy, PartialEq)]
+enum AstreField {
+    GasOrbit(usize), GasRadius(usize), GasSeed(usize), GasEcc(usize), GasInc(usize),
+    GasBandCount(usize), GasBandEmissive(usize),
+    CometPerihelion(usize), CometAphelion(usize), CometNucleus(usize),
+    CometComa(usize), CometDustTail(usize), CometIonTail(usize), CometInclination(usize),
+    MeteorRadius(usize),
+    VStarOrbit(usize), VStarRadius(usize),
+    ProtoOrbit(usize), ProtoRadius(usize), ProtoTemp(usize),
+    DwarfOrbit(usize), DwarfRadius(usize),
+    MSOrbit(usize), MSRadius(usize),
+    GiantOrbit(usize), GiantRadius(usize),
+    SGOrbit(usize), SGRadius(usize),
+    HGOrbit(usize), HGRadius(usize),
+    BHOrbit(usize), BHHorizon(usize), BHInfluence(usize),
+    PulsarOrbit(usize), PulsarRadius(usize), PulsarPeriod(usize),
+    MagOrbit(usize), MagRadius(usize),
+    NSOrbit(usize), NSRadius(usize),
+    SNOrbit(usize), SNRadius(usize),
+    NebRadius, NebSeed,
+}
+
+impl AstreField {
+    fn label(self) -> &'static str {
+        match self {
+            Self::GasOrbit(_) | Self::VStarOrbit(_) | Self::ProtoOrbit(_) | Self::DwarfOrbit(_) |
+            Self::MSOrbit(_) | Self::GiantOrbit(_) | Self::SGOrbit(_) | Self::HGOrbit(_) |
+            Self::BHOrbit(_) | Self::PulsarOrbit(_) | Self::MagOrbit(_) | Self::NSOrbit(_) |
+            Self::SNOrbit(_) | Self::CometPerihelion(_) => "Distance orbite",
+            Self::GasRadius(_) | Self::VStarRadius(_) | Self::ProtoRadius(_) | Self::DwarfRadius(_) |
+            Self::MSRadius(_) | Self::GiantRadius(_) | Self::SGRadius(_) | Self::HGRadius(_) |
+            Self::PulsarRadius(_) | Self::MagRadius(_) | Self::NSRadius(_) | Self::SNRadius(_) |
+            Self::CometNucleus(_) | Self::MeteorRadius(_) | Self::NebRadius => "Rayon",
+            Self::GasSeed(_) | Self::NebSeed => "Graine",
+            Self::GasEcc(_) => "Excentricite",
+            Self::GasInc(_) | Self::CometInclination(_) => "Inclinaison",
+            Self::GasBandCount(_) => "Bandes",
+            Self::GasBandEmissive(_) => "Luminosite bandes",
+            Self::CometAphelion(_) => "Aphelie",
+            Self::CometComa(_) => "Coma",
+            Self::CometDustTail(_) => "Queue poussiere",
+            Self::CometIonTail(_) => "Queue ion",
+            Self::ProtoTemp(_) => "Temperature",
+            Self::BHHorizon(_) => "Horizon",
+            Self::BHInfluence(_) => "Influence",
+            Self::PulsarPeriod(_) => "Periode",
+        }
+    }
+
+    fn get(self, res: &AstresResources) -> f32 {
+        match self {
+            Self::GasOrbit(i) => res.gas_res.planets.get(i).map(|c| c.orbit_distance).unwrap_or(0.0),
+            Self::GasRadius(i) => res.gas_res.planets.get(i).map(|c| c.radius).unwrap_or(100.0),
+            Self::GasSeed(i) => res.gas_res.planets.get(i).map(|c| c.seed as f32).unwrap_or(42.0),
+            Self::GasEcc(i) => res.gas_res.planets.get(i).map(|c| c.eccentricity).unwrap_or(0.0),
+            Self::GasInc(i) => res.gas_res.planets.get(i).map(|c| c.inclination).unwrap_or(0.0),
+            Self::GasBandCount(i) => res.gas_res.planets.get(i).map(|c| c.band_count).unwrap_or(6.0),
+            Self::GasBandEmissive(i) => res.gas_res.planets.get(i).map(|c| c.band_emissive).unwrap_or(0.0),
+            Self::CometPerihelion(i) => res.comet_res.comets.get(i).map(|c| c.perihelion).unwrap_or(500.0),
+            Self::CometAphelion(i) => res.comet_res.comets.get(i).map(|c| c.aphelion).unwrap_or(5000.0),
+            Self::CometNucleus(i) => res.comet_res.comets.get(i).map(|c| c.nucleus_radius).unwrap_or(15.0),
+            Self::CometComa(i) => res.comet_res.comets.get(i).map(|c| c.coma_radius).unwrap_or(50.0),
+            Self::CometDustTail(i) => res.comet_res.comets.get(i).map(|c| c.dust_tail_length).unwrap_or(200.0),
+            Self::CometIonTail(i) => res.comet_res.comets.get(i).map(|c| c.ion_tail_length).unwrap_or(300.0),
+            Self::CometInclination(i) => res.comet_res.comets.get(i).map(|c| c.inclination).unwrap_or(0.0),
+            Self::MeteorRadius(i) => res.meteor_res.meteoroids.get(i).map(|c| c.radius).unwrap_or(5.0),
+            Self::VStarOrbit(i) => res.vstar_res.stars.get(i).map(|c| c.orbit_distance).unwrap_or(0.0),
+            Self::VStarRadius(i) => res.vstar_res.stars.get(i).map(|c| c.radius).unwrap_or(100.0),
+            Self::ProtoOrbit(i) => res.proto_res.stars.get(i).map(|c| c.orbit_distance).unwrap_or(0.0),
+            Self::ProtoRadius(i) => res.proto_res.stars.get(i).map(|c| c.radius).unwrap_or(100.0),
+            Self::ProtoTemp(i) => res.proto_res.stars.get(i).map(|c| c.temperature).unwrap_or(0.5),
+            Self::DwarfOrbit(i) => res.dwarf_res.stars.get(i).map(|c| c.orbit_distance).unwrap_or(0.0),
+            Self::DwarfRadius(i) => res.dwarf_res.stars.get(i).map(|c| c.radius).unwrap_or(30.0),
+            Self::MSOrbit(i) => res.ms_res.stars.get(i).map(|c| c.orbit_distance).unwrap_or(0.0),
+            Self::MSRadius(i) => res.ms_res.stars.get(i).map(|c| c.base_radius).unwrap_or(100.0),
+            Self::GiantOrbit(i) => res.giant_res.stars.get(i).map(|c| c.orbit_distance).unwrap_or(0.0),
+            Self::GiantRadius(i) => res.giant_res.stars.get(i).map(|c| c.radius).unwrap_or(200.0),
+            Self::SGOrbit(i) => res.sg_res.stars.get(i).map(|c| c.orbit_distance).unwrap_or(0.0),
+            Self::SGRadius(i) => res.sg_res.stars.get(i).map(|c| c.radius).unwrap_or(400.0),
+            Self::HGOrbit(i) => res.hg_res.stars.get(i).map(|c| c.orbit_distance).unwrap_or(0.0),
+            Self::HGRadius(i) => res.hg_res.stars.get(i).map(|c| c.radius).unwrap_or(800.0),
+            Self::BHOrbit(i) => res.black_res.holes.get(i).map(|c| c.orbit_distance).unwrap_or(0.0),
+            Self::BHHorizon(i) => res.black_res.holes.get(i).map(|c| c.event_horizon).unwrap_or(30.0),
+            Self::BHInfluence(i) => res.black_res.holes.get(i).map(|c| c.influence_radius).unwrap_or(500.0),
+            Self::PulsarOrbit(i) => res.pulsar_res.pulsars.get(i).map(|c| c.orbit_distance).unwrap_or(0.0),
+            Self::PulsarRadius(i) => res.pulsar_res.pulsars.get(i).map(|c| c.radius).unwrap_or(15.0),
+            Self::PulsarPeriod(i) => res.pulsar_res.pulsars.get(i).map(|c| c.period_initial).unwrap_or(0.033),
+            Self::MagOrbit(i) => res.magnetar_res.magnetars.get(i).map(|c| c.orbit_distance).unwrap_or(0.0),
+            Self::MagRadius(i) => res.magnetar_res.magnetars.get(i).map(|c| c.radius).unwrap_or(15.0),
+            Self::NSOrbit(i) => res.neutron_res.stars.get(i).map(|c| c.orbit_distance).unwrap_or(0.0),
+            Self::NSRadius(i) => res.neutron_res.stars.get(i).map(|c| c.radius).unwrap_or(15.0),
+            Self::SNOrbit(i) => res.sn_res.supernovae.get(i).map(|c| c.orbit_distance).unwrap_or(0.0),
+            Self::SNRadius(i) => res.sn_res.supernovae.get(i).map(|c| c.progenitor_radius).unwrap_or(100.0),
+            Self::NebRadius => res.nebula_res.config.radius,
+            Self::NebSeed => res.nebula_res.config.seed as f32,
+        }
+    }
+
+    fn set(self, res: &mut AstresMutableResources, val: f32) {
+        match self {
+            Self::GasOrbit(i) => if let Some(c) = res.gas_res.planets.get_mut(i) { c.orbit_distance = val; },
+            Self::GasRadius(i) => if let Some(c) = res.gas_res.planets.get_mut(i) { c.radius = val; },
+            Self::GasSeed(i) => if let Some(c) = res.gas_res.planets.get_mut(i) { c.seed = val as u32; },
+            Self::GasEcc(i) => if let Some(c) = res.gas_res.planets.get_mut(i) { c.eccentricity = val; },
+            Self::GasInc(i) => if let Some(c) = res.gas_res.planets.get_mut(i) { c.inclination = val; },
+            Self::GasBandCount(i) => if let Some(c) = res.gas_res.planets.get_mut(i) { c.band_count = val; },
+            Self::GasBandEmissive(i) => if let Some(c) = res.gas_res.planets.get_mut(i) { c.band_emissive = val; },
+            Self::CometPerihelion(i) => if let Some(c) = res.comet_res.comets.get_mut(i) { c.perihelion = val; },
+            Self::CometAphelion(i) => if let Some(c) = res.comet_res.comets.get_mut(i) { c.aphelion = val; },
+            Self::CometNucleus(i) => if let Some(c) = res.comet_res.comets.get_mut(i) { c.nucleus_radius = val; },
+            Self::CometComa(i) => if let Some(c) = res.comet_res.comets.get_mut(i) { c.coma_radius = val; },
+            Self::CometDustTail(i) => if let Some(c) = res.comet_res.comets.get_mut(i) { c.dust_tail_length = val; },
+            Self::CometIonTail(i) => if let Some(c) = res.comet_res.comets.get_mut(i) { c.ion_tail_length = val; },
+            Self::CometInclination(i) => if let Some(c) = res.comet_res.comets.get_mut(i) { c.inclination = val; },
+            Self::MeteorRadius(i) => if let Some(c) = res.meteor_res.meteoroids.get_mut(i) { c.radius = val; },
+            Self::VStarOrbit(i) => if let Some(c) = res.vstar_res.stars.get_mut(i) { c.orbit_distance = val; },
+            Self::VStarRadius(i) => if let Some(c) = res.vstar_res.stars.get_mut(i) { c.radius = val; },
+            Self::ProtoOrbit(i) => if let Some(c) = res.proto_res.stars.get_mut(i) { c.orbit_distance = val; },
+            Self::ProtoRadius(i) => if let Some(c) = res.proto_res.stars.get_mut(i) { c.radius = val; },
+            Self::ProtoTemp(i) => if let Some(c) = res.proto_res.stars.get_mut(i) { c.temperature = val; },
+            Self::DwarfOrbit(i) => if let Some(c) = res.dwarf_res.stars.get_mut(i) { c.orbit_distance = val; },
+            Self::DwarfRadius(i) => if let Some(c) = res.dwarf_res.stars.get_mut(i) { c.radius = val; },
+            Self::MSOrbit(i) => if let Some(c) = res.ms_res.stars.get_mut(i) { c.orbit_distance = val; },
+            Self::MSRadius(i) => if let Some(c) = res.ms_res.stars.get_mut(i) { c.base_radius = val; },
+            Self::GiantOrbit(i) => if let Some(c) = res.giant_res.stars.get_mut(i) { c.orbit_distance = val; },
+            Self::GiantRadius(i) => if let Some(c) = res.giant_res.stars.get_mut(i) { c.radius = val; },
+            Self::SGOrbit(i) => if let Some(c) = res.sg_res.stars.get_mut(i) { c.orbit_distance = val; },
+            Self::SGRadius(i) => if let Some(c) = res.sg_res.stars.get_mut(i) { c.radius = val; },
+            Self::HGOrbit(i) => if let Some(c) = res.hg_res.stars.get_mut(i) { c.orbit_distance = val; },
+            Self::HGRadius(i) => if let Some(c) = res.hg_res.stars.get_mut(i) { c.radius = val; },
+            Self::BHOrbit(i) => if let Some(c) = res.black_res.holes.get_mut(i) { c.orbit_distance = val; },
+            Self::BHHorizon(i) => if let Some(c) = res.black_res.holes.get_mut(i) { c.event_horizon = val; },
+            Self::BHInfluence(i) => if let Some(c) = res.black_res.holes.get_mut(i) { c.influence_radius = val; },
+            Self::PulsarOrbit(i) => if let Some(c) = res.pulsar_res.pulsars.get_mut(i) { c.orbit_distance = val; },
+            Self::PulsarRadius(i) => if let Some(c) = res.pulsar_res.pulsars.get_mut(i) { c.radius = val; },
+            Self::PulsarPeriod(i) => if let Some(c) = res.pulsar_res.pulsars.get_mut(i) { c.period_initial = val; },
+            Self::MagOrbit(i) => if let Some(c) = res.magnetar_res.magnetars.get_mut(i) { c.orbit_distance = val; },
+            Self::MagRadius(i) => if let Some(c) = res.magnetar_res.magnetars.get_mut(i) { c.radius = val; },
+            Self::NSOrbit(i) => if let Some(c) = res.neutron_res.stars.get_mut(i) { c.orbit_distance = val; },
+            Self::NSRadius(i) => if let Some(c) = res.neutron_res.stars.get_mut(i) { c.radius = val; },
+            Self::SNOrbit(i) => if let Some(c) = res.sn_res.supernovae.get_mut(i) { c.orbit_distance = val; },
+            Self::SNRadius(i) => if let Some(c) = res.sn_res.supernovae.get_mut(i) { c.progenitor_radius = val; },
+            Self::NebRadius => res.nebula_res.config.radius = val,
+            Self::NebSeed => res.nebula_res.config.seed = val as u32,
+        }
+    }
+
+    fn regen(self, events: &mut RegenEvents) {
+        match self {
+            Self::GasOrbit(_) | Self::GasRadius(_) | Self::GasSeed(_) | Self::GasEcc(_) |
+            Self::GasInc(_) | Self::GasBandCount(_) | Self::GasBandEmissive(_) => { events.gas_events.send(RegenerateGasPlanet); }
+            Self::CometPerihelion(_) | Self::CometAphelion(_) | Self::CometNucleus(_) |
+            Self::CometComa(_) | Self::CometDustTail(_) | Self::CometIonTail(_) |
+            Self::CometInclination(_) => { events.comet_events.send(RegenerateComet); }
+            Self::MeteorRadius(_) => { events.meteor_events.send(RegenerateMeteoroid); }
+            Self::VStarOrbit(_) | Self::VStarRadius(_) => { events.vstar_events.send(RegenerateVoxelStar); }
+            Self::ProtoOrbit(_) | Self::ProtoRadius(_) | Self::ProtoTemp(_) => { events.proto_events.send(RegenerateProtostar); }
+            Self::DwarfOrbit(_) | Self::DwarfRadius(_) => { events.dwarf_events.send(RegenerateDwarfStar); }
+            Self::MSOrbit(_) | Self::MSRadius(_) => { events.ms_events.send(RegenerateMainSequence); }
+            Self::GiantOrbit(_) | Self::GiantRadius(_) => { events.giant_events.send(RegenerateGiantStar); }
+            Self::SGOrbit(_) | Self::SGRadius(_) => { events.sg_events.send(RegenerateSupergiant); }
+            Self::HGOrbit(_) | Self::HGRadius(_) => { events.hg_events.send(RegenerateHypergiant); }
+            Self::BHOrbit(_) | Self::BHHorizon(_) | Self::BHInfluence(_) => { events.black_events.send(RegenerateBlackHole); }
+            Self::PulsarOrbit(_) | Self::PulsarRadius(_) | Self::PulsarPeriod(_) => { events.pulsar_events.send(RegeneratePulsar); }
+            Self::MagOrbit(_) | Self::MagRadius(_) => { events.mag_events.send(RegenerateMagnetar); }
+            Self::NSOrbit(_) | Self::NSRadius(_) => { events.neutron_events.send(RegenerateNeutronStar); }
+            Self::SNOrbit(_) | Self::SNRadius(_) => { events.sn_events.send(RegenerateSupernova); }
+            Self::NebRadius | Self::NebSeed => { events.nebula_events.send(RegenerateNebula); }
+        }
+    }
+}
+
+#[derive(Component)]
+struct AstreSliderBar {
+    field: AstreField,
+    min: f32,
+    max: f32,
+}
+
+#[derive(Component)]
+struct AstreSliderFill(AstreField);
+
+#[derive(Component)]
+struct AstreSliderLabel(AstreField);
 
 // ── Colors ──
 
@@ -678,7 +883,13 @@ fn setup_game_ui(mut commands: Commands, settings: Res<GameSettings>) {
         settings.show_orbits,
         ToggleShowOrbits,
     );
-    commands.entity(content).add_children(&[s1, s2, s3, invert, show_light, show_orbits]);
+    let show_systems = spawn_toggle(
+        &mut commands,
+        "Afficher chunks",
+        settings.show_systems,
+        ToggleShowSystems,
+    );
+    commands.entity(content).add_children(&[s1, s2, s3, invert, show_light, show_orbits, show_systems]);
     commands.entity(menu_root).add_children(&[title, content]);
 
 }
@@ -736,303 +947,8 @@ fn spawn_center_btn(commands: &mut Commands, label: &str, target: TargetKind, co
 }
 
 // ══════════════════════════════════════════════════════════
-// Options window
-// ══════════════════════════════════════════════════════════
-
-fn setup_options_window(
-    mut commands: Commands,
-    settings: Res<GameSettings>,
-    tab: Res<OptionsTabState>,
-) {
-    let options_window = commands
-        .spawn(Window {
-            title: "SpaceSpore - Options".into(),
-            resolution: (480.0_f32, 900.0_f32).into(),
-            position: WindowPosition::Automatic,
-            ..default()
-        })
-        .id();
-
-    let ui_camera = commands
-        .spawn((
-            Camera2d,
-            Camera {
-                target: bevy::render::camera::RenderTarget::Window(WindowRef::Entity(options_window)),
-                ..default()
-            },
-            OptionsWindowCam,
-        ))
-        .id();
-
-    spawn_options_ui_root(&mut commands, &settings, ui_camera, tab.active);
-}
-
-fn spawn_options_ui_root(
-    commands: &mut Commands,
-    settings: &GameSettings,
-    cam_entity: Entity,
-    active_tab: OptionsTab,
-) {
-    let root = commands
-        .spawn((
-            Node {
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                flex_direction: FlexDirection::Column,
-                overflow: Overflow::scroll_y(),
-                ..default()
-            },
-            BackgroundColor(BG_DARK),
-            TargetCamera(cam_entity),
-            OptionsUiRoot,
-        ))
-        .id();
-
-    let title = commands
-        .spawn((
-            Node {
-                width: Val::Percent(100.0),
-                padding: UiRect::axes(Val::Px(20.0), Val::Px(16.0)),
-                justify_content: JustifyContent::Center,
-                border: UiRect::bottom(Val::Px(2.0)),
-                ..default()
-            },
-            BorderColor(BG_SLIDER),
-        ))
-        .with_child((
-            Text::new("SYSTEME SOLAIRE"),
-            TextFont { font_size: 22.0, ..default() },
-            TextColor(TEXT_COLOR),
-        ))
-        .id();
-
-    let content = commands
-        .spawn(Node {
-            width: Val::Percent(100.0),
-            flex_direction: FlexDirection::Column,
-            padding: UiRect::axes(Val::Px(16.0), Val::Px(12.0)),
-            row_gap: Val::Px(10.0),
-            ..default()
-        })
-        .id();
-
-    if active_tab == OptionsTab::General {
-        let general_cat = spawn_category_header(commands, "REGLAGES GENERAUX", ACCENT);
-        commands.entity(content).add_child(general_cat);
-        for (key, min, max) in [
-            (SettingKey::MouseSensitivity, 0.05, 2.0),
-            (SettingKey::ScrollSpeed, 1.0, 30.0),
-            (SettingKey::KeyboardSpeed, 0.5, 5.0),
-        ] {
-            let slider = spawn_slider(commands, settings, key, min, max);
-            commands.entity(content).add_child(slider);
-        }
-        let invert = spawn_toggle(commands, "Inverser Y", settings.invert_y, ToggleInvertY);
-        let light = spawn_toggle(commands, "Afficher eclairage", settings.show_light_indicator, ToggleShowLight);
-        let orbits = spawn_toggle(commands, "Afficher orbites", settings.show_orbits, ToggleShowOrbits);
-        commands.entity(content).add_children(&[invert, light, orbits]);
-    }
-
-    if active_tab == OptionsTab::Planets {
-    // ════ PLANETES ════
-    let planet_cat = spawn_category_header(commands, "PLANETES", PLANET_COLOR);
-    commands.entity(content).add_child(planet_cat);
-
-    let moon_color = Color::srgb(0.6, 0.6, 0.7);
-
-    for (i, pcfg) in settings.planets.iter().enumerate() {
-        let (card, body) = spawn_body_card(
-            commands,
-            settings,
-            &format!("Planete {}", i + 1),
-            PLANET_COLOR,
-            BodyAction::RemovePlanet(i),
-            &[
-                (SettingKey::PlanetOrbitDistance(i), 100.0, 100000.0),
-                (SettingKey::PlanetRadius(i), 20.0, 500.0),
-                (SettingKey::PlanetSeaLevel(i), 0.1, 0.7),
-                (SettingKey::PlanetTerrainHeight(i), 5.0, 200.0),
-                (SettingKey::PlanetSeed(i), 1.0, 999.0),
-                (SettingKey::PlanetNoiseScale(i), 0.5, 5.0),
-                (SettingKey::PlanetDetailScale(i), 1.0, 10.0),
-            ],
-        );
-        let atmo_toggle = spawn_toggle(commands, "Atmosphere", pcfg.atmosphere, ToggleAtmosphere(i));
-        commands.entity(body).add_child(atmo_toggle);
-        if pcfg.atmosphere {
-            for (key, min, max) in [
-                (SettingKey::PlanetCloudDensity(i), 0.1, 1.0),
-                (SettingKey::PlanetCloudAltitude(i), 5.0, 200.0),
-                (SettingKey::PlanetCloudSpeed(i), 0.005, 0.1),
-            ] {
-                let s = spawn_slider(commands, settings, key, min, max);
-                commands.entity(body).add_child(s);
-            }
-        }
-        commands.entity(content).add_child(card);
-
-        for (mi, _) in pcfg.moons.iter().enumerate() {
-            let (moon_card, _) = spawn_body_card(
-                commands,
-                settings,
-                &format!("  Lune {} (P{})", mi + 1, i + 1),
-                moon_color,
-                BodyAction::RemoveMoon(i, mi),
-                &[
-                    (SettingKey::MoonOrbitDistance(i, mi), 30.0, 10000.0),
-                    (SettingKey::MoonRadius(i, mi), 3.0, 150.0),
-                    (SettingKey::MoonSeed(i, mi), 1.0, 999.0),
-                ],
-            );
-            commands.entity(moon_card).insert((Button, CenterButton(TargetKind::Moon(i, mi))));
-            commands.entity(content).add_child(moon_card);
-        }
-
-        let add_moon = spawn_add_button(commands, &format!("Ajouter lune (P{})", i + 1), BodyAction::AddMoon(i), moon_color);
-        commands.entity(content).add_child(add_moon);
-    }
-
-    let add_planet = spawn_add_button(commands, "Ajouter planete", BodyAction::AddPlanet, PLANET_COLOR);
-    commands.entity(content).add_child(add_planet);
-    }
-
-    if active_tab == OptionsTab::Stars {
-    // ════ ETOILES ════
-    let star_cat = spawn_category_header(commands, "ETOILES", STAR_COLOR);
-    commands.entity(content).add_child(star_cat);
-
-    for (i, _) in settings.stars.iter().enumerate() {
-        let (card, _) = spawn_body_card(
-            commands,
-            settings,
-            &format!("Etoile {}", i + 1),
-            STAR_COLOR,
-            BodyAction::RemoveStar(i),
-            &[
-                (SettingKey::StarOrbitDistance(i), 0.0, 5000.0),
-                (SettingKey::StarRadius(i), 20.0, 2000.0),
-                (SettingKey::StarIntensity(i), 415.0, 57000.0),
-                (SettingKey::StarLightRange(i), 500.0, 100000.0),
-                (SettingKey::StarColorR(i), 0.0, 1.0),
-                (SettingKey::StarColorG(i), 0.0, 1.0),
-                (SettingKey::StarColorB(i), 0.0, 1.0),
-                (SettingKey::StarFlareCount(i), 0.0, 20.0),
-                (SettingKey::StarFlareHeight(i), 10.0, 500.0),
-                (SettingKey::StarFlareSpeed(i), 0.1, 5.0),
-                (SettingKey::StarFlareSize(i), 2.0, 60.0),
-                (SettingKey::StarFlareDistance(i), 0.0, 300.0),
-            ],
-        );
-        commands.entity(content).add_child(card);
-    }
-
-    let add_star = spawn_add_button(commands, "Ajouter etoile", BodyAction::AddStar, STAR_COLOR);
-    commands.entity(content).add_child(add_star);
-    }
-
-    if active_tab == OptionsTab::Belts {
-    // ════ CEINTURES ════
-    let belt_cat = spawn_category_header(commands, "CEINTURES", BELT_COLOR);
-    commands.entity(content).add_child(belt_cat);
-
-    for (i, _) in settings.asteroid_belts.iter().enumerate() {
-        let (card, _) = spawn_body_card(
-            commands,
-            settings,
-            &format!("Ceinture {}", i + 1),
-            BELT_COLOR,
-            BodyAction::RemoveBelt(i),
-            &[
-                (SettingKey::BeltDistance(i), 50.0, 100000.0),
-                (SettingKey::BeltWidth(i), 15.0, 500.0),
-                (SettingKey::BeltMinSize(i), 0.5, 30.0),
-                (SettingKey::BeltMaxSize(i), 1.0, 60.0),
-                (SettingKey::BeltCount(i), 10.0, 1000.0),
-            ],
-        );
-        commands.entity(content).add_child(card);
-    }
-
-    let add_belt = spawn_add_button(commands, "Ajouter ceinture", BodyAction::AddBelt, BELT_COLOR);
-    commands.entity(content).add_child(add_belt);
-    }
-
-    // ════ REGENERER ════
-    let apply_btn = commands
-        .spawn((
-            Node {
-                width: Val::Percent(100.0),
-                padding: UiRect::axes(Val::Px(0.0), Val::Px(14.0)),
-                margin: UiRect::top(Val::Px(8.0)),
-                justify_content: JustifyContent::Center,
-                border: UiRect::all(Val::Px(2.0)),
-                ..default()
-            },
-            BackgroundColor(BG_PANEL),
-            BorderColor(ACCENT),
-            BorderRadius::all(Val::Px(8.0)),
-            Button,
-            ApplyPlanetButton,
-        ))
-        .with_child((
-            Text::new("REGENERER"),
-            TextFont { font_size: 17.0, ..default() },
-            TextColor(TEXT_COLOR),
-        ))
-        .id();
-    commands.entity(content).add_child(apply_btn);
-
-    let tabs = spawn_options_tabs(commands, active_tab);
-    commands.entity(root).add_children(&[title, tabs, content]);
-}
-
-// ══════════════════════════════════════════════════════════
 // Layout helpers
 // ══════════════════════════════════════════════════════════
-
-fn spawn_options_tabs(commands: &mut Commands, active: OptionsTab) -> Entity {
-    let bar = commands
-        .spawn(Node {
-            width: Val::Percent(100.0),
-            padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
-            column_gap: Val::Px(6.0),
-            ..default()
-        })
-        .id();
-
-    for (tab, label, color) in [
-        (OptionsTab::General, "General", ACCENT),
-        (OptionsTab::Planets, "Planetes", PLANET_COLOR),
-        (OptionsTab::Stars, "Etoiles", STAR_COLOR),
-        (OptionsTab::Belts, "Ceintures", BELT_COLOR),
-    ] {
-        let selected = tab == active;
-        let button = commands
-            .spawn((
-                Node {
-                    flex_grow: 1.0,
-                    justify_content: JustifyContent::Center,
-                    padding: UiRect::axes(Val::Px(4.0), Val::Px(9.0)),
-                    border: UiRect::all(Val::Px(1.0)),
-                    ..default()
-                },
-                BackgroundColor(if selected { color.with_alpha(0.22) } else { BG_PANEL }),
-                BorderColor(if selected { color } else { BG_SLIDER }),
-                BorderRadius::all(Val::Px(4.0)),
-                Button,
-                OptionsTabButton(tab),
-            ))
-            .with_child((
-                Text::new(label),
-                TextFont { font_size: 12.0, ..default() },
-                TextColor(if selected { color } else { TEXT_DIM }),
-            ))
-            .id();
-        commands.entity(bar).add_child(button);
-    }
-
-    bar
-}
 
 fn spawn_category_header(commands: &mut Commands, label: &str, color: Color) -> Entity {
     commands
@@ -1326,18 +1242,6 @@ fn handle_options_button(
     }
 }
 
-fn handle_options_tabs(
-    interactions: Query<(&Interaction, &OptionsTabButton), Changed<Interaction>>,
-    mut tab: ResMut<OptionsTabState>,
-    mut rebuild: EventWriter<RebuildUi>,
-) {
-    for (interaction, button) in &interactions {
-        if *interaction == Interaction::Pressed && tab.active != button.0 {
-            tab.active = button.0;
-            rebuild.send(RebuildUi);
-        }
-    }
-}
 
 fn handle_astres_tabs(
     interactions: Query<(&Interaction, &AstresTabButton), Changed<Interaction>>,
@@ -1473,6 +1377,28 @@ fn handle_toggle_show_orbits(
     }
 }
 
+fn handle_toggle_show_systems(
+    interactions: Query<&Interaction, (Changed<Interaction>, With<ToggleShowSystems>)>,
+    mut settings: ResMut<GameSettings>,
+    mut toggle_q: Query<(&mut BackgroundColor, &mut BorderColor, &mut Node), With<ToggleShowSystems>>,
+) {
+    for interaction in &interactions {
+        if *interaction == Interaction::Pressed {
+            settings.show_systems = !settings.show_systems;
+            settings.save();
+            for (mut bg, mut border, mut node) in &mut toggle_q {
+                *bg = BackgroundColor(if settings.show_systems { ACCENT } else { BG_SLIDER });
+                *border = BorderColor(if settings.show_systems { ACCENT } else { TEXT_DIM });
+                node.justify_content = if settings.show_systems {
+                    JustifyContent::End
+                } else {
+                    JustifyContent::Start
+                };
+            }
+        }
+    }
+}
+
 fn handle_toggle_atmosphere(
     interactions: Query<(&Interaction, &ToggleAtmosphere), Changed<Interaction>>,
     mut settings: ResMut<GameSettings>,
@@ -1480,7 +1406,7 @@ fn handle_toggle_atmosphere(
 ) {
     for (interaction, toggle) in &interactions {
         if *interaction == Interaction::Pressed {
-            if let Some(p) = settings.planets.get_mut(toggle.0) {
+            if let Some(p) = settings.systems.first_mut().and_then(|sys| sys.planets.get_mut(toggle.0)) {
                 p.atmosphere = !p.atmosphere;
                 settings.save();
                 rebuild.send(RebuildUi);
@@ -1568,54 +1494,67 @@ fn handle_body_actions(
         }
         match *action {
             BodyAction::AddPlanet => {
-                let n = settings.planets.len();
-                settings.planets.push(PlanetConfig {
-                    orbit_distance: 450.0 + n as f32 * 200.0,
-                    seed: 42 + n as u32 * 13,
-                    ..PlanetConfig::default()
-                });
+                if let Some(sys) = settings.systems.first_mut() {
+                    let n = sys.planets.len();
+                    sys.planets.push(PlanetConfig {
+                        orbit_distance: 450.0 + n as f32 * 200.0,
+                        seed: 42 + n as u32 * 13,
+                        ..PlanetConfig::default()
+                    });
+                }
             }
             BodyAction::RemovePlanet(i) => {
-                if settings.planets.len() > 1 && i < settings.planets.len() {
-                    settings.planets.remove(i);
+                if let Some(sys) = settings.systems.first_mut() {
+                    if sys.planets.len() > 1 && i < sys.planets.len() {
+                        sys.planets.remove(i);
+                    }
                 }
             }
             BodyAction::AddStar => {
-                let n = settings.stars.len();
-                settings.stars.push(StarConfig {
-                    orbit_distance: 150.0 + n as f32 * 100.0,
-                    radius: 80.0,
-                    ..StarConfig::default()
-                });
+                if let Some(sys) = settings.systems.first_mut() {
+                    let n = sys.stars.len();
+                    sys.stars.push(StarConfig {
+                        orbit_distance: 150.0 + n as f32 * 100.0,
+                        radius: 80.0,
+                        ..StarConfig::default()
+                    });
+                }
             }
             BodyAction::RemoveStar(i) => {
-                if settings.stars.len() > 1 && i < settings.stars.len() {
-                    settings.stars.remove(i);
+                if let Some(sys) = settings.systems.first_mut() {
+                    if sys.stars.len() > 1 && i < sys.stars.len() {
+                        sys.stars.remove(i);
+                    }
                 }
             }
             BodyAction::AddBelt => {
-                settings.asteroid_belts.push(AsteroidBeltConfig {
-                    distance: 300.0,
-                    ..AsteroidBeltConfig::default()
-                });
+                if let Some(sys) = settings.systems.first_mut() {
+                    sys.asteroid_belts.push(AsteroidBeltConfig {
+                        distance: 300.0,
+                        ..AsteroidBeltConfig::default()
+                    });
+                }
             }
             BodyAction::RemoveBelt(i) => {
-                if i < settings.asteroid_belts.len() {
-                    settings.asteroid_belts.remove(i);
+                if let Some(sys) = settings.systems.first_mut() {
+                    if i < sys.asteroid_belts.len() {
+                        sys.asteroid_belts.remove(i);
+                    }
                 }
             }
             BodyAction::AddMoon(pi) => {
-                if let Some(planet) = settings.planets.get_mut(pi) {
+                if let Some(planet) = settings.systems.first_mut().and_then(|sys| sys.planets.get_mut(pi)) {
                     let n = planet.moons.len();
                     planet.moons.push(crate::settings::MoonConfig {
                         orbit_distance: 80.0 + n as f32 * 30.0,
                         radius: 12.0,
                         seed: 77 + n as u32 * 11,
+                        ..Default::default()
                     });
                 }
             }
             BodyAction::RemoveMoon(pi, mi) => {
-                if let Some(planet) = settings.planets.get_mut(pi) {
+                if let Some(planet) = settings.systems.first_mut().and_then(|sys| sys.planets.get_mut(pi)) {
                     if mi < planet.moons.len() {
                         planet.moons.remove(mi);
                     }
@@ -1629,32 +1568,12 @@ fn handle_body_actions(
     }
 }
 
-fn rebuild_options_ui(
-    mut commands: Commands,
-    settings: Res<GameSettings>,
-    tab: Res<OptionsTabState>,
-    mut events: EventReader<RebuildUi>,
-    ui_root_q: Query<Entity, With<OptionsUiRoot>>,
-    camera_q: Query<Entity, With<OptionsWindowCam>>,
-) {
-    let mut should = false;
-    for _ in events.read() {
-        should = true;
-    }
-    if !should {
-        return;
-    }
-    for entity in &ui_root_q {
-        commands.entity(entity).despawn_recursive();
-    }
-    let Ok(cam) = camera_q.get_single() else { return };
-    spawn_options_ui_root(&mut commands, &settings, cam, tab.active);
-}
-
 fn rebuild_astres_ui(
     mut commands: Commands,
+    settings: Res<GameSettings>,
     res: AstresResources,
     tab: Res<AstresTabState>,
+    selected: Res<SelectedAstre>,
     mut events: EventReader<RebuildUi>,
     ui_root_q: Query<Entity, With<AstresUiRoot>>,
     camera_q: Query<Entity, With<AstresWindowCam>>,
@@ -1666,13 +1585,7 @@ fn rebuild_astres_ui(
         commands.entity(entity).despawn_recursive();
     }
     let Ok(cam) = camera_q.get_single() else { return };
-    spawn_astres_ui_root(
-        &mut commands,
-        &res.gas_res, &res.comet_res, &res.meteor_res,
-        &res.vstar_res, &res.proto_res, &res.dwarf_res, &res.ms_res, &res.giant_res, &res.sg_res, &res.hg_res,
-        &res.nebula_res, &res.black_res, &res.pulsar_res, &res.magnetar_res, &res.neutron_res, &res.sn_res,
-        cam, tab.active,
-    );
+    spawn_astres_ui_root(&mut commands, &settings, &res, cam, tab.active, selected.0);
 }
 
 fn rebuild_center_buttons(
@@ -1698,7 +1611,7 @@ fn scroll_options_panel(
     mut mouse_wheel: EventReader<MouseWheel>,
     primary_window: Query<&Window, With<PrimaryWindow>>,
     other_windows: Query<&Window, Without<PrimaryWindow>>,
-    mut scroll_q: Query<&mut ScrollPosition, Or<(With<OptionsUiRoot>, With<AstresUiRoot>)>>,
+    mut scroll_q: Query<&mut ScrollPosition, With<AstresUiRoot>>,
 ) {
     let mut on_options_window = false;
     if let Ok(w) = primary_window.get_single() {
@@ -1730,22 +1643,24 @@ fn scroll_options_panel(
     }
 }
 // ══════════════════════════════════════════════════════════
-// Fenêtre Astres
+// Fenêtre Astres (unique)
 // ══════════════════════════════════════════════════════════
 
 fn setup_astres_window(
     mut commands: Commands,
-    res: AstresResources, // Remplace les 16 Res par cette structure
+    settings: Res<GameSettings>,
+    res: AstresResources,
     tab: Res<AstresTabState>,
+    selected: Res<SelectedAstre>,
 ) {
-    let astres_window = commands
-        .spawn(Window {
-            title: "SpaceSpore - Astres".into(),
-            resolution: (480.0_f32, 860.0_f32).into(),
-            position: WindowPosition::Automatic,
-            ..default()
-        })
-        .id();
+    let mut astres_win = Window {
+        title: "SpaceSpore - Editeur".into(),
+        resolution: (500.0_f32, 900.0_f32).into(),
+        position: WindowPosition::Automatic,
+        ..default()
+    };
+    astres_win.set_minimized(true);
+    let astres_window = commands.spawn(astres_win).id();
     let ui_camera = commands
         .spawn((
             Camera2d,
@@ -1756,35 +1671,16 @@ fn setup_astres_window(
             AstresWindowCam,
         ))
         .id();
-    spawn_astres_ui_root(
-        &mut commands,
-        &res.gas_res, &res.comet_res, &res.meteor_res,
-        &res.vstar_res, &res.proto_res, &res.dwarf_res, &res.ms_res, &res.giant_res, &res.sg_res, &res.hg_res,
-        &res.nebula_res, &res.black_res, &res.pulsar_res, &res.magnetar_res, &res.neutron_res, &res.sn_res,
-        ui_camera, tab.active,
-    );
+    spawn_astres_ui_root(&mut commands, &settings, &res, ui_camera, tab.active, selected.0);
 }
 
 fn spawn_astres_ui_root(
     commands:     &mut Commands,
-    gas_res:      &GasPlanetRes,
-    comet_res:    &CometRes,
-    meteor_res:   &MeteoroidRes,
-    vstar_res:    &VoxelStarRes,
-    proto_res:    &ProtostarRes,
-    dwarf_res:    &DwarfStarRes,
-    ms_res:       &MainSequenceRes,
-    giant_res:    &GiantStarRes,
-    sg_res:       &SupergiantRes,
-    hg_res:       &HypergiantRes,
-    nebula_res:   &NebulaRes,
-    black_res:    &BlackHoleRes,
-    pulsar_res:   &PulsarRes,
-    magnetar_res: &MagnetarRes,
-    neutron_res:  &NeutronStarRes,
-    sn_res:       &SupernovaRes,
+    settings:     &GameSettings,
+    res:          &AstresResources,
     cam_entity:   Entity,
     active_tab:   AstresTab,
+    selected:     Option<TargetKind>,
 ) {
     let root = commands
         .spawn((
@@ -1792,8 +1688,6 @@ fn spawn_astres_ui_root(
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
                 flex_direction: FlexDirection::Column,
-                padding: UiRect::axes(Val::Px(16.0), Val::Px(12.0)),
-                row_gap: Val::Px(10.0),
                 overflow: Overflow::scroll_y(),
                 ..default()
             },
@@ -1807,7 +1701,7 @@ fn spawn_astres_ui_root(
         .spawn((
             Node {
                 width: Val::Percent(100.0),
-                padding: UiRect::axes(Val::Px(20.0), Val::Px(16.0)),
+                padding: UiRect::axes(Val::Px(20.0), Val::Px(14.0)),
                 justify_content: JustifyContent::Center,
                 border: UiRect::bottom(Val::Px(2.0)),
                 ..default()
@@ -1815,280 +1709,593 @@ fn spawn_astres_ui_root(
             BorderColor(BG_SLIDER),
         ))
         .with_child((
-            Text::new("ASTRES"),
-            TextFont {
-                font_size: 22.0,
-                ..default()
-            },
+            Text::new("EDITEUR"),
+            TextFont { font_size: 22.0, ..default() },
             TextColor(TEXT_COLOR),
         ))
         .id();
+
+    let tabs = spawn_astres_tabs(commands, active_tab);
 
     let content = commands
         .spawn(Node {
             width: Val::Percent(100.0),
             flex_direction: FlexDirection::Column,
-            padding: UiRect::axes(Val::Px(16.0), Val::Px(12.0)),
-            row_gap: Val::Px(10.0),
+            padding: UiRect::axes(Val::Px(12.0), Val::Px(8.0)),
+            row_gap: Val::Px(8.0),
             ..default()
         })
         .id();
 
-    if active_tab == AstresTab::Planets {
-    // ── Planètes gazeuses ──
-    let gas_cat = spawn_category_header(commands, "PLANETES GAZEUSES", PLANET_COLOR);
-    commands.entity(content).add_child(gas_cat);
-
-    for (i, cfg) in gas_res.planets.iter().enumerate() {
-        let info = format!(
-            "Rayon {:.0}  -  Orbite {:.0}",
-            cfg.radius, cfg.orbit_distance
-        );
-
-        let card = spawn_astre_card(
-            commands,
-            &format!("Planete gazeuse {}", i + 1),
-            TargetKind::GasPlanet(i),
-            PLANET_COLOR,
-            &info,
-        );
-
-        commands.entity(content).add_child(card);
+    match active_tab {
+        AstresTab::Liste => build_liste_tab(commands, settings, res, content, selected),
+        AstresTab::Editer => build_editer_tab(commands, settings, res, content, selected),
+        AstresTab::Ajouter => build_ajouter_tab(commands, content),
     }
 
-    let gas_regen = spawn_astre_regen_button(
-        commands,
-        "Regenerer planetes gazeuses",
-        RegenAstreAction::GasPlanet,
-        PLANET_COLOR,
-    );
-    commands.entity(content).add_child(gas_regen);
-    add_astre_add_button(commands, content, "une planete gazeuse", AstreFamily::GasPlanet, PLANET_COLOR);
-    }
-
-    if active_tab == AstresTab::Remnants {
-    // ── Nébuleuse ──
-    if nebula_res.enabled {
-    let nebula_cat = spawn_category_header(commands, "NEBULEUSE", BELT_COLOR);
-    commands.entity(content).add_child(nebula_cat);
-
-    let nebula_info = format!(
-        "Rayon {:.0}  -  Seed {}",
-        nebula_res.config.radius, nebula_res.config.seed
-    );
-
-    let nebula_card = spawn_astre_card(
-        commands,
-        "Nebuleuse",
-        TargetKind::Nebula,
-        BELT_COLOR,
-        &nebula_info,
-    );
-    commands.entity(content).add_child(nebula_card);
-
-    let nebula_regen = spawn_astre_regen_button(
-        commands,
-        "Regenerer nebuleuse",
-        RegenAstreAction::Nebula,
-        BELT_COLOR,
-    );
-    commands.entity(content).add_child(nebula_regen);
-    }
-    add_astre_add_button(commands, content, "une nebuleuse", AstreFamily::Nebula, BELT_COLOR);
-
-    // ── Trous noirs / remparts stellaires ──
-    let black_cat = spawn_category_header(commands, "REMNANTS STELLAIRES", REMNANT_COLOR);
-    commands.entity(content).add_child(black_cat);
-
-    for (i, cfg) in black_res.holes.iter().enumerate() {
-        let info = format!(
-            "Horizon {:.0}  -  Influence {:.0}",
-            cfg.event_horizon, cfg.influence_radius
-        );
-
-        let card = spawn_astre_card(
-            commands,
-            &format!("Trou noir {}", i + 1),
-            TargetKind::BlackHole(i),
-            REMNANT_COLOR,
-            &info,
-        );
-
-        commands.entity(content).add_child(card);
-    }
-
-    let black_regen = spawn_astre_regen_button(
-        commands,
-        "Regenerer trous noirs",
-        RegenAstreAction::BlackHole,
-        REMNANT_COLOR,
-    );
-    commands.entity(content).add_child(black_regen);
-    add_astre_add_button(commands, content, "un trou noir", AstreFamily::BlackHole, REMNANT_COLOR);
-
-       // ── Pulsars ──
-    let pulsar_cat = spawn_category_header(commands, "PULSARS", REMNANT_COLOR);
-    commands.entity(content).add_child(pulsar_cat);
-    for (i, cfg) in pulsar_res.pulsars.iter().enumerate() {
-        let info = format!("Periode {:.3}s  -  Orbite {:.0}", cfg.period_initial, cfg.orbit_distance);
-        let card = spawn_astre_card(commands, &format!("Pulsar {}", i+1), TargetKind::Pulsar(i), REMNANT_COLOR, &info);
-        commands.entity(content).add_child(card);
-    }
-    let btn_pulsar = spawn_astre_regen_button(commands, "Regenerer pulsars", RegenAstreAction::Pulsar, REMNANT_COLOR);
-    commands.entity(content).add_child(btn_pulsar);
-    add_astre_add_button(commands, content, "un pulsar", AstreFamily::Pulsar, REMNANT_COLOR);
-
-    // ── Magnétars ──
-    let mag_cat = spawn_category_header(commands, "MAGNETARS", REMNANT_COLOR);
-    commands.entity(content).add_child(mag_cat);
-    for (i, cfg) in magnetar_res.magnetars.iter().enumerate() {
-        let info = format!("Rayon {:.0}  -  Orbite {:.0}", cfg.radius, cfg.orbit_distance);
-        let card = spawn_astre_card(commands, &format!("Magnetar {}", i+1), TargetKind::Magnetar(i), REMNANT_COLOR, &info);
-        commands.entity(content).add_child(card);
-    }
-    let btn_magnetar = spawn_astre_regen_button(commands, "Regenerer magnetars", RegenAstreAction::Magnetar, REMNANT_COLOR);
-    commands.entity(content).add_child(btn_magnetar);
-    add_astre_add_button(commands, content, "un magnetar", AstreFamily::Magnetar, REMNANT_COLOR);
-
-    // ── Étoiles à neutrons ──
-    let ns_cat = spawn_category_header(commands, "ETOILES A NEUTRONS", REMNANT_COLOR);
-    commands.entity(content).add_child(ns_cat);
-    for (i, cfg) in neutron_res.stars.iter().enumerate() {
-        let info = format!("Rayon {:.0}  -  Orbite {:.0}", cfg.radius, cfg.orbit_distance);
-        let card = spawn_astre_card(commands, &format!("Etoile neutrons {}", i+1), TargetKind::NeutronStar(i), REMNANT_COLOR, &info);
-        commands.entity(content).add_child(card);
-    }
-    let btn_neutron = spawn_astre_regen_button(commands, "Regenerer etoiles neutrons", RegenAstreAction::NeutronStar, REMNANT_COLOR);
-    commands.entity(content).add_child(btn_neutron);
-    add_astre_add_button(commands, content, "une etoile a neutrons", AstreFamily::NeutronStar, REMNANT_COLOR);
-
-    // ── Supernovae ──
-    let sn_cat = spawn_category_header(commands, "SUPERNOVAE", REMNANT_COLOR);
-    commands.entity(content).add_child(sn_cat);
-    for (i, cfg) in sn_res.supernovae.iter().enumerate() {
-        let info = format!("Type {:?}  -  Orbite {:.0}", cfg.sn_type, cfg.orbit_distance);
-        let card = spawn_astre_card(commands, &format!("Supernova {}", i+1), TargetKind::Supernova(i), REMNANT_COLOR, &info);
-        commands.entity(content).add_child(card);
-    }
-    let btn_sn = spawn_astre_regen_button(commands, "Regenerer supernovae", RegenAstreAction::Supernova, REMNANT_COLOR);
-    commands.entity(content).add_child(btn_sn);
-    add_astre_add_button(commands, content, "une supernova", AstreFamily::Supernova, REMNANT_COLOR);
-    }
-
-    if active_tab == AstresTab::Planets {
-    // ── Comètes ──
-    let comet_cat = spawn_category_header(commands, "COMETES", PLANET_COLOR);
-    commands.entity(content).add_child(comet_cat);
-    for (i, cfg) in comet_res.comets.iter().enumerate() {
-        let info = format!("Perihelie {:.0}  -  Aphelie {:.0}", cfg.perihelion, cfg.aphelion);
-        let card = spawn_astre_card(commands, &format!("Comete {}", i+1), TargetKind::Comet(i), PLANET_COLOR, &info);
-        commands.entity(content).add_child(card);
-    }
-    let btn_comet = spawn_astre_regen_button(commands, "Regenerer cometes", RegenAstreAction::Comet, PLANET_COLOR);
-    commands.entity(content).add_child(btn_comet);
-    add_astre_add_button(commands, content, "une comete", AstreFamily::Comet, PLANET_COLOR);
-
-    // ── Météoroïdes ──
-    let met_cat = spawn_category_header(commands, "METEOROÏDES", PLANET_COLOR);
-    commands.entity(content).add_child(met_cat);
-    for (i, cfg) in meteor_res.meteoroids.iter().enumerate() {
-        let info = format!("Rayon {:.0}  -  {:?}", cfg.radius, cfg.composition);
-        let card = spawn_astre_card(commands, &format!("Meteoroide {}", i+1), TargetKind::Meteoroid(i), PLANET_COLOR, &info);
-        commands.entity(content).add_child(card);
-    }
-    let btn_meteor = spawn_astre_regen_button(commands, "Regenerer meteoroides", RegenAstreAction::Meteoroid, PLANET_COLOR);
-    commands.entity(content).add_child(btn_meteor);
-    add_astre_add_button(commands, content, "un meteoroide", AstreFamily::Meteoroid, PLANET_COLOR);
-    }
-
-    if active_tab == AstresTab::Stars {
-    // ── Étoiles voxel ──
-    let vstar_cat = spawn_category_header(commands, "ETOILES VOXEL", STAR_COLOR);
-    commands.entity(content).add_child(vstar_cat);
-    for (i, cfg) in vstar_res.stars.iter().enumerate() {
-        let info = format!("Rayon {:.0}  -  Orbite {:.0}", cfg.radius, cfg.orbit_distance);
-        let card = spawn_astre_card(commands, &format!("Etoile {}", i+1), TargetKind::VoxelStar(i), STAR_COLOR, &info);
-        commands.entity(content).add_child(card);
-    }
-    let btn_vstar = spawn_astre_regen_button(commands, "Regenerer etoiles", RegenAstreAction::VoxelStar, STAR_COLOR);
-    commands.entity(content).add_child(btn_vstar);
-    add_astre_add_button(commands, content, "une etoile voxel", AstreFamily::VoxelStar, STAR_COLOR);
-
-    // ── Protoétoiles ──
-    let proto_cat = spawn_category_header(commands, "PROTOETOILES", STAR_COLOR);
-    commands.entity(content).add_child(proto_cat);
-    for (i, cfg) in proto_res.stars.iter().enumerate() {
-        let info = format!("Rayon {:.0}  -  Orbite {:.0}", cfg.radius, cfg.orbit_distance);
-        let card = spawn_astre_card(commands, &format!("Protoetoile {}", i+1), TargetKind::Protostar(i), STAR_COLOR, &info);
-        commands.entity(content).add_child(card);
-    }
-    let btn_proto = spawn_astre_regen_button(commands, "Regenerer protoetoiles", RegenAstreAction::Protostar, STAR_COLOR);
-    commands.entity(content).add_child(btn_proto);
-    add_astre_add_button(commands, content, "une protoetoile", AstreFamily::Protostar, STAR_COLOR);
-
-    // ── Naines ──
-    let dwarf_cat = spawn_category_header(commands, "NAINES", STAR_COLOR);
-    commands.entity(content).add_child(dwarf_cat);
-    for (i, cfg) in dwarf_res.stars.iter().enumerate() {
-        let info = format!("Rayon {:.0}  -  {:?}", cfg.radius, cfg.dwarf_type);
-        let card = spawn_astre_card(commands, &format!("Naine {}", i+1), TargetKind::DwarfStar(i), STAR_COLOR, &info);
-        commands.entity(content).add_child(card);
-    }
-    let btn_dwarf = spawn_astre_regen_button(commands, "Regenerer naines", RegenAstreAction::DwarfStar, STAR_COLOR);
-    commands.entity(content).add_child(btn_dwarf);
-    add_astre_add_button(commands, content, "une naine", AstreFamily::DwarfStar, STAR_COLOR);
-
-    // ── Séquence principale ──
-    let ms_cat = spawn_category_header(commands, "SEQUENCE PRINCIPALE", STAR_COLOR);
-    commands.entity(content).add_child(ms_cat);
-    for (i, cfg) in ms_res.stars.iter().enumerate() {
-        let info = format!("Classe {:?}  -  Orbite {:.0}", cfg.spectral_class, cfg.orbit_distance);
-        let card = spawn_astre_card(commands, &format!("Seq. princ. {}", i+1), TargetKind::MainSequence(i), STAR_COLOR, &info);
-        commands.entity(content).add_child(card);
-    }
-    let btn_ms = spawn_astre_regen_button(commands, "Regenerer seq. principale", RegenAstreAction::MainSequence, STAR_COLOR);
-    commands.entity(content).add_child(btn_ms);
-    add_astre_add_button(commands, content, "une etoile principale", AstreFamily::MainSequence, STAR_COLOR);
-
-    // ── Géantes ──
-    let giant_cat = spawn_category_header(commands, "GEANTES", STAR_COLOR);
-    commands.entity(content).add_child(giant_cat);
-    for (i, cfg) in giant_res.stars.iter().enumerate() {
-        let info = format!("Rayon {:.0}  -  {:?}", cfg.radius, cfg.giant_type);
-        let card = spawn_astre_card(commands, &format!("Geante {}", i+1), TargetKind::GiantStar(i), STAR_COLOR, &info);
-        commands.entity(content).add_child(card);
-    }
-    let btn_giant = spawn_astre_regen_button(commands, "Regenerer geantes", RegenAstreAction::GiantStar, STAR_COLOR);
-    commands.entity(content).add_child(btn_giant);
-    add_astre_add_button(commands, content, "une geante", AstreFamily::GiantStar, STAR_COLOR);
-
-    // ── Supergéantes ──
-    let sg_cat = spawn_category_header(commands, "SUPERGEANTES", STAR_COLOR);
-    commands.entity(content).add_child(sg_cat);
-    for (i, cfg) in sg_res.stars.iter().enumerate() {
-        let info = format!("Rayon {:.0}  -  {:?}", cfg.radius, cfg.class);
-        let card = spawn_astre_card(commands, &format!("Supergeante {}", i+1), TargetKind::Supergiant(i), STAR_COLOR, &info);
-        commands.entity(content).add_child(card);
-    }
-    let btn_sg = spawn_astre_regen_button(commands, "Regenerer supergeantes", RegenAstreAction::Supergiant, STAR_COLOR);
-    commands.entity(content).add_child(btn_sg);
-    add_astre_add_button(commands, content, "une supergeante", AstreFamily::Supergiant, STAR_COLOR);
-
-    // ── Hypergéantes ──
-    let hg_cat = spawn_category_header(commands, "HYPERGEANTES", STAR_COLOR);
-    commands.entity(content).add_child(hg_cat);
-    for (i, cfg) in hg_res.stars.iter().enumerate() {
-        let info = format!("Rayon {:.0}  -  {:?}", cfg.radius, cfg.hg_type);
-        let card = spawn_astre_card(commands, &format!("Hypergeante {}", i+1), TargetKind::Hypergiant(i), STAR_COLOR, &info);
-        commands.entity(content).add_child(card);
-    }
-    let btn_hg = spawn_astre_regen_button(commands, "Regenerer hypergeantes", RegenAstreAction::Hypergiant, STAR_COLOR);
-    commands.entity(content).add_child(btn_hg);
-    add_astre_add_button(commands, content, "une hypergeante", AstreFamily::Hypergiant, STAR_COLOR);
-    }
-
-    let tabs = spawn_astres_tabs(commands, active_tab);
     commands.entity(root).add_children(&[title, tabs, content]);
+}
+
+// ── Liste tab ──
+
+fn spawn_list_item(
+    commands: &mut Commands,
+    label: &str,
+    info: &str,
+    target: TargetKind,
+    color: Color,
+    is_selected: bool,
+) -> Entity {
+    let bg = if is_selected { color.with_alpha(0.15) } else { BG_CARD };
+    let border = if is_selected { color } else { color.with_alpha(0.3) };
+    commands
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                padding: UiRect::axes(Val::Px(12.0), Val::Px(8.0)),
+                border: UiRect::left(Val::Px(if is_selected { 4.0 } else { 2.0 })),
+                justify_content: JustifyContent::SpaceBetween,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(bg),
+            BorderColor(border),
+            BorderRadius::all(Val::Px(4.0)),
+            Button,
+            SelectAstre(target),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Text::new(label.to_string()),
+                TextFont { font_size: 13.0, ..default() },
+                TextColor(color),
+            ));
+            parent.spawn((
+                Text::new(info.to_string()),
+                TextFont { font_size: 10.0, ..default() },
+                TextColor(TEXT_DIM),
+            ));
+        })
+        .id()
+}
+
+fn build_liste_tab(
+    commands: &mut Commands,
+    settings: &GameSettings,
+    res: &AstresResources,
+    content: Entity,
+    selected: Option<TargetKind>,
+) {
+    let moon_color = Color::srgb(0.6, 0.6, 0.7);
+
+    // Planetes rocheuses (settings)
+    let sys = settings.systems.first();
+    if let Some(sys) = sys {
+        if !sys.planets.is_empty() {
+            let cat = spawn_category_header(commands, "PLANETES", PLANET_COLOR);
+            commands.entity(content).add_child(cat);
+            for (i, p) in sys.planets.iter().enumerate() {
+                let info = format!("R {:.0}  Orb {:.0}", p.radius, p.orbit_distance);
+                let item = spawn_list_item(commands, &format!("Planete {}", i+1), &info, TargetKind::Planet(i), PLANET_COLOR, selected == Some(TargetKind::Planet(i)));
+                commands.entity(content).add_child(item);
+                for (mi, m) in p.moons.iter().enumerate() {
+                    let minfo = format!("R {:.0}  Orb {:.0}", m.radius, m.orbit_distance);
+                    let mitem = spawn_list_item(commands, &format!("  Lune {} (P{})", mi+1, i+1), &minfo, TargetKind::Moon(i, mi), moon_color, selected == Some(TargetKind::Moon(i, mi)));
+                    commands.entity(content).add_child(mitem);
+                }
+            }
+        }
+        if !sys.stars.is_empty() {
+            let cat = spawn_category_header(commands, "ETOILES (settings)", STAR_COLOR);
+            commands.entity(content).add_child(cat);
+            for (i, s) in sys.stars.iter().enumerate() {
+                let info = format!("R {:.0}  Orb {:.0}", s.radius, s.orbit_distance);
+                let item = spawn_list_item(commands, &format!("Etoile {}", i+1), &info, TargetKind::Star(i), STAR_COLOR, selected == Some(TargetKind::Star(i)));
+                commands.entity(content).add_child(item);
+            }
+        }
+        if !sys.asteroid_belts.is_empty() {
+            let cat = spawn_category_header(commands, "CEINTURES", BELT_COLOR);
+            commands.entity(content).add_child(cat);
+            for (i, _) in sys.asteroid_belts.iter().enumerate() {
+                let item = spawn_list_item(commands, &format!("Ceinture {}", i+1), "", TargetKind::Planet(1000+i), BELT_COLOR, false);
+                commands.entity(content).add_child(item);
+            }
+        }
+    }
+
+    // Gas planets
+    if !res.gas_res.planets.is_empty() {
+        let cat = spawn_category_header(commands, "PLANETES GAZEUSES", PLANET_COLOR);
+        commands.entity(content).add_child(cat);
+        for (i, c) in res.gas_res.planets.iter().enumerate() {
+            let info = format!("R {:.0}  Orb {:.0}", c.radius, c.orbit_distance);
+            let item = spawn_list_item(commands, &format!("Gazeuse {}", i+1), &info, TargetKind::GasPlanet(i), PLANET_COLOR, selected == Some(TargetKind::GasPlanet(i)));
+            commands.entity(content).add_child(item);
+        }
+    }
+
+    // Comets
+    if !res.comet_res.comets.is_empty() {
+        let cat = spawn_category_header(commands, "COMETES", PLANET_COLOR);
+        commands.entity(content).add_child(cat);
+        for (i, c) in res.comet_res.comets.iter().enumerate() {
+            let info = format!("Peri {:.0}  Aph {:.0}", c.perihelion, c.aphelion);
+            let item = spawn_list_item(commands, &format!("Comete {}", i+1), &info, TargetKind::Comet(i), PLANET_COLOR, selected == Some(TargetKind::Comet(i)));
+            commands.entity(content).add_child(item);
+        }
+    }
+
+    // Meteoroids
+    if !res.meteor_res.meteoroids.is_empty() {
+        let cat = spawn_category_header(commands, "METEOROIDES", PLANET_COLOR);
+        commands.entity(content).add_child(cat);
+        for (i, c) in res.meteor_res.meteoroids.iter().enumerate() {
+            let info = format!("R {:.0}", c.radius);
+            let item = spawn_list_item(commands, &format!("Meteoroide {}", i+1), &info, TargetKind::Meteoroid(i), PLANET_COLOR, selected == Some(TargetKind::Meteoroid(i)));
+            commands.entity(content).add_child(item);
+        }
+    }
+
+    // Stars (resource-based)
+    macro_rules! list_stars {
+        ($label:expr, $list:expr, $kind:ident, $color:expr, $fmt:expr) => {
+            if !$list.is_empty() {
+                let cat = spawn_category_header(commands, $label, $color);
+                commands.entity(content).add_child(cat);
+                for (i, c) in $list.iter().enumerate() {
+                    let info = $fmt(c);
+                    let item = spawn_list_item(commands, &format!("{} {}", $label, i+1), &info, TargetKind::$kind(i), $color, selected == Some(TargetKind::$kind(i)));
+                    commands.entity(content).add_child(item);
+                }
+            }
+        }
+    }
+    list_stars!("Etoile voxel", res.vstar_res.stars, VoxelStar, STAR_COLOR, |c: &crate::astre::etoile::star::StarConfig| format!("R {:.0}  Orb {:.0}", c.radius, c.orbit_distance));
+    list_stars!("Protoetoile", res.proto_res.stars, Protostar, STAR_COLOR, |c: &crate::astre::etoile::protostar::ProtostarConfig| format!("R {:.0}  Orb {:.0}", c.radius, c.orbit_distance));
+    list_stars!("Naine", res.dwarf_res.stars, DwarfStar, STAR_COLOR, |c: &crate::astre::etoile::dwarf_star::DwarfStarConfig| format!("R {:.0}  {:?}", c.radius, c.dwarf_type));
+    list_stars!("Seq. princ.", res.ms_res.stars, MainSequence, STAR_COLOR, |c: &crate::astre::etoile::main_sequence_star::MainSequenceConfig| format!("{:?}  Orb {:.0}", c.spectral_class, c.orbit_distance));
+    list_stars!("Geante", res.giant_res.stars, GiantStar, STAR_COLOR, |c: &crate::astre::etoile::giant_star::GiantStarConfig| format!("R {:.0}  {:?}", c.radius, c.giant_type));
+    list_stars!("Supergeante", res.sg_res.stars, Supergiant, STAR_COLOR, |c: &crate::astre::etoile::supergiant_star::SupergiantConfig| format!("R {:.0}  {:?}", c.radius, c.class));
+    list_stars!("Hypergeante", res.hg_res.stars, Hypergiant, STAR_COLOR, |c: &crate::astre::etoile::hypergiant_star::HypergiantConfig| format!("R {:.0}  {:?}", c.radius, c.hg_type));
+
+    // Remnants
+    if res.nebula_res.enabled {
+        let cat = spawn_category_header(commands, "NEBULEUSE", BELT_COLOR);
+        commands.entity(content).add_child(cat);
+        let info = format!("R {:.0}  Seed {}", res.nebula_res.config.radius, res.nebula_res.config.seed);
+        let item = spawn_list_item(commands, "Nebuleuse", &info, TargetKind::Nebula, BELT_COLOR, selected == Some(TargetKind::Nebula));
+        commands.entity(content).add_child(item);
+    }
+    if !res.black_res.holes.is_empty() {
+        let cat = spawn_category_header(commands, "TROUS NOIRS", REMNANT_COLOR);
+        commands.entity(content).add_child(cat);
+        for (i, c) in res.black_res.holes.iter().enumerate() {
+            let info = format!("H {:.0}  Inf {:.0}", c.event_horizon, c.influence_radius);
+            let item = spawn_list_item(commands, &format!("Trou noir {}", i+1), &info, TargetKind::BlackHole(i), REMNANT_COLOR, selected == Some(TargetKind::BlackHole(i)));
+            commands.entity(content).add_child(item);
+        }
+    }
+    list_stars!("Pulsar", res.pulsar_res.pulsars, Pulsar, REMNANT_COLOR, |c: &crate::astre::Remnant_stellaire::pulsar::PulsarConfig| format!("P {:.3}s  Orb {:.0}", c.period_initial, c.orbit_distance));
+    list_stars!("Magnetar", res.magnetar_res.magnetars, Magnetar, REMNANT_COLOR, |c: &crate::astre::Remnant_stellaire::magnetar::MagnetarConfig| format!("R {:.0}  Orb {:.0}", c.radius, c.orbit_distance));
+    list_stars!("Etoile neutrons", res.neutron_res.stars, NeutronStar, REMNANT_COLOR, |c: &crate::astre::Remnant_stellaire::neutron_star::NeutronStarConfig| format!("R {:.0}  Orb {:.0}", c.radius, c.orbit_distance));
+    list_stars!("Supernova", res.sn_res.supernovae, Supernova, REMNANT_COLOR, |c: &crate::astre::Remnant_stellaire::supernova::SupernovaConfig| format!("{:?}  Orb {:.0}", c.sn_type, c.orbit_distance));
+}
+
+// ── Editer tab ──
+
+fn spawn_astre_slider(
+    commands: &mut Commands,
+    field: AstreField,
+    value: f32,
+    min: f32,
+    max: f32,
+) -> Entity {
+    let frac = ((value - min) / (max - min)).clamp(0.0, 1.0);
+    let row = commands
+        .spawn(Node {
+            width: Val::Percent(100.0),
+            flex_direction: FlexDirection::Column,
+            row_gap: Val::Px(3.0),
+            ..default()
+        })
+        .id();
+
+    let label_row = commands
+        .spawn(Node {
+            width: Val::Percent(100.0),
+            justify_content: JustifyContent::SpaceBetween,
+            ..default()
+        })
+        .id();
+
+    let name_label = commands
+        .spawn((
+            Text::new(field.label().to_string()),
+            TextFont { font_size: 12.0, ..default() },
+            TextColor(TEXT_DIM),
+        ))
+        .id();
+
+    let val_text = if value == value.floor() && value.abs() < 10000.0 {
+        format!("{:.0}", value)
+    } else {
+        format!("{:.2}", value)
+    };
+
+    let val_label = commands
+        .spawn((
+            Text::new(val_text),
+            TextFont { font_size: 12.0, ..default() },
+            TextColor(TEXT_COLOR),
+            AstreSliderLabel(field),
+        ))
+        .id();
+
+    commands.entity(label_row).add_children(&[name_label, val_label]);
+
+    let bar = commands
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Px(10.0),
+                ..default()
+            },
+            BackgroundColor(BG_SLIDER),
+            BorderRadius::all(Val::Px(5.0)),
+            AstreSliderBar { field, min, max },
+            Button,
+        ))
+        .id();
+
+    let fill = commands
+        .spawn((
+            Node {
+                width: Val::Percent(frac * 100.0),
+                height: Val::Percent(100.0),
+                ..default()
+            },
+            BackgroundColor(ACCENT),
+            BorderRadius::all(Val::Px(5.0)),
+            AstreSliderFill(field),
+        ))
+        .id();
+
+    commands.entity(bar).add_child(fill);
+    commands.entity(row).add_children(&[label_row, bar]);
+    row
+}
+
+fn build_editer_tab(
+    commands: &mut Commands,
+    settings: &GameSettings,
+    res: &AstresResources,
+    content: Entity,
+    selected: Option<TargetKind>,
+) {
+    let Some(sel) = selected else {
+        let msg = commands.spawn((
+            Text::new("Selectionnez un astre dans l'onglet Liste"),
+            TextFont { font_size: 14.0, ..default() },
+            TextColor(TEXT_DIM),
+        )).id();
+        commands.entity(content).add_child(msg);
+        return;
+    };
+
+    match sel {
+        TargetKind::Planet(i) => {
+            let cat = spawn_category_header(commands, &format!("PLANETE {}", i+1), PLANET_COLOR);
+            commands.entity(content).add_child(cat);
+            let (card, body) = spawn_body_card(commands, settings, &format!("Planete {}", i+1), PLANET_COLOR, BodyAction::RemovePlanet(i), &[
+                (SettingKey::PlanetOrbitDistance(i), 100.0, 100000.0),
+                (SettingKey::PlanetRadius(i), 20.0, 500.0),
+                (SettingKey::PlanetSeaLevel(i), 0.0, 0.7),
+                (SettingKey::PlanetTerrainHeight(i), 5.0, 200.0),
+                (SettingKey::PlanetSeed(i), 1.0, 999.0),
+                (SettingKey::PlanetNoiseScale(i), 0.5, 5.0),
+                (SettingKey::PlanetDetailScale(i), 1.0, 10.0),
+            ]);
+            let has_atmo = settings.systems.first().and_then(|s| s.planets.get(i)).map(|p| p.atmosphere).unwrap_or(false);
+            let atmo_toggle = spawn_toggle(commands, "Atmosphere", has_atmo, ToggleAtmosphere(i));
+            commands.entity(body).add_child(atmo_toggle);
+            if has_atmo {
+                for (key, min, max) in [
+                    (SettingKey::PlanetCloudDensity(i), 0.0, 1.0),
+                    (SettingKey::PlanetCloudAltitude(i), 5.0, 200.0),
+                    (SettingKey::PlanetCloudSpeed(i), 0.005, 0.1),
+                ] {
+                    let s = spawn_slider(commands, settings, key, min, max);
+                    commands.entity(body).add_child(s);
+                }
+            }
+            commands.entity(content).add_child(card);
+            // Moons
+            let moon_color = Color::srgb(0.6, 0.6, 0.7);
+            if let Some(p) = settings.systems.first().and_then(|s| s.planets.get(i)) {
+                for (mi, _) in p.moons.iter().enumerate() {
+                    let (mc, _) = spawn_body_card(commands, settings, &format!("Lune {}", mi+1), moon_color, BodyAction::RemoveMoon(i, mi), &[
+                        (SettingKey::MoonOrbitDistance(i, mi), 30.0, 10000.0),
+                        (SettingKey::MoonRadius(i, mi), 3.0, 150.0),
+                        (SettingKey::MoonSeed(i, mi), 1.0, 999.0),
+                    ]);
+                    commands.entity(content).add_child(mc);
+                }
+                let add_moon = spawn_add_button(commands, &format!("Ajouter lune (P{})", i+1), BodyAction::AddMoon(i), moon_color);
+                commands.entity(content).add_child(add_moon);
+            }
+            let apply = spawn_regen_button(commands);
+            commands.entity(content).add_child(apply);
+        }
+        TargetKind::Moon(pi, mi) => {
+            let moon_color = Color::srgb(0.6, 0.6, 0.7);
+            let cat = spawn_category_header(commands, &format!("LUNE {} (P{})", mi+1, pi+1), moon_color);
+            commands.entity(content).add_child(cat);
+            let (card, _) = spawn_body_card(commands, settings, &format!("Lune {}", mi+1), moon_color, BodyAction::RemoveMoon(pi, mi), &[
+                (SettingKey::MoonOrbitDistance(pi, mi), 30.0, 10000.0),
+                (SettingKey::MoonRadius(pi, mi), 3.0, 150.0),
+                (SettingKey::MoonSeed(pi, mi), 1.0, 999.0),
+            ]);
+            commands.entity(content).add_child(card);
+            let apply = spawn_regen_button(commands);
+            commands.entity(content).add_child(apply);
+        }
+        TargetKind::Star(i) => {
+            let cat = spawn_category_header(commands, &format!("ETOILE {}", i+1), STAR_COLOR);
+            commands.entity(content).add_child(cat);
+            let (card, _) = spawn_body_card(commands, settings, &format!("Etoile {}", i+1), STAR_COLOR, BodyAction::RemoveStar(i), &[
+                (SettingKey::StarOrbitDistance(i), 0.0, 5000.0),
+                (SettingKey::StarRadius(i), 20.0, 2000.0),
+                (SettingKey::StarIntensity(i), 415.0, 57000.0),
+                (SettingKey::StarLightRange(i), 500.0, 100000.0),
+                (SettingKey::StarColorR(i), 0.0, 1.0),
+                (SettingKey::StarColorG(i), 0.0, 1.0),
+                (SettingKey::StarColorB(i), 0.0, 1.0),
+                (SettingKey::StarFlareCount(i), 0.0, 20.0),
+                (SettingKey::StarFlareHeight(i), 10.0, 500.0),
+                (SettingKey::StarFlareSpeed(i), 0.1, 5.0),
+                (SettingKey::StarFlareSize(i), 2.0, 60.0),
+                (SettingKey::StarFlareDistance(i), 0.0, 300.0),
+            ]);
+            commands.entity(content).add_child(card);
+            let apply = spawn_regen_button(commands);
+            commands.entity(content).add_child(apply);
+        }
+        TargetKind::GasPlanet(i) => {
+            build_astre_editor(commands, res, content, "PLANETE GAZEUSE", PLANET_COLOR, TargetKind::GasPlanet(i), &[
+                (AstreField::GasOrbit(i), 100.0, 100000.0),
+                (AstreField::GasRadius(i), 20.0, 800.0),
+                (AstreField::GasSeed(i), 1.0, 999.0),
+                (AstreField::GasEcc(i), 0.0, 0.3),
+                (AstreField::GasInc(i), -0.5, 0.5),
+                (AstreField::GasBandCount(i), 2.0, 16.0),
+                (AstreField::GasBandEmissive(i), 0.0, 2.0),
+            ], RegenAstreAction::GasPlanet);
+        }
+        TargetKind::Comet(i) => {
+            build_astre_editor(commands, res, content, "COMETE", PLANET_COLOR, TargetKind::Comet(i), &[
+                (AstreField::CometPerihelion(i), 100.0, 20000.0),
+                (AstreField::CometAphelion(i), 500.0, 50000.0),
+                (AstreField::CometNucleus(i), 1.0, 100.0),
+                (AstreField::CometComa(i), 5.0, 200.0),
+                (AstreField::CometDustTail(i), 0.0, 1000.0),
+                (AstreField::CometIonTail(i), 0.0, 1500.0),
+                (AstreField::CometInclination(i), -1.0, 1.0),
+            ], RegenAstreAction::Comet);
+        }
+        TargetKind::Meteoroid(i) => {
+            build_astre_editor(commands, res, content, "METEOROIDE", PLANET_COLOR, TargetKind::Meteoroid(i), &[
+                (AstreField::MeteorRadius(i), 1.0, 50.0),
+            ], RegenAstreAction::Meteoroid);
+        }
+        TargetKind::VoxelStar(i) => {
+            build_astre_editor(commands, res, content, "ETOILE VOXEL", STAR_COLOR, TargetKind::VoxelStar(i), &[
+                (AstreField::VStarOrbit(i), 0.0, 10000.0),
+                (AstreField::VStarRadius(i), 20.0, 500.0),
+            ], RegenAstreAction::VoxelStar);
+        }
+        TargetKind::Protostar(i) => {
+            build_astre_editor(commands, res, content, "PROTOETOILE", STAR_COLOR, TargetKind::Protostar(i), &[
+                (AstreField::ProtoOrbit(i), 0.0, 10000.0),
+                (AstreField::ProtoRadius(i), 20.0, 500.0),
+                (AstreField::ProtoTemp(i), 0.0, 1.0),
+            ], RegenAstreAction::Protostar);
+        }
+        TargetKind::DwarfStar(i) => {
+            build_astre_editor(commands, res, content, "NAINE", STAR_COLOR, TargetKind::DwarfStar(i), &[
+                (AstreField::DwarfOrbit(i), 0.0, 10000.0),
+                (AstreField::DwarfRadius(i), 5.0, 200.0),
+            ], RegenAstreAction::DwarfStar);
+        }
+        TargetKind::MainSequence(i) => {
+            build_astre_editor(commands, res, content, "SEQ. PRINCIPALE", STAR_COLOR, TargetKind::MainSequence(i), &[
+                (AstreField::MSOrbit(i), 0.0, 10000.0),
+                (AstreField::MSRadius(i), 20.0, 500.0),
+            ], RegenAstreAction::MainSequence);
+        }
+        TargetKind::GiantStar(i) => {
+            build_astre_editor(commands, res, content, "GEANTE", STAR_COLOR, TargetKind::GiantStar(i), &[
+                (AstreField::GiantOrbit(i), 0.0, 10000.0),
+                (AstreField::GiantRadius(i), 50.0, 1000.0),
+            ], RegenAstreAction::GiantStar);
+        }
+        TargetKind::Supergiant(i) => {
+            build_astre_editor(commands, res, content, "SUPERGEANTE", STAR_COLOR, TargetKind::Supergiant(i), &[
+                (AstreField::SGOrbit(i), 0.0, 10000.0),
+                (AstreField::SGRadius(i), 100.0, 2000.0),
+            ], RegenAstreAction::Supergiant);
+        }
+        TargetKind::Hypergiant(i) => {
+            build_astre_editor(commands, res, content, "HYPERGEANTE", STAR_COLOR, TargetKind::Hypergiant(i), &[
+                (AstreField::HGOrbit(i), 0.0, 10000.0),
+                (AstreField::HGRadius(i), 200.0, 3000.0),
+            ], RegenAstreAction::Hypergiant);
+        }
+        TargetKind::BlackHole(i) => {
+            build_astre_editor(commands, res, content, "TROU NOIR", REMNANT_COLOR, TargetKind::BlackHole(i), &[
+                (AstreField::BHOrbit(i), 0.0, 10000.0),
+                (AstreField::BHHorizon(i), 5.0, 200.0),
+                (AstreField::BHInfluence(i), 50.0, 2000.0),
+            ], RegenAstreAction::BlackHole);
+        }
+        TargetKind::Pulsar(i) => {
+            build_astre_editor(commands, res, content, "PULSAR", REMNANT_COLOR, TargetKind::Pulsar(i), &[
+                (AstreField::PulsarOrbit(i), 0.0, 10000.0),
+                (AstreField::PulsarRadius(i), 5.0, 100.0),
+                (AstreField::PulsarPeriod(i), 0.001, 2.0),
+            ], RegenAstreAction::Pulsar);
+        }
+        TargetKind::Magnetar(i) => {
+            build_astre_editor(commands, res, content, "MAGNETAR", REMNANT_COLOR, TargetKind::Magnetar(i), &[
+                (AstreField::MagOrbit(i), 0.0, 10000.0),
+                (AstreField::MagRadius(i), 5.0, 100.0),
+            ], RegenAstreAction::Magnetar);
+        }
+        TargetKind::NeutronStar(i) => {
+            build_astre_editor(commands, res, content, "ETOILE A NEUTRONS", REMNANT_COLOR, TargetKind::NeutronStar(i), &[
+                (AstreField::NSOrbit(i), 0.0, 10000.0),
+                (AstreField::NSRadius(i), 5.0, 100.0),
+            ], RegenAstreAction::NeutronStar);
+        }
+        TargetKind::Supernova(i) => {
+            build_astre_editor(commands, res, content, "SUPERNOVA", REMNANT_COLOR, TargetKind::Supernova(i), &[
+                (AstreField::SNOrbit(i), 0.0, 10000.0),
+                (AstreField::SNRadius(i), 20.0, 500.0),
+            ], RegenAstreAction::Supernova);
+        }
+        TargetKind::Nebula => {
+            build_astre_editor(commands, res, content, "NEBULEUSE", BELT_COLOR, TargetKind::Nebula, &[
+                (AstreField::NebRadius, 50.0, 2000.0),
+                (AstreField::NebSeed, 1.0, 999.0),
+            ], RegenAstreAction::Nebula);
+        }
+        _ => {}
+    }
+}
+
+fn build_astre_editor(
+    commands: &mut Commands,
+    res: &AstresResources,
+    content: Entity,
+    title: &str,
+    color: Color,
+    target: TargetKind,
+    sliders: &[(AstreField, f32, f32)],
+    regen_action: RegenAstreAction,
+) {
+    let cat = spawn_category_header(commands, title, color);
+    commands.entity(content).add_child(cat);
+
+    for &(field, min, max) in sliders {
+        let val = field.get(res);
+        let s = spawn_astre_slider(commands, field, val, min, max);
+        commands.entity(content).add_child(s);
+    }
+
+    let remove_btn = spawn_astre_edit_button(commands, "Supprimer", AstreEditAction::Remove(target), RED_SOFT);
+    commands.entity(content).add_child(remove_btn);
+
+    let regen = spawn_astre_regen_button(commands, "Regenerer", regen_action, color);
+    commands.entity(content).add_child(regen);
+}
+
+fn spawn_regen_button(commands: &mut Commands) -> Entity {
+    commands
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                padding: UiRect::axes(Val::Px(0.0), Val::Px(14.0)),
+                margin: UiRect::top(Val::Px(8.0)),
+                justify_content: JustifyContent::Center,
+                border: UiRect::all(Val::Px(2.0)),
+                ..default()
+            },
+            BackgroundColor(BG_PANEL),
+            BorderColor(ACCENT),
+            BorderRadius::all(Val::Px(8.0)),
+            Button,
+            ApplyPlanetButton,
+        ))
+        .with_child((
+            Text::new("REGENERER"),
+            TextFont { font_size: 17.0, ..default() },
+            TextColor(TEXT_COLOR),
+        ))
+        .id()
+}
+
+// ── Ajouter tab ──
+
+fn build_ajouter_tab(commands: &mut Commands, content: Entity) {
+    let cat_planet = spawn_category_header(commands, "PLANETES & CORPS", PLANET_COLOR);
+    commands.entity(content).add_child(cat_planet);
+    for (label, family) in [
+        ("Planete rocheuse", AstreFamily::GasPlanet), // will use BodyAction instead
+        ("Planete gazeuse", AstreFamily::GasPlanet),
+        ("Comete", AstreFamily::Comet),
+        ("Meteoroide", AstreFamily::Meteoroid),
+    ] {
+        if label == "Planete rocheuse" {
+            let btn = spawn_add_button(commands, "Ajouter planete rocheuse", BodyAction::AddPlanet, PLANET_COLOR);
+            commands.entity(content).add_child(btn);
+        } else {
+            add_astre_add_button(commands, content, label, family, PLANET_COLOR);
+        }
+    }
+
+    let cat_star = spawn_category_header(commands, "ETOILES", STAR_COLOR);
+    commands.entity(content).add_child(cat_star);
+    let btn_star = spawn_add_button(commands, "Ajouter etoile (settings)", BodyAction::AddStar, STAR_COLOR);
+    commands.entity(content).add_child(btn_star);
+    for (label, family) in [
+        ("Etoile voxel", AstreFamily::VoxelStar),
+        ("Protoetoile", AstreFamily::Protostar),
+        ("Naine", AstreFamily::DwarfStar),
+        ("Seq. principale", AstreFamily::MainSequence),
+        ("Geante", AstreFamily::GiantStar),
+        ("Supergeante", AstreFamily::Supergiant),
+        ("Hypergeante", AstreFamily::Hypergiant),
+    ] {
+        add_astre_add_button(commands, content, label, family, STAR_COLOR);
+    }
+
+    let cat_belt = spawn_category_header(commands, "CEINTURES", BELT_COLOR);
+    commands.entity(content).add_child(cat_belt);
+    let btn_belt = spawn_add_button(commands, "Ajouter ceinture", BodyAction::AddBelt, BELT_COLOR);
+    commands.entity(content).add_child(btn_belt);
+
+    let cat_rem = spawn_category_header(commands, "REMANENTS", REMNANT_COLOR);
+    commands.entity(content).add_child(cat_rem);
+    for (label, family) in [
+        ("Nebuleuse", AstreFamily::Nebula),
+        ("Trou noir", AstreFamily::BlackHole),
+        ("Pulsar", AstreFamily::Pulsar),
+        ("Magnetar", AstreFamily::Magnetar),
+        ("Etoile a neutrons", AstreFamily::NeutronStar),
+        ("Supernova", AstreFamily::Supernova),
+    ] {
+        add_astre_add_button(commands, content, label, family, REMNANT_COLOR);
+    }
 }
 
 fn spawn_astres_tabs(commands: &mut Commands, active: AstresTab) -> Entity {
@@ -2096,14 +2303,15 @@ fn spawn_astres_tabs(commands: &mut Commands, active: AstresTab) -> Entity {
         .spawn(Node {
             width: Val::Percent(100.0),
             column_gap: Val::Px(6.0),
+            padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
             ..default()
         })
         .id();
 
     for (tab, label, color) in [
-        (AstresTab::Planets, "Planetes", PLANET_COLOR),
-        (AstresTab::Stars, "Etoiles", STAR_COLOR),
-        (AstresTab::Remnants, "Remanents", REMNANT_COLOR),
+        (AstresTab::Liste, "Liste", ACCENT),
+        (AstresTab::Editer, "Editer", STAR_COLOR),
+        (AstresTab::Ajouter, "Ajouter", PLANET_COLOR),
     ] {
         let selected = tab == active;
         let button = commands
@@ -2380,7 +2588,7 @@ where
     configs.iter().map(&mut values).collect()
 }
 
-fn load_saved_astres(mut res: AstresMutableResources) {
+pub(crate) fn load_saved_astres(mut res: AstresMutableResources) {
     let Ok(contents) = fs::read_to_string(astres_save_path()) else { return; };
     let Ok(saved) = serde_json::from_str::<SavedAstres>(&contents) else { return; };
 
@@ -2599,5 +2807,358 @@ fn handle_astre_regen_buttons(
             RegenAstreAction::NeutronStar => { events.neutron_events.send(RegenerateNeutronStar); }
             RegenAstreAction::Supernova   => { events.sn_events.send(RegenerateSupernova); }
         }
+    }
+}
+
+fn handle_select_astre(
+    interactions: Query<(&Interaction, &SelectAstre), Changed<Interaction>>,
+    mut selected: ResMut<SelectedAstre>,
+    mut tab: ResMut<AstresTabState>,
+    mut rebuild: EventWriter<RebuildUi>,
+) {
+    for (interaction, sel) in &interactions {
+        if *interaction == Interaction::Pressed {
+            selected.0 = Some(sel.0);
+            tab.active = AstresTab::Editer;
+            rebuild.send(RebuildUi);
+        }
+    }
+}
+
+fn handle_astre_sliders(
+    interactions: Query<(&Interaction, &AstreSliderBar, &Node, &GlobalTransform), Changed<Interaction>>,
+    primary_window: Query<&Window, With<PrimaryWindow>>,
+    other_windows: Query<&Window, Without<PrimaryWindow>>,
+    mut res: AstresMutableResources,
+) {
+    for (interaction, slider, node, global_tf) in &interactions {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+
+        let mut cursor_x = None;
+        if let Ok(w) = primary_window.get_single() {
+            if let Some(pos) = w.cursor_position() {
+                cursor_x = Some(pos.x);
+            }
+        }
+        if cursor_x.is_none() {
+            for w in &other_windows {
+                if let Some(pos) = w.cursor_position() {
+                    cursor_x = Some(pos.x);
+                }
+            }
+        }
+        let Some(cx) = cursor_x else { continue };
+
+        let bar_pos = global_tf.translation();
+        let bar_width = node.width;
+        if let Val::Percent(pct) = bar_width {
+            let estimated_width = pct / 100.0 * 448.0;
+            let bar_left = bar_pos.x - estimated_width * 0.5;
+            let frac = ((cx - bar_left) / estimated_width).clamp(0.0, 1.0);
+            let val = slider.min + frac * (slider.max - slider.min);
+            slider.field.set(&mut res, val);
+        }
+    }
+}
+
+fn update_astre_slider_visuals(
+    res: AstresResources,
+    sliders: Query<&AstreSliderBar>,
+    mut fills: Query<(&AstreSliderFill, &mut Node), Without<AstreSliderBar>>,
+    mut labels: Query<(&AstreSliderLabel, &mut Text)>,
+) {
+    for bar in &sliders {
+        let val = bar.field.get(&res);
+        let frac = ((val - bar.min) / (bar.max - bar.min)).clamp(0.0, 1.0);
+        for (fill, mut node) in &mut fills {
+            if fill.0 == bar.field {
+                node.width = Val::Percent(frac * 100.0);
+            }
+        }
+    }
+
+    for (label, mut text) in &mut labels {
+        let val = label.0.get(&res);
+        let val_text = if val == val.floor() && val.abs() < 10000.0 {
+            format!("{:.0}", val)
+        } else {
+            format!("{:.2}", val)
+        };
+        **text = val_text;
+    }
+}
+
+const RADAR_SIZE: f32 = 500.0;
+const RADAR_PAD: f32 = 20.0;
+const RADAR_DOT_SIZE: f32 = 8.0;
+const RADAR_CAM_SIZE: f32 = 10.0;
+
+fn setup_radar_window(mut commands: Commands) {
+    let mut radar_win = Window {
+        title: "SpaceSpore - Radar".into(),
+        resolution: (RADAR_SIZE, RADAR_SIZE + 60.0).into(),
+        position: WindowPosition::Automatic,
+        ..default()
+    };
+    radar_win.set_minimized(true);
+    let window = commands.spawn(radar_win).id();
+
+    let cam = commands
+        .spawn((
+            Camera2d,
+            Camera {
+                target: bevy::render::camera::RenderTarget::Window(WindowRef::Entity(window)),
+                ..default()
+            },
+            RadarWindowCam,
+        ))
+        .id();
+
+    let root = commands
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.02, 0.02, 0.05)),
+            TargetCamera(cam),
+            RadarRoot,
+        ))
+        .id();
+
+    let header = commands
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                padding: UiRect::axes(Val::Px(12.0), Val::Px(8.0)),
+                justify_content: JustifyContent::SpaceBetween,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(BG_DARK),
+        ))
+        .with_child((
+            Text::new("RADAR - VUE XZ"),
+            TextFont { font_size: 14.0, ..default() },
+            TextColor(TEXT_COLOR),
+        ))
+        .id();
+
+    let info = commands
+        .spawn((
+            Text::new(""),
+            TextFont { font_size: 11.0, ..default() },
+            TextColor(TEXT_DIM),
+            RadarInfoText,
+        ))
+        .id();
+    commands.entity(header).add_child(info);
+
+    let area = commands
+        .spawn((
+            Node {
+                width: Val::Px(RADAR_SIZE),
+                height: Val::Px(RADAR_SIZE),
+                position_type: PositionType::Relative,
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.04, 0.04, 0.08)),
+            RadarArea,
+        ))
+        .id();
+
+    // camera indicator
+    let cam_dot = commands
+        .spawn((
+            Node {
+                width: Val::Px(RADAR_CAM_SIZE),
+                height: Val::Px(RADAR_CAM_SIZE),
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                top: Val::Px(0.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgb(1.0, 1.0, 1.0)),
+            BorderRadius::all(Val::Px(RADAR_CAM_SIZE / 2.0)),
+            RadarCamIndicator,
+        ))
+        .id();
+
+    // camera direction line
+    let cam_dir = commands
+        .spawn((
+            Node {
+                width: Val::Px(2.0),
+                height: Val::Px(20.0),
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                top: Val::Px(0.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.5)),
+            RadarCamDir,
+        ))
+        .id();
+
+    commands.entity(area).add_children(&[cam_dot, cam_dir]);
+    commands.entity(root).add_children(&[header, area]);
+}
+
+fn update_radar(
+    mut commands: Commands,
+    body_q: Query<(Entity, &GlobalTransform, &AstreLodRoot, Option<&AstreUnloaded>)>,
+    cam_q: Query<&Transform, With<Camera3d>>,
+    area_q: Query<Entity, With<RadarArea>>,
+    mut dots: Query<(Entity, &RadarDot, &mut Node, &mut BackgroundColor)>,
+    mut cam_ind: Query<&mut Node, (With<RadarCamIndicator>, Without<RadarDot>, Without<RadarCamDir>)>,
+    mut cam_dir_q: Query<&mut Node, (With<RadarCamDir>, Without<RadarCamIndicator>, Without<RadarDot>)>,
+    mut info_q: Query<&mut Text, With<RadarInfoText>>,
+) {
+    let Ok(cam_tf) = cam_q.get_single() else { return };
+    let Ok(area_e) = area_q.get_single() else { return };
+
+    let cam_pos = cam_tf.translation;
+    let cam_fwd = cam_tf.forward().as_vec3();
+
+    let mut min_x = f32::MAX;
+    let mut max_x = f32::MIN;
+    let mut min_z = f32::MAX;
+    let mut max_z = f32::MIN;
+
+    let bodies: Vec<_> = body_q.iter().collect();
+
+    // include camera in bounds
+    min_x = min_x.min(cam_pos.x);
+    max_x = max_x.max(cam_pos.x);
+    min_z = min_z.min(cam_pos.z);
+    max_z = max_z.max(cam_pos.z);
+
+    for (_, gt, _, _) in &bodies {
+        let p = gt.translation();
+        min_x = min_x.min(p.x);
+        max_x = max_x.max(p.x);
+        min_z = min_z.min(p.z);
+        max_z = max_z.max(p.z);
+    }
+
+    let margin = 500.0;
+    min_x -= margin;
+    max_x += margin;
+    min_z -= margin;
+    max_z += margin;
+
+    let range_x = (max_x - min_x).max(1.0);
+    let range_z = (max_z - min_z).max(1.0);
+    let range = range_x.max(range_z);
+
+    let center_x = (min_x + max_x) / 2.0;
+    let center_z = (min_z + max_z) / 2.0;
+
+    let usable = RADAR_SIZE - RADAR_PAD * 2.0;
+
+    let to_px = |wx: f32, wz: f32| -> (f32, f32) {
+        let nx = (wx - center_x) / range + 0.5;
+        let nz = (wz - center_z) / range + 0.5;
+        (RADAR_PAD + nx * usable, RADAR_PAD + nz * usable)
+    };
+
+    // update camera indicator
+    let (cx, cz) = to_px(cam_pos.x, cam_pos.z);
+    if let Ok(mut node) = cam_ind.get_single_mut() {
+        node.left = Val::Px(cx - RADAR_CAM_SIZE / 2.0);
+        node.top = Val::Px(cz - RADAR_CAM_SIZE / 2.0);
+    }
+
+    // update camera direction line (endpoint of a short segment from cam pos along fwd)
+    if let Ok(mut node) = cam_dir_q.get_single_mut() {
+        let dir_len = 25.0;
+        let dx = cam_fwd.x;
+        let dz = cam_fwd.z;
+        let end_x = cx + dx * dir_len;
+        let end_z = cz + dz * dir_len;
+        node.left = Val::Px(end_x - 3.0);
+        node.top = Val::Px(end_z - 3.0);
+        node.width = Val::Px(6.0);
+        node.height = Val::Px(6.0);
+    }
+
+    // track existing dots
+    let mut existing: std::collections::HashMap<Entity, Entity> = std::collections::HashMap::new();
+    for (dot_e, radar_dot, _, _) in &dots {
+        existing.insert(radar_dot.0, dot_e);
+    }
+
+    let mut visible_count = 0u32;
+    let mut hidden_count = 0u32;
+
+    for &(body_e, ref gt, ref lod, ref unloaded) in &bodies {
+        let p = gt.translation();
+        let (px, pz) = to_px(p.x, p.z);
+        let is_hidden = unloaded.is_some();
+
+        if is_hidden { hidden_count += 1; } else { visible_count += 1; }
+
+        let color = if is_hidden {
+            Color::srgba(0.8, 0.15, 0.1, 0.5)
+        } else {
+            match lod.label {
+                "Star" | "VoxelStar" | "Protostar" | "DwarfStar" | "MainSequence"
+                | "GiantStar" | "Supergiant" | "Hypergiant" => Color::srgb(1.0, 0.9, 0.2),
+                "Planet" | "GasPlanet" => Color::srgb(0.2, 0.6, 1.0),
+                "Moon" => Color::srgb(0.6, 0.6, 0.65),
+                "Comet" | "Meteoroid" => Color::srgb(0.5, 0.8, 0.9),
+                "BlackHole" => Color::srgb(0.6, 0.0, 0.8),
+                "Nebula" => Color::srgb(0.8, 0.3, 0.9),
+                "Pulsar" | "Magnetar" | "NeutronStar" => Color::srgb(0.3, 1.0, 0.8),
+                "Supernova" => Color::srgb(1.0, 0.5, 0.1),
+                _ => Color::srgb(0.5, 0.5, 0.5),
+            }
+        };
+
+        let dot_size = if is_hidden { RADAR_DOT_SIZE * 0.6 } else {
+            (RADAR_DOT_SIZE * (lod.radius / 200.0).clamp(0.5, 3.0)).clamp(4.0, 16.0)
+        };
+
+        if let Some(&dot_e) = existing.get(&body_e) {
+            if let Ok((_, _, mut node, mut bg)) = dots.get_mut(dot_e) {
+                node.left = Val::Px(px - dot_size / 2.0);
+                node.top = Val::Px(pz - dot_size / 2.0);
+                node.width = Val::Px(dot_size);
+                node.height = Val::Px(dot_size);
+                *bg = BackgroundColor(color);
+            }
+            existing.remove(&body_e);
+        } else {
+            let dot = commands
+                .spawn((
+                    Node {
+                        width: Val::Px(dot_size),
+                        height: Val::Px(dot_size),
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(px - dot_size / 2.0),
+                        top: Val::Px(pz - dot_size / 2.0),
+                        ..default()
+                    },
+                    BackgroundColor(color),
+                    BorderRadius::all(Val::Px(dot_size / 2.0)),
+                    RadarDot(body_e),
+                ))
+                .id();
+            commands.entity(area_e).add_child(dot);
+        }
+    }
+
+    // remove dots for bodies that no longer exist
+    for (_, dot_e) in existing {
+        commands.entity(dot_e).despawn_recursive();
+    }
+
+    // update info text
+    if let Ok(mut text) = info_q.get_single_mut() {
+        **text = format!("{} vis / {} hid", visible_count, hidden_count);
     }
 }

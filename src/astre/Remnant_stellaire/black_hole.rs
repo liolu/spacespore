@@ -1,5 +1,6 @@
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
+use crate::astre::{AstreLodRoot, ReloadAstre};
 
 // ─────────────────────────────────────────────
 //  Config
@@ -147,6 +148,7 @@ impl Plugin for BlackHolePlugin {
                 animate_jets,
                 absorb_horizon_voxels,
                 regenerate_black_holes,
+                reload_black_holes,
             ).chain());
     }
 }
@@ -162,7 +164,7 @@ pub struct BlackHoleRes {
 
 impl Default for BlackHoleRes {
     fn default() -> Self {
-        Self { holes: vec![BlackHoleConfig::default()] }
+        Self { holes: vec![BlackHoleConfig { position: Vec3::new(0.0, 0.0, -5000.0), ..Default::default() }] }
     }
 }
 
@@ -317,6 +319,7 @@ fn build_black_hole(
         Transform::from_translation(pos),
         Visibility::default(),
         BlackHoleRoot { idx },
+        AstreLodRoot { cull_dist: 10000.0, radius: cfg.influence_radius, streamable: true, label: "BlackHole" },
     )).id();
 
     // ── Cœur — sphère de voxels noirs absolus ─────────────────────────────
@@ -792,6 +795,23 @@ fn animate_jets(
 // ─────────────────────────────────────────────
 //  Régénération à chaud
 // ─────────────────────────────────────────────
+
+fn reload_black_holes(
+    mut commands:  Commands,
+    mut events:    EventReader<ReloadAstre>,
+    res:           Res<BlackHoleRes>,
+    roots:         Query<(Entity, &BlackHoleRoot)>,
+    mut meshes:    ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for ev in events.read() {
+        let Ok((entity, root)) = roots.get(ev.0) else { continue };
+        let idx = root.idx;
+        let Some(cfg) = res.holes.get(idx) else { continue };
+        commands.entity(entity).despawn_recursive();
+        build_black_hole(&mut commands, cfg, idx, &mut meshes, &mut materials);
+    }
+}
 
 fn regenerate_black_holes(
     mut commands:  Commands,

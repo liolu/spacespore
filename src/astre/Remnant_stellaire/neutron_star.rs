@@ -1,5 +1,6 @@
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
+use crate::astre::{AstreLodRoot, ReloadAstre};
 
 // ─────────────────────────────────────────────
 //  Mode de l'étoile à neutrons
@@ -252,6 +253,7 @@ impl Plugin for NeutronStarPlugin {
                 animate_accretion_stream,
                 orbit_companion,
                 regenerate_neutron_stars,
+                reload_neutron_stars,
             ).chain());
     }
 }
@@ -267,7 +269,7 @@ pub struct NeutronStarRes {
 
 impl Default for NeutronStarRes {
     fn default() -> Self {
-        Self { stars: vec![NeutronStarConfig::default()] }
+        Self { stars: vec![NeutronStarConfig { position: Vec3::new(0.0, 0.0, -7000.0), ..Default::default() }] }
     }
 }
 
@@ -503,6 +505,7 @@ fn build_neutron_star(
         Transform::from_translation(init_pos),
         Visibility::default(),
         NeutronStarRoot { idx },
+        AstreLodRoot { cull_dist: 5000.0, radius: cfg.radius, streamable: true, label: "NeutronStar" },
     )).id();
 
     // ── Corps stellaire ────────────────────────────────────────────────────
@@ -1252,6 +1255,23 @@ fn orbit_companion(
 // ─────────────────────────────────────────────
 //  Régénération à chaud
 // ─────────────────────────────────────────────
+
+fn reload_neutron_stars(
+    mut commands:  Commands,
+    mut events:    EventReader<ReloadAstre>,
+    res:           Res<NeutronStarRes>,
+    roots:         Query<(Entity, &NeutronStarRoot)>,
+    mut meshes:    ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for ev in events.read() {
+        let Ok((entity, root)) = roots.get(ev.0) else { continue };
+        let idx = root.idx;
+        let Some(cfg) = res.stars.get(idx) else { continue };
+        commands.entity(entity).despawn_recursive();
+        build_neutron_star(&mut commands, cfg, idx, &mut meshes, &mut materials);
+    }
+}
 
 fn regenerate_neutron_stars(
     mut commands:  Commands,

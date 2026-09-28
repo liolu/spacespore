@@ -30,15 +30,15 @@ pub fn compute_lod_level(camera_pos: Vec3, chunk_center: Vec3, planet_radius: f3
     let dist = camera_pos.distance(chunk_center);
     let ratio = dist / planet_radius;
 
-    if ratio < 1.5 {
+    if ratio < 3.0 {
         LodLevel::Lod0
-    } else if ratio < 2.5 {
-        LodLevel::Lod1
-    } else if ratio < 3.5 {
-        LodLevel::Lod2
     } else if ratio < 5.0 {
-        LodLevel::Lod3
+        LodLevel::Lod1
     } else if ratio < 7.0 {
+        LodLevel::Lod2
+    } else if ratio < 10.0 {
+        LodLevel::Lod3
+    } else if ratio < 14.0 {
         LodLevel::Lod4
     } else {
         LodLevel::Lod5

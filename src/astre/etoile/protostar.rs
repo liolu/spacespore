@@ -1,5 +1,6 @@
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
+use crate::astre::{AstreLodRoot, ReloadAstre};
 
 #[derive(Clone, Debug)]
 pub struct ProtostarConfig {
@@ -90,13 +91,15 @@ impl Plugin for ProtostarPlugin {
            .add_event::<RegenerateProtostar>()
            .add_systems(Startup, spawn_protostars)
            .add_systems(Update, (orbit_protostars, animate_pulse, animate_envelope,
-               animate_disk, animate_jets, animate_accretion, regenerate_protostars).chain());
+               animate_disk, animate_jets, animate_accretion, regenerate_protostars, reload_protostars).chain());
     }
 }
 
 #[derive(Resource)]
 pub struct ProtostarRes { pub stars: Vec<ProtostarConfig> }
-impl Default for ProtostarRes { fn default() -> Self { Self { stars: vec![ProtostarConfig::default()] } } }
+impl Default for ProtostarRes { fn default() -> Self { Self { stars: vec![
+    ProtostarConfig { position: Vec3::new(0.0, 0.0, 7000.0), ..Default::default() },
+] } } }
 #[derive(Event)] pub struct RegenerateProtostar;
 
 #[derive(Component)] pub struct ProtostarRoot   { pub idx: usize }
@@ -117,7 +120,7 @@ fn spawn_protostars(mut cmd:Commands,res:Res<ProtostarRes>,mut msh:ResMut<Assets
 
 fn build_protostar(cmd:&mut Commands,cfg:&ProtostarConfig,idx:usize,msh:&mut ResMut<Assets<Mesh>>,mat:&mut ResMut<Assets<StandardMaterial>>) {
     let pos=if cfg.orbit_distance>1.0{Vec3::new(cfg.orbit_distance,0.0,0.0)}else{cfg.position};
-    let root=cmd.spawn((Transform::from_translation(pos),Visibility::default(),ProtostarRoot{idx})).id();
+    let root=cmd.spawn((Transform::from_translation(pos),Visibility::default(),ProtostarRoot{idx},AstreLodRoot{cull_dist:6000.0, radius: cfg.radius, streamable: true, label: "Protostar"})).id();
     // Noyau voxelisé
     let core_e=cmd.spawn((Transform::IDENTITY,Visibility::default(),ProtostarCore{idx})).id();
     cmd.entity(root).add_child(core_e);
@@ -260,6 +263,23 @@ fn animate_accretion(time:Res<Time>,res:Res<ProtostarRes>,mut q:Query<(&ProtoAcc
         *vis=Visibility::Visible;
     }
 }
+fn reload_protostars(
+    mut cmd: Commands,
+    mut events: EventReader<ReloadAstre>,
+    res: Res<ProtostarRes>,
+    roots: Query<(Entity, &ProtostarRoot)>,
+    mut msh: ResMut<Assets<Mesh>>,
+    mut mat: ResMut<Assets<StandardMaterial>>,
+) {
+    for ev in events.read() {
+        let Ok((entity, root)) = roots.get(ev.0) else { continue };
+        let idx = root.idx;
+        let Some(cfg) = res.stars.get(idx) else { continue };
+        cmd.entity(entity).despawn_recursive();
+        build_protostar(&mut cmd, cfg, idx, &mut msh, &mut mat);
+    }
+}
+
 fn regenerate_protostars(mut cmd:Commands,mut ev:EventReader<RegenerateProtostar>,res:Res<ProtostarRes>,rq:Query<Entity,With<ProtostarRoot>>,mut msh:ResMut<Assets<Mesh>>,mut mat:ResMut<Assets<StandardMaterial>>) {
     let mut f=false;for _ in ev.read(){f=true;}if !f{return;}
     for e in &rq{cmd.entity(e).despawn_recursive();}
