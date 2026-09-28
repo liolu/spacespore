@@ -74,6 +74,10 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          cp docs/version.json /tmp/version.json
+          git fetch origin main
+          git checkout origin/main
+          cp /tmp/version.json docs/version.json
           git add docs/version.json
           git diff --cached --quiet || git commit -m "Update version.json for v${{ steps.version.outputs.VERSION }}"
           git push origin HEAD:main
