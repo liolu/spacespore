@@ -10,6 +10,7 @@ use crate::lod::{compute_lod_level, LodChunk, LodLevel};
 use crate::mesher::{build_celestial_chunk_mesh, build_chunk_mesh};
 use crate::settings::{GameSettings, SystemSpatialIndex, SYSTEM_CELL_SIZE, STREAM_RADIUS};
 use crate::astre::{AstreLodRoot, ReloadAstre};
+use crate::ship::Ship;
 const STAR_DIVISIONS: usize = 4;
 const MOON_DIVISIONS: usize = 3;
 
@@ -859,9 +860,7 @@ fn spawn_system_bodies(
                 PointLight {
                     intensity,
                     range: star_cfg.light_range,
-                    shadows_enabled: true,
-                    shadow_depth_bias: 0.02,
-                    shadow_normal_bias: 1.0,
+                    shadows_enabled: false,
                     color: Color::srgb(r, g, b),
                     ..default()
                 },
@@ -2075,6 +2074,7 @@ fn stream_system_bodies(
     settings: Res<GameSettings>,
     spatial: Res<SystemSpatialIndex>,
     camera_q: Query<&GlobalTransform, With<Camera3d>>,
+    ship_q: Query<&GlobalTransform, With<Ship>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut spawned: ResMut<SpawnedSystems>,
@@ -2086,35 +2086,30 @@ fn stream_system_bodies(
     cloud_q: Query<(Entity, &CloudVoxel)>,
 ) {
     let cam_pos = camera_q.single().translation();
+    let ship_pos = ship_q.single().translation();
     let stream_dist = STREAM_RADIUS * SYSTEM_CELL_SIZE;
     let radius_sq = stream_dist * stream_dist;
 
-    let nearby = spatial.systems_in_radius(cam_pos, stream_dist);
-    let mut nearby_set = std::collections::HashSet::with_capacity(nearby.len());
-
-    let mut to_spawn: Vec<usize> = Vec::new();
-    for si in nearby {
-        nearby_set.insert(si);
-        if let Some(sys) = settings.systems.get(si) {
-            let dist_sq_actual = cam_pos.distance_squared(sys.center());
-            if dist_sq_actual < radius_sq && !spawned.0.contains(&si) {
-                to_spawn.push(si);
+    let nearby = spatial.systems_in_radius(ship_pos, stream_dist);
+    let mut closest: Option<(usize, f32)> = None;
+    for si in &nearby {
+        if let Some(sys) = settings.systems.get(*si) {
+            let d = ship_pos.distance_squared(sys.center());
+            if d < radius_sq {
+                if closest.is_none() || d < closest.unwrap().1 {
+                    closest = Some((*si, d));
+                }
             }
         }
     }
 
+    let want = closest.map(|(si, _)| si);
+
     let mut to_despawn: Vec<usize> = Vec::new();
     for &si in spawned.0.iter() {
-        if !nearby_set.contains(&si) || settings.systems.get(si)
-            .map(|sys| cam_pos.distance_squared(sys.center()) >= radius_sq)
-            .unwrap_or(true)
-        {
+        if Some(si) != want {
             to_despawn.push(si);
         }
-    }
-
-    if to_spawn.len() > 1 {
-        to_spawn.truncate(1);
     }
 
     for si in &to_despawn {
@@ -2123,10 +2118,10 @@ fn stream_system_bodies(
             if idx.0 == *si {
                 for (fe, fv) in &flare_q {
                     if fv.star_idx >= id_base && fv.star_idx < id_base + 1000 {
-                        commands.entity(fe).despawn_recursive();
+                        if let Some(ec) = commands.get_entity(fe) { ec.despawn_recursive(); }
                     }
                 }
-                commands.entity(e).despawn_recursive();
+                if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); }
             }
         }
         for (e, idx) in &planet_q {
@@ -2134,29 +2129,35 @@ fn stream_system_bodies(
                 let pid_base = si * 1000;
                 for (ce, cv) in &cloud_q {
                     if cv.planet_idx >= pid_base && cv.planet_idx < pid_base + 1000 {
-                        commands.entity(ce).despawn_recursive();
+                        if let Some(ec) = commands.get_entity(ce) { ec.despawn_recursive(); }
                     }
                 }
-                commands.entity(e).despawn_recursive();
+                if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); }
             }
         }
         for (e, idx) in &moon_q {
-            if idx.0 == *si { commands.entity(e).despawn_recursive(); }
+            if idx.0 == *si {
+                if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); }
+            }
         }
         for (e, idx) in &belt_q {
-            if idx.0 == *si { commands.entity(e).despawn_recursive(); }
+            if idx.0 == *si {
+                if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); }
+            }
         }
         spawned.0.remove(si);
     }
 
-    for si in &to_spawn {
-        if let Some(sys) = settings.systems.get(*si) {
-            let center = sys.center();
-            spawn_system_bodies(
-                &mut commands, sys, &settings, *si,
-                &mut meshes, &mut materials, cam_pos, center,
-            );
-            spawned.0.insert(*si);
+    if let Some(si) = want {
+        if !spawned.0.contains(&si) {
+            if let Some(sys) = settings.systems.get(si) {
+                let center = sys.center();
+                spawn_system_bodies(
+                    &mut commands, sys, &settings, si,
+                    &mut meshes, &mut materials, cam_pos, center,
+                );
+                spawned.0.insert(si);
+            }
         }
     }
 }

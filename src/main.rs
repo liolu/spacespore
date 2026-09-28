@@ -151,6 +151,16 @@ pub struct TargetQueries<'w, 's> {
 // ─────────────────────────────────────────────────────────────────────────
 
 fn main() {
+    let log_path = settings::data_dir().join("crash.log");
+    std::panic::set_hook({
+        let log_path = log_path.clone();
+        Box::new(move |info| {
+            let msg = format!("{}\n{:?}\n", info, std::backtrace::Backtrace::capture());
+            let _ = std::fs::write(&log_path, &msg);
+            eprintln!("{msg}");
+        })
+    });
+
     let settings = GameSettings::load();
     let update_state = update_checker::spawn_update_check();
 
@@ -175,32 +185,40 @@ fn main() {
         // ── Planètes & corps ────────────────────────────────────────────
         .add_plugins(PlanetPlugin)
 
-        .add_plugins((
-            GasPlanetPlugin,
-            CometPlugin,
-            MeteoroidPlugin,
-        ))
-
-        // ── Étoiles ─────────────────────────────────────────────────────
-        .add_plugins((
-            VoxelStarPlugin,
-            ProtostarPlugin,
-            DwarfStarPlugin,
-            MainSequencePlugin,
-            GiantStarPlugin,
-            SupergiantPlugin,
-            HypergiantPlugin,
-        ))
-
-        // ── Rémanents stellaires ────────────────────────────────────────
-        .add_plugins((
-            NebulaPlugin,
-            BlackHolePlugin,
-            PulsarPlugin,
-            MagnetarPlugin,
-            NeutronStarPlugin,
-            SupernovaPlugin,
-        ))
+        // ── Legacy astre plugins désactivés — la galaxie gère tout ──
+        // Ressources + events vides pour l'UI (pas de Startup spawn)
+        .init_resource::<astre::planete::gas_planet::GasPlanetRes>()
+        .init_resource::<astre::planete::comet::CometRes>()
+        .init_resource::<astre::planete::meteoroid::MeteoroidRes>()
+        .init_resource::<astre::etoile::star::StarRes>()
+        .init_resource::<astre::etoile::protostar::ProtostarRes>()
+        .init_resource::<astre::etoile::dwarf_star::DwarfStarRes>()
+        .init_resource::<astre::etoile::main_sequence_star::MainSequenceRes>()
+        .init_resource::<astre::etoile::giant_star::GiantStarRes>()
+        .init_resource::<astre::etoile::supergiant_star::SupergiantRes>()
+        .init_resource::<astre::etoile::hypergiant_star::HypergiantRes>()
+        .init_resource::<astre::Remnant_stellaire::nebula::NebulaRes>()
+        .init_resource::<astre::Remnant_stellaire::black_hole::BlackHoleRes>()
+        .init_resource::<astre::Remnant_stellaire::pulsar::PulsarRes>()
+        .init_resource::<astre::Remnant_stellaire::magnetar::MagnetarRes>()
+        .init_resource::<astre::Remnant_stellaire::neutron_star::NeutronStarRes>()
+        .init_resource::<astre::Remnant_stellaire::supernova::SupernovaRes>()
+        .add_event::<astre::planete::gas_planet::RegenerateGasPlanet>()
+        .add_event::<astre::planete::comet::RegenerateComet>()
+        .add_event::<astre::planete::meteoroid::RegenerateMeteoroid>()
+        .add_event::<astre::etoile::star::RegenerateStar>()
+        .add_event::<astre::etoile::protostar::RegenerateProtostar>()
+        .add_event::<astre::etoile::dwarf_star::RegenerateDwarfStar>()
+        .add_event::<astre::etoile::main_sequence_star::RegenerateMainSequence>()
+        .add_event::<astre::etoile::giant_star::RegenerateGiantStar>()
+        .add_event::<astre::etoile::supergiant_star::RegenerateSupergiant>()
+        .add_event::<astre::etoile::hypergiant_star::RegenerateHypergiant>()
+        .add_event::<astre::Remnant_stellaire::nebula::RegenerateNebula>()
+        .add_event::<astre::Remnant_stellaire::black_hole::RegenerateBlackHole>()
+        .add_event::<astre::Remnant_stellaire::pulsar::RegeneratePulsar>()
+        .add_event::<astre::Remnant_stellaire::magnetar::RegenerateMagnetar>()
+        .add_event::<astre::Remnant_stellaire::neutron_star::RegenerateNeutronStar>()
+        .add_event::<astre::Remnant_stellaire::supernova::RegenerateSupernova>()
 
         // ── Vaisseau ────────────────────────────────────────────────────
         .add_plugins(ShipPlugin)
@@ -212,14 +230,7 @@ fn main() {
         .init_resource::<ProfilingLog>()
         .insert_resource(ZoomLevel::System)
 
-        // ── PreStartup : seed generation then saved overrides ───────────
-        .add_systems(
-            PreStartup,
-            (
-                system_gen::populate_from_seed,
-                ui::load_saved_astres,
-            ).chain(),
-        )
+        // ── PreStartup (legacy seed/astres désactivé — galaxie gère tout) ─
 
         // ── Startup ─────────────────────────────────────────────────────
         .add_systems(
@@ -520,9 +531,9 @@ pub enum ZoomLevel {
 
 impl ZoomLevel {
     fn from_distance(d: f32) -> Self {
-        if d < 10000.0 {
+        if d < 15000.0 {
             ZoomLevel::System
-        } else if d < 200000.0 {
+        } else if d < 3_000_000.0 {
             ZoomLevel::Galaxy
         } else {
             ZoomLevel::Overview
@@ -915,11 +926,11 @@ fn camera_distance_range(
 
             (
                 r * 1.4,
-                r * 20000.0,
+                12_000_000.0,
             )
         }
 
-        TargetKind::Moon(_, _) => (20.0, 200000.0),
+        TargetKind::Moon(_, _) => (20.0, 12_000_000.0),
 
         TargetKind::Star(i) => {
             let r = settings
@@ -930,7 +941,7 @@ fn camera_distance_range(
 
             (
                 r * 0.5,
-                r * 15000.0,
+                r * 60000.0,
             )
         }
 

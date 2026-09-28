@@ -301,27 +301,30 @@ pub fn astre_lod_cull(
         if let Ok(si) = sys_q.get(entity) {
             if let Some(ps) = player_sys {
                 if si.0 != ps && !is_star_label(lod.label) {
-                    commands.entity(entity).remove::<AstrePendingUnload>();
-                    if unloaded.is_none() {
-                        commands.entity(entity).insert(AstreUnloaded);
-                        commands.entity(entity).despawn_descendants();
-                        if profiling.active {
-                            profiling.counter += 1;
-                            profiling.hidden_total += 1;
-                            let t = profiling.elapsed_secs();
-                            let msg = format!(
-                                "  log {} | {:.2}s | FPS:{:.0} ft:{:.1}ms | HIDDEN {} | sys={} (player={}) pos=({:.0},{:.0},{:.0})",
-                                profiling.counter, t, fps, frame_time, lod.label, si.0, ps, pos.x, pos.y, pos.z
-                            );
-                            profiling.log(&msg);
+                    if let Some(mut ec) = commands.get_entity(entity) {
+                        ec.remove::<AstrePendingUnload>();
+                        if unloaded.is_none() {
+                            ec.try_insert(AstreUnloaded);
+                            if profiling.active {
+                                profiling.counter += 1;
+                                profiling.hidden_total += 1;
+                                let t = profiling.elapsed_secs();
+                                let msg = format!(
+                                    "  log {} | {:.2}s | FPS:{:.0} ft:{:.1}ms | HIDDEN {} | sys={} (player={}) pos=({:.0},{:.0},{:.0})",
+                                    profiling.counter, t, fps, frame_time, lod.label, si.0, ps, pos.x, pos.y, pos.z
+                                );
+                                profiling.log(&msg);
+                            }
                         }
                     }
                     if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
                     continue;
                 }
                 if si.0 == ps && unloaded.is_some() {
-                    commands.entity(entity).remove::<AstrePendingUnload>();
-                    commands.entity(entity).insert(AstrePendingReload);
+                    if let Some(mut ec) = commands.get_entity(entity) {
+                        ec.remove::<AstrePendingUnload>();
+                        ec.try_insert(AstrePendingReload);
+                    }
                     if *vis != Visibility::Inherited { *vis = Visibility::Inherited; }
                     continue;
                 }
@@ -329,11 +332,9 @@ pub fn astre_lod_cull(
         }
 
         if d < lod.radius * 5.0 {
-            if pending.is_some() {
-                commands.entity(entity).remove::<AstrePendingUnload>();
-            }
-            if unloaded.is_some() {
-                commands.entity(entity).insert(AstrePendingReload);
+            if let Some(mut ec) = commands.get_entity(entity) {
+                if pending.is_some() { ec.remove::<AstrePendingUnload>(); }
+                if unloaded.is_some() { ec.try_insert(AstrePendingReload); }
             }
             if *vis != Visibility::Inherited { *vis = Visibility::Inherited; }
             continue;
@@ -351,9 +352,10 @@ pub fn astre_lod_cull(
                 if let Some(p) = pending {
                     let elapsed = p.0 + dt;
                     if elapsed >= UNLOAD_DELAY {
-                        commands.entity(entity).remove::<AstrePendingUnload>();
-                        commands.entity(entity).insert(AstreUnloaded);
-                        commands.entity(entity).despawn_descendants();
+                        if let Some(mut ec) = commands.get_entity(entity) {
+                            ec.remove::<AstrePendingUnload>();
+                            ec.try_insert(AstreUnloaded);
+                        }
                         if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
                         if profiling.active {
                             profiling.counter += 1;
@@ -365,24 +367,24 @@ pub fn astre_lod_cull(
                             );
                             profiling.log(&msg);
                         }
-                    } else {
-                        commands.entity(entity).insert(AstrePendingUnload(elapsed));
+                    } else if let Some(mut ec) = commands.get_entity(entity) {
+                        ec.try_insert(AstrePendingUnload(elapsed));
                     }
-                } else {
-                    commands.entity(entity).insert(AstrePendingUnload(0.0));
+                } else if let Some(mut ec) = commands.get_entity(entity) {
+                    ec.try_insert(AstrePendingUnload(0.0));
                 }
             }
         } else if dot > reload_dot {
-            if pending.is_some() {
-                commands.entity(entity).remove::<AstrePendingUnload>();
-            }
-            if unloaded.is_some() {
-                commands.entity(entity).insert(AstrePendingReload);
+            if let Some(mut ec) = commands.get_entity(entity) {
+                if pending.is_some() { ec.remove::<AstrePendingUnload>(); }
+                if unloaded.is_some() { ec.try_insert(AstrePendingReload); }
             }
             if *vis != Visibility::Inherited { *vis = Visibility::Inherited; }
         } else {
             if pending.is_some() {
-                commands.entity(entity).remove::<AstrePendingUnload>();
+                if let Some(mut ec) = commands.get_entity(entity) {
+                    ec.remove::<AstrePendingUnload>();
+                }
             }
         }
     }

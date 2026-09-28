@@ -7,7 +7,7 @@ use std::path::PathBuf;
 //  Dossier de données centralisé
 // ─────────────────────────────────────────────────────────────────────────
 
-pub const SAVE_VERSION: u32 = 5;
+pub const SAVE_VERSION: u32 = 7;
 
 pub fn data_dir() -> PathBuf {
     let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -179,18 +179,29 @@ fn pseudo_rand(seed: u32) -> f32 {
 }
 
 pub const SYSTEM_GRID_SIZE: usize = 100;
-pub const SYSTEM_CELL_SIZE: f32 = 20_000.0;
-pub const STREAM_RADIUS: f32 = 5.0;
+pub const SYSTEM_CELL_SIZE: f32 = 100_000.0;
+pub const STREAM_RADIUS: f32 = 3.0;
 pub const CLICKABLE_RADIUS: f32 = 30.0;
+pub const GALAXY_RADIUS: f32 = 4_500_000.0;
+
+fn star_color(seed: u32) -> [f32; 3] {
+    let c = pseudo_rand(seed);
+    if c < 0.2 { [1.0, 0.5, 0.3] }
+    else if c < 0.4 { [1.0, 0.7, 0.4] }
+    else if c < 0.6 { [1.0, 0.92, 0.65] }
+    else if c < 0.8 { [0.8, 0.85, 1.0] }
+    else { [0.6, 0.7, 1.0] }
+}
 
 fn default_systems() -> Vec<StarSystemConfig> {
-    let cols = SYSTEM_GRID_SIZE;
-    let rows = SYSTEM_GRID_SIZE;
-    let cell = SYSTEM_CELL_SIZE;
-    let half_grid_x = cols as f32 * cell / 2.0;
-    let half_grid_z = rows as f32 * cell / 2.0;
-    let margin = cell * 0.15;
+    const NUM_ARMS: usize = 5;
+    const ARM_STARS: usize = 10_000;
+    const SCATTER_STARS: usize = 2_500;
+    const ARM_TWIST: f32 = 5.0;
+    let tau = std::f32::consts::TAU;
+    let gr = GALAXY_RADIUS;
 
+    let prefixes = ["HD", "GJ", "HR", "TYC", "HIP", "NGC", "IC", "SAO"];
     let star_names = [
         "Sol", "Vega", "Altair", "Sirius", "Kepler",
         "Proxima", "Rigel", "Deneb", "Polaris", "Antares",
@@ -202,7 +213,6 @@ fn default_systems() -> Vec<StarSystemConfig> {
         "Atria", "Alhena", "Mirfak", "Saiph", "Alnitak",
         "Alnilam", "Mintaka", "Rasalhague", "Schedar", "Alphard",
     ];
-    let prefixes = ["HD", "GJ", "HR", "TYC", "HIP"];
     let gen_name = |idx: usize| -> String {
         if idx < star_names.len() {
             star_names[idx].to_string()
@@ -212,141 +222,86 @@ fn default_systems() -> Vec<StarSystemConfig> {
         }
     };
 
-    let mut systems = Vec::new();
-    let mut idx = 0u32;
-    for row in 0..rows {
-        for col in 0..cols {
-            let cell_idx = (row * cols + col) as u32;
+    let make_star = |seed: u32| -> (f32, f32, [f32; 3]) {
+        let r_f = pseudo_rand(seed * 5 + 31);
+        let radius = 75.0 + r_f * 175.0;
+        let intensity = 8.0 + r_f * 27.0;
+        let sc = star_color(seed * 5 + 37);
+        (radius, intensity, sc)
+    };
 
-            if cell_idx > 0 && pseudo_rand(cell_idx * 7 + 9999) < 0.35 {
-                idx += 1;
-                continue;
+    let make_planets = |seed: u32| -> Vec<PlanetConfig> {
+        let n = (pseudo_rand(seed * 3 + 41) * 2.5) as usize;
+        let sb = (seed + 1) * 100;
+        (0..n).map(|pi| {
+            let pu = pi as u32;
+            PlanetConfig {
+                orbit_distance: 1750.0 + pi as f32 * 1500.0 + pseudo_rand(sb + pu + 60) * 800.0,
+                radius: 100.0 + pi as f32 * 60.0 + pseudo_rand(sb + pu + 50) * 100.0,
+                seed: sb + pu,
+                atmosphere: pseudo_rand(seed * 11 + pu + 71) < 0.35,
+                ..Default::default()
             }
+        }).collect()
+    };
 
-            let cell_x = col as f32 * cell - half_grid_x;
-            let cell_z = row as f32 * cell - half_grid_z;
+    let mut systems = Vec::with_capacity(ARM_STARS + SCATTER_STARS + 1);
 
-            let x = cell_x + margin + pseudo_rand(cell_idx * 5 + 7) * (cell - 2.0 * margin);
-            let z = cell_z + margin + pseudo_rand(cell_idx * 5 + 13) * (cell - 2.0 * margin);
-            let y = (pseudo_rand(cell_idx * 5 + 19) - 0.5) * 2000.0;
+    // ── Bras spiraux ──────────────────────────────────────────────────
+    for i in 0..ARM_STARS {
+        let s = i as u32 + 100;
+        let arm = i % NUM_ARMS;
+        let arm_base = arm as f32 * tau / NUM_ARMS as f32;
 
-            let r = pseudo_rand(cell_idx * 5 + 31);
-            let star_radius = 75.0 + r * 175.0;
-            let star_intensity = 8.0 + r * 27.0;
-            let color_seed = pseudo_rand(cell_idx * 5 + 37);
-            let sc = if color_seed < 0.2 {
-                [1.0, 0.5, 0.3]
-            } else if color_seed < 0.4 {
-                [1.0, 0.7, 0.4]
-            } else if color_seed < 0.6 {
-                [1.0, 0.92, 0.65]
-            } else if color_seed < 0.8 {
-                [0.8, 0.85, 1.0]
-            } else {
-                [0.6, 0.7, 1.0]
-            };
+        let t = pseudo_rand(s * 7 + 3);
+        let r = t * t * gr;
 
-            let seed_base = (cell_idx + 1) * 100;
-            let num_planets = 1 + (pseudo_rand(cell_idx * 3 + 41) * 3.0) as usize;
-            let mut planets = Vec::new();
-            for pi in 0..num_planets {
-                let p_orbit = 1750.0 + pi as f32 * 1500.0 + pseudo_rand(seed_base + pi as u32 + 60) * 800.0;
-                planets.push(PlanetConfig {
-                    orbit_distance: p_orbit,
-                    radius: 150.0 + (pi as f32 * 75.0) + pseudo_rand(seed_base + pi as u32 + 50) * 100.0,
-                    seed: seed_base + pi as u32,
-                    atmosphere: pseudo_rand(cell_idx * 11 + pi as u32 + 71) < 0.4,
-                    ..Default::default()
-                });
-            }
-            let belts = if pseudo_rand(cell_idx * 13 + 83) < 0.25 {
-                vec![AsteroidBeltConfig { distance: 1750.0 + num_planets as f32 * 1500.0 + 1000.0, ..Default::default() }]
-            } else {
-                Vec::new()
-            };
-            systems.push(StarSystemConfig {
-                name: gen_name(cell_idx as usize),
-                position: [x, y, z],
-                stars: vec![StarConfig {
-                    radius: star_radius,
-                    intensity: star_intensity,
-                    light_color_r: sc[0], light_color_g: sc[1], light_color_b: sc[2],
-                    ..Default::default()
-                }],
-                planets,
-                asteroid_belts: belts,
-            });
-            idx += 1;
-        }
+        let spiral = arm_base + (r / gr) * ARM_TWIST;
+        let width = 0.35 * (1.0 - r / gr * 0.65);
+        let scatter = (pseudo_rand(s * 7 + 5) - 0.5) * width;
+        let theta = spiral + scatter;
+
+        let x = r * theta.cos();
+        let z = r * theta.sin();
+        let thickness = 3000.0 * (1.0 - r / gr * 0.8);
+        let y = (pseudo_rand(s * 7 + 7) - 0.5) * thickness;
+
+        let (sr, si, sc) = make_star(s);
+        systems.push(StarSystemConfig {
+            name: gen_name(i),
+            position: [x, y, z],
+            stars: vec![StarConfig {
+                radius: sr, intensity: si,
+                light_color_r: sc[0], light_color_g: sc[1], light_color_b: sc[2],
+                ..Default::default()
+            }],
+            planets: make_planets(s),
+            asteroid_belts: Vec::new(),
+        });
     }
 
-    // Remplacer le premier système par le chunk de test
-    if let Some(first) = systems.first_mut() {
-        first.name = "TestLab".to_string();
-        first.position = [0.0, 0.0, 0.0];
-        first.stars = vec![
-            StarConfig {
-                radius: 300.0, intensity: 25.0,
-                light_color_r: 1.0, light_color_g: 0.92, light_color_b: 0.65,
+    // ── Étoiles dispersées entre les bras ─────────────────────────────
+    for i in 0..SCATTER_STARS {
+        let s = (ARM_STARS + i) as u32 + 100;
+        let t = pseudo_rand(s * 7 + 3);
+        let r = t * t * gr * 0.85;
+        let theta = pseudo_rand(s * 7 + 5) * tau;
+        let x = r * theta.cos();
+        let z = r * theta.sin();
+        let y = (pseudo_rand(s * 7 + 7) - 0.5) * 1500.0;
+
+        let (sr, si, sc) = make_star(s);
+        systems.push(StarSystemConfig {
+            name: gen_name(ARM_STARS + i),
+            position: [x, y, z],
+            stars: vec![StarConfig {
+                radius: sr, intensity: si,
+                light_color_r: sc[0], light_color_g: sc[1], light_color_b: sc[2],
                 ..Default::default()
-            },
-        ];
-        let spacing = 2000.0;
-        first.planets = vec![
-            // Petite planète rocheuse
-            PlanetConfig {
-                orbit_distance: spacing,
-                radius: 80.0, sea_level: 0.0, terrain_height: 40.0,
-                seed: 900, noise_scale: 3.0, detail_scale: 5.0,
-                atmosphere: false, ..Default::default()
-            },
-            // Planète océan avec atmosphère
-            PlanetConfig {
-                orbit_distance: spacing * 2.0,
-                radius: 200.0, sea_level: 0.55, terrain_height: 80.0,
-                seed: 901, noise_scale: 2.0, detail_scale: 4.0,
-                atmosphere: true, cloud_density: 0.8, cloud_altitude: 80.0, cloud_speed: 0.03,
-                moons: vec![
-                    MoonConfig { orbit_distance: 500.0, radius: 40.0, seed: 910, ..Default::default() },
-                    MoonConfig { orbit_distance: 800.0, radius: 25.0, seed: 911, ..Default::default() },
-                ],
-                ..Default::default()
-            },
-            // Grosse planète désertique
-            PlanetConfig {
-                orbit_distance: spacing * 3.0,
-                radius: 350.0, sea_level: 0.1, terrain_height: 150.0,
-                seed: 902, noise_scale: 1.5, detail_scale: 3.0,
-                atmosphere: true, cloud_density: 0.3, cloud_altitude: 120.0, cloud_speed: 0.01,
-                moons: vec![
-                    MoonConfig { orbit_distance: 600.0, radius: 55.0, seed: 920, ..Default::default() },
-                ],
-                ..Default::default()
-            },
-            // Petite lune/planétoïde sans mer
-            PlanetConfig {
-                orbit_distance: spacing * 4.0,
-                radius: 50.0, sea_level: 0.0, terrain_height: 25.0,
-                seed: 903, noise_scale: 4.0, detail_scale: 6.0,
-                atmosphere: false, ..Default::default()
-            },
-            // Planète montagneuse avec atmosphère dense
-            PlanetConfig {
-                orbit_distance: spacing * 5.0,
-                radius: 280.0, sea_level: 0.3, terrain_height: 120.0,
-                seed: 904, noise_scale: 2.5, detail_scale: 5.0,
-                atmosphere: true, cloud_density: 1.0, cloud_altitude: 100.0, cloud_speed: 0.05,
-                moons: vec![
-                    MoonConfig { orbit_distance: 450.0, radius: 35.0, seed: 930, ..Default::default() },
-                    MoonConfig { orbit_distance: 700.0, radius: 50.0, seed: 931, ..Default::default() },
-                    MoonConfig { orbit_distance: 1000.0, radius: 20.0, seed: 932, ..Default::default() },
-                ],
-                ..Default::default()
-            },
-        ];
-        first.asteroid_belts = vec![
-            AsteroidBeltConfig { distance: spacing * 6.0, width: 800.0, min_size: 5.0, max_size: 30.0, count: 200 },
-        ];
+            }],
+            planets: make_planets(s),
+            asteroid_belts: Vec::new(),
+        });
     }
 
     systems
@@ -384,8 +339,8 @@ pub struct GameSettings {
 
     #[serde(default)] pub world_seed: u64,
 
-    // ── Systèmes stellaires ─────────────────────────────────────────────
-    #[serde(default = "default_systems")] pub systems: Vec<StarSystemConfig>,
+    // ── Systèmes stellaires (régénérés au lancement, jamais sauvegardés) ─
+    #[serde(skip)] pub systems: Vec<StarSystemConfig>,
 
     // ── Corps historiques (rétrocompat, migré vers systems[0]) ───────────
     #[serde(default = "default_planets")] pub planets:       Vec<PlanetConfig>,
@@ -442,7 +397,7 @@ impl GameSettings {
 
     pub fn load() -> Self {
         let path = Self::config_path();
-        if path.exists() {
+        let mut s = if path.exists() {
             match fs::read_to_string(&path) {
                 Ok(contents) => {
                     let mut s: Self = serde_json::from_str(&contents).unwrap_or_default();
@@ -451,7 +406,6 @@ impl GameSettings {
                               s.save_version, SAVE_VERSION);
                         let fresh = Self::default();
                         s.save_version = SAVE_VERSION;
-                        s.systems = fresh.systems;
                         s.planets = fresh.planets;
                         s.stars = fresh.stars;
                         s.asteroid_belts = fresh.asteroid_belts;
@@ -483,12 +437,28 @@ impl GameSettings {
             let settings = Self::default();
             settings.save();
             settings
-        }
+        };
+        s.systems = default_systems();
+        s.comets.clear();
+        s.meteoroids.clear();
+        s.voxel_stars.clear();
+        s.protostars.clear();
+        s.dwarf_stars.clear();
+        s.main_sequence.clear();
+        s.giants.clear();
+        s.supergiants.clear();
+        s.hypergiants.clear();
+        s.black_holes.clear();
+        s.pulsars.clear();
+        s.magnetars.clear();
+        s.neutron_stars.clear();
+        s.supernovae.clear();
+        s
     }
 
     pub fn save(&self) {
         let path = Self::config_path();
-        if let Ok(json) = serde_json::to_string_pretty(self) {
+        if let Ok(json) = serde_json::to_string(self) {
             fs::write(path, json).ok();
         }
     }
