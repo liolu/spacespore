@@ -58,7 +58,7 @@ fn main() {
 
     println!("Update complete! Launching SpaceSpore...");
     let game_path = Path::new(&config.install_dir).join(&config.game_exe);
-    let _ = Command::new(&game_path).spawn();
+    let _ = Command::new(&game_path).current_dir(&config.install_dir).spawn();
 }
 
 fn wait_for_process(pid: u32) {
@@ -76,10 +76,22 @@ fn wait_for_process(pid: u32) {
         }
     }
 
-    #[cfg(not(windows))]
+    #[cfg(unix)]
     {
-        let _ = pid;
-        thread::sleep(Duration::from_secs(2));
+        // `kill -0` teste l'existence du processus sans lui envoyer de signal.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            let alive = Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if !alive {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
     }
 }
 
@@ -88,8 +100,9 @@ fn extract_update(config: &UpdateConfig) -> Result<(), Box<dyn std::error::Error
     let mut archive = zip::ZipArchive::new(zip_file)?;
     let install_dir = Path::new(&config.install_dir);
 
-    let updater_exe = install_dir.join("spacespore-updater.exe");
-    let updater_old = install_dir.join("spacespore-updater.exe.old");
+    let updater_name = spacespore_common::exe_name(spacespore_common::UPDATER_BIN);
+    let updater_exe = install_dir.join(&updater_name);
+    let updater_old = install_dir.join(format!("{}.old", updater_name));
     if updater_exe.exists() {
         let _ = fs::remove_file(&updater_old);
         fs::rename(&updater_exe, &updater_old)?;
@@ -114,14 +127,12 @@ fn extract_update(config: &UpdateConfig) -> Result<(), Box<dyn std::error::Error
         if entry.is_dir() {
             fs::create_dir_all(&out_path)?;
         } else {
-            if let Some(parent) = out_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            let mut outfile = fs::File::create(&out_path)?;
-            io::copy(&mut entry, &mut outfile)?;
+            let mode = entry.unix_mode();
+            spacespore_common::write_extracted_file(&out_path, &mut entry, mode)?;
             println!("  extracted: {}", relative);
         }
     }
+    spacespore_common::clear_macos_quarantine(install_dir);
 
     Ok(())
 }

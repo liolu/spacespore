@@ -9,15 +9,35 @@ env:
 
 jobs:
   build:
-    runs-on: windows-latest
-    permissions:
-      contents: write
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            os: windows-latest
+          # Ubuntu 22.04 : glibc plus ancienne = binaire compatible avec plus de distributions
+          - platform: linux
+            os: ubuntu-22.04
+          - platform: macos
+            os: macos-latest
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libssl-dev libasound2-dev libudev-dev \
+            libwayland-dev libxkbcommon-dev zip
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -28,29 +48,18 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Build game (release)
-        run: cargo build --release -p spacespore
-
-      - name: Build updater (release)
-        run: cargo build --release -p spacespore-updater
-
-      - name: Build installer (release)
-        run: cargo build --release -p spacespore-installer
-
-      - name: Build launcher (release)
-        run: cargo build --release -p spacespore-launcher
-
       - name: Extract version from tag
         id: version
         shell: bash
-        run: |
-          VER="${GITHUB_REF#refs/tags/v}"
-          echo "VERSION=$VER" >> $GITHUB_OUTPUT
-          IFS='.' read -r major minor patch <<< "$VER"
-          CODE=$(( major * 100 + minor * 10 + patch ))
-          echo "CODE=$CODE" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
-      - name: Create distribution zip
+      # ── Windows ──────────────────────────────────────────────────────
+      - name: Build (Windows)
+        if: matrix.platform == 'windows'
+        run: cargo build --release -p spacespore -p spacespore-updater -p spacespore-launcher -p spacespore-installer
+
+      - name: Package (Windows)
+        if: matrix.platform == 'windows'
         shell: pwsh
         run: |
           $dir = "spacespore-v${{ steps.version.outputs.VERSION }}-windows"
@@ -59,16 +68,103 @@ jobs:
           Copy-Item target/release/spacespore-updater.exe $dir/
           Copy-Item target/release/spacespore-launcher.exe $dir/
           Compress-Archive -Path $dir -DestinationPath "$dir.zip"
+          New-Item -ItemType Directory -Path dist
+          Move-Item "$dir.zip" dist/
+          Copy-Item target/release/spacespore-installer.exe dist/
+
+      # ── Linux ────────────────────────────────────────────────────────
+      - name: Build (Linux)
+        if: matrix.platform == 'linux'
+        run: cargo build --release -p spacespore -p spacespore-updater -p spacespore-launcher -p spacespore-installer
+
+      - name: Package (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          dir="spacespore-v${{ steps.version.outputs.VERSION }}-linux"
+          mkdir -p "$dir" dist
+          cp target/release/spacespore target/release/spacespore-updater target/release/spacespore-launcher "$dir/"
+          cp run.sh "$dir/"
+          chmod +x "$dir"/*
+          zip -r "dist/$dir.zip" "$dir"
+          cp target/release/spacespore-installer dist/spacespore-installer-linux
+          chmod +x dist/spacespore-installer-linux
+
+      # ── macOS (binaire universel Apple Silicon + Intel) ──────────────
+      - name: Build (macOS)
+        if: matrix.platform == 'macos'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
+        run: |
+          for t in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release --target $t -p spacespore -p spacespore-updater -p spacespore-launcher -p spacespore-installer
+          done
+          mkdir -p target/universal
+          for bin in spacespore spacespore-updater spacespore-launcher spacespore-installer; do
+            lipo -create \
+              target/aarch64-apple-darwin/release/$bin \
+              target/x86_64-apple-darwin/release/$bin \
+              -output target/universal/$bin
+          done
+
+      - name: Package (macOS)
+        if: matrix.platform == 'macos'
+        run: |
+          dir="spacespore-v${{ steps.version.outputs.VERSION }}-macos"
+          mkdir -p "$dir" dist
+          cp target/universal/spacespore target/universal/spacespore-updater target/universal/spacespore-launcher "$dir/"
+          cp run.sh "$dir/SpaceSpore.command"
+          chmod +x "$dir"/*
+          # Signature ad-hoc : obligatoire pour exécuter sur Apple Silicon
+          for f in "$dir"/spacespore*; do codesign --force --sign - "$f"; done
+          codesign --force --sign - target/universal/spacespore-installer
+          zip -r "dist/$dir.zip" "$dir"
+          cp target/universal/spacespore-installer dist/spacespore-installer-macos
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.platform }}
+          path: dist/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: |
+          VER="${GITHUB_REF#refs/tags/v}"
+          echo "VERSION=$VER" >> $GITHUB_OUTPUT
+          IFS='.' read -r major minor patch <<< "$VER"
+          # Doit correspondre à VERSION_CODE dans tools/common/src/lib.rs (0.5.0 -> 500)
+          CODE=$(( major * 10000 + minor * 100 + patch ))
+          echo "CODE=$CODE" >> $GITHUB_OUTPUT
 
       - name: Update version.json
         shell: bash
         run: |
+          BASE="https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.VERSION }}"
+          NAME="spacespore-v${{ steps.version.outputs.VERSION }}"
           cat > docs/version.json << EOF
           {
             "version": "${{ steps.version.outputs.VERSION }}",
             "version_code": ${{ steps.version.outputs.CODE }},
             "release_date": "$(date -u +%Y-%m-%d)",
-            "download_url": "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.VERSION }}/spacespore-v${{ steps.version.outputs.VERSION }}-windows.zip",
+            "download_url": "$BASE/$NAME-windows.zip",
+            "download_url_linux": "$BASE/$NAME-linux.zip",
+            "download_url_macos": "$BASE/$NAME-macos.zip",
             "release_notes": "See release page for details",
             "min_updater_version": 1
           }
@@ -90,7 +186,5 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            spacespore-v${{ steps.version.outputs.VERSION }}-windows.zip
-            target/release/spacespore-installer.exe
+          files: dist/*
           generate_release_notes: true

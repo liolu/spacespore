@@ -1634,7 +1634,7 @@ fn scroll_options_panel(
 
     let mut dy = 0.0;
     for ev in mouse_wheel.read() {
-        dy -= ev.y * 40.0;
+        dy -= wheel_lines(ev) * 40.0;
     }
     if dy == 0.0 {
         return;
@@ -2559,6 +2559,17 @@ fn add_astre_add_button(
         ))
         .id();
     commands.entity(parent).add_child(button);
+}
+
+/// Convertit un événement molette en "crans" : les trackpads (macOS surtout,
+/// et certains pilotes Linux) envoient des pixels au lieu de lignes, ce qui
+/// rendait le zoom et le défilement beaucoup trop rapides.
+pub(crate) fn wheel_lines(ev: &MouseWheel) -> f32 {
+    use bevy::input::mouse::MouseScrollUnit;
+    match ev.unit {
+        MouseScrollUnit::Line => ev.y,
+        MouseScrollUnit::Pixel => ev.y / 40.0,
+    }
 }
 
 fn astres_save_path() -> PathBuf {

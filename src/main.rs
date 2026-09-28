@@ -747,9 +747,10 @@ fn camera_controller(
     }
 
     for ev in mouse_wheel.read() {
-        let direction_factor = if ev.y < 0.0 { 2.5 } else { 1.0 };
+        let y = ui::wheel_lines(ev);
+        let direction_factor = if y < 0.0 { 2.5 } else { 1.0 };
         let zoom_factor = 1.0 + ctrl.distance.abs() * 0.004 * direction_factor;
-        ctrl.distance -= ev.y * settings.scroll_speed * zoom_factor;
+        ctrl.distance -= y * settings.scroll_speed * zoom_factor;
     }
 
     ctrl.pitch = ctrl.pitch.clamp(-1.5, 1.5);

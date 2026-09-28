@@ -9,12 +9,8 @@ fn main() {
     println!("========================================");
     println!();
 
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-
-    let game_exe = exe_dir.join("spacespore.exe");
+    let exe_dir = spacespore_common::exe_dir();
+    let game_exe = exe_dir.join(spacespore_common::exe_name(spacespore_common::GAME_BIN));
 
     println!("Verification des mises a jour...");
     match check_for_update() {
@@ -56,7 +52,7 @@ fn main() {
             .current_dir(&exe_dir)
             .spawn();
     } else {
-        eprintln!("spacespore.exe introuvable dans {}", exe_dir.display());
+        eprintln!("{} introuvable dans {}", game_exe.display(), exe_dir.display());
         eprintln!("Appuyez sur Entree pour quitter...");
         let _ = io::stdin().read(&mut [0u8]);
     }
@@ -95,7 +91,7 @@ fn check_for_update() -> UpdateResult {
         Err(e) => return UpdateResult::Error(format!("{}", e)),
     };
 
-    if spacespore_common::needs_update(info.version_code) {
+    if spacespore_common::needs_update(info.version_code) && info.platform_download_url().is_some() {
         UpdateResult::Available(info)
     } else {
         UpdateResult::UpToDate
@@ -106,13 +102,17 @@ fn download_and_apply(
     info: &spacespore_common::VersionInfo,
     install_dir: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let url = info
+        .platform_download_url()
+        .ok_or_else(|| format!("Aucune version disponible pour {}", spacespore_common::PLATFORM))?;
+
     let temp_dir = std::env::temp_dir().join("spacespore-update");
     fs::create_dir_all(&temp_dir)?;
     let zip_path = temp_dir.join("update.zip");
 
     println!("  Telechargement...");
     let agent = make_agent(120);
-    let response = agent.get(&info.download_url).call()?;
+    let response = agent.get(url).call()?;
 
     let total_size = response
         .headers()
@@ -166,8 +166,9 @@ fn download_and_apply(
         }
 
         // Ne pas écraser le launcher lui-même pendant qu'il tourne
-        if relative == "spacespore-launcher.exe" {
-            let old_path = install_dir.join("spacespore-launcher.exe.old");
+        let launcher_name = spacespore_common::exe_name(spacespore_common::LAUNCHER_BIN);
+        if relative == launcher_name {
+            let old_path = install_dir.join(format!("{}.old", launcher_name));
             let _ = fs::remove_file(&old_path);
             let new_path = install_dir.join(&relative);
             if new_path.exists() {
@@ -180,14 +181,12 @@ fn download_and_apply(
         if entry.is_dir() {
             fs::create_dir_all(&out_path)?;
         } else {
-            if let Some(parent) = out_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            let mut outfile = fs::File::create(&out_path)?;
-            io::copy(&mut entry, &mut outfile)?;
+            let mode = entry.unix_mode();
+            spacespore_common::write_extracted_file(&out_path, &mut entry, mode)?;
             println!("    {}", relative);
         }
     }
+    spacespore_common::clear_macos_quarantine(install_dir);
 
     let _ = fs::remove_file(&zip_path);
     let _ = fs::remove_dir_all(&temp_dir);
