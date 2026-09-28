@@ -36,7 +36,7 @@ pub fn spawn_update_check() -> UpdateState {
     std::thread::spawn(move || {
         match check_version() {
             Ok(info) => {
-                if spacespore_common::needs_update(info.version_code) {
+                if spacespore_common::needs_update(info.version_code) && info.platform_download_url().is_some() {
                     *result_clone.lock().unwrap() = Some(CheckResult::Available(info));
                 } else {
                     *result_clone.lock().unwrap() = Some(CheckResult::UpToDate);
@@ -123,7 +123,9 @@ pub fn start_download(state: &mut UpdateState) {
                     Some(CheckResult::Available(VersionInfo {
                         version: info.version.clone(),
                         version_code: info.version_code,
-                        download_url: zip_path,
+                        download_url: zip_path.clone(),
+                        download_url_linux: Some(zip_path.clone()),
+                        download_url_macos: Some(zip_path),
                         release_notes: info.release_notes.clone(),
                         min_updater_version: info.min_updater_version,
                     }));
@@ -145,8 +147,12 @@ fn download_update(
 
     let zip_path = temp_dir.join("update.zip");
 
+    let url = info
+        .platform_download_url()
+        .ok_or_else(|| format!("No download available for {}", spacespore_common::PLATFORM))?;
+
     let agent = make_agent(120);
-    let response = agent.get(&info.download_url)
+    let response = agent.get(url)
         .call()
         .map_err(|e| format!("Download error: {}", e))?;
 
@@ -229,7 +235,7 @@ pub fn apply_update(zip_path: &str) {
     let config = serde_json::json!({
         "zip_path": zip_path,
         "install_dir": install_dir,
-        "game_exe": "spacespore.exe",
+        "game_exe": spacespore_common::exe_name(spacespore_common::GAME_BIN),
         "game_pid": std::process::id(),
     });
 
@@ -238,7 +244,7 @@ pub fn apply_update(zip_path: &str) {
         return;
     }
 
-    let updater_path = std::path::Path::new(&install_dir).join("spacespore-updater.exe");
+    let updater_path = std::path::Path::new(&install_dir).join(spacespore_common::exe_name(spacespore_common::UPDATER_BIN));
     if !updater_path.exists() {
         warn!("Updater not found at {}", updater_path.display());
         return;

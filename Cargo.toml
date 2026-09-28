@@ -9,7 +9,7 @@ edition = "2021"
 
 [dependencies]
 spacespore-common = { path = "tools/common" }
-bevy = "0.15"
+bevy = { version = "0.15", features = ["wayland"] }
 noise = "0.9"
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
@@ -17,7 +17,7 @@ serde_json = "1"
 dirs = "5"
 chrono = "0.4"
 ureq = { version = "3", features = ["native-tls"], default-features = false }
-zip = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [profile.dev]
 opt-level = 1

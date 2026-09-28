@@ -9,13 +9,41 @@ use std::path::PathBuf;
 
 pub const SAVE_VERSION: u32 = 7;
 
+/// Dossier `saves/` à côté de l'exécutable (installation portable).
+/// Si ce dossier n'est pas accessible en écriture (ex. installation système
+/// sous Linux, ou bundle `.app` en lecture seule sous macOS), on se rabat sur
+/// le dossier de données de l'utilisateur :
+///   Windows : %APPDATA%\SpaceSpore\saves
+///   Linux   : ~/.local/share/SpaceSpore/saves
+///   macOS   : ~/Library/Application Support/SpaceSpore/saves
 pub fn data_dir() -> PathBuf {
-    let path = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("saves")))
-        .unwrap_or_else(|| PathBuf::from("saves"));
-    fs::create_dir_all(&path).ok();
-    path
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let beside_exe = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("saves")));
+        if let Some(path) = beside_exe {
+            if is_writable_dir(&path) {
+                return path;
+            }
+        }
+        let fallback = dirs::data_dir()
+            .map(|d| d.join("SpaceSpore").join("saves"))
+            .unwrap_or_else(|| PathBuf::from("saves"));
+        fs::create_dir_all(&fallback).ok();
+        fallback
+    })
+    .clone()
+}
+
+fn is_writable_dir(path: &std::path::Path) -> bool {
+    if fs::create_dir_all(path).is_err() {
+        return false;
+    }
+    let probe = path.join(".write_test");
+    let ok = fs::write(&probe, b"").is_ok();
+    let _ = fs::remove_file(&probe);
+    ok
 }
 
 // ─────────────────────────────────────────────────────────────────────────
