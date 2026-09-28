@@ -86,8 +86,10 @@ jobs:
           cp run.sh "$dir/"
           chmod +x "$dir"/*
           zip -r "dist/$dir.zip" "$dir"
-          cp target/release/spacespore-installer dist/spacespore-installer-linux
-          chmod +x dist/spacespore-installer-linux
+          # tar.gz : conserve le droit d'exécution après téléchargement
+          mkdir -p installer && cp target/release/spacespore-installer installer/
+          chmod +x installer/spacespore-installer
+          tar -czf dist/spacespore-installer-linux.tar.gz -C installer spacespore-installer
 
       # ── macOS (binaire universel Apple Silicon + Intel) ──────────────
       - name: Build (macOS)
@@ -109,16 +111,46 @@ jobs:
       - name: Package (macOS)
         if: matrix.platform == 'macos'
         run: |
-          dir="spacespore-v${{ steps.version.outputs.VERSION }}-macos"
+          VER="${{ steps.version.outputs.VERSION }}"
+          # make_app <dossier .app> <nom> <identifiant>
+          make_app() {
+            mkdir -p "$1/Contents/MacOS"
+            cat > "$1/Contents/Info.plist" << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleName</key><string>$2</string>
+              <key>CFBundleDisplayName</key><string>$2</string>
+              <key>CFBundleIdentifier</key><string>$3</string>
+              <key>CFBundleVersion</key><string>$VER</string>
+              <key>CFBundleShortVersionString</key><string>$VER</string>
+              <key>CFBundlePackageType</key><string>APPL</string>
+              <key>CFBundleExecutable</key><string>$2</string>
+              <key>LSMinimumSystemVersion</key><string>11.0</string>
+              <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          EOF
+          }
+
+          dir="spacespore-v$VER-macos"
           mkdir -p "$dir" dist
           cp target/universal/spacespore target/universal/spacespore-updater target/universal/spacespore-launcher "$dir/"
-          cp run.sh "$dir/SpaceSpore.command"
-          chmod +x "$dir"/*
+          # SpaceSpore.app : double-clic dans le Finder -> lance le launcher (sans Terminal)
+          make_app "$dir/SpaceSpore.app" SpaceSpore io.github.liolu.spacespore
+          printf '#!/bin/bash\ncd "$(dirname "$0")/../../.."\nexec ./spacespore-launcher\n' > "$dir/SpaceSpore.app/Contents/MacOS/SpaceSpore"
+          chmod +x "$dir"/spacespore* "$dir/SpaceSpore.app/Contents/MacOS/SpaceSpore"
           # Signature ad-hoc : obligatoire pour exécuter sur Apple Silicon
           for f in "$dir"/spacespore*; do codesign --force --sign - "$f"; done
-          codesign --force --sign - target/universal/spacespore-installer
-          zip -r "dist/$dir.zip" "$dir"
-          cp target/universal/spacespore-installer dist/spacespore-installer-macos
+          zip -ry "dist/$dir.zip" "$dir"
+
+          # Installeur : "SpaceSpore Installer.app"
+          inst="installer/SpaceSpore Installer.app"
+          make_app "$inst" "SpaceSpore Installer" io.github.liolu.spacespore.installer
+          cp target/universal/spacespore-installer "$inst/Contents/MacOS/SpaceSpore Installer"
+          codesign --force --deep --sign - "$inst"
+          (cd installer && zip -ry ../dist/spacespore-installer-macos.zip "SpaceSpore Installer.app")
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

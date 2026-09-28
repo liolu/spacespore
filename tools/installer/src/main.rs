@@ -12,11 +12,11 @@ mod install;
 #[cfg(windows)]
 mod windows_gui;
 #[cfg(not(windows))]
-mod unix_cli;
+mod unix_gui;
 
 fn main() {
     #[cfg(windows)]
     windows_gui::run();
     #[cfg(not(windows))]
-    unix_cli::run();
+    unix_gui::run();
 }
