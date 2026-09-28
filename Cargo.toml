@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = [".", "tools/common", "tools/installer", "tools/updater"]
+members = [".", "tools/common", "tools/installer", "tools/updater", "tools/launcher"]
 
 [package]
 name = "spacespore"

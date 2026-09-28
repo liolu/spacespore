@@ -4455,6 +4455,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "spacespore-launcher"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "spacespore-common",
+ "ureq",
+ "zip",
+]
+
+[[package]]
 name = "spacespore-updater"
 version = "0.1.0"
 dependencies = [

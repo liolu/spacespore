@@ -37,6 +37,9 @@ jobs:
       - name: Build installer (release)
         run: cargo build --release -p spacespore-installer
 
+      - name: Build launcher (release)
+        run: cargo build --release -p spacespore-launcher
+
       - name: Extract version from tag
         id: version
         shell: bash
@@ -49,6 +52,7 @@ jobs:
           New-Item -ItemType Directory -Path $dir
           Copy-Item target/release/spacespore.exe $dir/
           Copy-Item target/release/spacespore-updater.exe $dir/
+          Copy-Item target/release/spacespore-launcher.exe $dir/
           Compress-Archive -Path $dir -DestinationPath "$dir.zip"
 
       - name: Update version.json
