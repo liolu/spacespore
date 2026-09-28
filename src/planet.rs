@@ -2,10 +2,11 @@ use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
 use rand::Rng;
 
+use std::collections::HashSet;
 use crate::kepler::{OrbitalElements, DEFAULT_MU};
 use crate::lod::{compute_lod_level, LodChunk, LodLevel};
 use crate::mesher::{build_celestial_chunk_mesh, build_chunk_mesh};
-use crate::settings::GameSettings;
+use crate::settings::{GameSettings, SYSTEM_CELL_SIZE, STREAM_RADIUS};
 use crate::astre::{AstreLodRoot, ReloadAstre};
 const STAR_DIVISIONS: usize = 4;
 const MOON_DIVISIONS: usize = 3;
@@ -15,13 +16,17 @@ pub struct PlanetPlugin;
 impl Plugin for PlanetPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<RegeneratePlanet>()
+            .insert_resource(SpawnedSystems(HashSet::new()))
             .add_systems(Startup, generate_all)
             .add_systems(
                 Update,
-                (orbit_planets, orbit_stars, orbit_moons, orbit_asteroid_belts, update_flare_voxels, rotate_clouds, regenerate_all, update_lod, update_star_visibility, reload_stars, reload_planets, reload_moons, reload_asteroid_belts, cleanup_hidden_toplevel),
+                (orbit_planets, orbit_stars, orbit_moons, orbit_asteroid_belts, update_flare_voxels, rotate_clouds, regenerate_all, update_lod, update_star_visibility, update_far_star_scale, stream_system_bodies, reload_stars, reload_planets, reload_moons, reload_asteroid_belts, cleanup_hidden_toplevel),
             );
     }
 }
+
+#[derive(Resource)]
+pub struct SpawnedSystems(pub HashSet<usize>);
 
 #[derive(Event)]
 pub struct RegeneratePlanet;
@@ -43,6 +48,12 @@ pub struct StarBeacon;
 
 #[derive(Component)]
 pub struct StarChunk;
+
+#[derive(Component)]
+pub struct FarStar {
+    pub sys_idx: usize,
+    pub radius: f32,
+}
 
 #[derive(Component)]
 pub struct MoonRoot;
@@ -157,20 +168,40 @@ fn generate_all(
     settings: Res<GameSettings>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut spawned: ResMut<SpawnedSystems>,
 ) {
+    let billboard_mesh = meshes.add(Sphere::new(1.0).mesh().ico(2).unwrap());
+
     for (si, sys) in settings.systems.iter().enumerate() {
+        let center = sys.center();
+        if let Some(star_cfg) = sys.stars.first() {
+            let r = star_cfg.light_color_r;
+            let g = star_cfg.light_color_g;
+            let b = star_cfg.light_color_b;
+            let mat = materials.add(StandardMaterial {
+                base_color: Color::srgb(r, g, b),
+                emissive: LinearRgba::new(r * 30.0, g * 25.0, b * 10.0, 1.0),
+                unlit: true,
+                ..default()
+            });
+            commands.spawn((
+                Mesh3d(billboard_mesh.clone()),
+                MeshMaterial3d(mat),
+                Transform::from_translation(center).with_scale(Vec3::splat(star_cfg.radius * 0.5)),
+                NotShadowCaster,
+                FarStar { sys_idx: si, radius: star_cfg.radius },
+            ));
+        }
+    }
+
+    if let Some(sys) = settings.systems.first() {
         let center = sys.center();
         let sys_cam = center + Vec3::new(0.0, 80.0, 200.0);
         spawn_system_bodies(
-            &mut commands,
-            sys,
-            &settings,
-            si,
-            &mut meshes,
-            &mut materials,
-            sys_cam,
-            center,
+            &mut commands, sys, &settings, 0,
+            &mut meshes, &mut materials, sys_cam, center,
         );
+        spawned.0.insert(0);
     }
 }
 
@@ -1912,6 +1943,106 @@ fn reload_asteroid_belts(
                 ))
                 .id();
             commands.entity(entity).add_child(asteroid);
+        }
+    }
+}
+
+fn update_far_star_scale(
+    camera_q: Query<&GlobalTransform, With<Camera3d>>,
+    spawned: Res<SpawnedSystems>,
+    mut far_q: Query<(&FarStar, &mut Transform, &mut Visibility)>,
+) {
+    let cam_pos = camera_q.single().translation();
+    for (fs, mut tf, mut vis) in &mut far_q {
+        if spawned.0.contains(&fs.sys_idx) {
+            *vis = Visibility::Hidden;
+            continue;
+        }
+        *vis = Visibility::Inherited;
+        let dist = cam_pos.distance(tf.translation);
+        let min_scale = fs.radius * 0.5;
+        let angular_scale = dist * 0.005;
+        let scale = angular_scale.max(min_scale);
+        tf.scale = Vec3::splat(scale);
+    }
+}
+
+fn stream_system_bodies(
+    mut commands: Commands,
+    settings: Res<GameSettings>,
+    camera_q: Query<&GlobalTransform, With<Camera3d>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut spawned: ResMut<SpawnedSystems>,
+    star_q: Query<(Entity, &SystemIdx), With<StarRoot>>,
+    planet_q: Query<(Entity, &SystemIdx), With<PlanetRoot>>,
+    moon_q: Query<(Entity, &SystemIdx), With<MoonRoot>>,
+    belt_q: Query<(Entity, &SystemIdx), With<AsteroidBeltRoot>>,
+    flare_q: Query<(Entity, &FlareVoxel)>,
+    cloud_q: Query<(Entity, &CloudVoxel)>,
+) {
+    let cam_pos = camera_q.single().translation();
+    let radius_sq = (STREAM_RADIUS * SYSTEM_CELL_SIZE) * (STREAM_RADIUS * SYSTEM_CELL_SIZE);
+
+    let mut to_spawn: Vec<usize> = Vec::new();
+    let mut to_despawn: Vec<usize> = Vec::new();
+
+    for (si, sys) in settings.systems.iter().enumerate() {
+        let dist_sq = cam_pos.distance_squared(sys.center());
+        let is_near = dist_sq < radius_sq;
+        let is_spawned = spawned.0.contains(&si);
+
+        if is_near && !is_spawned {
+            to_spawn.push(si);
+        } else if !is_near && is_spawned {
+            to_despawn.push(si);
+        }
+    }
+
+    if to_spawn.len() > 1 {
+        to_spawn.truncate(1);
+    }
+
+    for si in &to_despawn {
+        let id_base = si * 1000;
+        for (e, idx) in &star_q {
+            if idx.0 == *si {
+                for (fe, fv) in &flare_q {
+                    if fv.star_idx >= id_base && fv.star_idx < id_base + 1000 {
+                        commands.entity(fe).despawn_recursive();
+                    }
+                }
+                commands.entity(e).despawn_recursive();
+            }
+        }
+        for (e, idx) in &planet_q {
+            if idx.0 == *si {
+                let pid_base = si * 1000;
+                for (ce, cv) in &cloud_q {
+                    if cv.planet_idx >= pid_base && cv.planet_idx < pid_base + 1000 {
+                        commands.entity(ce).despawn_recursive();
+                    }
+                }
+                commands.entity(e).despawn_recursive();
+            }
+        }
+        for (e, idx) in &moon_q {
+            if idx.0 == *si { commands.entity(e).despawn_recursive(); }
+        }
+        for (e, idx) in &belt_q {
+            if idx.0 == *si { commands.entity(e).despawn_recursive(); }
+        }
+        spawned.0.remove(si);
+    }
+
+    for si in &to_spawn {
+        if let Some(sys) = settings.systems.get(*si) {
+            let center = sys.center();
+            spawn_system_bodies(
+                &mut commands, sys, &settings, *si,
+                &mut meshes, &mut materials, cam_pos, center,
+            );
+            spawned.0.insert(*si);
         }
     }
 }

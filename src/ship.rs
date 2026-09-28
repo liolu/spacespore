@@ -6,12 +6,9 @@ pub struct ShipPlugin;
 
 impl Plugin for ShipPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(ShipMode::Orbit)
+        app.insert_resource(ShipMode::Ship)
             .add_systems(Startup, spawn_ship)
-            .add_systems(Update, (
-                toggle_ship_mode,
-                ship_free_move,
-            ));
+            .add_systems(Update, toggle_ship_mode);
     }
 }
 
@@ -20,7 +17,7 @@ pub struct Ship;
 
 #[derive(Resource, Debug, Clone, PartialEq)]
 pub enum ShipMode {
-    Orbit,
+    Ship,
     Free,
 }
 
@@ -100,6 +97,16 @@ fn spawn_ship(
             MeshMaterial3d(engine_mat),
             Transform::from_translation(Vec3::new(0.5, 0.0, 2.6)),
         ));
+        p.spawn((
+            PointLight {
+                intensity: 800_000.0,
+                range: 150.0,
+                color: Color::srgb(0.6, 0.8, 1.0),
+                shadows_enabled: false,
+                ..default()
+            },
+            Transform::from_translation(Vec3::new(0.0, 1.0, 0.0)),
+        ));
     });
 }
 
@@ -109,50 +116,8 @@ fn toggle_ship_mode(
 ) {
     if keys.just_pressed(KeyCode::F1) {
         *mode = match *mode {
-            ShipMode::Free => ShipMode::Orbit,
-            ShipMode::Orbit => ShipMode::Free,
+            ShipMode::Ship => ShipMode::Free,
+            ShipMode::Free => ShipMode::Ship,
         };
-    }
-}
-
-fn ship_free_move(
-    time: Res<Time>,
-    keys: Res<ButtonInput<KeyCode>>,
-    mut mouse_motion: EventReader<bevy::input::mouse::MouseMotion>,
-    mouse_buttons: Res<ButtonInput<MouseButton>>,
-    mode: Res<ShipMode>,
-    menu_state: Res<MenuState>,
-    settings: Res<GameSettings>,
-    mut ship_q: Query<&mut Transform, With<Ship>>,
-) {
-    if *mode != ShipMode::Free { mouse_motion.clear(); return; }
-    if menu_state.open { mouse_motion.clear(); return; }
-
-    let Ok(mut tf) = ship_q.get_single_mut() else { return };
-    let dt = time.delta_secs();
-
-    let sens = settings.mouse_sensitivity * 0.003;
-
-    for ev in mouse_motion.read() {
-        let yaw = -ev.delta.x * sens;
-        let pitch = -ev.delta.y * sens;
-        tf.rotate_y(yaw);
-        tf.rotate_local_x(pitch);
-    }
-
-    let forward = tf.rotation * Vec3::NEG_Z;
-    let right = tf.rotation * Vec3::X;
-    let speed = 300.0 * dt;
-
-    let mut dir = Vec3::ZERO;
-    if keys.pressed(KeyCode::KeyW) { dir += forward; }
-    if keys.pressed(KeyCode::KeyS) { dir -= forward; }
-    if keys.pressed(KeyCode::KeyA) { dir -= right; }
-    if keys.pressed(KeyCode::KeyD) { dir += right; }
-    if keys.pressed(KeyCode::Space) { dir += Vec3::Y; }
-    if keys.pressed(KeyCode::ShiftLeft) { dir -= Vec3::Y; }
-
-    if dir.length_squared() > 0.0 {
-        tf.translation += dir.normalize() * speed;
     }
 }

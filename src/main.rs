@@ -207,6 +207,7 @@ fn main() {
 
         .add_event::<ReloadAstre>()
         .init_resource::<ProfilingLog>()
+        .insert_resource(ZoomLevel::System)
 
         // ── PreStartup : seed generation then saved overrides ───────────
         .add_systems(
@@ -351,6 +352,7 @@ fn select_world_target(
     camera_q: Query<(&Camera, &GlobalTransform), With<CameraController>>,
     queries: TargetQueries,
     mut target: ResMut<CameraTarget>,
+    zoom: Res<ZoomLevel>,
 ) {
     if !buttons.just_pressed(MouseButton::Left) {
         return;
@@ -439,7 +441,9 @@ fn select_world_target(
     }
 
     if let Some((_, selected)) = best {
-        target.0 = selected;
+        if zoom.can_navigate_to(&selected) {
+            target.0 = selected;
+        }
     }
 }
 
@@ -481,6 +485,41 @@ struct CameraController {
     distance: f32,
 }
 
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ZoomLevel {
+    System,
+    Galaxy,
+    Overview,
+}
+
+impl ZoomLevel {
+    fn from_distance(d: f32) -> Self {
+        if d < 50000.0 {
+            ZoomLevel::System
+        } else if d < 800000.0 {
+            ZoomLevel::Galaxy
+        } else {
+            ZoomLevel::Overview
+        }
+    }
+
+    fn is_star(kind: &TargetKind) -> bool {
+        matches!(kind,
+            TargetKind::Star(_) | TargetKind::VoxelStar(_) | TargetKind::Protostar(_)
+            | TargetKind::DwarfStar(_) | TargetKind::MainSequence(_) | TargetKind::GiantStar(_)
+            | TargetKind::Supergiant(_) | TargetKind::Hypergiant(_)
+        )
+    }
+
+    fn can_navigate_to(&self, kind: &TargetKind) -> bool {
+        match self {
+            ZoomLevel::System => true,
+            ZoomLevel::Galaxy => Self::is_star(kind),
+            ZoomLevel::Overview => false,
+        }
+    }
+}
+
 fn camera_controller(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -500,185 +539,178 @@ fn camera_controller(
 
     queries: TargetQueries,
 
-    ship_q: Query<&Transform, With<Ship>>,
+    mut ship_q: Query<(&mut Transform, &mut Visibility), With<Ship>>,
+    mut zoom_level: ResMut<ZoomLevel>,
 
     mut cam_q:
         Query<(&mut Transform, &mut CameraController), Without<Ship>>,
 ) {
-    let Ok((mut transform, mut ctrl)) =
+    let Ok((mut cam_tf, mut ctrl)) =
         cam_q.get_single_mut()
     else {
         return;
     };
 
-    // ── Mode libre : caméra derrière le vaisseau ──────────────────────
+    // ── Mode vue libre (F1) : caméra libre sans vaisseau ─────────────
     if *ship_mode == ShipMode::Free {
-        mouse_motion.clear();
-
-        if let Ok(ship_tf) = ship_q.get_single() {
-            for ev in mouse_wheel.read() {
-                ctrl.distance -= ev.y * settings.scroll_speed * 0.5;
-            }
-            ctrl.distance = ctrl.distance.clamp(5.0, 200.0);
-
-            let behind = ship_tf.rotation * Vec3::new(0.0, 2.5, ctrl.distance);
-            transform.translation = ship_tf.translation + behind;
-            transform.look_at(ship_tf.translation + ship_tf.rotation * Vec3::NEG_Z * 10.0, Vec3::Y);
+        if menu_state.open {
+            mouse_motion.clear();
+            mouse_wheel.clear();
+            return;
         }
+
+        let dt = time.delta_secs();
+        let move_speed = 300.0 * dt;
+        let mouse_sens = settings.mouse_sensitivity * 0.003;
+
+        if mouse_buttons.pressed(MouseButton::Right) {
+            for ev in mouse_motion.read() {
+                ctrl.yaw -= ev.delta.x * mouse_sens;
+                ctrl.pitch -= ev.delta.y * mouse_sens;
+            }
+        } else {
+            mouse_motion.clear();
+        }
+        mouse_wheel.clear();
+
+        ctrl.pitch = ctrl.pitch.clamp(-1.5, 1.5);
+
+        let rotation = Quat::from_euler(EulerRot::YXZ, ctrl.yaw, ctrl.pitch, 0.0);
+        let forward = rotation * Vec3::NEG_Z;
+        let right = rotation * Vec3::X;
+
+        let mut dir = Vec3::ZERO;
+        if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) { dir += forward; }
+        if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) { dir -= forward; }
+        if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft) { dir -= right; }
+        if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) { dir += right; }
+        if keys.pressed(KeyCode::Space) { dir += Vec3::Y; }
+        if keys.pressed(KeyCode::ShiftLeft) { dir -= Vec3::Y; }
+
+        if dir.length_squared() > 0.0 {
+            cam_tf.translation += dir.normalize() * move_speed;
+        }
+        cam_tf.rotation = rotation;
         return;
     }
 
-    // ── Mode orbite : comportement normal ─────────────────────────────
-    let target_pos =
-        resolve_target(
-            &camera_target,
-            &queries,
-        );
+    // ── Mode vaisseau (defaut) : vaisseau orbite l'astre ─────────────
+    let target_pos = resolve_target(&camera_target, &queries);
 
-    // ── Menu ouvert ────────────────────────────────────────────────────
     if menu_state.open {
         mouse_motion.clear();
         mouse_wheel.clear();
 
-        let rotation =
-            Quat::from_euler(
-                EulerRot::YXZ,
-                ctrl.yaw,
-                ctrl.pitch,
-                0.0,
-            );
+        let cam_rotation = Quat::from_euler(EulerRot::YXZ, ctrl.yaw, ctrl.pitch, 0.0);
 
-        transform.translation =
+        let sp = if let Ok((mut ship_tf, mut ship_vis)) = ship_q.get_single_mut() {
+            if *zoom_level == ZoomLevel::Overview {
+                *ship_vis = Visibility::Hidden;
+                cam_tf.translation = target_pos + cam_rotation * Vec3::new(0.0, 0.0, ctrl.distance);
+                cam_tf.look_at(target_pos, Vec3::Y);
+                return;
+            }
+            *ship_vis = Visibility::Inherited;
+            let hover_pos = target_pos + Vec3::Y * 80.0;
+            let to_hover = hover_pos - ship_tf.translation;
+            let dist = to_hover.length();
+            if dist > 30.0 {
+                let cruise = (dist * 0.8).max(3000.0).min(500_000.0);
+                let step = (cruise * time.delta_secs()).min(dist);
+                ship_tf.translation += to_hover.normalize() * step;
+                ship_tf.look_to(to_hover.normalize(), Vec3::Y);
+            } else {
+                ship_tf.translation = hover_pos;
+            }
+            let pos = ship_tf.translation;
+            ship_tf.scale = Vec3::splat(ctrl.distance.max(1.0) * 0.008);
+            pos
+        } else {
             target_pos
-            + rotation
-                * Vec3::new(
-                    0.0,
-                    0.0,
-                    ctrl.distance,
-                );
+        };
 
-        transform.look_at(
-            target_pos,
-            Vec3::Y,
-        );
-
+        cam_tf.translation = sp + cam_rotation * Vec3::new(0.0, 0.0, ctrl.distance);
+        cam_tf.look_at(sp, Vec3::Y);
         return;
     }
 
-    // ── Vitesse clavier ────────────────────────────────────────────────
-    let rotate_speed =
-        settings.keyboard_speed
-        * time.delta_secs();
+    // ── Controles caméra orbitale ──────────────────────────────────
+    let rotate_speed = settings.keyboard_speed * time.delta_secs();
+    let mouse_sens = settings.mouse_sensitivity * 0.01;
+    let y_mult = if settings.invert_y { -1.0 } else { 1.0 };
 
-    let mouse_sens =
-        settings.mouse_sensitivity
-        * 0.01;
-
-    let y_mult =
-        if settings.invert_y {
-            -1.0
-        } else {
-            1.0
-        };
-
-    // ── Rotation clavier ──────────────────────────────────────────────
-
-    if keys.pressed(KeyCode::ArrowLeft)
-        || keys.pressed(KeyCode::KeyA)
-    {
+    if keys.pressed(KeyCode::ArrowLeft) || keys.pressed(KeyCode::KeyA) {
         ctrl.yaw += rotate_speed;
     }
-
-    if keys.pressed(KeyCode::ArrowRight)
-        || keys.pressed(KeyCode::KeyD)
-    {
+    if keys.pressed(KeyCode::ArrowRight) || keys.pressed(KeyCode::KeyD) {
         ctrl.yaw -= rotate_speed;
     }
-
-    if keys.pressed(KeyCode::ArrowUp)
-        || keys.pressed(KeyCode::KeyW)
-    {
-        ctrl.pitch +=
-            rotate_speed * y_mult;
+    if keys.pressed(KeyCode::ArrowUp) || keys.pressed(KeyCode::KeyW) {
+        ctrl.pitch += rotate_speed * y_mult;
     }
-
-    if keys.pressed(KeyCode::ArrowDown)
-        || keys.pressed(KeyCode::KeyS)
-    {
-        ctrl.pitch -=
-            rotate_speed * y_mult;
+    if keys.pressed(KeyCode::ArrowDown) || keys.pressed(KeyCode::KeyS) {
+        ctrl.pitch -= rotate_speed * y_mult;
     }
-
-    // ── Rotation souris ───────────────────────────────────────────────
 
     if mouse_buttons.pressed(MouseButton::Right) {
         for ev in mouse_motion.read() {
-            ctrl.yaw -=
-                ev.delta.x * mouse_sens;
-
-            ctrl.pitch +=
-                ev.delta.y
-                * mouse_sens
-                * y_mult;
+            ctrl.yaw -= ev.delta.x * mouse_sens;
+            ctrl.pitch += ev.delta.y * mouse_sens * y_mult;
         }
     } else {
         mouse_motion.clear();
     }
 
-    // ── Zoom ──────────────────────────────────────────────────────────
-
     for ev in mouse_wheel.read() {
         let direction_factor = if ev.y < 0.0 { 2.5 } else { 1.0 };
         let zoom_factor = 1.0 + ctrl.distance.abs() * 0.004 * direction_factor;
-        ctrl.distance -=
-            ev.y * settings.scroll_speed * zoom_factor;
+        ctrl.distance -= ev.y * settings.scroll_speed * zoom_factor;
     }
 
-    // ── Limites rotation ──────────────────────────────────────────────
+    ctrl.pitch = ctrl.pitch.clamp(-1.5, 1.5);
 
-    ctrl.pitch =
-        ctrl.pitch.clamp(
-            -1.5,
-            1.5,
-        );
+    let (min_dist, max_dist) = camera_distance_range(&camera_target, &settings);
+    ctrl.distance = ctrl.distance.clamp(min_dist, max_dist);
 
-    // ── Limites distance ──────────────────────────────────────────────
+    *zoom_level = ZoomLevel::from_distance(ctrl.distance);
 
-    let (min_dist, max_dist) =
-        camera_distance_range(
-            &camera_target,
-            &settings,
-        );
+    let cam_rotation = Quat::from_euler(EulerRot::YXZ, ctrl.yaw, ctrl.pitch, 0.0);
 
-    ctrl.distance =
-        ctrl.distance.clamp(
-            min_dist,
-            max_dist,
-        );
+    // ── Vaisseau : croisière puis posé au-dessus de l'astre ────────
+    let ship_pos = if let Ok((mut ship_tf, mut ship_vis)) = ship_q.get_single_mut() {
+        if *zoom_level == ZoomLevel::Overview {
+            *ship_vis = Visibility::Hidden;
+            cam_tf.translation = target_pos + cam_rotation * Vec3::new(0.0, 0.0, ctrl.distance);
+            cam_tf.look_at(target_pos, Vec3::Y);
+            return;
+        }
+        *ship_vis = Visibility::Inherited;
 
-    // ── Application caméra ────────────────────────────────────────────
+        let hover_height = 80.0_f32;
+        let hover_pos = target_pos + Vec3::Y * hover_height;
+        let to_hover = hover_pos - ship_tf.translation;
+        let dist = to_hover.length();
 
-    let rotation =
-        Quat::from_euler(
-            EulerRot::YXZ,
-            ctrl.yaw,
-            ctrl.pitch,
-            0.0,
-        );
+        if dist > 30.0 {
+            let cruise = (dist * 0.8).max(3000.0).min(500_000.0);
+            let step = (cruise * time.delta_secs()).min(dist);
+            ship_tf.translation += to_hover.normalize() * step;
+            ship_tf.look_to(to_hover.normalize(), Vec3::Y);
+        } else {
+            ship_tf.translation = hover_pos;
+        }
 
-    transform.translation =
+        let pos = ship_tf.translation;
+        let d = ctrl.distance.max(1.0);
+        ship_tf.scale = Vec3::splat(d * 0.008);
+        pos
+    } else {
         target_pos
-        + rotation
-            * Vec3::new(
-                0.0,
-                0.0,
-                ctrl.distance,
-            );
+    };
 
-    transform.look_at(
-        target_pos,
-        Vec3::Y,
-    );
+    // ── Caméra centrée sur le vaisseau ────────────────────────────
+    cam_tf.translation = ship_pos + cam_rotation * Vec3::new(0.0, 0.0, ctrl.distance);
+    cam_tf.look_at(ship_pos, Vec3::Y);
 }
 
 
@@ -845,11 +877,11 @@ fn camera_distance_range(
 
             (
                 r * 1.4,
-                r * 200.0,
+                r * 20000.0,
             )
         }
 
-        TargetKind::Moon(_, _) => (20.0, 2000.0),
+        TargetKind::Moon(_, _) => (20.0, 200000.0),
 
         TargetKind::Star(i) => {
             let r = settings
@@ -860,7 +892,7 @@ fn camera_distance_range(
 
             (
                 r * 0.5,
-                r * 150.0,
+                r * 15000.0,
             )
         }
 
@@ -869,19 +901,19 @@ fn camera_distance_range(
         TargetKind::GasPlanet(_) =>
             (
                 220.0 * 1.3,
-                220.0 * 200.0,
+                220.0 * 20000.0,
             ),
 
         TargetKind::Comet(_) =>
             (
                 80.0,
-                20000.0,
+                2000000.0,
             ),
 
         TargetKind::Meteoroid(_) =>
             (
                 30.0,
-                4000.0,
+                400000.0,
             ),
 
         // ── Étoiles ───────────────────────────────────────────────────
@@ -889,43 +921,43 @@ fn camera_distance_range(
         TargetKind::VoxelStar(_) =>
             (
                 120.0 * 0.5,
-                120.0 * 200.0,
+                120.0 * 20000.0,
             ),
 
         TargetKind::Protostar(_) =>
             (
                 60.0 * 1.2,
-                12000.0,
+                1200000.0,
             ),
 
         TargetKind::DwarfStar(_) =>
             (
                 45.0 * 1.5,
-                8000.0,
+                800000.0,
             ),
 
         TargetKind::MainSequence(_) =>
             (
                 100.0 * 1.2,
-                20000.0,
+                2000000.0,
             ),
 
         TargetKind::GiantStar(_) =>
             (
                 350.0 * 0.6,
-                350.0 * 150.0,
+                350.0 * 15000.0,
             ),
 
         TargetKind::Supergiant(_) =>
             (
                 700.0 * 0.4,
-                700.0 * 120.0,
+                700.0 * 12000.0,
             ),
 
         TargetKind::Hypergiant(_) =>
             (
                 1400.0 * 0.3,
-                1400.0 * 100.0,
+                1400.0 * 10000.0,
             ),
 
         // ── Rémanents ─────────────────────────────────────────────────
@@ -933,37 +965,37 @@ fn camera_distance_range(
         TargetKind::Nebula =>
             (
                 600.0 * 0.5,
-                600.0 * 100.0,
+                600.0 * 10000.0,
             ),
 
         TargetKind::BlackHole(_) =>
             (
                 40.0 * 3.0,
-                40.0 * 800.0,
+                40.0 * 80000.0,
             ),
 
         TargetKind::Pulsar(_) =>
             (
                 28.0 * 4.0,
-                20000.0,
+                2000000.0,
             ),
 
         TargetKind::Magnetar(_) =>
             (
                 35.0 * 3.0,
-                15000.0,
+                1500000.0,
             ),
 
         TargetKind::NeutronStar(_) =>
             (
                 22.0 * 4.0,
-                12000.0,
+                1200000.0,
             ),
 
         TargetKind::Supernova(_) =>
             (
                 500.0,
-                50000.0,
+                5000000.0,
             ),
     }
 }

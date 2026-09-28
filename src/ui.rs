@@ -2560,11 +2560,7 @@ fn add_astre_add_button(
 }
 
 fn astres_save_path() -> PathBuf {
-    let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-    path.push("spacespore");
-    fs::create_dir_all(&path).ok();
-    path.push("astres.json");
-    path
+    crate::settings::data_dir().join("astres.json")
 }
 
 fn restore_saved_astres<T, D, A>(saved: &[SavedAstre], configs: &mut Vec<T>, mut default_config: D, mut apply: A)

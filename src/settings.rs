@@ -4,6 +4,19 @@ use std::fs;
 use std::path::PathBuf;
 
 // ─────────────────────────────────────────────────────────────────────────
+//  Dossier de données centralisé
+// ─────────────────────────────────────────────────────────────────────────
+
+pub const SAVE_VERSION: u32 = 3;
+
+pub fn data_dir() -> PathBuf {
+    let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
+    path.push("spacespore");
+    fs::create_dir_all(&path).ok();
+    path
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 //  Configs existantes (inchangées)
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -156,12 +169,19 @@ impl StarSystemConfig {
 }
 
 fn pseudo_rand(seed: u32) -> f32 {
-    let x = seed.wrapping_mul(2654435761);
+    let mut x = seed;
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x45d9f3b);
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x45d9f3b);
+    x ^= x >> 16;
     (x & 0xFFFF) as f32 / 65535.0
 }
 
-pub const SYSTEM_GRID_SIZE: usize = 5;
+pub const SYSTEM_GRID_SIZE: usize = 30;
 pub const SYSTEM_CELL_SIZE: f32 = 100_000.0;
+pub const STREAM_RADIUS: f32 = 5.0;
+pub const CLICKABLE_RADIUS: f32 = 30.0;
 
 fn default_systems() -> Vec<StarSystemConfig> {
     let cols = SYSTEM_GRID_SIZE;
@@ -177,23 +197,43 @@ fn default_systems() -> Vec<StarSystemConfig> {
         "Aldebaran", "Betelgeuse", "Capella", "Fomalhaut", "Arcturus",
         "Spica", "Regulus", "Achernar", "Canopus", "Procyon",
         "Mira", "Castor", "Pollux", "Bellatrix", "Shaula",
+        "Toliman", "Hadar", "Mimosa", "Gacrux", "Acrux",
+        "Wezen", "Sargas", "Kaus", "Avior", "Menkalinan",
+        "Atria", "Alhena", "Mirfak", "Saiph", "Alnitak",
+        "Alnilam", "Mintaka", "Rasalhague", "Schedar", "Alphard",
     ];
+    let prefixes = ["HD", "GJ", "HR", "TYC", "HIP"];
+    let gen_name = |idx: usize| -> String {
+        if idx < star_names.len() {
+            star_names[idx].to_string()
+        } else {
+            let pi = idx % prefixes.len();
+            format!("{}-{}", prefixes[pi], idx * 7 + 1031)
+        }
+    };
 
     let mut systems = Vec::new();
     let mut idx = 0u32;
     for row in 0..rows {
         for col in 0..cols {
+            let cell_idx = (row * cols + col) as u32;
+
+            if cell_idx > 0 && pseudo_rand(cell_idx * 7 + 9999) < 0.35 {
+                idx += 1;
+                continue;
+            }
+
             let cell_x = col as f32 * cell - half_grid_x;
             let cell_z = row as f32 * cell - half_grid_z;
 
-            let x = cell_x + margin + pseudo_rand(idx * 5 + 7) * (cell - 2.0 * margin);
-            let z = cell_z + margin + pseudo_rand(idx * 5 + 13) * (cell - 2.0 * margin);
-            let y = (pseudo_rand(idx * 5 + 19) - 0.5) * 2000.0;
+            let x = cell_x + margin + pseudo_rand(cell_idx * 5 + 7) * (cell - 2.0 * margin);
+            let z = cell_z + margin + pseudo_rand(cell_idx * 5 + 13) * (cell - 2.0 * margin);
+            let y = (pseudo_rand(cell_idx * 5 + 19) - 0.5) * 6000.0;
 
-            let r = pseudo_rand(idx * 5 + 31);
+            let r = pseudo_rand(cell_idx * 5 + 31);
             let star_radius = 75.0 + r * 175.0;
             let star_intensity = 8.0 + r * 27.0;
-            let color_seed = pseudo_rand(idx * 5 + 37);
+            let color_seed = pseudo_rand(cell_idx * 5 + 37);
             let sc = if color_seed < 0.2 {
                 [1.0, 0.5, 0.3]
             } else if color_seed < 0.4 {
@@ -206,25 +246,26 @@ fn default_systems() -> Vec<StarSystemConfig> {
                 [0.6, 0.7, 1.0]
             };
 
-            let seed_base = (idx + 1) * 100;
-            let num_planets = 1 + (idx as usize % 3);
+            let seed_base = (cell_idx + 1) * 100;
+            let num_planets = 1 + (pseudo_rand(cell_idx * 3 + 41) * 3.0) as usize;
             let mut planets = Vec::new();
             for pi in 0..num_planets {
+                let p_orbit = 1750.0 + pi as f32 * 1500.0 + pseudo_rand(seed_base + pi as u32 + 60) * 800.0;
                 planets.push(PlanetConfig {
-                    orbit_distance: 1750.0 + pi as f32 * 1500.0,
+                    orbit_distance: p_orbit,
                     radius: 150.0 + (pi as f32 * 75.0) + pseudo_rand(seed_base + pi as u32 + 50) * 100.0,
                     seed: seed_base + pi as u32,
-                    atmosphere: pi == 0 && idx % 2 == 0,
+                    atmosphere: pseudo_rand(cell_idx * 11 + pi as u32 + 71) < 0.4,
                     ..Default::default()
                 });
             }
-            let belts = if idx % 4 == 0 {
+            let belts = if pseudo_rand(cell_idx * 13 + 83) < 0.25 {
                 vec![AsteroidBeltConfig { distance: 1750.0 + num_planets as f32 * 1500.0 + 1000.0, ..Default::default() }]
             } else {
                 Vec::new()
             };
             systems.push(StarSystemConfig {
-                name: star_names[idx as usize % star_names.len()].to_string(),
+                name: gen_name(cell_idx as usize),
                 position: [x, y, z],
                 stars: vec![StarConfig {
                     radius: star_radius,
@@ -330,6 +371,8 @@ fn default_stars()    -> Vec<StarConfig>    { vec![StarConfig::default()] }
 
 #[derive(Resource, Serialize, Deserialize, Clone, Debug)]
 pub struct GameSettings {
+    #[serde(default)] pub save_version: u32,
+
     pub mouse_sensitivity:      f32,
     pub scroll_speed:           f32,
     pub keyboard_speed:         f32,
@@ -373,6 +416,7 @@ pub struct GameSettings {
 impl Default for GameSettings {
     fn default() -> Self {
         Self {
+            save_version: SAVE_VERSION,
             mouse_sensitivity: 0.5, scroll_speed: 10.0,
             keyboard_speed: 2.0, invert_y: true,
             show_light_indicator: false, show_orbits: false, show_systems: false,
@@ -393,11 +437,7 @@ impl Default for GameSettings {
 
 impl GameSettings {
     fn config_path() -> PathBuf {
-        let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-        path.push("spacespore");
-        fs::create_dir_all(&path).ok();
-        path.push("settings.json");
-        path
+        data_dir().join("settings.json")
     }
 
     pub fn load() -> Self {
@@ -406,6 +446,33 @@ impl GameSettings {
             match fs::read_to_string(&path) {
                 Ok(contents) => {
                     let mut s: Self = serde_json::from_str(&contents).unwrap_or_default();
+                    if s.save_version < SAVE_VERSION {
+                        info!("Save version {} -> {}: regeneration du monde (preferences conservees)",
+                              s.save_version, SAVE_VERSION);
+                        let fresh = Self::default();
+                        s.save_version = SAVE_VERSION;
+                        s.systems = fresh.systems;
+                        s.planets = fresh.planets;
+                        s.stars = fresh.stars;
+                        s.asteroid_belts = fresh.asteroid_belts;
+                        s.comets = fresh.comets;
+                        s.meteoroids = fresh.meteoroids;
+                        s.voxel_stars = fresh.voxel_stars;
+                        s.protostars = fresh.protostars;
+                        s.dwarf_stars = fresh.dwarf_stars;
+                        s.main_sequence = fresh.main_sequence;
+                        s.giants = fresh.giants;
+                        s.supergiants = fresh.supergiants;
+                        s.hypergiants = fresh.hypergiants;
+                        s.black_holes = fresh.black_holes;
+                        s.pulsars = fresh.pulsars;
+                        s.magnetars = fresh.magnetars;
+                        s.neutron_stars = fresh.neutron_stars;
+                        s.supernovae = fresh.supernovae;
+                        let astres_path = data_dir().join("astres.json");
+                        let _ = fs::remove_file(astres_path);
+                        s.save();
+                    }
                     if s.planets.is_empty() { s.planets = default_planets(); }
                     if s.stars.is_empty()   { s.stars   = default_stars(); }
                     s

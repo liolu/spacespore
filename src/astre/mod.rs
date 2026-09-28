@@ -31,7 +31,9 @@ pub struct AstrePendingReload;
 #[derive(Event)]
 pub struct ReloadAstre(pub Entity);
 
-const LOG_DIR: &str = "logs/profiling";
+fn log_dir() -> PathBuf {
+    crate::settings::data_dir().join("logs")
+}
 const MAX_RELOADS_PER_FRAME: usize = 2;
 const SNAPSHOT_INTERVAL: f32 = 1.0;
 
@@ -74,10 +76,10 @@ impl Default for ProfilingLog {
 
 impl ProfilingLog {
     fn open_file(&mut self) {
-        fs::create_dir_all(LOG_DIR).ok();
+        let dir = log_dir();
+        fs::create_dir_all(&dir).ok();
         let now = chrono::Local::now();
-        let name = format!("{}/{}.log", LOG_DIR, now.format("%Y-%m-%d_%H-%M-%S"));
-        let path = PathBuf::from(&name);
+        let path = dir.join(format!("{}.log", now.format("%Y-%m-%d_%H-%M-%S")));
         match File::create(&path) {
             Ok(f) => {
                 let mut w = BufWriter::new(f);
