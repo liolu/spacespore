@@ -43,7 +43,12 @@ jobs:
       - name: Extract version from tag
         id: version
         shell: bash
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: |
+          VER="${GITHUB_REF#refs/tags/v}"
+          echo "VERSION=$VER" >> $GITHUB_OUTPUT
+          IFS='.' read -r major minor patch <<< "$VER"
+          CODE=$(( major * 100 + minor * 10 + patch ))
+          echo "CODE=$CODE" >> $GITHUB_OUTPUT
 
       - name: Create distribution zip
         shell: pwsh
@@ -61,7 +66,7 @@ jobs:
           cat > docs/version.json << EOF
           {
             "version": "${{ steps.version.outputs.VERSION }}",
-            "version_code": ${{ github.run_number }},
+            "version_code": ${{ steps.version.outputs.CODE }},
             "release_date": "$(date -u +%Y-%m-%d)",
             "download_url": "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.VERSION }}/spacespore-v${{ steps.version.outputs.VERSION }}-windows.zip",
             "release_notes": "See release page for details",
