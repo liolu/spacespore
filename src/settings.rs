@@ -7,7 +7,7 @@ use std::path::PathBuf;
 //  Dossier de données centralisé
 // ─────────────────────────────────────────────────────────────────────────
 
-pub const SAVE_VERSION: u32 = 3;
+pub const SAVE_VERSION: u32 = 5;
 
 pub fn data_dir() -> PathBuf {
     let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -178,8 +178,8 @@ fn pseudo_rand(seed: u32) -> f32 {
     (x & 0xFFFF) as f32 / 65535.0
 }
 
-pub const SYSTEM_GRID_SIZE: usize = 30;
-pub const SYSTEM_CELL_SIZE: f32 = 100_000.0;
+pub const SYSTEM_GRID_SIZE: usize = 100;
+pub const SYSTEM_CELL_SIZE: f32 = 20_000.0;
 pub const STREAM_RADIUS: f32 = 5.0;
 pub const CLICKABLE_RADIUS: f32 = 30.0;
 
@@ -228,7 +228,7 @@ fn default_systems() -> Vec<StarSystemConfig> {
 
             let x = cell_x + margin + pseudo_rand(cell_idx * 5 + 7) * (cell - 2.0 * margin);
             let z = cell_z + margin + pseudo_rand(cell_idx * 5 + 13) * (cell - 2.0 * margin);
-            let y = (pseudo_rand(cell_idx * 5 + 19) - 0.5) * 6000.0;
+            let y = (pseudo_rand(cell_idx * 5 + 19) - 0.5) * 2000.0;
 
             let r = pseudo_rand(cell_idx * 5 + 31);
             let star_radius = 75.0 + r * 175.0;
@@ -491,5 +491,44 @@ impl GameSettings {
         if let Ok(json) = serde_json::to_string_pretty(self) {
             fs::write(path, json).ok();
         }
+    }
+}
+
+use std::collections::HashMap;
+
+#[derive(Resource, Default)]
+pub struct SystemSpatialIndex {
+    cells: HashMap<(i32, i32), Vec<usize>>,
+}
+
+impl SystemSpatialIndex {
+    pub fn build(settings: &GameSettings) -> Self {
+        let cell = SYSTEM_CELL_SIZE;
+        let half = SYSTEM_GRID_SIZE as f32 * cell / 2.0;
+        let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+        for (si, sys) in settings.systems.iter().enumerate() {
+            let c = sys.center();
+            let col = ((c.x + half) / cell) as i32;
+            let row = ((c.z + half) / cell) as i32;
+            cells.entry((col, row)).or_default().push(si);
+        }
+        Self { cells }
+    }
+
+    pub fn systems_in_radius(&self, pos: bevy::math::Vec3, radius: f32) -> Vec<usize> {
+        let cell = SYSTEM_CELL_SIZE;
+        let half = SYSTEM_GRID_SIZE as f32 * cell / 2.0;
+        let r_cells = (radius / cell).ceil() as i32 + 1;
+        let cx = ((pos.x + half) / cell) as i32;
+        let cz = ((pos.z + half) / cell) as i32;
+        let mut result = Vec::new();
+        for col in (cx - r_cells)..=(cx + r_cells) {
+            for row in (cz - r_cells)..=(cz + r_cells) {
+                if let Some(indices) = self.cells.get(&(col, row)) {
+                    result.extend_from_slice(indices);
+                }
+            }
+        }
+        result
     }
 }

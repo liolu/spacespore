@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use crate::kepler::{OrbitalElements, DEFAULT_MU};
 use crate::lod::{compute_lod_level, LodChunk, LodLevel};
 use crate::mesher::{build_celestial_chunk_mesh, build_chunk_mesh};
-use crate::settings::{GameSettings, SYSTEM_CELL_SIZE, STREAM_RADIUS};
+use crate::settings::{GameSettings, SystemSpatialIndex, SYSTEM_CELL_SIZE, STREAM_RADIUS};
 use crate::astre::{AstreLodRoot, ReloadAstre};
 const STAR_DIVISIONS: usize = 4;
 const MOON_DIVISIONS: usize = 3;
@@ -19,7 +19,7 @@ impl Plugin for PlanetPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<RegeneratePlanet>()
             .insert_resource(SpawnedSystems(HashSet::new()))
-            .add_systems(Startup, generate_all)
+            .add_systems(Startup, (build_spatial_index, generate_all).chain())
             .add_systems(
                 Update,
                 (orbit_planets, orbit_stars, orbit_moons, orbit_asteroid_belts, update_flare_voxels, rotate_clouds, regenerate_all, update_lod, update_star_visibility, update_far_star_scale, stream_system_bodies, reload_stars, reload_planets, reload_moons, reload_asteroid_belts, cleanup_hidden_toplevel),
@@ -238,6 +238,10 @@ fn make_atlas_quad(meshes: &mut Assets<Mesh>, group: usize) -> Handle<Mesh> {
     meshes.add(mesh)
 }
 
+fn build_spatial_index(mut commands: Commands, settings: Res<GameSettings>) {
+    commands.insert_resource(SystemSpatialIndex::build(&settings));
+}
+
 fn generate_all(
     mut commands: Commands,
     settings: Res<GameSettings>,
@@ -252,7 +256,7 @@ fn generate_all(
         base_color: Color::WHITE,
         base_color_texture: Some(atlas.clone()),
         emissive: LinearRgba::new(25.0, 20.0, 10.0, 1.0),
-        emissive_texture: Some(atlas.clone()),
+        emissive_texture: Some(atlas),
         unlit: true,
         alpha_mode: AlphaMode::Add,
         ..default()
@@ -2034,33 +2038,42 @@ fn reload_asteroid_belts(
 }
 
 fn update_far_star_scale(
-    camera_q: Query<&GlobalTransform, With<Camera3d>>,
+    camera_q: Query<(&GlobalTransform, &Transform), With<Camera3d>>,
     spawned: Res<SpawnedSystems>,
-    mut far_q: Query<(&FarStar, &mut Transform, &mut Visibility)>,
+    mut far_q: Query<(&FarStar, &mut Transform, &mut Visibility), Without<Camera3d>>,
 ) {
-    let cam_pos = camera_q.single().translation();
+    let (cam_gt, cam_tf) = camera_q.single();
+    let cam_pos = cam_gt.translation();
+    let cam_fwd = cam_tf.forward().as_vec3();
+
     for (fs, mut tf, mut vis) in &mut far_q {
         if spawned.0.contains(&fs.sys_idx) {
-            *vis = Visibility::Hidden;
+            if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
             continue;
         }
-        *vis = Visibility::Inherited;
-        let dist = cam_pos.distance(tf.translation);
+
+        let to_star = tf.translation - cam_pos;
+        let dist = to_star.length();
+
+        if dist > 1000.0 && cam_fwd.dot(to_star / dist) < -0.5 {
+            if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
+            continue;
+        }
+
+        if *vis != Visibility::Inherited { *vis = Visibility::Inherited; }
         let min_scale = fs.radius * 0.5;
         let angular_scale = dist * 0.005;
-        let scale = angular_scale.max(min_scale);
-        tf.scale = Vec3::splat(scale);
+        tf.scale = Vec3::splat(angular_scale.max(min_scale));
 
-        let to_cam = (cam_pos - tf.translation).normalize_or_zero();
-        if to_cam.length_squared() > 0.001 {
-            tf.look_to(-to_cam, Vec3::Y);
-        }
+        let n = to_star / dist.max(0.001);
+        tf.look_to(n, Vec3::Y);
     }
 }
 
 fn stream_system_bodies(
     mut commands: Commands,
     settings: Res<GameSettings>,
+    spatial: Res<SystemSpatialIndex>,
     camera_q: Query<&GlobalTransform, With<Camera3d>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -2073,19 +2086,29 @@ fn stream_system_bodies(
     cloud_q: Query<(Entity, &CloudVoxel)>,
 ) {
     let cam_pos = camera_q.single().translation();
-    let radius_sq = (STREAM_RADIUS * SYSTEM_CELL_SIZE) * (STREAM_RADIUS * SYSTEM_CELL_SIZE);
+    let stream_dist = STREAM_RADIUS * SYSTEM_CELL_SIZE;
+    let radius_sq = stream_dist * stream_dist;
+
+    let nearby = spatial.systems_in_radius(cam_pos, stream_dist);
+    let mut nearby_set = std::collections::HashSet::with_capacity(nearby.len());
 
     let mut to_spawn: Vec<usize> = Vec::new();
+    for si in nearby {
+        nearby_set.insert(si);
+        if let Some(sys) = settings.systems.get(si) {
+            let dist_sq_actual = cam_pos.distance_squared(sys.center());
+            if dist_sq_actual < radius_sq && !spawned.0.contains(&si) {
+                to_spawn.push(si);
+            }
+        }
+    }
+
     let mut to_despawn: Vec<usize> = Vec::new();
-
-    for (si, sys) in settings.systems.iter().enumerate() {
-        let dist_sq = cam_pos.distance_squared(sys.center());
-        let is_near = dist_sq < radius_sq;
-        let is_spawned = spawned.0.contains(&si);
-
-        if is_near && !is_spawned {
-            to_spawn.push(si);
-        } else if !is_near && is_spawned {
+    for &si in spawned.0.iter() {
+        if !nearby_set.contains(&si) || settings.systems.get(si)
+            .map(|sys| cam_pos.distance_squared(sys.center()) >= radius_sq)
+            .unwrap_or(true)
+        {
             to_despawn.push(si);
         }
     }

@@ -520,9 +520,9 @@ pub enum ZoomLevel {
 
 impl ZoomLevel {
     fn from_distance(d: f32) -> Self {
-        if d < 50000.0 {
+        if d < 10000.0 {
             ZoomLevel::System
-        } else if d < 800000.0 {
+        } else if d < 200000.0 {
             ZoomLevel::Galaxy
         } else {
             ZoomLevel::Overview
@@ -1621,6 +1621,8 @@ fn draw_light_indicator(
 fn draw_orbits(
     mut gizmos: Gizmos,
     settings: Res<GameSettings>,
+    cam_q: Query<&GlobalTransform, With<Camera3d>>,
+    spatial: Res<settings::SystemSpatialIndex>,
 
     planet_q:
         Query<
@@ -1628,38 +1630,44 @@ fn draw_orbits(
             With<PlanetRoot>,
         >,
 ) {
-    // ── Chunks (grille de systèmes stellaires) ─────────────────────────
+    // ── Chunks (grille locale autour de la caméra) ────────────────────
     if settings.show_systems {
         use crate::settings::{SYSTEM_GRID_SIZE, SYSTEM_CELL_SIZE};
         let chunk_color = Color::srgba(0.2, 1.0, 0.4, 0.25);
         let star_dot = Color::srgba(1.0, 0.3, 0.2, 0.6);
-        let cols = SYSTEM_GRID_SIZE;
-        let rows = SYSTEM_GRID_SIZE;
         let cell = SYSTEM_CELL_SIZE;
-        let half_x = cols as f32 * cell / 2.0;
-        let half_z = rows as f32 * cell / 2.0;
+        let half = SYSTEM_GRID_SIZE as f32 * cell / 2.0;
 
-        for col in 0..=cols {
-            let x = col as f32 * cell - half_x;
-            gizmos.line(
-                Vec3::new(x, 0.0, -half_z),
-                Vec3::new(x, 0.0, half_z),
-                chunk_color,
-            );
+        let cam_pos = cam_q.single().translation();
+        let view_radius = 10;
+        let cx = ((cam_pos.x + half) / cell) as i32;
+        let cz = ((cam_pos.z + half) / cell) as i32;
+        let col_min = (cx - view_radius).max(0) as usize;
+        let col_max = ((cx + view_radius) as usize).min(SYSTEM_GRID_SIZE);
+        let row_min = (cz - view_radius).max(0) as usize;
+        let row_max = ((cz + view_radius) as usize).min(SYSTEM_GRID_SIZE);
+
+        let z_lo = row_min as f32 * cell - half;
+        let z_hi = row_max as f32 * cell - half;
+        let x_lo = col_min as f32 * cell - half;
+        let x_hi = col_max as f32 * cell - half;
+        for col in col_min..=col_max {
+            let x = col as f32 * cell - half;
+            gizmos.line(Vec3::new(x, 0.0, z_lo), Vec3::new(x, 0.0, z_hi), chunk_color);
         }
-        for row in 0..=rows {
-            let z = row as f32 * cell - half_z;
-            gizmos.line(
-                Vec3::new(-half_x, 0.0, z),
-                Vec3::new(half_x, 0.0, z),
-                chunk_color,
-            );
+        for row in row_min..=row_max {
+            let z = row as f32 * cell - half;
+            gizmos.line(Vec3::new(x_lo, 0.0, z), Vec3::new(x_hi, 0.0, z), chunk_color);
         }
-        for sys in &settings.systems {
-            let c = sys.center();
-            gizmos.line(c - Vec3::Y * 500.0, c + Vec3::Y * 500.0, star_dot);
-            gizmos.line(c - Vec3::X * 500.0, c + Vec3::X * 500.0, star_dot);
-            gizmos.line(c - Vec3::Z * 500.0, c + Vec3::Z * 500.0, star_dot);
+
+        let nearby = spatial.systems_in_radius(cam_pos, view_radius as f32 * cell);
+        for si in nearby {
+            if let Some(sys) = settings.systems.get(si) {
+                let c = sys.center();
+                gizmos.line(c - Vec3::Y * 500.0, c + Vec3::Y * 500.0, star_dot);
+                gizmos.line(c - Vec3::X * 500.0, c + Vec3::X * 500.0, star_dot);
+                gizmos.line(c - Vec3::Z * 500.0, c + Vec3::Z * 500.0, star_dot);
+            }
         }
     }
 
