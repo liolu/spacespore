@@ -197,10 +197,17 @@ impl InstallerApp {
                 if nwg::message(&params) == nwg::MessageChoice::Yes {
                     let launcher = install_dir.join("spacespore-launcher.exe");
                     let game = install_dir.join("spacespore.exe");
-                    let exe = if launcher.exists() { launcher } else { game };
-                    let _ = std::process::Command::new(&exe)
+                    let exe = if launcher.exists() { &launcher } else { &game };
+                    if let Err(e) = std::process::Command::new(exe)
                         .current_dir(&install_dir)
-                        .spawn();
+                        .spawn()
+                    {
+                        nwg::modal_info_message(
+                            &self.window,
+                            "Erreur",
+                            &format!("Impossible de lancer le jeu:\n{}\n\nChemin: {}", e, exe.display()),
+                        );
+                    }
                 }
                 nwg::stop_thread_dispatch();
             }
@@ -257,11 +264,19 @@ fn do_install(
     Ok(())
 }
 
-fn fetch_version_info() -> Result<spacespore_common::VersionInfo, String> {
-    let config = ureq::Agent::config_builder()
-        .timeout_global(Some(std::time::Duration::from_secs(10)))
+fn make_agent(timeout_secs: u64) -> ureq::Agent {
+    let tls = ureq::tls::TlsConfig::builder()
+        .provider(ureq::tls::TlsProvider::NativeTls)
         .build();
-    let agent = ureq::Agent::new_with_config(config);
+    let config = ureq::Agent::config_builder()
+        .tls_config(tls)
+        .timeout_global(Some(std::time::Duration::from_secs(timeout_secs)))
+        .build();
+    ureq::Agent::new_with_config(config)
+}
+
+fn fetch_version_info() -> Result<spacespore_common::VersionInfo, String> {
+    let agent = make_agent(10);
 
     let body: String = agent
         .get(spacespore_common::VERSION_URL)
@@ -281,7 +296,9 @@ fn download_file(
     total_size: &AtomicU64,
     sender: &nwg::NoticeSender,
 ) -> Result<(), String> {
-    let response = ureq::get(url)
+    let agent = make_agent(120);
+
+    let response = agent.get(url)
         .call()
         .map_err(|e| format!("Erreur telechargement: {}", e))?;
 

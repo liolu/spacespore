@@ -56,11 +56,19 @@ pub fn spawn_update_check() -> UpdateState {
     }
 }
 
-fn check_version() -> Result<VersionInfo, String> {
-    let config = ureq::Agent::config_builder()
-        .timeout_global(Some(std::time::Duration::from_secs(3)))
+fn make_agent(timeout_secs: u64) -> ureq::Agent {
+    let tls = ureq::tls::TlsConfig::builder()
+        .provider(ureq::tls::TlsProvider::NativeTls)
         .build();
-    let agent = ureq::Agent::new_with_config(config);
+    let config = ureq::Agent::config_builder()
+        .tls_config(tls)
+        .timeout_global(Some(std::time::Duration::from_secs(timeout_secs)))
+        .build();
+    ureq::Agent::new_with_config(config)
+}
+
+fn check_version() -> Result<VersionInfo, String> {
+    let agent = make_agent(3);
 
     let body: String = agent
         .get(VERSION_URL)
@@ -137,7 +145,8 @@ fn download_update(
 
     let zip_path = temp_dir.join("update.zip");
 
-    let response = ureq::get(&info.download_url)
+    let agent = make_agent(120);
+    let response = agent.get(&info.download_url)
         .call()
         .map_err(|e| format!("Download error: {}", e))?;
 

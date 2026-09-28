@@ -68,11 +68,19 @@ enum UpdateResult {
     Error(String),
 }
 
-fn check_for_update() -> UpdateResult {
-    let config = ureq::Agent::config_builder()
-        .timeout_global(Some(std::time::Duration::from_secs(5)))
+fn make_agent(timeout_secs: u64) -> ureq::Agent {
+    let tls = ureq::tls::TlsConfig::builder()
+        .provider(ureq::tls::TlsProvider::NativeTls)
         .build();
-    let agent = ureq::Agent::new_with_config(config);
+    let config = ureq::Agent::config_builder()
+        .tls_config(tls)
+        .timeout_global(Some(std::time::Duration::from_secs(timeout_secs)))
+        .build();
+    ureq::Agent::new_with_config(config)
+}
+
+fn check_for_update() -> UpdateResult {
+    let agent = make_agent(5);
 
     let body: String = match agent.get(spacespore_common::VERSION_URL).call() {
         Ok(mut resp) => match resp.body_mut().read_to_string() {
@@ -103,7 +111,8 @@ fn download_and_apply(
     let zip_path = temp_dir.join("update.zip");
 
     println!("  Telechargement...");
-    let response = ureq::get(&info.download_url).call()?;
+    let agent = make_agent(120);
+    let response = agent.get(&info.download_url).call()?;
 
     let total_size = response
         .headers()
