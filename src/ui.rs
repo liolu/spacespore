@@ -307,6 +307,8 @@ pub enum TargetKind {
     Magnetar(usize),
     NeutronStar(usize),
     Supernova(usize),
+    // ── Centre galactique ────────────────────────────────────────────────
+    GalacticCore,
 }
 
 #[derive(Resource)]

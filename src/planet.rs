@@ -4,7 +4,7 @@ use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use rand::Rng;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use crate::kepler::{OrbitalElements, DEFAULT_MU};
 use crate::lod::{compute_lod_level, LodChunk, LodLevel};
 use crate::mesher::{build_celestial_chunk_mesh, build_chunk_mesh};
@@ -13,6 +13,37 @@ use crate::astre::{AstreLodRoot, ReloadAstre};
 use crate::ship::Ship;
 const STAR_DIVISIONS: usize = 4;
 const MOON_DIVISIONS: usize = 3;
+
+const LOD_STARS_END: f32 = 50_000_000.0;
+const LOD_STARS_GONE: f32 = 60_000_000.0;
+const LOD_CAPS_START: f32 = 35_000_000.0;
+const LOD_CAPS_FULL: f32 = 55_000_000.0;
+const LOD_STEPS: usize = 10;
+const STAR_BRIGHTNESS_STEPS: usize = 10;
+const ARM_COLORS: usize = 5;
+
+const ARM_PALETTE: [[f32; 3]; ARM_COLORS] = [
+    [1.0, 0.55, 0.15],
+    [1.0, 0.82, 0.4],
+    [0.85, 0.75, 1.0],
+    [0.55, 0.45, 1.0],
+    [0.35, 0.55, 1.0],
+];
+
+fn smoothstep(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+#[derive(Resource)]
+pub struct GalaxyLodMaterials {
+    pub capsule_steps: Vec<Vec<Handle<StandardMaterial>>>,
+}
+
+#[derive(Resource)]
+pub struct StarBrightnessMaterials {
+    pub steps: Vec<Handle<StandardMaterial>>,
+}
 
 pub struct PlanetPlugin;
 
@@ -23,7 +54,7 @@ impl Plugin for PlanetPlugin {
             .add_systems(Startup, (build_spatial_index, generate_all).chain())
             .add_systems(
                 Update,
-                (orbit_planets, orbit_stars, orbit_moons, orbit_asteroid_belts, update_flare_voxels, rotate_clouds, regenerate_all, update_lod, update_star_visibility, update_far_star_scale, stream_system_bodies, reload_stars, reload_planets, reload_moons, reload_asteroid_belts, cleanup_hidden_toplevel),
+                (orbit_planets, orbit_stars, orbit_moons, orbit_asteroid_belts, update_flare_voxels, rotate_clouds, regenerate_all, update_lod, update_star_visibility, update_far_star_scale, update_distant_star_scale, update_arm_capsule_lod, stream_system_bodies, reload_stars, reload_planets, reload_moons, reload_asteroid_belts, cleanup_hidden_toplevel, rotate_accretion_disk),
             );
     }
 }
@@ -85,6 +116,35 @@ pub struct AsteroidBeltRoot;
 
 #[derive(Component)]
 pub struct AsteroidBeltId(pub usize);
+
+#[derive(Component)]
+pub struct GalacticCore;
+
+#[derive(Component)]
+pub struct AccretionDisk;
+
+#[derive(Component)]
+pub struct DistantGalaxyCore;
+
+#[derive(Component)]
+pub struct DistantStar {
+    pub radius: f32,
+    pub galaxy_id: u32,
+}
+
+#[derive(Component)]
+pub struct GalaxyMeta {
+    pub id: u32,
+    pub center: Vec3,
+}
+
+#[derive(Component)]
+pub struct ArmCapsule {
+    pub galaxy_id: u32,
+    pub base_scale: Vec3,
+    pub color_idx: usize,
+    pub detail: bool,
+}
 
 #[derive(Component)]
 pub struct CloudVoxel {
@@ -253,22 +313,30 @@ fn generate_all(
 ) {
     let atlas = create_star_atlas(&mut images);
 
-    let atlas_mat = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        base_color_texture: Some(atlas.clone()),
-        emissive: LinearRgba::new(25.0, 20.0, 10.0, 1.0),
-        emissive_texture: Some(atlas),
-        unlit: true,
-        alpha_mode: AlphaMode::Add,
-        ..default()
-    });
+    let mut star_brightness_steps: Vec<Handle<StandardMaterial>> = Vec::with_capacity(STAR_BRIGHTNESS_STEPS);
+    for step in 0..STAR_BRIGHTNESS_STEPS {
+        let b = (step as f32 / (STAR_BRIGHTNESS_STEPS - 1) as f32).max(0.05);
+        star_brightness_steps.push(materials.add(StandardMaterial {
+            base_color: Color::srgba(1.0, 1.0, 1.0, b),
+            base_color_texture: Some(atlas.clone()),
+            emissive: LinearRgba::new(25.0 * b, 20.0 * b, 10.0 * b, 1.0),
+            emissive_texture: Some(atlas.clone()),
+            unlit: true,
+            alpha_mode: AlphaMode::Add,
+            ..default()
+        }));
+    }
+    commands.insert_resource(StarBrightnessMaterials { steps: star_brightness_steps.clone() });
+    let atlas_mat = star_brightness_steps.last().unwrap().clone();
 
     let quad_meshes: Vec<Handle<Mesh>> = (0..5)
         .map(|i| make_atlas_quad(&mut meshes, i))
         .collect();
 
+    let core_exclusion = 15000.0_f32;
     for (si, sys) in settings.systems.iter().enumerate() {
         let center = sys.center();
+        if center.length() < core_exclusion { continue; }
         if let Some(star_cfg) = sys.stars.first() {
             let group = star_color_group(
                 star_cfg.light_color_r,
@@ -293,6 +361,404 @@ fn generate_all(
             &mut meshes, &mut materials, sys_cam, center,
         );
         spawned.0.insert(0);
+    }
+
+    spawn_galactic_core(&mut commands, &mut meshes, &mut materials);
+
+    // Capsule partagée + matériaux LOD (10 niveaux d'opacité)
+    let capsule_mesh = meshes.add(Capsule3d::new(1.0, 1.0));
+    let mut capsule_steps: Vec<Vec<Handle<StandardMaterial>>> = Vec::with_capacity(ARM_COLORS);
+    for ci in 0..ARM_COLORS {
+        let c = ARM_PALETTE[ci];
+        let mut steps = Vec::with_capacity(LOD_STEPS);
+        for step in 0..LOD_STEPS {
+            let o = step as f32 / (LOD_STEPS - 1) as f32;
+            steps.push(materials.add(StandardMaterial {
+                base_color: Color::srgba(c[0], c[1], c[2], 0.3 * o),
+                emissive: LinearRgba::new(
+                    2.5 * c[0] * o,
+                    2.5 * c[1] * o,
+                    2.5 * c[2] * o,
+                    1.0,
+                ),
+                unlit: true,
+                alpha_mode: AlphaMode::Add,
+                ..default()
+            }));
+        }
+        capsule_steps.push(steps);
+    }
+    commands.insert_resource(GalaxyLodMaterials { capsule_steps: capsule_steps.clone() });
+    let capsule_mat = capsule_steps[1].last().unwrap().clone();
+
+    // GalaxyMeta + capsules pour la galaxie principale
+    commands.spawn(GalaxyMeta { id: 0, center: Vec3::ZERO });
+    spawn_arm_capsules(
+        &mut commands, &capsule_mesh, &capsule_mat,
+        0, Vec3::ZERO, Quat::IDENTITY,
+        5, 5.0, 4_500_000.0,
+    );
+
+    spawn_distant_galaxies(
+        &mut commands, &mut meshes, &mut materials,
+        &quad_meshes, atlas_mat.clone(),
+        &capsule_mesh, &capsule_mat,
+    );
+}
+
+fn spawn_galactic_core(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+) {
+    let core_radius = 3000.0_f32;
+
+    let core_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.01, 0.0, 0.02),
+        emissive: LinearRgba::new(0.0, 0.0, 0.0, 1.0),
+        unlit: true,
+        ..default()
+    });
+    commands.spawn((
+        Mesh3d(meshes.add(Sphere::new(core_radius).mesh().ico(4).unwrap())),
+        MeshMaterial3d(core_mat),
+        Transform::from_translation(Vec3::ZERO),
+        NotShadowCaster,
+        GalacticCore,
+    ));
+
+    let ring_segments = 128_u32;
+    let ring_layers = 3_u32;
+    let inner_r = core_radius * 1.3;
+    let outer_r = core_radius * 4.0;
+
+    for layer in 0..ring_layers {
+        let t = layer as f32 / ring_layers as f32;
+        let r_in = inner_r + (outer_r - inner_r) * t;
+        let r_out = inner_r + (outer_r - inner_r) * (t + 1.0 / ring_layers as f32);
+        let thickness = (r_out - r_in) * 0.15;
+
+        let mut positions: Vec<[f32; 3]> = Vec::new();
+        let mut normals: Vec<[f32; 3]> = Vec::new();
+        let mut colors: Vec<[f32; 4]> = Vec::new();
+        let mut indices: Vec<u32> = Vec::new();
+
+        for i in 0..=ring_segments {
+            let angle = i as f32 / ring_segments as f32 * std::f32::consts::TAU;
+            let cos = angle.cos();
+            let sin = angle.sin();
+
+            let brightness = 1.0 - t * 0.6;
+            let inner_color = [1.0 * brightness, 0.6 * brightness, 0.15 * brightness, 0.9];
+            let outer_color = [0.6 * brightness, 0.1 * brightness, 0.4 * brightness, 0.3];
+
+            positions.push([cos * r_in, 0.0, sin * r_in]);
+            normals.push([0.0, 1.0, 0.0]);
+            colors.push(inner_color);
+
+            positions.push([cos * r_out, 0.0, sin * r_out]);
+            normals.push([0.0, 1.0, 0.0]);
+            colors.push(outer_color);
+
+            if i < ring_segments {
+                let base = i * 2;
+                indices.push(base);
+                indices.push(base + 1);
+                indices.push(base + 2);
+                indices.push(base + 1);
+                indices.push(base + 3);
+                indices.push(base + 2);
+            }
+        }
+
+        let mut mesh = Mesh::new(
+            bevy::render::mesh::PrimitiveTopology::TriangleList,
+            bevy::render::render_asset::RenderAssetUsages::default(),
+        );
+        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+        mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
+
+        let disk_mat = materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            emissive: LinearRgba::new(4.0 * (1.0 - t), 1.5 * (1.0 - t), 0.5, 1.0),
+            unlit: true,
+            alpha_mode: AlphaMode::Add,
+            double_sided: true,
+            cull_mode: None,
+            ..default()
+        });
+
+        let tilt = Quat::from_rotation_x(0.25) * Quat::from_rotation_z(0.1);
+        let y_off = thickness * (layer as f32 - 1.0) * 0.3;
+        commands.spawn((
+            Mesh3d(meshes.add(mesh)),
+            MeshMaterial3d(disk_mat),
+            Transform::from_translation(Vec3::new(0.0, y_off, 0.0)).with_rotation(tilt),
+            NotShadowCaster,
+            AccretionDisk,
+        ));
+    }
+}
+
+fn spawn_arm_capsules(
+    commands: &mut Commands,
+    capsule_mesh: &Handle<Mesh>,
+    capsule_mat: &Handle<StandardMaterial>,
+    galaxy_id: u32,
+    center: Vec3,
+    tilt: Quat,
+    num_arms: usize,
+    twist: f32,
+    radius: f32,
+) {
+    let tau = std::f32::consts::TAU;
+    let base_samples: &[f32] = &[0.12, 0.22, 0.32, 0.42, 0.52, 0.62, 0.72, 0.82, 0.92];
+    let detail_samples: &[f32] = &[0.17, 0.27, 0.37, 0.47, 0.57, 0.67, 0.77, 0.87];
+
+    for arm in 0..num_arms {
+        let arm_base = arm as f32 * tau / num_arms as f32;
+
+        for (is_detail, samples) in [(false, base_samples as &[f32]), (true, detail_samples)] {
+            for &t in samples {
+                let r = t * t * radius;
+                let theta = arm_base + t * t * twist;
+
+                let local_pos = Vec3::new(r * theta.cos(), 0.0, r * theta.sin());
+
+                let dr = 2.0 * t * radius;
+                let dtheta = 2.0 * t * twist;
+                let dx = dr * theta.cos() - r * dtheta * theta.sin();
+                let dz = dr * theta.sin() + r * dtheta * theta.cos();
+                let tangent = Vec3::new(dx, 0.0, dz).normalize_or_zero();
+
+                let world_pos = center + tilt * local_pos;
+                let world_tangent = tilt * tangent;
+
+                let cap_half_len = radius * 0.12;
+                let cap_radius = radius * 0.006 * (1.0 - t * 0.5);
+
+                let rot = Quat::from_rotation_arc(Vec3::Y, world_tangent);
+                let base_scale = Vec3::new(cap_radius, cap_half_len, cap_radius);
+                let color_idx = ((t * (ARM_COLORS as f32 - 0.01)) as usize).min(ARM_COLORS - 1);
+
+                commands.spawn((
+                    Mesh3d(capsule_mesh.clone()),
+                    MeshMaterial3d(capsule_mat.clone()),
+                    Transform {
+                        translation: world_pos,
+                        rotation: rot,
+                        scale: Vec3::ZERO,
+                    },
+                    Visibility::Hidden,
+                    NotShadowCaster,
+                    ArmCapsule { galaxy_id, base_scale, color_idx, detail: is_detail },
+                ));
+            }
+        }
+    }
+}
+
+fn spawn_distant_galaxies(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    quad_meshes: &[Handle<Mesh>],
+    atlas_mat: Handle<StandardMaterial>,
+    capsule_mesh: &Handle<Mesh>,
+    capsule_mat: &Handle<StandardMaterial>,
+) {
+    fn prand(seed: u32) -> f32 {
+        let mut x = seed;
+        x ^= x >> 16;
+        x = x.wrapping_mul(0x45d9f3b);
+        x ^= x >> 16;
+        x = x.wrapping_mul(0x45d9f3b);
+        x ^= x >> 16;
+        (x & 0xFFFF) as f32 / 65535.0
+    }
+
+    let tau = std::f32::consts::TAU;
+    const NUM_GALAXIES: usize = 100;
+    const META_ARMS: usize = 5;
+    const META_RADIUS: f32 = 80_000_000.0;
+    const META_TWIST: f32 = 4.0;
+    const MIN_DIST: f32 = 15_000_000.0;
+
+    let core_mesh = meshes.add(Sphere::new(1.0).mesh().ico(3).unwrap());
+
+    for gi in 0..NUM_GALAXIES {
+        let gs = gi as u32 + 300_000;
+
+        // Position de la galaxie sur les bras de la méta-spirale
+        let arm = gi % META_ARMS;
+        let arm_base = arm as f32 * tau / META_ARMS as f32;
+        let t = prand(gs * 13 + 1);
+        let r = MIN_DIST + t * t * (META_RADIUS - MIN_DIST);
+        let spiral = arm_base + (r / META_RADIUS) * META_TWIST;
+        let scatter = (prand(gs * 13 + 3) - 0.5) * 0.4;
+        let theta = spiral + scatter;
+
+        let gx = r * theta.cos();
+        let gz = r * theta.sin();
+        let gy = (prand(gs * 13 + 5) - 0.5) * 8_000_000.0;
+        let center = Vec3::new(gx, gy, gz);
+
+        // Propriétés variables par galaxie
+        let gal_radius = 800_000.0 + prand(gs * 13 + 7) * 2_500_000.0;
+        let num_arms = 2 + (prand(gs * 13 + 9) * 4.0) as usize;
+        let twist = 3.0 + prand(gs * 13 + 11) * 4.0;
+        let tilt = Quat::from_euler(
+            EulerRot::XYZ,
+            (prand(gs * 13 + 13) - 0.5) * 1.5,
+            prand(gs * 13 + 15) * tau,
+            (prand(gs * 13 + 17) - 0.5) * 1.0,
+        );
+
+        let arm_stars = 200 + (prand(gs * 13 + 19) * 300.0) as usize;
+        let scatter_stars = 50 + (prand(gs * 13 + 21) * 100.0) as usize;
+        let seed_off = gs * 1000;
+
+        // Étoiles sur les bras
+        for i in 0..arm_stars {
+            let s = i as u32 + seed_off;
+            let a = i % num_arms;
+            let ab = a as f32 * tau / num_arms as f32;
+
+            let st = prand(s * 7 + 3);
+            let sr = st * st * gal_radius;
+            let sp = ab + (sr / gal_radius) * twist;
+            let w = 0.35 * (1.0 - sr / gal_radius * 0.65);
+            let sc = (prand(s * 7 + 5) - 0.5) * w;
+
+            let lx = sr * (sp + sc).cos();
+            let lz = sr * (sp + sc).sin();
+            let thick = 12000.0 * (1.0 - sr / gal_radius * 0.8);
+            let ly = (prand(s * 7 + 7) - 0.5) * thick;
+
+            let world = center + tilt * Vec3::new(lx, ly, lz);
+            let star_r = 75.0 + prand(s * 5 + 31) * 175.0;
+            let group = (prand(s * 5 + 37) * 5.0) as usize % 5;
+
+            commands.spawn((
+                Mesh3d(quad_meshes[group].clone()),
+                MeshMaterial3d(atlas_mat.clone()),
+                Transform::from_translation(world).with_scale(Vec3::splat(star_r * 0.5)),
+                NotShadowCaster,
+                DistantStar { radius: star_r, galaxy_id: gi as u32 + 1 },
+            ));
+        }
+
+        // Étoiles dispersées
+        for i in 0..scatter_stars {
+            let s = (arm_stars + i) as u32 + seed_off;
+            let st = prand(s * 7 + 3);
+            let sr = st * st * gal_radius * 0.85;
+            let stheta = prand(s * 7 + 5) * tau;
+
+            let lx = sr * stheta.cos();
+            let lz = sr * stheta.sin();
+            let ly = (prand(s * 7 + 7) - 0.5) * 8000.0;
+
+            let world = center + tilt * Vec3::new(lx, ly, lz);
+            let star_r = 75.0 + prand(s * 5 + 31) * 175.0;
+            let group = (prand(s * 5 + 37) * 5.0) as usize % 5;
+
+            commands.spawn((
+                Mesh3d(quad_meshes[group].clone()),
+                MeshMaterial3d(atlas_mat.clone()),
+                Transform::from_translation(world).with_scale(Vec3::splat(star_r * 0.5)),
+                NotShadowCaster,
+                DistantStar { radius: star_r, galaxy_id: gi as u32 + 1 },
+            ));
+        }
+
+        // GalaxyMeta + capsules LOD
+        commands.spawn(GalaxyMeta { id: gi as u32 + 1, center });
+        spawn_arm_capsules(
+            commands, capsule_mesh, capsule_mat,
+            gi as u32 + 1, center, tilt,
+            num_arms, twist, gal_radius,
+        );
+
+        // Trou noir décoratif
+        let core_r = 1000.0 + prand(gs * 13 + 23) * 2000.0;
+        let core_mat = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.01, 0.0, 0.02),
+            emissive: LinearRgba::new(0.0, 0.0, 0.0, 1.0),
+            unlit: true,
+            ..default()
+        });
+        commands.spawn((
+            Mesh3d(core_mesh.clone()),
+            MeshMaterial3d(core_mat),
+            Transform::from_translation(center).with_scale(Vec3::splat(core_r)),
+            NotShadowCaster,
+            DistantGalaxyCore,
+        ));
+
+        // Disque d'accrétion (1 seul anneau par galaxie pour rester léger)
+        let ring_seg = 64_u32;
+        let inner = core_r * 1.3;
+        let outer = core_r * 3.5;
+
+        let mut positions: Vec<[f32; 3]> = Vec::new();
+        let mut normals: Vec<[f32; 3]> = Vec::new();
+        let mut colors: Vec<[f32; 4]> = Vec::new();
+        let mut indices: Vec<u32> = Vec::new();
+
+        for i in 0..=ring_seg {
+            let angle = i as f32 / ring_seg as f32 * tau;
+            let cos = angle.cos();
+            let sin = angle.sin();
+
+            positions.push([cos * inner, 0.0, sin * inner]);
+            normals.push([0.0, 1.0, 0.0]);
+            colors.push([1.0, 0.6, 0.15, 0.9]);
+
+            positions.push([cos * outer, 0.0, sin * outer]);
+            normals.push([0.0, 1.0, 0.0]);
+            colors.push([0.6, 0.1, 0.4, 0.2]);
+
+            if i < ring_seg {
+                let base = i * 2;
+                indices.push(base);
+                indices.push(base + 1);
+                indices.push(base + 2);
+                indices.push(base + 1);
+                indices.push(base + 3);
+                indices.push(base + 2);
+            }
+        }
+
+        let mut mesh = Mesh::new(
+            bevy::render::mesh::PrimitiveTopology::TriangleList,
+            bevy::render::render_asset::RenderAssetUsages::default(),
+        );
+        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+        mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
+
+        let disk_mat = materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            emissive: LinearRgba::new(3.0, 1.2, 0.4, 1.0),
+            unlit: true,
+            alpha_mode: AlphaMode::Add,
+            double_sided: true,
+            cull_mode: None,
+            ..default()
+        });
+
+        let disk_tilt = tilt * Quat::from_rotation_x(0.25);
+        commands.spawn((
+            Mesh3d(meshes.add(mesh)),
+            MeshMaterial3d(disk_mat),
+            Transform::from_translation(center).with_rotation(disk_tilt),
+            NotShadowCaster,
+            DistantGalaxyCore,
+        ));
     }
 }
 
@@ -2039,13 +2505,26 @@ fn reload_asteroid_belts(
 fn update_far_star_scale(
     camera_q: Query<(&GlobalTransform, &Transform), With<Camera3d>>,
     spawned: Res<SpawnedSystems>,
-    mut far_q: Query<(&FarStar, &mut Transform, &mut Visibility), Without<Camera3d>>,
+    brightness_mats: Res<StarBrightnessMaterials>,
+    mut far_q: Query<(&FarStar, &mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>), Without<Camera3d>>,
 ) {
     let (cam_gt, cam_tf) = camera_q.single();
     let cam_pos = cam_gt.translation();
     let cam_fwd = cam_tf.forward().as_vec3();
 
-    for (fs, mut tf, mut vis) in &mut far_q {
+    let main_dist = cam_pos.length();
+    let raw = ((main_dist - LOD_STARS_END) / (LOD_STARS_GONE - LOD_STARS_END)).clamp(0.0, 1.0);
+    let lod_fade = smoothstep(raw);
+
+    let brightness = (5_000_000.0 / main_dist.max(1.0)).clamp(0.05, 1.0) * (1.0 - lod_fade);
+    let step = ((brightness * (STAR_BRIGHTNESS_STEPS - 1) as f32).round() as usize).min(STAR_BRIGHTNESS_STEPS - 1);
+
+    for (fs, mut tf, mut vis, mut mat) in &mut far_q {
+        if lod_fade >= 1.0 {
+            if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
+            continue;
+        }
+
         if spawned.0.contains(&fs.sys_idx) {
             if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
             continue;
@@ -2062,10 +2541,113 @@ fn update_far_star_scale(
         if *vis != Visibility::Inherited { *vis = Visibility::Inherited; }
         let min_scale = fs.radius * 0.5;
         let angular_scale = dist * 0.005;
-        tf.scale = Vec3::splat(angular_scale.max(min_scale));
+        let dist_shrink = (10_000_000.0 / main_dist.max(1.0)).clamp(0.05, 1.0);
+        let mut scale = angular_scale.max(min_scale) * dist_shrink;
+        if lod_fade > 0.0 { scale *= 1.0 - lod_fade; }
+        tf.scale = Vec3::splat(scale);
+
+        if mat.0 != brightness_mats.steps[step] {
+            mat.0 = brightness_mats.steps[step].clone();
+        }
 
         let n = to_star / dist.max(0.001);
         tf.look_to(n, Vec3::Y);
+    }
+}
+
+fn update_distant_star_scale(
+    camera_q: Query<&GlobalTransform, With<Camera3d>>,
+    galaxy_q: Query<&GalaxyMeta>,
+    brightness_mats: Res<StarBrightnessMaterials>,
+    mut star_q: Query<(&DistantStar, &mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>), Without<Camera3d>>,
+) {
+    let cam_pos = camera_q.single().translation();
+
+    let mut gal_cache: HashMap<u32, (f32, usize)> = HashMap::new();
+    for meta in &galaxy_q {
+        let d = (cam_pos - meta.center).length();
+        let raw = ((d - LOD_STARS_END) / (LOD_STARS_GONE - LOD_STARS_END)).clamp(0.0, 1.0);
+        let fade = smoothstep(raw);
+        let b = (5_000_000.0 / d.max(1.0)).clamp(0.05, 1.0) * (1.0 - fade);
+        let s = ((b * (STAR_BRIGHTNESS_STEPS - 1) as f32).round() as usize).min(STAR_BRIGHTNESS_STEPS - 1);
+        gal_cache.insert(meta.id, (d, s));
+    }
+
+    for (ds, mut tf, mut vis, mut mat) in &mut star_q {
+        let (gal_dist, bstep) = gal_cache.get(&ds.galaxy_id).copied().unwrap_or((f32::MAX, 0));
+        let raw = ((gal_dist - LOD_STARS_END) / (LOD_STARS_GONE - LOD_STARS_END)).clamp(0.0, 1.0);
+        let fade = smoothstep(raw);
+
+        if fade >= 1.0 {
+            if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
+            continue;
+        }
+
+        let to_star = tf.translation - cam_pos;
+        let dist = to_star.length();
+        let min_scale = ds.radius * 0.5;
+        let angular_scale = dist * 0.005;
+        let dist_shrink = (10_000_000.0 / gal_dist.max(1.0)).clamp(0.05, 1.0);
+        let mut scale = angular_scale.max(min_scale) * dist_shrink;
+        scale *= 1.0 - fade;
+
+        tf.scale = Vec3::splat(scale);
+        if mat.0 != brightness_mats.steps[bstep] {
+            mat.0 = brightness_mats.steps[bstep].clone();
+        }
+        let n = to_star / dist.max(0.001);
+        tf.look_to(n, Vec3::Y);
+        if *vis != Visibility::Inherited { *vis = Visibility::Inherited; }
+    }
+}
+
+fn update_arm_capsule_lod(
+    camera_q: Query<&GlobalTransform, With<Camera3d>>,
+    galaxy_q: Query<&GalaxyMeta>,
+    lod_mats: Res<GalaxyLodMaterials>,
+    mut capsule_q: Query<(&ArmCapsule, &mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>)>,
+) {
+    let cam_pos = camera_q.single().translation();
+
+    let mut gal_dists: HashMap<u32, f32> = HashMap::new();
+    for meta in &galaxy_q {
+        gal_dists.insert(meta.id, (cam_pos - meta.center).length());
+    }
+    gal_dists.insert(0, cam_pos.length());
+
+    const DETAIL_CUTOFF: f32 = 100_000_000.0;
+    for (cap, mut tf, mut vis, mut mat) in &mut capsule_q {
+        let dist = gal_dists.get(&cap.galaxy_id).copied().unwrap_or(f32::MAX);
+
+        if cap.detail && dist > DETAIL_CUTOFF {
+            if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
+            tf.scale = Vec3::ZERO;
+            continue;
+        }
+
+        let raw = ((dist - LOD_CAPS_START) / (LOD_CAPS_FULL - LOD_CAPS_START)).clamp(0.0, 1.0);
+        let t = smoothstep(raw);
+
+        if t <= 0.0 {
+            if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
+            tf.scale = Vec3::ZERO;
+        } else {
+            tf.scale = cap.base_scale * t;
+            if *vis != Visibility::Inherited { *vis = Visibility::Inherited; }
+            let step = ((t * (LOD_STEPS - 1) as f32).round() as usize).min(LOD_STEPS - 1);
+            let ci = cap.color_idx.min(ARM_COLORS - 1);
+            let target = &lod_mats.capsule_steps[ci][step];
+            if mat.0 != *target { mat.0 = target.clone(); }
+        }
+    }
+}
+
+fn rotate_accretion_disk(
+    time: Res<Time>,
+    mut disk_q: Query<&mut Transform, With<AccretionDisk>>,
+) {
+    for mut tf in &mut disk_q {
+        tf.rotate_y(time.delta_secs() * 0.08);
     }
 }
 

@@ -14,7 +14,7 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowCloseRequested};
 
-use planet::{FarStar, MoonId, MoonRoot, PlanetId, PlanetPlugin, PlanetRoot, StarId, StarRoot};
+use planet::{FarStar, GalacticCore, MoonId, MoonRoot, PlanetId, PlanetPlugin, PlanetRoot, StarId, StarRoot};
 use settings::{GameSettings, SYSTEM_CELL_SIZE, SYSTEM_GRID_SIZE};
 use ship::{Ship, ShipMode, ShipPlugin};
 use ui::{CameraTarget, MenuState, TargetKind, UiPlugin};
@@ -143,6 +143,9 @@ pub struct TargetQueries<'w, 's> {
 
     pub far_star_q:
         Query<'w, 's, (&'static GlobalTransform, &'static FarStar)>,
+
+    pub core_q:
+        Query<'w, 's, &'static GlobalTransform, With<GalacticCore>>,
 }
 
 
@@ -228,7 +231,7 @@ fn main() {
 
         .add_event::<ReloadAstre>()
         .init_resource::<ProfilingLog>()
-        .insert_resource(ZoomLevel::System)
+        .insert_resource(ZoomLevel::Planet)
 
         // ── PreStartup (legacy seed/astres désactivé — galaxie gère tout) ─
 
@@ -251,6 +254,7 @@ fn main() {
                 update_sun_direction,
                 update_fps_display,
                 update_system_hud,
+                update_zoom_hud,
                 draw_light_indicator,
                 draw_orbits,
                 close_game_when_primary_window_closes,
@@ -336,7 +340,7 @@ fn setup_scene(
     commands.spawn((
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
-            far: 10_000_000.0,
+            far: 100_000_000.0,
             ..default()
         }),
 
@@ -457,6 +461,11 @@ fn select_world_target(
         consider(transform.translation(), 80.0, TargetKind::Supernova(root.idx));
     }
 
+    // ── GalacticCore : clic sur le trou noir central ──────────────
+    for gt in &queries.core_q {
+        consider(gt.translation(), 120.0, TargetKind::GalacticCore);
+    }
+
     // ── FarStar : clic sur étoiles lointaines (spatial hash) ──────
     let cam_pos = camera_transform.translation();
     let cell = SYSTEM_CELL_SIZE;
@@ -524,19 +533,50 @@ struct CameraController {
 
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZoomLevel {
+    Planet,
     System,
+    Sector,
     Galaxy,
-    Overview,
+    Cosmos,
+    DeepSpace,
 }
 
 impl ZoomLevel {
     fn from_distance(d: f32) -> Self {
-        if d < 15000.0 {
+        if d < 5_000.0 {
+            ZoomLevel::Planet
+        } else if d < 50_000.0 {
             ZoomLevel::System
+        } else if d < 500_000.0 {
+            ZoomLevel::Sector
         } else if d < 3_000_000.0 {
             ZoomLevel::Galaxy
+        } else if d < 10_000_000.0 {
+            ZoomLevel::Cosmos
         } else {
-            ZoomLevel::Overview
+            ZoomLevel::DeepSpace
+        }
+    }
+
+    pub fn level_number(&self) -> u32 {
+        match self {
+            ZoomLevel::Planet => 1,
+            ZoomLevel::System => 2,
+            ZoomLevel::Sector => 3,
+            ZoomLevel::Galaxy => 4,
+            ZoomLevel::Cosmos => 5,
+            ZoomLevel::DeepSpace => 6,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            ZoomLevel::Planet => "Planete",
+            ZoomLevel::System => "Systeme",
+            ZoomLevel::Sector => "Secteur",
+            ZoomLevel::Galaxy => "Galaxie",
+            ZoomLevel::Cosmos => "Cosmos",
+            ZoomLevel::DeepSpace => "Espace Profond",
         }
     }
 
@@ -550,9 +590,10 @@ impl ZoomLevel {
 
     fn can_navigate_to(&self, kind: &TargetKind) -> bool {
         match self {
-            ZoomLevel::System => true,
-            ZoomLevel::Galaxy => Self::is_star(kind),
-            ZoomLevel::Overview => false,
+            ZoomLevel::Planet | ZoomLevel::System => true,
+            ZoomLevel::Sector | ZoomLevel::Galaxy => Self::is_star(kind) || matches!(kind, TargetKind::GalacticCore),
+            ZoomLevel::Cosmos => matches!(kind, TargetKind::GalacticCore),
+            ZoomLevel::DeepSpace => false,
         }
     }
 }
@@ -647,7 +688,8 @@ fn camera_controller(
         let cam_rotation = Quat::from_euler(EulerRot::YXZ, ctrl.yaw, ctrl.pitch, 0.0);
 
         let sp = if let Ok((mut ship_tf, mut ship_vis)) = ship_q.get_single_mut() {
-            if *zoom_level == ZoomLevel::Overview {
+            let hide_ship = matches!(*zoom_level, ZoomLevel::Galaxy | ZoomLevel::Cosmos | ZoomLevel::DeepSpace);
+            if hide_ship {
                 *ship_vis = Visibility::Hidden;
                 cam_tf.translation = target_pos + cam_rotation * Vec3::new(0.0, 0.0, ctrl.distance);
                 cam_tf.look_at(target_pos, Vec3::Y);
@@ -721,7 +763,8 @@ fn camera_controller(
 
     // ── Vaisseau : croisière puis posé au-dessus de l'astre ────────
     let ship_pos = if let Ok((mut ship_tf, mut ship_vis)) = ship_q.get_single_mut() {
-        if *zoom_level == ZoomLevel::Overview {
+        let hide_ship = matches!(*zoom_level, ZoomLevel::Galaxy | ZoomLevel::Cosmos | ZoomLevel::DeepSpace);
+        if hide_ship {
             *ship_vis = Visibility::Hidden;
             cam_tf.translation = target_pos + cam_rotation * Vec3::new(0.0, 0.0, ctrl.distance);
             cam_tf.look_at(target_pos, Vec3::Y);
@@ -904,6 +947,13 @@ fn resolve_target(
                 .find(|(_, r)| r.idx == i)
                 .map(|(gt, _)| gt.translation())
                 .unwrap_or_default(),
+
+        TargetKind::GalacticCore =>
+            q.core_q
+                .iter()
+                .next()
+                .map(|gt| gt.translation())
+                .unwrap_or(Vec3::ZERO),
     }
 }
 
@@ -916,7 +966,8 @@ fn camera_distance_range(
     target: &CameraTarget,
     settings: &GameSettings,
 ) -> (f32, f32) {
-    match target.0 {
+    let is_core = matches!(target.0, TargetKind::GalacticCore);
+    let (min_d, max_d) = match target.0 {
         TargetKind::Planet(i) => {
             let r = settings
                 .planets
@@ -926,11 +977,11 @@ fn camera_distance_range(
 
             (
                 r * 1.4,
-                12_000_000.0,
+                10_000_000.0,
             )
         }
 
-        TargetKind::Moon(_, _) => (20.0, 12_000_000.0),
+        TargetKind::Moon(_, _) => (20.0, 10_000_000.0),
 
         TargetKind::Star(i) => {
             let r = settings
@@ -1046,7 +1097,14 @@ fn camera_distance_range(
                 500.0,
                 5000000.0,
             ),
-    }
+
+        TargetKind::GalacticCore =>
+            (
+                5000.0,
+                100_000_000.0,
+            ),
+    };
+    if is_core { (min_d, max_d) } else { (min_d, max_d.min(10_000_000.0)) }
 }
 
 
@@ -1157,6 +1215,9 @@ struct TempText;
 #[derive(Component)]
 struct SystemHudText;
 
+#[derive(Component)]
+struct ZoomHudText;
+
 
 fn setup_fps_display(
     mut commands: Commands,
@@ -1225,6 +1286,13 @@ fn setup_fps_display(
                 ),
 
                 TempText,
+            ));
+
+            p.spawn((
+                Text::new("Niv. 1 Planete"),
+                TextFont { font_size: 14.0, ..default() },
+                TextColor(Color::srgb(0.5, 0.7, 1.0)),
+                ZoomHudText,
             ));
         });
 
@@ -1361,6 +1429,9 @@ fn update_fps_display(
             TargetKind::Supernova(_) =>
                 500_000.0,
 
+            TargetKind::GalacticCore =>
+                1_000_000_000_000.0,
+
             _ =>
                 -270.0,
         };
@@ -1443,12 +1514,13 @@ fn update_system_hud(
             });
             (Some(si), label)
         }
+        TargetKind::GalacticCore => (None, Some("Trou Noir Galactique".to_string())),
         _ => (None, None),
     };
 
-    let label = if let (Some(si), Some(body)) = (sys_idx, body_label) {
+    let label = if let (Some(si), Some(body)) = (sys_idx, &body_label) {
         if let Some(sys) = settings.systems.get(si) {
-            let mut full = body;
+            let mut full = body.clone();
             full.push('\n');
             full.push_str(&sys.name);
             let mut planets_line = String::new();
@@ -1464,10 +1536,31 @@ fn update_system_hud(
         } else {
             String::new()
         }
+    } else if let Some(body) = &body_label {
+        body.clone()
     } else {
         String::new()
     };
 
+    for mut text in &mut hud_q {
+        **text = label.clone();
+    }
+}
+
+fn update_zoom_hud(
+    zoom: Res<ZoomLevel>,
+    cam_q: Query<&CameraController>,
+    mut hud_q: Query<&mut Text, With<ZoomHudText>>,
+) {
+    let dist = cam_q.iter().next().map(|c| c.distance).unwrap_or(0.0);
+    let dist_str = if dist >= 1_000_000.0 {
+        format!("{:.1}M", dist / 1_000_000.0)
+    } else if dist >= 1_000.0 {
+        format!("{:.0}K", dist / 1_000.0)
+    } else {
+        format!("{:.0}", dist)
+    };
+    let label = format!("Niv. {} {}  [{}]", zoom.level_number(), zoom.label(), dist_str);
     for mut text in &mut hud_q {
         **text = label.clone();
     }

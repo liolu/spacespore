@@ -10,8 +10,10 @@ use std::path::PathBuf;
 pub const SAVE_VERSION: u32 = 7;
 
 pub fn data_dir() -> PathBuf {
-    let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-    path.push("spacespore");
+    let path = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("saves")))
+        .unwrap_or_else(|| PathBuf::from("saves"));
     fs::create_dir_all(&path).ok();
     path
 }
@@ -263,7 +265,7 @@ fn default_systems() -> Vec<StarSystemConfig> {
 
         let x = r * theta.cos();
         let z = r * theta.sin();
-        let thickness = 3000.0 * (1.0 - r / gr * 0.8);
+        let thickness = 24000.0 * (1.0 - r / gr * 0.8);
         let y = (pseudo_rand(s * 7 + 7) - 0.5) * thickness;
 
         let (sr, si, sc) = make_star(s);
