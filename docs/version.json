@@ -1,8 +1,8 @@
 {
-  "version": "0.4.0",
-  "version_code": 400,
-  "release_date": "2026-09-28",
-  "download_url": "https://github.com/liolu/spacespore/releases/download/v0.4.0/spacespore-v0.4.0-windows.zip",
-  "release_notes": "See release page for details",
+  "version": "0.5.0",
+  "version_code": 500,
+  "release_date": "2026-09-29",
+  "download_url": "https://github.com/liolu/spacespore/releases/download/v0.5.0/spacespore-v0.5.0-windows.zip",
+  "release_notes": "Deep space exploration: 100 galaxies, LOD system, star brightness",
   "min_updater_version": 1
 }
