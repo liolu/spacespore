@@ -90,8 +90,8 @@ pub struct InstallerApp {
     status_label: nwg::Label,
 
     #[nwg_control]
-    #[nwg_events(OnNotice: [InstallerApp::on_timer])]
-    timer: nwg::AnimationTimer,
+    #[nwg_events(OnNotice: [InstallerApp::on_notice])]
+    notice: nwg::Notice,
 
     progress_val: RefCell<Arc<AtomicU64>>,
     total_val: RefCell<Arc<AtomicU64>>,
@@ -146,18 +146,18 @@ impl InstallerApp {
 
         let create_desktop = self.desktop_shortcut.check_state() == nwg::CheckBoxState::Checked;
         let create_startmenu = self.startmenu_shortcut.check_state() == nwg::CheckBoxState::Checked;
-
-        self.timer.start();
+        let sender = self.notice.sender();
 
         thread::spawn(move || {
-            if let Err(e) = do_install(&install_dir, &progress, &total, create_desktop, create_startmenu) {
+            if let Err(e) = do_install(&install_dir, &progress, &total, create_desktop, create_startmenu, &sender) {
                 *error.lock().unwrap() = Some(e);
             }
             done.store(true, Ordering::Relaxed);
+            sender.notice();
         });
     }
 
-    fn on_timer(&self) {
+    fn on_notice(&self) {
         let progress = self.progress_val.borrow().load(Ordering::Relaxed);
         let total = self.total_val.borrow().load(Ordering::Relaxed);
 
@@ -173,7 +173,6 @@ impl InstallerApp {
         }
 
         if self.done_flag.borrow().load(Ordering::Relaxed) {
-            self.timer.stop();
             self.progress.set_pos(100);
 
             let err = self.error_msg.borrow().lock().unwrap().clone();
@@ -215,13 +214,15 @@ fn do_install(
     total: &AtomicU64,
     create_desktop: bool,
     create_startmenu: bool,
+    sender: &nwg::NoticeSender,
 ) -> Result<(), String> {
     let info = fetch_version_info()?;
+    sender.notice();
 
     fs::create_dir_all(install_dir).map_err(|e| format!("Impossible de creer le dossier: {}", e))?;
 
     let temp_zip = std::env::temp_dir().join("spacespore-install.zip");
-    download_file(&info.download_url, &temp_zip, progress, total)?;
+    download_file(&info.download_url, &temp_zip, progress, total, sender)?;
 
     extract_zip(&temp_zip, install_dir)?;
     let _ = fs::remove_file(&temp_zip);
@@ -265,7 +266,7 @@ fn fetch_version_info() -> Result<spacespore_common::VersionInfo, String> {
     let body: String = agent
         .get(spacespore_common::VERSION_URL)
         .call()
-        .map_err(|e| format!("Erreur reseau: {}", e))?
+        .map_err(|e| format!("Erreur reseau: {}\n\nVerifiez que GitHub Pages est active sur le depot.", e))?
         .body_mut()
         .read_to_string()
         .map_err(|e| format!("Erreur lecture: {}", e))?;
@@ -278,6 +279,7 @@ fn download_file(
     dest: &Path,
     progress: &AtomicU64,
     total_size: &AtomicU64,
+    sender: &nwg::NoticeSender,
 ) -> Result<(), String> {
     let response = ureq::get(url)
         .call()
@@ -296,6 +298,7 @@ fn download_file(
     let mut file = fs::File::create(dest).map_err(|e| format!("Erreur fichier: {}", e))?;
     let mut downloaded: u64 = 0;
     let mut buf = [0u8; 8192];
+    let mut last_notify = std::time::Instant::now();
 
     loop {
         let n = body.as_reader().read(&mut buf).map_err(|e| format!("Erreur lecture: {}", e))?;
@@ -303,6 +306,11 @@ fn download_file(
         file.write_all(&buf[..n]).map_err(|e| format!("Erreur ecriture: {}", e))?;
         downloaded += n as u64;
         progress.store(downloaded, Ordering::Relaxed);
+
+        if last_notify.elapsed() >= std::time::Duration::from_millis(100) {
+            sender.notice();
+            last_notify = std::time::Instant::now();
+        }
     }
 
     if content_length > 0 && downloaded != content_length {
@@ -360,7 +368,6 @@ fn main() {
     app.path_input.set_text(&default_path.to_string_lossy());
     app.desktop_shortcut.set_check_state(nwg::CheckBoxState::Checked);
     app.startmenu_shortcut.set_check_state(nwg::CheckBoxState::Checked);
-    app.timer.set_interval(std::time::Duration::from_millis(100));
 
     nwg::dispatch_thread_events();
 }
