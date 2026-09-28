@@ -1,5 +1,7 @@
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
+use bevy::render::render_asset::RenderAssetUsages;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use rand::Rng;
 
 use std::collections::HashSet;
@@ -163,30 +165,114 @@ impl CubeFace {
     }
 }
 
+fn star_color_group(r: f32, g: f32, b: f32) -> usize {
+    const PALETTES: [[f32; 3]; 5] = [
+        [1.0, 0.5, 0.3],
+        [1.0, 0.7, 0.4],
+        [1.0, 0.92, 0.65],
+        [0.8, 0.85, 1.0],
+        [0.6, 0.7, 1.0],
+    ];
+    let mut best = 0;
+    let mut best_d = f32::MAX;
+    for (i, p) in PALETTES.iter().enumerate() {
+        let d = (r - p[0]) * (r - p[0]) + (g - p[1]) * (g - p[1]) + (b - p[2]) * (b - p[2]);
+        if d < best_d { best_d = d; best = i; }
+    }
+    best
+}
+
+const ATLAS_COLS: u32 = 5;
+const ATLAS_CELL: u32 = 32;
+
+const PALETTE: [[f32; 3]; 5] = [
+    [1.0, 0.5, 0.3],
+    [1.0, 0.7, 0.4],
+    [1.0, 0.92, 0.65],
+    [0.8, 0.85, 1.0],
+    [0.6, 0.7, 1.0],
+];
+
+fn create_star_atlas(images: &mut Assets<Image>) -> Handle<Image> {
+    let w = ATLAS_CELL * ATLAS_COLS;
+    let h = ATLAS_CELL;
+    let center = ATLAS_CELL as f32 / 2.0;
+    let mut data = vec![0u8; (w * h * 4) as usize];
+
+    for (gi, col) in PALETTE.iter().enumerate() {
+        let ox = gi as u32 * ATLAS_CELL;
+        for y in 0..ATLAS_CELL {
+            for x in 0..ATLAS_CELL {
+                let dx = x as f32 - center + 0.5;
+                let dy = y as f32 - center + 0.5;
+                let d = (dx * dx + dy * dy).sqrt() / center;
+                let alpha = (1.0 - d).clamp(0.0, 1.0).powf(1.5);
+                let px = ((y * w + ox + x) * 4) as usize;
+                data[px]     = (col[0] * 255.0) as u8;
+                data[px + 1] = (col[1] * 255.0) as u8;
+                data[px + 2] = (col[2] * 255.0) as u8;
+                data[px + 3] = (alpha * 255.0) as u8;
+            }
+        }
+    }
+
+    images.add(Image::new(
+        Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    ))
+}
+
+fn make_atlas_quad(meshes: &mut Assets<Mesh>, group: usize) -> Handle<Mesh> {
+    let u_min = group as f32 / ATLAS_COLS as f32;
+    let u_max = (group as f32 + 1.0) / ATLAS_COLS as f32;
+    let mut mesh = Mesh::from(Rectangle::new(2.0, 2.0));
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![
+        [u_min, 1.0],
+        [u_max, 1.0],
+        [u_max, 0.0],
+        [u_min, 0.0],
+    ]);
+    meshes.add(mesh)
+}
+
 fn generate_all(
     mut commands: Commands,
     settings: Res<GameSettings>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
     mut spawned: ResMut<SpawnedSystems>,
 ) {
-    let billboard_mesh = meshes.add(Sphere::new(1.0).mesh().ico(2).unwrap());
+    let atlas = create_star_atlas(&mut images);
+
+    let atlas_mat = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        base_color_texture: Some(atlas.clone()),
+        emissive: LinearRgba::new(25.0, 20.0, 10.0, 1.0),
+        emissive_texture: Some(atlas.clone()),
+        unlit: true,
+        alpha_mode: AlphaMode::Add,
+        ..default()
+    });
+
+    let quad_meshes: Vec<Handle<Mesh>> = (0..5)
+        .map(|i| make_atlas_quad(&mut meshes, i))
+        .collect();
 
     for (si, sys) in settings.systems.iter().enumerate() {
         let center = sys.center();
         if let Some(star_cfg) = sys.stars.first() {
-            let r = star_cfg.light_color_r;
-            let g = star_cfg.light_color_g;
-            let b = star_cfg.light_color_b;
-            let mat = materials.add(StandardMaterial {
-                base_color: Color::srgb(r, g, b),
-                emissive: LinearRgba::new(r * 30.0, g * 25.0, b * 10.0, 1.0),
-                unlit: true,
-                ..default()
-            });
+            let group = star_color_group(
+                star_cfg.light_color_r,
+                star_cfg.light_color_g,
+                star_cfg.light_color_b,
+            );
             commands.spawn((
-                Mesh3d(billboard_mesh.clone()),
-                MeshMaterial3d(mat),
+                Mesh3d(quad_meshes[group].clone()),
+                MeshMaterial3d(atlas_mat.clone()),
                 Transform::from_translation(center).with_scale(Vec3::splat(star_cfg.radius * 0.5)),
                 NotShadowCaster,
                 FarStar { sys_idx: si, radius: star_cfg.radius },
@@ -1964,6 +2050,11 @@ fn update_far_star_scale(
         let angular_scale = dist * 0.005;
         let scale = angular_scale.max(min_scale);
         tf.scale = Vec3::splat(scale);
+
+        let to_cam = (cam_pos - tf.translation).normalize_or_zero();
+        if to_cam.length_squared() > 0.001 {
+            tf.look_to(-to_cam, Vec3::Y);
+        }
     }
 }
 

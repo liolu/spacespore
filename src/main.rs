@@ -14,8 +14,8 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowCloseRequested};
 
-use planet::{MoonId, MoonRoot, PlanetId, PlanetPlugin, PlanetRoot, StarId, StarRoot};
-use settings::GameSettings;
+use planet::{FarStar, MoonId, MoonRoot, PlanetId, PlanetPlugin, PlanetRoot, StarId, StarRoot};
+use settings::{GameSettings, SYSTEM_CELL_SIZE, SYSTEM_GRID_SIZE};
 use ship::{Ship, ShipMode, ShipPlugin};
 use ui::{CameraTarget, MenuState, TargetKind, UiPlugin};
 
@@ -140,6 +140,9 @@ pub struct TargetQueries<'w, 's> {
 
     pub supernova_q:
         Query<'w, 's, (&'static GlobalTransform, &'static SupernovaRoot)>,
+
+    pub far_star_q:
+        Query<'w, 's, (&'static GlobalTransform, &'static FarStar)>,
 }
 
 
@@ -342,6 +345,7 @@ fn setup_scene(
             yaw: 0.0,
             pitch: -0.3,
             distance: 200.0,
+            last_target_pos: Vec3::ZERO,
         },
     ));
 }
@@ -349,8 +353,9 @@ fn setup_scene(
 fn select_world_target(
     buttons: Res<ButtonInput<MouseButton>>,
     primary_window: Query<&Window, With<PrimaryWindow>>,
-    camera_q: Query<(&Camera, &GlobalTransform), With<CameraController>>,
+    camera_q: Query<(&Camera, &GlobalTransform, &CameraController)>,
     queries: TargetQueries,
+    settings: Res<GameSettings>,
     mut target: ResMut<CameraTarget>,
     zoom: Res<ZoomLevel>,
 ) {
@@ -359,7 +364,8 @@ fn select_world_target(
     }
     let Ok(window) = primary_window.get_single() else { return; };
     let Some(cursor) = window.cursor_position() else { return; };
-    let Ok((camera, camera_transform)) = camera_q.get_single() else { return; };
+    let Ok((camera, camera_transform, ctrl)) = camera_q.get_single() else { return; };
+    let ctrl_dist = ctrl.distance;
     let Ok(ray) = camera.viewport_to_world(camera_transform, cursor) else { return; };
     let mut best: Option<(f32, TargetKind)> = None;
 
@@ -440,6 +446,25 @@ fn select_world_target(
         consider(transform.translation(), 80.0, TargetKind::Supernova(root.idx));
     }
 
+    // ── FarStar : clic sur étoiles lointaines (spatial hash) ──────
+    let cam_pos = camera_transform.translation();
+    let cell = SYSTEM_CELL_SIZE;
+    let half = SYSTEM_GRID_SIZE as f32 * cell / 2.0;
+    let cam_col = ((cam_pos.x + half) / cell) as i32;
+    let cam_row = ((cam_pos.z + half) / cell) as i32;
+    let grid_radius = (ctrl_dist / cell).ceil() as i32 + 2;
+
+    for (gt, fs) in &queries.far_star_q {
+        let pos = gt.translation();
+        let col = ((pos.x + half) / cell) as i32;
+        let row = ((pos.z + half) / cell) as i32;
+        if (col - cam_col).abs() > grid_radius || (row - cam_row).abs() > grid_radius {
+            continue;
+        }
+        if fs.sys_idx >= settings.systems.len() { continue; }
+        consider(pos, 60.0, TargetKind::Star(fs.sys_idx));
+    }
+
     if let Some((_, selected)) = best {
         if zoom.can_navigate_to(&selected) {
             target.0 = selected;
@@ -483,6 +508,7 @@ struct CameraController {
     yaw: f32,
     pitch: f32,
     distance: f32,
+    last_target_pos: Vec3,
 }
 
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
@@ -595,7 +621,13 @@ fn camera_controller(
     }
 
     // ── Mode vaisseau (defaut) : vaisseau orbite l'astre ─────────────
-    let target_pos = resolve_target(&camera_target, &queries);
+    let raw_target = resolve_target(&camera_target, &queries, &settings);
+    let target_pos = if raw_target == Vec3::ZERO && ctrl.last_target_pos.length_squared() > 100.0 {
+        ctrl.last_target_pos
+    } else {
+        ctrl.last_target_pos = raw_target;
+        raw_target
+    };
 
     if menu_state.open {
         mouse_motion.clear();
@@ -721,6 +753,7 @@ fn camera_controller(
 fn resolve_target(
     target: &CameraTarget,
     q: &TargetQueries,
+    settings: &GameSettings,
 ) -> Vec3 {
     match target.0 {
         TargetKind::Planet(i) =>
@@ -742,7 +775,12 @@ fn resolve_target(
                 .iter()
                 .find(|(_, sid)| sid.0 == i)
                 .map(|(gt, _)| gt.translation())
-                .unwrap_or_default(),
+                .or_else(|| q.far_star_q.iter()
+                    .find(|(_, fs)| fs.sys_idx == i)
+                    .map(|(gt, _)| gt.translation()))
+                .unwrap_or_else(|| settings.systems.get(i)
+                    .map(|s| s.center())
+                    .unwrap_or_default()),
 
         TargetKind::GasPlanet(i) =>
             q.gas_q
@@ -1229,7 +1267,7 @@ fn update_fps_display(
     // ── FPS + distance ────────────────────────────────────────────────
 
     let dist_str = if let Ok(cam_gt) = cam_q.get_single() {
-        let tp = resolve_target(&camera_target, &queries);
+        let tp = resolve_target(&camera_target, &queries, &settings);
         let d = cam_gt.translation().distance(tp);
         format!("  Dist: {:.0}", d)
     } else {

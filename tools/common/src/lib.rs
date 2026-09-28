@@ -1,5 +1,5 @@
-pub const VERSION: &str = "0.3.0";
-pub const VERSION_CODE: u32 = 300;
+pub const VERSION: &str = "0.4.0";
+pub const VERSION_CODE: u32 = 400;
 pub const UPDATER_VERSION: u32 = 1;
 
 pub const REPO_OWNER: &str = "liolu";

@@ -1,8 +1,8 @@
 {
-  "version": "0.3.0",
-  "version_code": 8,
+  "version": "0.4.0",
+  "version_code": 400,
   "release_date": "2026-09-28",
-  "download_url": "https://github.com/liolu/spacespore/releases/download/v0.3.0/spacespore-v0.3.0-windows.zip",
-  "release_notes": "See release page for details",
+  "download_url": "https://github.com/liolu/spacespore/releases/download/v0.4.0/spacespore-v0.4.0-windows.zip",
+  "release_notes": "Ship hover, zoom levels, galaxy randomness, rendering optimizations, target fallback fix",
   "min_updater_version": 1
 }
