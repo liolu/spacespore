@@ -118,6 +118,9 @@ struct InviteText;
 struct InviteHint;
 
 #[derive(Component)]
+struct CopyCodeButton;
+
+#[derive(Component)]
 struct NoticeText;
 
 #[derive(Component)]
@@ -288,7 +291,15 @@ fn setup_net_panel(mut commands: Commands) {
 
     // Inviter un ami
     let invite_title = section_title(&mut commands, "INVITER UN AMI PAR INTERNET");
+    let invite_row = commands.spawn(Node {
+        width: Val::Percent(100.0),
+        column_gap: Val::Px(8.0),
+        align_items: AlignItems::Center,
+        ..default()
+    }).id();
     let invite = commands.spawn((text("", 26.0, CODE_COLOR), InviteText)).id();
+    let copy_btn = button(&mut commands, "Copier", ACCENT, CopyCodeButton);
+    commands.entity(invite_row).add_children(&[invite, copy_btn]);
     let invite_hint = commands.spawn((text("", 11.0, TEXT_DIM), InviteHint)).id();
 
     // Rejoindre un ami
@@ -320,7 +331,7 @@ fn setup_net_panel(mut commands: Commands) {
     commands.entity(root).add_children(&[
         header, name_title, name_field, color_title, palette,
         players_title, status, players,
-        invite_title, invite, invite_hint,
+        invite_title, invite_row, invite_hint,
         join_title, join_row, leave, notice,
         help,
     ]);
@@ -374,7 +385,9 @@ fn handle_panel_buttons(
     swatches: Query<(&Interaction, &Swatch), Changed<Interaction>>,
     join: Query<&Interaction, (Changed<Interaction>, With<JoinButton>)>,
     leave: Query<&Interaction, (Changed<Interaction>, With<LeaveButton>)>,
+    copy_btn: Query<&Interaction, (Changed<Interaction>, With<CopyCodeButton>)>,
     mouse: Res<ButtonInput<MouseButton>>,
+    net: Res<Net>,
     mut panel: ResMut<NetPanel>,
     mut settings: ResMut<GameSettings>,
     mut commands_out: EventWriter<NetCommand>,
@@ -407,6 +420,13 @@ fn handle_panel_buttons(
     }
     if leave.iter().any(pressed) {
         commands_out.send(NetCommand::Leave);
+    }
+    if copy_btn.iter().any(pressed) {
+        if let Invite::Ready(code) = net.invite() {
+            if let Ok(mut clip) = arboard::Clipboard::new() {
+                clip.set_text(code).ok();
+            }
+        }
     }
 }
 

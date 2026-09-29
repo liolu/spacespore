@@ -58,6 +58,7 @@ struct LauncherApp {
     shared: Arc<Shared>,
     ctx: egui::Context,
     install_dir: PathBuf,
+    launched: bool,
     game_exe: PathBuf,
     launch_error: Option<String>,
 }
@@ -86,7 +87,7 @@ impl LauncherApp {
             });
         }
 
-        Self { shared, ctx, install_dir, game_exe, launch_error: None }
+        Self { shared, ctx, install_dir, game_exe, launch_error: None, launched: false }
     }
 
     fn start_update(&self, info: VersionInfo) {
@@ -106,12 +107,16 @@ impl LauncherApp {
 
     /// Lance le jeu et ferme le launcher.
     fn launch_game(&mut self, ctx: &egui::Context) {
+        if self.launched { return; }
         if !self.game_exe.exists() {
             self.launch_error = Some(format!("{} introuvable", self.game_exe.display()));
             return;
         }
         match Command::new(&self.game_exe).current_dir(&self.install_dir).spawn() {
-            Ok(_) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            Ok(_) => {
+                self.launched = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
             Err(e) => self.launch_error = Some(format!("Impossible de lancer le jeu: {}", e)),
         }
     }
