@@ -1,11 +1,37 @@
-name: Release
+# Compilation Windows / Linux / macOS, utilisée par stable.yml et unstable.yml.
+# Ne se lance pas toute seule.
+name: Build
 
 on:
-  push:
-    tags: ['v*']
+  workflow_call:
+    inputs:
+      version:
+        description: "Version, ex. 0.6.5"
+        type: string
+        required: true
+      channel:
+        description: "stable ou unstable"
+        type: string
+        required: true
+      build:
+        description: "Numero de build (instable)"
+        type: string
+        default: "0"
+      name:
+        description: "Prefixe des zips, ex. spacespore-v0.6.5"
+        type: string
+        required: true
+      installers:
+        description: "Construire aussi les installeurs"
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
+  # Lus à la compilation par tools/common (version / canal affichés et mises à jour)
+  SPACESPORE_VERSION: ${{ inputs.version }}
+  SPACESPORE_CHANNEL: ${{ inputs.channel }}
+  SPACESPORE_BUILD: ${{ inputs.build }}
 
 jobs:
   build:
@@ -48,11 +74,6 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Extract version from tag
-        id: version
-        shell: bash
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
       # ── Windows ──────────────────────────────────────────────────────
       - name: Build (Windows)
         if: matrix.platform == 'windows'
@@ -62,7 +83,7 @@ jobs:
         if: matrix.platform == 'windows'
         shell: pwsh
         run: |
-          $dir = "spacespore-v${{ steps.version.outputs.VERSION }}-windows"
+          $dir = "${{ inputs.name }}-windows"
           New-Item -ItemType Directory -Path $dir
           Copy-Item target/release/spacespore.exe $dir/
           Copy-Item target/release/spacespore-updater.exe $dir/
@@ -70,7 +91,7 @@ jobs:
           Compress-Archive -Path $dir -DestinationPath "$dir.zip"
           New-Item -ItemType Directory -Path dist
           Move-Item "$dir.zip" dist/
-          Copy-Item target/release/spacespore-installer.exe dist/
+          if ("${{ inputs.installers }}" -eq "true") { Copy-Item target/release/spacespore-installer.exe dist/ }
 
       # ── Linux ────────────────────────────────────────────────────────
       - name: Build (Linux)
@@ -80,16 +101,18 @@ jobs:
       - name: Package (Linux)
         if: matrix.platform == 'linux'
         run: |
-          dir="spacespore-v${{ steps.version.outputs.VERSION }}-linux"
+          dir="${{ inputs.name }}-linux"
           mkdir -p "$dir" dist
           cp target/release/spacespore target/release/spacespore-updater target/release/spacespore-launcher "$dir/"
           cp run.sh "$dir/"
           chmod +x "$dir"/*
           zip -r "dist/$dir.zip" "$dir"
-          # tar.gz : conserve le droit d'exécution après téléchargement
-          mkdir -p installer && cp target/release/spacespore-installer installer/
-          chmod +x installer/spacespore-installer
-          tar -czf dist/spacespore-installer-linux.tar.gz -C installer spacespore-installer
+          if [ "${{ inputs.installers }}" = "true" ]; then
+            # tar.gz : conserve le droit d'exécution après téléchargement
+            mkdir -p installer && cp target/release/spacespore-installer installer/
+            chmod +x installer/spacespore-installer
+            tar -czf dist/spacespore-installer-linux.tar.gz -C installer spacespore-installer
+          fi
 
       # ── macOS (binaire universel Apple Silicon + Intel) ──────────────
       - name: Build (macOS)
@@ -111,7 +134,7 @@ jobs:
       - name: Package (macOS)
         if: matrix.platform == 'macos'
         run: |
-          VER="${{ steps.version.outputs.VERSION }}"
+          VER="${{ inputs.version }}"
           # make_app <dossier .app> <nom> <identifiant>
           make_app() {
             mkdir -p "$1/Contents/MacOS"
@@ -134,7 +157,7 @@ jobs:
           EOF
           }
 
-          dir="spacespore-v$VER-macos"
+          dir="${{ inputs.name }}-macos"
           mkdir -p "$dir" dist
           cp target/universal/spacespore target/universal/spacespore-updater target/universal/spacespore-launcher "$dir/"
           # SpaceSpore.app : double-clic dans le Finder -> lance le launcher (sans Terminal)
@@ -146,11 +169,13 @@ jobs:
           zip -ry "dist/$dir.zip" "$dir"
 
           # Installeur : "SpaceSpore Installer.app"
-          inst="installer/SpaceSpore Installer.app"
-          make_app "$inst" "SpaceSpore Installer" io.github.liolu.spacespore.installer
-          cp target/universal/spacespore-installer "$inst/Contents/MacOS/SpaceSpore Installer"
-          codesign --force --deep --sign - "$inst"
-          (cd installer && zip -ry ../dist/spacespore-installer-macos.zip "SpaceSpore Installer.app")
+          if [ "${{ inputs.installers }}" = "true" ]; then
+            inst="installer/SpaceSpore Installer.app"
+            make_app "$inst" "SpaceSpore Installer" io.github.liolu.spacespore.installer
+            cp target/universal/spacespore-installer "$inst/Contents/MacOS/SpaceSpore Installer"
+            codesign --force --deep --sign - "$inst"
+            (cd installer && zip -ry ../dist/spacespore-installer-macos.zip "SpaceSpore Installer.app")
+          fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -158,65 +183,3 @@ jobs:
           name: dist-${{ matrix.platform }}
           path: dist/*
 
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-
-      - name: Extract version from tag
-        id: version
-        shell: bash
-        run: |
-          VER="${GITHUB_REF#refs/tags/v}"
-          echo "VERSION=$VER" >> $GITHUB_OUTPUT
-          IFS='.' read -r major minor patch <<< "$VER"
-          # Doit correspondre à VERSION_CODE dans tools/common/src/lib.rs (0.5.0 -> 500)
-          CODE=$(( major * 10000 + minor * 100 + patch ))
-          echo "CODE=$CODE" >> $GITHUB_OUTPUT
-
-      - name: Update version.json
-        shell: bash
-        run: |
-          BASE="https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.VERSION }}"
-          NAME="spacespore-v${{ steps.version.outputs.VERSION }}"
-          cat > docs/version.json << EOF
-          {
-            "version": "${{ steps.version.outputs.VERSION }}",
-            "version_code": ${{ steps.version.outputs.CODE }},
-            "release_date": "$(date -u +%Y-%m-%d)",
-            "download_url": "$BASE/$NAME-windows.zip",
-            "download_url_linux": "$BASE/$NAME-linux.zip",
-            "download_url_macos": "$BASE/$NAME-macos.zip",
-            "release_notes": "See release page for details",
-            "min_updater_version": 1
-          }
-          EOF
-
-      - name: Commit version.json update
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          cp docs/version.json /tmp/version.json
-          git fetch origin main
-          git checkout -f origin/main
-          cp /tmp/version.json docs/version.json
-          git add docs/version.json
-          git diff --cached --quiet || git commit -m "Update version.json for v${{ steps.version.outputs.VERSION }}"
-          git push origin HEAD:main
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*
-          generate_release_notes: true

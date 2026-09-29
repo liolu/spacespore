@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use spacespore_common::{VersionInfo, VERSION, VERSION_CODE, UPDATER_VERSION, VERSION_URL};
+use spacespore_common::{make_agent, VersionInfo, CHANNEL};
 use std::sync::{Arc, Mutex};
 use std::io::Read as IoRead;
 
@@ -34,9 +34,11 @@ pub fn spawn_update_check() -> UpdateState {
     let result_clone = result.clone();
 
     std::thread::spawn(move || {
-        match check_version() {
+        // Le jeu vérifie son propre canal (stable ou instable) ; le choix
+        // du canal se fait dans le launcher.
+        match spacespore_common::fetch_channel(CHANNEL, 3) {
             Ok(info) => {
-                if spacespore_common::needs_update(info.version_code) && info.platform_download_url().is_some() {
+                if spacespore_common::should_install(CHANNEL, &info) {
                     *result_clone.lock().unwrap() = Some(CheckResult::Available(info));
                 } else {
                     *result_clone.lock().unwrap() = Some(CheckResult::UpToDate);
@@ -56,31 +58,6 @@ pub fn spawn_update_check() -> UpdateState {
     }
 }
 
-fn make_agent(timeout_secs: u64) -> ureq::Agent {
-    let tls = ureq::tls::TlsConfig::builder()
-        .provider(ureq::tls::TlsProvider::NativeTls)
-        .build();
-    let config = ureq::Agent::config_builder()
-        .tls_config(tls)
-        .timeout_global(Some(std::time::Duration::from_secs(timeout_secs)))
-        .build();
-    ureq::Agent::new_with_config(config)
-}
-
-fn check_version() -> Result<VersionInfo, String> {
-    let agent = make_agent(3);
-
-    let body: String = agent
-        .get(VERSION_URL)
-        .call()
-        .map_err(|e| format!("Network error: {}", e))?
-        .body_mut()
-        .read_to_string()
-        .map_err(|e| format!("Read error: {}", e))?;
-
-    serde_json::from_str(&body).map_err(|e| format!("Parse error: {}", e))
-}
-
 pub fn poll_update_check(mut state: ResMut<UpdateState>) {
     if state.status != UpdateStatus::Checking {
         return;
@@ -89,11 +66,11 @@ pub fn poll_update_check(mut state: ResMut<UpdateState>) {
     let result = state.check_result.lock().unwrap().clone();
     match result {
         Some(CheckResult::Available(ref info)) => {
-            info!("Update available: v{} (current: v{})", info.version, VERSION);
+            info!("Update available: {} (current: {})", info.label(), spacespore_common::installed_label());
             state.status = UpdateStatus::Available(info.version.clone());
         }
         Some(CheckResult::UpToDate) => {
-            info!("SpaceSpore v{} is up to date", VERSION);
+            info!("SpaceSpore {} is up to date", spacespore_common::installed_label());
             state.status = UpdateStatus::NoUpdate;
         }
         Some(CheckResult::Error(ref e)) => {
@@ -123,6 +100,7 @@ pub fn start_download(state: &mut UpdateState) {
                     Some(CheckResult::Available(VersionInfo {
                         version: info.version.clone(),
                         version_code: info.version_code,
+                        build: info.build,
                         download_url: zip_path.clone(),
                         download_url_linux: Some(zip_path.clone()),
                         download_url_macos: Some(zip_path),

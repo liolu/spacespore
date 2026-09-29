@@ -1,0 +1,113 @@
+# VERSION STABLE : se lance à chaque push sur la branche "stable".
+# Crée une vraie release GitHub (zips + installeurs .exe / .app / Linux)
+# et met à jour docs/version.json (lu par le launcher en mode "Stable").
+#
+# Numéro de version : celui de Cargo.toml ([workspace.package] version) s'il
+# n'a pas encore été publié, sinon le dernier chiffre augmente tout seul
+# (0.6.4 -> 0.6.5 -> 0.6.6 ...).
+name: Stable
+
+on:
+  push:
+    branches: [stable]
+  workflow_dispatch:
+
+concurrency:
+  group: stable
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.VERSION }}
+      code: ${{ steps.v.outputs.CODE }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Choisir le numero de version
+        id: v
+        shell: bash
+        run: |
+          BASE=$(sed -n '/^\[workspace.package\]/,/^\[/ s/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)
+          LAST=$(git tag -l 'v[0-9]*' | sed 's/^v//' | sort -V | tail -1)
+          LAST=${LAST:-0.0.0}
+          if [ "$(printf '%s\n%s\n' "$BASE" "$LAST" | sort -V | tail -1)" = "$BASE" ] && [ "$BASE" != "$LAST" ]; then
+            VER="$BASE"
+          else
+            IFS='.' read -r a b c <<< "$LAST"
+            VER="$a.$b.$((c + 1))"
+          fi
+          IFS='.' read -r major minor patch <<< "$VER"
+          echo "VERSION=$VER" >> $GITHUB_OUTPUT
+          echo "CODE=$(( major * 10000 + minor * 100 + patch ))" >> $GITHUB_OUTPUT
+          echo "Version stable : $VER (Cargo.toml: $BASE, derniere publiee: $LAST)"
+
+  build:
+    needs: version
+    uses: ./.github/workflows/build.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      channel: stable
+      name: spacespore-v${{ needs.version.outputs.version }}
+      installers: true
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VER: ${{ needs.version.outputs.version }}
+      CODE: ${{ needs.version.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Notes de version
+        id: notes
+        shell: bash
+        run: echo "NOTES=$(git log -1 --no-merges --format=%s)" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VER }}
+          target_commitish: ${{ github.sha }}
+          name: SpaceSpore v${{ env.VER }}
+          files: dist/*
+          make_latest: true
+          generate_release_notes: true
+
+      - name: Update docs/version.json on main
+        shell: bash
+        env:
+          NOTES: ${{ steps.notes.outputs.NOTES }}
+        run: |
+          BASE="https://github.com/${{ github.repository }}/releases/download/v$VER"
+          NAME="spacespore-v$VER"
+          jq -n --arg v "$VER" --argjson code "$CODE" --arg date "$(date -u +%Y-%m-%d)" \
+                --arg base "$BASE/$NAME" --arg notes "$NOTES" '{
+            version: $v, version_code: $code, release_date: $date,
+            download_url: ($base + "-windows.zip"),
+            download_url_linux: ($base + "-linux.zip"),
+            download_url_macos: ($base + "-macos.zip"),
+            release_notes: $notes, min_updater_version: 1 }' > /tmp/version.json
+          cat /tmp/version.json
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout -f origin/main
+          cp /tmp/version.json docs/version.json
+          git add docs/version.json
+          git diff --cached --quiet || git commit -m "Update version.json for v$VER"
+          git push origin HEAD:main
