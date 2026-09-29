@@ -382,6 +382,7 @@ fn setup_scene(
             pitch: -0.3,
             distance: 200.0,
             last_target_pos: Vec3::ZERO,
+            zoom_goal: None,
         },
     ));
 }
@@ -633,10 +634,23 @@ pub struct CameraController {
     pitch: f32,
     distance: f32,
     last_target_pos: Vec3,
+    /// Zoom automatique en cours (ex. clic sur une galaxie depuis l'espace profond).
+    zoom_goal: Option<f32>,
 }
 
 /// Limite du zoom 1 : en dessous, on reste verrouillé dans le système courant.
 pub const ZOOM_PLANET_MAX: f32 = 10_000.0;
+
+/// Distance de caméra pour voir une galaxie entière (reste au zoom 4 pour
+/// pouvoir cliquer ses étoiles).
+fn galaxy_view_distance(kind: &TargetKind, settings: &GameSettings) -> f32 {
+    let gid = match *kind {
+        TargetKind::DistantGalaxyCore(id) => id as usize,
+        _ => 0,
+    };
+    let radius = settings.galaxies.get(gid).map_or(4_500_000.0, |g| g.radius);
+    (radius * 1.5).clamp(1_000_000.0, 2_900_000.0)
+}
 
 /// Au-delà de cette distance (changement de galaxie), le vaisseau saute
 /// directement à destination au lieu de voyager en croisière.
@@ -869,11 +883,32 @@ fn camera_controller(
         mouse_motion.clear();
     }
 
+    // Galaxie sélectionnée depuis l'espace profond : on plonge dedans
+    if camera_target.is_changed()
+        && ZoomLevel::is_core(&camera_target.0)
+        && ctrl.distance >= 10_000_000.0
+    {
+        ctrl.zoom_goal = Some(galaxy_view_distance(&camera_target.0, &settings));
+    }
+
     for ev in mouse_wheel.read() {
+        // La molette reprend la main sur le zoom automatique
+        ctrl.zoom_goal = None;
         let y = ui::wheel_lines(ev);
         let direction_factor = if y < 0.0 { 2.5 } else { 1.0 };
         let zoom_factor = 1.0 + ctrl.distance.abs() * 0.004 * direction_factor;
         ctrl.distance -= y * settings.scroll_speed * zoom_factor;
+    }
+
+    if let Some(goal) = ctrl.zoom_goal {
+        // Interpolation logarithmique : descente fluide sur plusieurs ordres de grandeur
+        let t = 1.0 - (-3.0 * time.delta_secs()).exp();
+        let cur = ctrl.distance.max(1.0).ln();
+        ctrl.distance = (cur + (goal.ln() - cur) * t).exp();
+        if (ctrl.distance / goal - 1.0).abs() < 0.01 {
+            ctrl.distance = goal;
+            ctrl.zoom_goal = None;
+        }
     }
 
     ctrl.pitch = ctrl.pitch.clamp(-1.5, 1.5);
