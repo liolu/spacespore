@@ -127,7 +127,9 @@ pub struct GalacticCore;
 pub struct AccretionDisk;
 
 #[derive(Component)]
-pub struct DistantGalaxyCore;
+pub struct DistantGalaxyCore {
+    pub galaxy_id: u32,
+}
 
 #[derive(Component)]
 pub struct DistantStar {
@@ -696,7 +698,7 @@ fn spawn_distant_galaxies(
             MeshMaterial3d(core_mat),
             Transform::from_translation(center).with_scale(Vec3::splat(core_r)),
             NotShadowCaster,
-            DistantGalaxyCore,
+            DistantGalaxyCore { galaxy_id: gi as u32 + 1 },
         ));
 
         // Disque d'accrétion (1 seul anneau par galaxie pour rester léger)
@@ -758,7 +760,7 @@ fn spawn_distant_galaxies(
             MeshMaterial3d(disk_mat),
             Transform::from_translation(center).with_rotation(disk_tilt),
             NotShadowCaster,
-            DistantGalaxyCore,
+            DistantGalaxyCore { galaxy_id: gi as u32 + 1 },
         ));
     }
 }

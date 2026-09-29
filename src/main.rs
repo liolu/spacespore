@@ -18,7 +18,7 @@ use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowCloseRequested};
 
 use kepler::OrbitalElements;
-use planet::{FarStar, GalacticCore, MoonId, MoonRoot, PlanetId, PlanetPlugin, PlanetRoot, StarId, StarRoot};
+use planet::{DistantGalaxyCore, FarStar, GalacticCore, MoonId, MoonRoot, PlanetId, PlanetPlugin, PlanetRoot, StarId, StarRoot};
 use settings::{GameSettings, SYSTEM_CELL_SIZE, SYSTEM_GRID_SIZE};
 use ship::{Ship, ShipMode, ShipPlugin};
 use ui::{CameraTarget, MenuState, TargetKind, UiPlugin};
@@ -152,6 +152,9 @@ pub struct TargetQueries<'w, 's> {
 
     pub core_q:
         Query<'w, 's, &'static GlobalTransform, With<GalacticCore>>,
+
+    pub dist_core_q:
+        Query<'w, 's, (&'static GlobalTransform, &'static DistantGalaxyCore)>,
 }
 
 
@@ -492,6 +495,13 @@ fn select_world_target(
         consider(gt.translation(), 120.0, TargetKind::GalacticCore);
     }
 
+    // ── DistantGalaxyCore : uniquement si on est déjà sur le trou noir central ──
+    if matches!(target.0, TargetKind::GalacticCore) {
+        for (gt, dc) in &queries.dist_core_q {
+            consider(gt.translation(), 120.0, TargetKind::DistantGalaxyCore(dc.galaxy_id));
+        }
+    }
+
     // ── FarStar : clic sur étoiles lointaines (spatial hash) ──────
     let cam_pos = camera_transform.translation();
     let cell = SYSTEM_CELL_SIZE;
@@ -672,7 +682,7 @@ impl ZoomLevel {
             ZoomLevel::Planet | ZoomLevel::System => true,
             ZoomLevel::Sector | ZoomLevel::Galaxy => Self::is_star(kind) || matches!(kind, TargetKind::GalacticCore),
             ZoomLevel::Cosmos => matches!(kind, TargetKind::GalacticCore),
-            ZoomLevel::DeepSpace => false,
+            ZoomLevel::DeepSpace => matches!(kind, TargetKind::GalacticCore | TargetKind::DistantGalaxyCore(_)),
         }
     }
 }
@@ -1040,6 +1050,13 @@ fn resolve_target(
                 .next()
                 .map(|gt| gt.translation())
                 .unwrap_or(Vec3::ZERO),
+
+        TargetKind::DistantGalaxyCore(id) =>
+            q.dist_core_q
+                .iter()
+                .find(|(_, dc)| dc.galaxy_id == id)
+                .map(|(gt, _)| gt.translation())
+                .unwrap_or_default(),
     }
 }
 
@@ -1052,8 +1069,7 @@ fn camera_distance_range(
     target: &CameraTarget,
     settings: &GameSettings,
 ) -> (f32, f32) {
-    let is_core = matches!(target.0, TargetKind::GalacticCore);
-    let (min_d, max_d) = match target.0 {
+    match target.0 {
         TargetKind::Planet(i) => {
             let r = settings
                 .planets
@@ -1061,13 +1077,10 @@ fn camera_distance_range(
                 .map(|p| p.radius)
                 .unwrap_or(50.0);
 
-            (
-                r * 1.4,
-                10_000_000.0,
-            )
+            (r * 1.4, 9_999_999.0)
         }
 
-        TargetKind::Moon(_, _) => (20.0, 10_000_000.0),
+        TargetKind::Moon(_, _) => (20.0, 9_999_999.0),
 
         TargetKind::Star(i) => {
             let r = settings
@@ -1076,121 +1089,37 @@ fn camera_distance_range(
                 .map(|s| s.radius)
                 .unwrap_or(200.0);
 
-            (
-                r * 0.5,
-                r * 60000.0,
-            )
+            (r * 0.5, 9_999_999.0)
         }
 
         // ── Planètes / corps ──────────────────────────────────────────
 
-        TargetKind::GasPlanet(_) =>
-            (
-                220.0 * 1.3,
-                220.0 * 20000.0,
-            ),
-
-        TargetKind::Comet(_) =>
-            (
-                80.0,
-                2000000.0,
-            ),
-
-        TargetKind::Meteoroid(_) =>
-            (
-                30.0,
-                400000.0,
-            ),
+        TargetKind::GasPlanet(_) => (220.0 * 1.3, 9_999_999.0),
+        TargetKind::Comet(_) => (80.0, 9_999_999.0),
+        TargetKind::Meteoroid(_) => (30.0, 9_999_999.0),
 
         // ── Étoiles ───────────────────────────────────────────────────
 
-        TargetKind::VoxelStar(_) =>
-            (
-                120.0 * 0.5,
-                120.0 * 20000.0,
-            ),
-
-        TargetKind::Protostar(_) =>
-            (
-                60.0 * 1.2,
-                1200000.0,
-            ),
-
-        TargetKind::DwarfStar(_) =>
-            (
-                45.0 * 1.5,
-                800000.0,
-            ),
-
-        TargetKind::MainSequence(_) =>
-            (
-                100.0 * 1.2,
-                2000000.0,
-            ),
-
-        TargetKind::GiantStar(_) =>
-            (
-                350.0 * 0.6,
-                350.0 * 15000.0,
-            ),
-
-        TargetKind::Supergiant(_) =>
-            (
-                700.0 * 0.4,
-                700.0 * 12000.0,
-            ),
-
-        TargetKind::Hypergiant(_) =>
-            (
-                1400.0 * 0.3,
-                1400.0 * 10000.0,
-            ),
+        TargetKind::VoxelStar(_) => (120.0 * 0.5, 9_999_999.0),
+        TargetKind::Protostar(_) => (60.0 * 1.2, 9_999_999.0),
+        TargetKind::DwarfStar(_) => (45.0 * 1.5, 9_999_999.0),
+        TargetKind::MainSequence(_) => (100.0 * 1.2, 9_999_999.0),
+        TargetKind::GiantStar(_) => (350.0 * 0.6, 9_999_999.0),
+        TargetKind::Supergiant(_) => (700.0 * 0.4, 9_999_999.0),
+        TargetKind::Hypergiant(_) => (1400.0 * 0.3, 9_999_999.0),
 
         // ── Rémanents ─────────────────────────────────────────────────
 
-        TargetKind::Nebula =>
-            (
-                600.0 * 0.5,
-                600.0 * 10000.0,
-            ),
+        TargetKind::Nebula => (600.0 * 0.5, 9_999_999.0),
+        TargetKind::BlackHole(_) => (40.0 * 3.0, 100_000_000.0),
+        TargetKind::Pulsar(_) => (28.0 * 4.0, 9_999_999.0),
+        TargetKind::Magnetar(_) => (35.0 * 3.0, 9_999_999.0),
+        TargetKind::NeutronStar(_) => (22.0 * 4.0, 9_999_999.0),
+        TargetKind::Supernova(_) => (500.0, 9_999_999.0),
 
-        TargetKind::BlackHole(_) =>
-            (
-                40.0 * 3.0,
-                40.0 * 80000.0,
-            ),
-
-        TargetKind::Pulsar(_) =>
-            (
-                28.0 * 4.0,
-                2000000.0,
-            ),
-
-        TargetKind::Magnetar(_) =>
-            (
-                35.0 * 3.0,
-                1500000.0,
-            ),
-
-        TargetKind::NeutronStar(_) =>
-            (
-                22.0 * 4.0,
-                1200000.0,
-            ),
-
-        TargetKind::Supernova(_) =>
-            (
-                500.0,
-                5000000.0,
-            ),
-
-        TargetKind::GalacticCore =>
-            (
-                5000.0,
-                100_000_000.0,
-            ),
-    };
-    if is_core { (min_d, max_d) } else { (min_d, max_d.min(10_000_000.0)) }
+        TargetKind::GalacticCore => (5000.0, 100_000_000.0),
+        TargetKind::DistantGalaxyCore(_) => (10_000_001.0, 100_000_000.0),
+    }
 }
 
 
@@ -1515,7 +1444,7 @@ fn update_fps_display(
             TargetKind::Supernova(_) =>
                 500_000.0,
 
-            TargetKind::GalacticCore =>
+            TargetKind::GalacticCore | TargetKind::DistantGalaxyCore(_) =>
                 1_000_000_000_000.0,
 
             _ =>
@@ -1601,6 +1530,7 @@ fn update_system_hud(
             (Some(si), label)
         }
         TargetKind::GalacticCore => (None, Some("Trou Noir Galactique".to_string())),
+        TargetKind::DistantGalaxyCore(id) => (None, Some(format!("Galaxie {}", id))),
         _ => (None, None),
     };
 
