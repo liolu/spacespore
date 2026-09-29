@@ -5,6 +5,6 @@
   "download_url": "https://github.com/liolu/spacespore/releases/download/v0.6.1/spacespore-v0.6.1-windows.zip",
   "download_url_linux": "https://github.com/liolu/spacespore/releases/download/v0.6.1/spacespore-v0.6.1-linux.zip",
   "download_url_macos": "https://github.com/liolu/spacespore/releases/download/v0.6.1/spacespore-v0.6.1-macos.zip",
-  "release_notes": "STUN fallback for multiplayer invite codes",
+  "release_notes": "See release page for details",
   "min_updater_version": 1
 }
