@@ -1,17 +1,18 @@
 // ─────────────────────────────────────────────────────────────────────────
 //  Panneau Multijoueur (F2 ou bouton « Multijoueur »)
 //
-//  - pseudo (champ texte) et couleur d'aura (palette) ;
-//  - « Héberger une partie » ;
-//  - parties trouvées automatiquement sur le réseau local (un clic = rejoindre) ;
-//  - rejoindre par adresse IP (pour jouer par Internet).
+//  La connexion est automatique : rien à faire pour jouer en réseau local.
+//  Le panneau sert seulement à :
+//   - choisir son pseudo et la couleur de son aura ;
+//   - voir qui est connecté ;
+//   - donner son code à un ami (Internet) ou taper le code d'un ami.
 // ─────────────────────────────────────────────────────────────────────────
 
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::ButtonState;
 use bevy::prelude::*;
 
-use crate::net::{Net, NetCommand, NetMode, MAX_NAME_LEN, NET_PORT};
+use crate::net::{Invite, Net, NetCommand, NetMode, MAX_NAME_LEN};
 use crate::settings::GameSettings;
 
 const BG_DARK: Color = Color::srgba(0.06, 0.06, 0.10, 0.97);
@@ -22,6 +23,7 @@ const TEXT_COLOR: Color = Color::srgb(0.9, 0.9, 0.95);
 const TEXT_DIM: Color = Color::srgb(0.55, 0.55, 0.62);
 const ERROR_COLOR: Color = Color::srgb(1.0, 0.45, 0.4);
 const OK_COLOR: Color = Color::srgb(0.45, 0.9, 0.55);
+const CODE_COLOR: Color = Color::srgb(1.0, 0.85, 0.35);
 const RED_SOFT: Color = Color::srgb(0.85, 0.35, 0.35);
 
 /// Couleurs d'aura proposées.
@@ -56,8 +58,7 @@ impl Plugin for NetUiPlugin {
                     update_panel_visibility,
                     update_fields,
                     update_swatches,
-                    update_status,
-                    rebuild_lan_list,
+                    update_texts,
                     rebuild_players_list,
                 )
                     .chain(),
@@ -68,7 +69,7 @@ impl Plugin for NetUiPlugin {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Field {
     Name,
-    Address,
+    Code,
 }
 
 #[derive(Resource, Default)]
@@ -77,8 +78,7 @@ pub struct NetPanel {
     pub focus: Option<Field>,
     /// Échap a été utilisé par ce panneau pendant cette frame.
     pub esc_consumed: bool,
-    address: String,
-    address_loaded: bool,
+    code: String,
 }
 
 #[derive(Component)]
@@ -86,6 +86,9 @@ struct NetPanelRoot;
 
 #[derive(Component)]
 struct NetOpenButton;
+
+#[derive(Component)]
+struct NetOpenLabel;
 
 #[derive(Component)]
 struct CloseButton;
@@ -100,33 +103,29 @@ struct FieldText(Field);
 struct Swatch(usize);
 
 #[derive(Component)]
-struct HostButton;
-
-#[derive(Component)]
 struct JoinButton;
 
 #[derive(Component)]
 struct LeaveButton;
 
 #[derive(Component)]
-struct LanEntry(String);
-
-#[derive(Component)]
 struct StatusText;
 
 #[derive(Component)]
-struct LanList;
+struct InviteText;
+
+#[derive(Component)]
+struct InviteHint;
+
+#[derive(Component)]
+struct NoticeText;
 
 #[derive(Component)]
 struct PlayersList;
 
-/// Section visible uniquement hors ligne (héberger / rejoindre).
+/// Ligne « code d'un ami + Rejoindre » (masquée quand on a déjà rejoint un ami).
 #[derive(Component)]
-struct OfflineSection;
-
-/// Section visible uniquement en partie (joueurs + quitter).
-#[derive(Component)]
-struct OnlineSection;
+struct JoinRow;
 
 // ─────────────────────────────────────────────────────────────────────────
 //  Construction
@@ -178,7 +177,12 @@ fn field(commands: &mut Commands, kind: Field, width: Val) -> Entity {
 }
 
 fn section_title(commands: &mut Commands, label: &str) -> Entity {
-    commands.spawn(text(label, 12.0, TEXT_DIM)).id()
+    commands
+        .spawn((
+            text(label, 12.0, TEXT_DIM),
+            Node { margin: UiRect::top(Val::Px(4.0)), ..default() },
+        ))
+        .id()
 }
 
 fn setup_net_panel(mut commands: Commands) {
@@ -199,7 +203,7 @@ fn setup_net_panel(mut commands: Commands) {
             Button,
             NetOpenButton,
         ))
-        .with_child(text("Multijoueur", 18.0, TEXT_COLOR));
+        .with_child((text("Multijoueur", 18.0, TEXT_COLOR), NetOpenLabel));
 
     let root = commands
         .spawn((
@@ -207,10 +211,10 @@ fn setup_net_panel(mut commands: Commands) {
                 position_type: PositionType::Absolute,
                 left: Val::Px(20.0),
                 top: Val::Px(70.0),
-                width: Val::Px(380.0),
+                width: Val::Px(360.0),
                 flex_direction: FlexDirection::Column,
                 padding: UiRect::all(Val::Px(14.0)),
-                row_gap: Val::Px(10.0),
+                row_gap: Val::Px(8.0),
                 border: UiRect::all(Val::Px(2.0)),
                 ..default()
             },
@@ -238,7 +242,6 @@ fn setup_net_panel(mut commands: Commands) {
     // Profil
     let name_title = section_title(&mut commands, "VOTRE PSEUDO");
     let name_field = field(&mut commands, Field::Name, Val::Percent(100.0));
-
     let color_title = section_title(&mut commands, "COULEUR DE VOTRE AURA");
     let palette = commands
         .spawn(Node {
@@ -268,80 +271,9 @@ fn setup_net_panel(mut commands: Commands) {
         commands.entity(palette).add_child(swatch);
     }
 
-    // Statut
-    let status = commands.spawn((text("", 13.0, TEXT_DIM), StatusText)).id();
-
-    // ── Hors ligne : héberger / rejoindre ─────────────────────────────
-    let offline = commands
-        .spawn((
-            Node {
-                width: Val::Percent(100.0),
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(10.0),
-                ..default()
-            },
-            OfflineSection,
-        ))
-        .id();
-    let host = button(&mut commands, "Heberger une partie", OK_COLOR, HostButton);
-    let host_hint = commands
-        .spawn(text(
-            "Les joueurs sur le meme reseau (meme box / wifi) vous verront automatiquement ci-dessous.",
-            11.0,
-            TEXT_DIM,
-        ))
-        .id();
-    let lan_title = section_title(&mut commands, "PARTIES SUR LE RESEAU LOCAL (cliquer pour rejoindre)");
-    let lan_list = commands
-        .spawn((
-            Node {
-                width: Val::Percent(100.0),
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(4.0),
-                ..default()
-            },
-            LanList,
-        ))
-        .id();
-    let ip_title = section_title(&mut commands, "REJOINDRE PAR ADRESSE IP (par Internet)");
-    let ip_row = commands
-        .spawn(Node {
-            width: Val::Percent(100.0),
-            column_gap: Val::Px(6.0),
-            align_items: AlignItems::Center,
-            ..default()
-        })
-        .id();
-    let ip_field = field(&mut commands, Field::Address, Val::Px(240.0));
-    let join = button(&mut commands, "Rejoindre", ACCENT, JoinButton);
-    commands.entity(ip_row).add_children(&[ip_field, join]);
-    let ip_hint = commands
-        .spawn(text(
-            format!(
-                "Par Internet, l'hote doit rediriger le port UDP {NET_PORT} de sa box vers son PC, puis vous donner son IP publique."
-            ),
-            11.0,
-            TEXT_DIM,
-        ))
-        .id();
-    commands
-        .entity(offline)
-        .add_children(&[host, host_hint, lan_title, lan_list, ip_title, ip_row, ip_hint]);
-
-    // ── En partie : joueurs + quitter ─────────────────────────────────
-    let online = commands
-        .spawn((
-            Node {
-                width: Val::Percent(100.0),
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(8.0),
-                display: Display::None,
-                ..default()
-            },
-            OnlineSection,
-        ))
-        .id();
-    let players_title = section_title(&mut commands, "JOUEURS");
+    // Joueurs
+    let players_title = section_title(&mut commands, "DANS LA PARTIE");
+    let status = commands.spawn((text("", 13.0, OK_COLOR), StatusText)).id();
     let players = commands
         .spawn((
             Node {
@@ -353,15 +285,44 @@ fn setup_net_panel(mut commands: Commands) {
             PlayersList,
         ))
         .id();
-    let leave = button(&mut commands, "Quitter la partie", RED_SOFT, LeaveButton);
-    commands.entity(online).add_children(&[players_title, players, leave]);
+
+    // Inviter un ami
+    let invite_title = section_title(&mut commands, "INVITER UN AMI PAR INTERNET");
+    let invite = commands.spawn((text("", 26.0, CODE_COLOR), InviteText)).id();
+    let invite_hint = commands.spawn((text("", 11.0, TEXT_DIM), InviteHint)).id();
+
+    // Rejoindre un ami
+    let join_title = section_title(&mut commands, "REJOINDRE UN AMI");
+    let join_row = commands
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                column_gap: Val::Px(6.0),
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            JoinRow,
+        ))
+        .id();
+    let code_field = field(&mut commands, Field::Code, Val::Px(200.0));
+    let join = button(&mut commands, "Rejoindre", ACCENT, JoinButton);
+    commands.entity(join_row).add_children(&[code_field, join]);
+    let leave = button(&mut commands, "Quitter la partie de votre ami", RED_SOFT, LeaveButton);
+    let notice = commands.spawn((text("", 12.0, TEXT_DIM), NoticeText)).id();
 
     let help = commands
-        .spawn(text("F2 : ouvrir / fermer ce panneau", 11.0, TEXT_DIM))
+        .spawn((
+            text("Sur le meme wifi / la meme box, les joueurs se retrouvent tout seuls.\nF2 : ouvrir / fermer ce panneau", 11.0, TEXT_DIM),
+            Node { margin: UiRect::top(Val::Px(4.0)), ..default() },
+        ))
         .id();
 
     commands.entity(root).add_children(&[
-        header, name_title, name_field, color_title, palette, status, offline, online, help,
+        header, name_title, name_field, color_title, palette,
+        players_title, status, players,
+        invite_title, invite, invite_hint,
+        join_title, join_row, leave, notice,
+        help,
     ]);
 }
 
@@ -374,7 +335,6 @@ fn toggle_net_panel(
     open_btn: Query<&Interaction, (Changed<Interaction>, With<NetOpenButton>)>,
     close_btn: Query<&Interaction, (Changed<Interaction>, With<CloseButton>)>,
     mut panel: ResMut<NetPanel>,
-    mut net: ResMut<Net>,
     mut settings: ResMut<GameSettings>,
 ) {
     let clicked_open = open_btn.iter().any(|i| *i == Interaction::Pressed);
@@ -393,7 +353,6 @@ fn toggle_net_panel(
     if !panel.open {
         commit_focus(&mut panel, &mut settings);
     }
-    net.discovering = panel.open;
 }
 
 /// Quitte le champ en cours d'édition (et sauvegarde le pseudo).
@@ -409,10 +368,8 @@ fn commit_focus(panel: &mut NetPanel, settings: &mut GameSettings) {
 fn handle_panel_buttons(
     fields: Query<(&Interaction, &FieldBox), Changed<Interaction>>,
     swatches: Query<(&Interaction, &Swatch), Changed<Interaction>>,
-    host: Query<&Interaction, (Changed<Interaction>, With<HostButton>)>,
     join: Query<&Interaction, (Changed<Interaction>, With<JoinButton>)>,
     leave: Query<&Interaction, (Changed<Interaction>, With<LeaveButton>)>,
-    lan: Query<(&Interaction, &LanEntry), Changed<Interaction>>,
     mouse: Res<ButtonInput<MouseButton>>,
     mut panel: ResMut<NetPanel>,
     mut settings: ResMut<GameSettings>,
@@ -423,12 +380,7 @@ fn handle_panel_buttons(
     }
     let pressed = |i: &Interaction| *i == Interaction::Pressed;
 
-    let mut clicked_field = None;
-    for (i, f) in &fields {
-        if pressed(i) {
-            clicked_field = Some(f.0);
-        }
-    }
+    let clicked_field = fields.iter().find(|(i, _)| pressed(i)).map(|(_, f)| f.0);
     if let Some(f) = clicked_field {
         if panel.focus != Some(f) {
             commit_focus(&mut panel, &mut settings);
@@ -445,20 +397,12 @@ fn handle_panel_buttons(
             settings.save();
         }
     }
-    if host.iter().any(pressed) {
-        commands_out.send(NetCommand::Host);
-    }
     if join.iter().any(pressed) {
         commit_focus(&mut panel, &mut settings);
-        commands_out.send(NetCommand::Join(panel.address.clone()));
+        commands_out.send(NetCommand::JoinCode(panel.code.clone()));
     }
     if leave.iter().any(pressed) {
         commands_out.send(NetCommand::Leave);
-    }
-    for (i, entry) in &lan {
-        if pressed(i) {
-            commands_out.send(NetCommand::Join(entry.0.clone()));
-        }
     }
 }
 
@@ -468,10 +412,6 @@ fn handle_text_input(
     mut settings: ResMut<GameSettings>,
     mut commands_out: EventWriter<NetCommand>,
 ) {
-    if !panel.address_loaded {
-        panel.address = settings.last_join_address.clone();
-        panel.address_loaded = true;
-    }
     let Some(focus) = panel.focus else {
         events.clear();
         return;
@@ -483,8 +423,8 @@ fn handle_text_input(
         match &ev.logical_key {
             Key::Enter => {
                 commit_focus(&mut panel, &mut settings);
-                if focus == Field::Address {
-                    commands_out.send(NetCommand::Join(panel.address.clone()));
+                if focus == Field::Code {
+                    commands_out.send(NetCommand::JoinCode(panel.code.clone()));
                 }
                 return;
             }
@@ -492,12 +432,10 @@ fn handle_text_input(
                 commit_focus(&mut panel, &mut settings);
                 return;
             }
-            Key::Backspace => {
-                match focus {
-                    Field::Name => { settings.player_name.pop(); }
-                    Field::Address => { panel.address.pop(); }
-                }
-            }
+            Key::Backspace => match focus {
+                Field::Name => { settings.player_name.pop(); }
+                Field::Code => { panel.code.pop(); }
+            },
             Key::Space => {
                 if focus == Field::Name && settings.player_name.chars().count() < MAX_NAME_LEN {
                     settings.player_name.push(' ');
@@ -511,10 +449,11 @@ fn handle_text_input(
                                 settings.player_name.push(c);
                             }
                         }
-                        Field::Address => {
-                            let allowed = c.is_ascii_alphanumeric() || ".:-_[]".contains(c);
-                            if allowed && panel.address.len() < 64 {
-                                panel.address.push(c);
+                        Field::Code => {
+                            // Code d'invitation (ou, à défaut, une adresse IP)
+                            let allowed = c.is_ascii_alphanumeric() || ".:-[]".contains(c);
+                            if allowed && panel.code.len() < 64 {
+                                panel.code.push(c.to_ascii_uppercase());
                             }
                         }
                     }
@@ -529,12 +468,19 @@ fn handle_text_input(
 //  Rafraîchissement de l'affichage
 // ─────────────────────────────────────────────────────────────────────────
 
+fn set_display(node: &mut Node, visible: bool) {
+    let want = if visible { Display::Flex } else { Display::None };
+    if node.display != want {
+        node.display = want;
+    }
+}
+
 fn update_panel_visibility(
     panel: Res<NetPanel>,
     net: Res<Net>,
     mut root: Query<&mut Visibility, With<NetPanelRoot>>,
-    mut offline: Query<&mut Node, (With<OfflineSection>, Without<OnlineSection>)>,
-    mut online: Query<&mut Node, (With<OnlineSection>, Without<OfflineSection>)>,
+    mut join_row: Query<&mut Node, (With<JoinRow>, Without<LeaveButton>)>,
+    mut leave: Query<&mut Node, (With<LeaveButton>, Without<JoinRow>)>,
 ) {
     for mut vis in &mut root {
         let want = if panel.open { Visibility::Visible } else { Visibility::Hidden };
@@ -542,18 +488,12 @@ fn update_panel_visibility(
             *vis = want;
         }
     }
-    let in_game = matches!(net.mode(), NetMode::Hosting | NetMode::Connected);
-    for mut node in &mut offline {
-        let want = if in_game { Display::None } else { Display::Flex };
-        if node.display != want {
-            node.display = want;
-        }
+    let joined = net.joined_by_code();
+    for mut node in &mut join_row {
+        set_display(&mut node, !joined);
     }
-    for mut node in &mut online {
-        let want = if in_game { Display::Flex } else { Display::None };
-        if node.display != want {
-            node.display = want;
-        }
+    for mut node in &mut leave {
+        set_display(&mut node, joined);
     }
 }
 
@@ -577,7 +517,7 @@ fn update_fields(
     for (ft, mut t, mut color) in &mut texts {
         let (value, placeholder) = match ft.0 {
             Field::Name => (settings.player_name.as_str(), "Votre pseudo"),
-            Field::Address => (panel.address.as_str(), "ex. 192.168.1.20"),
+            Field::Code => (panel.code.as_str(), "Code de votre ami"),
         };
         let focused = panel.focus == Some(ft.0);
         let shown = if value.is_empty() && !focused {
@@ -607,77 +547,62 @@ fn update_swatches(settings: Res<GameSettings>, mut swatches: Query<(&Swatch, &m
     }
 }
 
-fn update_status(net: Res<Net>, mut q: Query<(&mut Text, &mut TextColor), With<StatusText>>) {
-    let color = if net.status_is_error {
-        ERROR_COLOR
-    } else if matches!(net.mode(), NetMode::Hosting | NetMode::Connected) {
-        OK_COLOR
-    } else {
-        TEXT_DIM
-    };
-    let mut status = net.status.clone();
-    if net.mode() == NetMode::Hosting {
-        status.push_str(&format!("\nLes autres joueurs peuvent vous rejoindre (port UDP {NET_PORT})."));
+fn set_text(t: &mut Text, c: &mut TextColor, value: String, color: Color) {
+    if t.0 != value {
+        t.0 = value;
     }
-    for (mut t, mut c) in &mut q {
-        if t.0 != status {
-            t.0 = status.clone();
-        }
-        if c.0 != color {
-            c.0 = color;
-        }
+    if c.0 != color {
+        c.0 = color;
     }
 }
 
-fn rebuild_lan_list(
-    mut commands: Commands,
+fn update_texts(
     net: Res<Net>,
-    list: Query<Entity, With<LanList>>,
-    mut last: Local<Option<String>>,
+    mut q: ParamSet<(
+        Query<(&mut Text, &mut TextColor), With<NetOpenLabel>>,
+        Query<(&mut Text, &mut TextColor), With<StatusText>>,
+        Query<(&mut Text, &mut TextColor), With<InviteText>>,
+        Query<(&mut Text, &mut TextColor), With<InviteHint>>,
+        Query<(&mut Text, &mut TextColor), With<NoticeText>>,
+    )>,
 ) {
-    let signature: String = net
-        .lan_games
-        .iter()
-        .map(|g| format!("{}|{}|{}|{};", g.addr, g.host, g.players, g.compatible))
-        .collect();
-    if last.as_deref() == Some(signature.as_str()) {
-        return;
-    }
-    *last = Some(signature);
-    let Ok(list) = list.get_single() else { return };
-    commands.entity(list).despawn_descendants();
+    let count = net.player_count();
+    let mode = net.mode();
 
-    if net.lan_games.is_empty() {
-        let empty = commands
-            .spawn(text("Recherche en cours... aucune partie trouvee pour l'instant.", 12.0, TEXT_DIM))
-            .id();
-        commands.entity(list).add_child(empty);
-        return;
+    // Bouton : nombre de joueurs connectés
+    let label = if count > 1 { format!("Multijoueur ({count})") } else { "Multijoueur".into() };
+    for (mut t, mut c) in &mut q.p0() {
+        set_text(&mut t, &mut c, label.clone(), TEXT_COLOR);
     }
-    for g in &net.lan_games {
-        let plural = if g.players > 1 { "s" } else { "" };
-        let label = if g.compatible {
-            format!("{}  -  {} joueur{plural}  -  {}", g.host, g.players, g.addr.ip())
-        } else {
-            format!("{}  -  version differente", g.host)
-        };
-        let entry = commands
-            .spawn((
-                Node {
-                    width: Val::Percent(100.0),
-                    padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
-                    border: UiRect::all(Val::Px(1.0)),
-                    ..default()
-                },
-                BackgroundColor(BG_BUTTON),
-                BorderColor(if g.compatible { OK_COLOR } else { TEXT_DIM }),
-                BorderRadius::all(Val::Px(5.0)),
-                Button,
-                LanEntry(g.addr.to_string()),
-            ))
-            .with_child(text(label, 13.0, if g.compatible { TEXT_COLOR } else { TEXT_DIM }))
-            .id();
-        commands.entity(list).add_child(entry);
+
+    let (status, color) = match mode {
+        NetMode::Joining => ("Connexion...".to_string(), TEXT_DIM),
+        _ if count > 1 => (format!("{count} joueurs connectes"), OK_COLOR),
+        _ => ("Vous etes seul pour l'instant. Recherche d'autres joueurs...".to_string(), TEXT_DIM),
+    };
+    for (mut t, mut c) in &mut q.p1() {
+        set_text(&mut t, &mut c, status.clone(), color);
+    }
+
+    let (code, code_color, hint) = match net.invite() {
+        Invite::Ready(code) => (
+            code,
+            CODE_COLOR,
+            "Donnez ce code a votre ami : il le tape dans \"Rejoindre un ami\".".to_string(),
+        ),
+        Invite::Pending => ("...".to_string(), TEXT_DIM, "Preparation du code...".to_string()),
+        Invite::Unavailable(reason) => ("Indisponible".to_string(), TEXT_DIM, reason),
+    };
+    for (mut t, mut c) in &mut q.p2() {
+        set_text(&mut t, &mut c, code.clone(), code_color);
+    }
+    for (mut t, mut c) in &mut q.p3() {
+        set_text(&mut t, &mut c, hint.clone(), TEXT_DIM);
+    }
+
+    let notice_color = if net.notice_is_error { ERROR_COLOR } else { OK_COLOR };
+    for (mut t, mut c) in &mut q.p4() {
+        set_text(&mut t, &mut c, net.notice.clone(), notice_color);
     }
 }
 
@@ -694,10 +619,7 @@ fn rebuild_players_list(
     others.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
     players.extend(others);
 
-    let signature: String = players
-        .iter()
-        .map(|(n, c, _)| format!("{n}|{:?};", c))
-        .collect();
+    let signature: String = players.iter().map(|(n, c, _)| format!("{n}|{c:?};")).collect();
     if last.as_deref() == Some(signature.as_str()) {
         return;
     }
