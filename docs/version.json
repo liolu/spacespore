@@ -1,10 +1,10 @@
 {
-  "version": "0.6.1",
-  "version_code": 601,
+  "version": "0.6.2",
+  "version_code": 602,
   "release_date": "2026-09-29",
-  "download_url": "https://github.com/liolu/spacespore/releases/download/v0.6.1/spacespore-v0.6.1-windows.zip",
-  "download_url_linux": "https://github.com/liolu/spacespore/releases/download/v0.6.1/spacespore-v0.6.1-linux.zip",
-  "download_url_macos": "https://github.com/liolu/spacespore/releases/download/v0.6.1/spacespore-v0.6.1-macos.zip",
-  "release_notes": "See release page for details",
+  "download_url": "https://github.com/liolu/spacespore/releases/download/v0.6.2/spacespore-v0.6.2-windows.zip",
+  "download_url_linux": "https://github.com/liolu/spacespore/releases/download/v0.6.2/spacespore-v0.6.2-linux.zip",
+  "download_url_macos": "https://github.com/liolu/spacespore/releases/download/v0.6.2/spacespore-v0.6.2-macos.zip",
+  "release_notes": "Copy invite code button, launcher fix",
   "min_updater_version": 1
 }

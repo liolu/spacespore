@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
-pub const VERSION: &str = "0.6.1";
-pub const VERSION_CODE: u32 = 601;
+pub const VERSION: &str = "0.6.2";
+pub const VERSION_CODE: u32 = 602;
 pub const UPDATER_VERSION: u32 = 1;
 
 pub const REPO_OWNER: &str = "liolu";
