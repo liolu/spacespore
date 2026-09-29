@@ -21,117 +21,107 @@ pub enum ShipMode {
     Free,
 }
 
+/// Épaisseur du contour coloré autour du vaisseau (unités, avant mise à l'échelle).
+const OUTLINE_WIDTH: f32 = 0.18;
+
+/// Pièces du vaisseau : (dimensions, position, matériau).
+const SHIP_PARTS: [([f32; 3], [f32; 3], usize); 6] = [
+    ([2.0, 0.6, 5.0], [0.0, 0.0, 0.0], 0),    // coque
+    ([3.5, 0.12, 1.8], [-2.2, 0.0, 0.4], 1),  // aile gauche
+    ([3.5, 0.12, 1.8], [2.2, 0.0, 0.4], 1),   // aile droite
+    ([0.8, 0.35, 1.0], [0.0, 0.35, -1.2], 2), // cockpit
+    ([0.6, 0.4, 0.4], [-0.5, 0.0, 2.6], 3),   // réacteur gauche
+    ([0.6, 0.4, 0.4], [0.5, 0.0, 2.6], 3),    // réacteur droit
+];
+
 /// Meshes et matériaux partagés entre le vaisseau local et ceux des autres joueurs.
 #[derive(Resource, Clone)]
 pub struct ShipAssets {
-    body_mesh: Handle<Mesh>,
-    wing_mesh: Handle<Mesh>,
-    cockpit_mesh: Handle<Mesh>,
-    engine_mesh: Handle<Mesh>,
-    body_mat: Handle<StandardMaterial>,
-    wing_mat: Handle<StandardMaterial>,
-    cockpit_mat: Handle<StandardMaterial>,
-    engine_mat: Handle<StandardMaterial>,
-    pub aura_mesh: Handle<Mesh>,
+    /// Par pièce : (mesh, mesh du contour, matériau, position)
+    parts: Vec<(Handle<Mesh>, Handle<Mesh>, Handle<StandardMaterial>, Vec3)>,
 }
 
 impl ShipAssets {
     fn new(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) -> Self {
-        Self {
-            body_mesh: meshes.add(Cuboid::new(2.0, 0.6, 5.0)),
-            wing_mesh: meshes.add(Cuboid::new(3.5, 0.12, 1.8)),
-            cockpit_mesh: meshes.add(Cuboid::new(0.8, 0.35, 1.0)),
-            engine_mesh: meshes.add(Cuboid::new(0.6, 0.4, 0.4)),
-            body_mat: materials.add(StandardMaterial {
+        let mats = [
+            materials.add(StandardMaterial {
                 base_color: Color::srgb(0.55, 0.55, 0.6),
                 metallic: 0.8,
                 perceptual_roughness: 0.3,
                 ..default()
             }),
-            wing_mat: materials.add(StandardMaterial {
+            materials.add(StandardMaterial {
                 base_color: Color::srgb(0.4, 0.4, 0.45),
                 metallic: 0.7,
                 perceptual_roughness: 0.4,
                 ..default()
             }),
-            cockpit_mat: materials.add(StandardMaterial {
+            materials.add(StandardMaterial {
                 base_color: Color::srgb(0.15, 0.4, 0.7),
                 metallic: 0.9,
                 perceptual_roughness: 0.1,
                 ..default()
             }),
-            engine_mat: materials.add(StandardMaterial {
+            materials.add(StandardMaterial {
                 base_color: Color::srgb(0.9, 0.4, 0.1),
                 emissive: bevy::color::LinearRgba::new(2.0, 0.8, 0.2, 1.0),
                 ..default()
             }),
-            aura_mesh: meshes.add(Sphere::new(1.0).mesh().ico(3).unwrap()),
-        }
+        ];
+        let parts = SHIP_PARTS
+            .iter()
+            .map(|(size, pos, mat)| {
+                let size = Vec3::from_array(*size);
+                (
+                    meshes.add(Cuboid::from_size(size)),
+                    meshes.add(Cuboid::from_size(size + Vec3::splat(OUTLINE_WIDTH * 2.0))),
+                    mats[*mat].clone(),
+                    Vec3::from_array(*pos),
+                )
+            })
+            .collect();
+        Self { parts }
     }
 
-    /// Ajoute la coque du vaisseau (sans lumière ni aura) comme enfants de `p`.
+    /// Ajoute la coque du vaisseau (sans lumière ni contour) comme enfants de `p`.
     pub fn spawn_model(&self, p: &mut ChildBuilder) {
-        p.spawn((
-            Mesh3d(self.body_mesh.clone()),
-            MeshMaterial3d(self.body_mat.clone()),
-            Transform::default(),
-        ));
-        for x in [-2.2, 2.2] {
+        for (mesh, _, mat, pos) in &self.parts {
             p.spawn((
-                Mesh3d(self.wing_mesh.clone()),
-                MeshMaterial3d(self.wing_mat.clone()),
-                Transform::from_translation(Vec3::new(x, 0.0, 0.4)),
-            ));
-        }
-        p.spawn((
-            Mesh3d(self.cockpit_mesh.clone()),
-            MeshMaterial3d(self.cockpit_mat.clone()),
-            Transform::from_translation(Vec3::new(0.0, 0.35, -1.2)),
-        ));
-        for x in [-0.5, 0.5] {
-            p.spawn((
-                Mesh3d(self.engine_mesh.clone()),
-                MeshMaterial3d(self.engine_mat.clone()),
-                Transform::from_translation(Vec3::new(x, 0.0, 2.6)),
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(mat.clone()),
+                Transform::from_translation(*pos),
             ));
         }
     }
 
-    /// Ajoute l'aura colorée (deux sphères additives) comme enfants de `p`.
-    pub fn spawn_aura(&self, p: &mut ChildBuilder, inner: Handle<StandardMaterial>, outer: Handle<StandardMaterial>) {
-        p.spawn((
-            Mesh3d(self.aura_mesh.clone()),
-            MeshMaterial3d(inner),
-            Transform::from_scale(Vec3::splat(4.0)),
-            bevy::pbr::NotShadowCaster,
-        ));
-        p.spawn((
-            Mesh3d(self.aura_mesh.clone()),
-            MeshMaterial3d(outer),
-            Transform::from_scale(Vec3::splat(6.5)),
-            bevy::pbr::NotShadowCaster,
-        ));
+    /// Ajoute le contour coloré : chaque pièce est dupliquée un peu plus grande
+    /// et seules ses faces arrière sont dessinées (« coque inversée »), ce qui
+    /// laisse apparaître un liseré de couleur tout autour de la silhouette.
+    pub fn spawn_outline(&self, p: &mut ChildBuilder, material: Handle<StandardMaterial>) {
+        for (_, outline_mesh, _, pos) in &self.parts {
+            p.spawn((
+                Mesh3d(outline_mesh.clone()),
+                MeshMaterial3d(material.clone()),
+                Transform::from_translation(*pos),
+                bevy::pbr::NotShadowCaster,
+            ));
+        }
     }
 }
 
-/// Matériaux de l'aura (intérieur plus dense, extérieur plus diffus).
-pub fn aura_materials(color: [f32; 3]) -> (StandardMaterial, StandardMaterial) {
-    let make = |alpha: f32| StandardMaterial {
-        base_color: Color::srgba(color[0], color[1], color[2], alpha),
+/// Matériau du contour : couleur pleine, non éclairée, faces avant masquées.
+pub fn outline_material(color: [f32; 3]) -> StandardMaterial {
+    StandardMaterial {
+        base_color: Color::srgb(color[0], color[1], color[2]),
         unlit: true,
-        alpha_mode: AlphaMode::Add,
-        cull_mode: None,
+        cull_mode: Some(bevy::render::render_resource::Face::Front),
         ..default()
-    };
-    (make(0.22), make(0.08))
+    }
 }
 
-/// Marqueur des matériaux d'aura du vaisseau local (couleur mise à jour depuis les options).
+/// Matériau du contour du vaisseau local (couleur mise à jour depuis le panneau).
 #[derive(Component)]
-pub struct LocalAura {
-    pub inner: Handle<StandardMaterial>,
-    pub outer: Handle<StandardMaterial>,
-}
+pub struct LocalOutline(pub Handle<StandardMaterial>);
 
 fn spawn_ship(
     mut commands: Commands,
@@ -146,18 +136,16 @@ fn spawn_ship(
     let start = sys0_center + Vec3::new(orbit_dist + radius * 1.6, radius * 0.2, 0.0);
 
     let assets = ShipAssets::new(&mut meshes, &mut materials);
-    let (inner, outer) = aura_materials(settings.aura_color);
-    let inner = materials.add(inner);
-    let outer = materials.add(outer);
+    let outline = materials.add(outline_material(settings.aura_color));
 
     commands.spawn((
         Transform::from_translation(start),
         Visibility::default(),
         Ship,
-        LocalAura { inner: inner.clone(), outer: outer.clone() },
+        LocalOutline(outline.clone()),
     )).with_children(|p| {
         assets.spawn_model(p);
-        assets.spawn_aura(p, inner, outer);
+        assets.spawn_outline(p, outline);
         p.spawn((
             PointLight {
                 intensity: 800_000.0,

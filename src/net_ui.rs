@@ -3,7 +3,7 @@
 //
 //  La connexion est automatique : rien à faire pour jouer en réseau local.
 //  Le panneau sert seulement à :
-//   - choisir son pseudo et la couleur de son aura ;
+//   - choisir son pseudo et la couleur du contour de son vaisseau ;
 //   - voir qui est connecté ;
 //   - donner son code à un ami (Internet) ou taper le code d'un ami.
 // ─────────────────────────────────────────────────────────────────────────
@@ -26,7 +26,7 @@ const OK_COLOR: Color = Color::srgb(0.45, 0.9, 0.55);
 const CODE_COLOR: Color = Color::srgb(1.0, 0.85, 0.35);
 const RED_SOFT: Color = Color::srgb(0.85, 0.35, 0.35);
 
-/// Couleurs d'aura proposées.
+/// Couleurs de contour proposées.
 pub const AURA_PALETTE: [[f32; 3]; 12] = [
     [0.20, 0.90, 1.00], // cyan
     [0.25, 0.45, 1.00], // bleu
@@ -242,7 +242,7 @@ fn setup_net_panel(mut commands: Commands) {
     // Profil
     let name_title = section_title(&mut commands, "VOTRE PSEUDO");
     let name_field = field(&mut commands, Field::Name, Val::Percent(100.0));
-    let color_title = section_title(&mut commands, "COULEUR DE VOTRE AURA");
+    let color_title = section_title(&mut commands, "COULEUR DU CONTOUR DE VOTRE VAISSEAU");
     let palette = commands
         .spawn(Node {
             width: Val::Percent(100.0),

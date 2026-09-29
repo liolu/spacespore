@@ -12,7 +12,7 @@
 //
 //  La carte est générée localement chez chaque joueur (même code, même
 //  graine). Seuls s'échangent : position/orientation du vaisseau, pseudo et
-//  couleur d'aura, plus le système stellaire où l'on se trouve et son
+//  couleur de contour, plus le système stellaire où l'on se trouve et son
 //  horloge d'univers. L'hôte relaie l'état de tout le monde.
 //
 //  Orbites : chacun garde sa propre horloge. Elle n'est alignée que lorsque
@@ -32,7 +32,7 @@ use std::time::Duration;
 
 use crate::planet::SpawnedSystems;
 use crate::settings::GameSettings;
-use crate::ship::{aura_materials, LocalAura, Ship, ShipAssets};
+use crate::ship::{outline_material, LocalOutline, Ship, ShipAssets};
 use crate::CameraController;
 
 pub const NET_PORT: u16 = 27777;
@@ -67,7 +67,7 @@ impl Plugin for NetPlugin {
                     net_update,
                     sync_remote_ships,
                     update_remote_labels,
-                    update_local_aura,
+                    update_local_outline,
                 )
                     .chain(),
             )
@@ -1060,8 +1060,7 @@ fn cleanup_on_exit(mut exit: EventReader<AppExit>, mut net: ResMut<Net>) {
 struct RemoteShip {
     id: u32,
     color: [f32; 3],
-    inner: Handle<StandardMaterial>,
-    outer: Handle<StandardMaterial>,
+    outline: Handle<StandardMaterial>,
 }
 
 #[derive(Component)]
@@ -1123,9 +1122,7 @@ fn sync_remote_ships(
 
         if rs.color != peer.color {
             rs.color = peer.color;
-            let (inner, outer) = aura_materials(peer.color);
-            if let Some(m) = materials.get_mut(&rs.inner) { *m = inner; }
-            if let Some(m) = materials.get_mut(&rs.outer) { *m = outer; }
+            if let Some(m) = materials.get_mut(&rs.outline) { *m = outline_material(peer.color); }
         }
     }
 
@@ -1134,18 +1131,16 @@ fn sync_remote_ships(
         if present.contains(id) {
             continue;
         }
-        let (inner, outer) = aura_materials(peer.color);
-        let inner = materials.add(inner);
-        let outer = materials.add(outer);
+        let outline = materials.add(outline_material(peer.color));
         commands
             .spawn((
                 Transform::from_translation(peer.pos).with_rotation(peer.rot),
                 Visibility::default(),
-                RemoteShip { id: *id, color: peer.color, inner: inner.clone(), outer: outer.clone() },
+                RemoteShip { id: *id, color: peer.color, outline: outline.clone() },
             ))
             .with_children(|p| {
                 assets.spawn_model(p);
-                assets.spawn_aura(p, inner, outer);
+                assets.spawn_outline(p, outline);
             });
 
         commands
@@ -1213,20 +1208,18 @@ fn update_remote_labels(
     }
 }
 
-fn update_local_aura(
+fn update_local_outline(
     settings: Res<GameSettings>,
-    aura_q: Query<&LocalAura>,
+    outline_q: Query<&LocalOutline>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut last: Local<Option<[f32; 3]>>,
 ) {
     if *last == Some(settings.aura_color) {
         return;
     }
-    let Ok(aura) = aura_q.get_single() else { return };
+    let Ok(outline) = outline_q.get_single() else { return };
     *last = Some(settings.aura_color);
-    let (inner, outer) = aura_materials(settings.aura_color);
-    if let Some(m) = materials.get_mut(&aura.inner) { *m = inner; }
-    if let Some(m) = materials.get_mut(&aura.outer) { *m = outer; }
+    if let Some(m) = materials.get_mut(&outline.0) { *m = outline_material(settings.aura_color); }
 }
 
 #[cfg(test)]
