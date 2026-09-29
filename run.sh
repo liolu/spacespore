@@ -32,6 +32,7 @@ echo "Controles:"
 echo "  WASD / Fleches  - Rotation camera"
 echo "  Clic droit      - Rotation libre (trackpad Mac : clic a deux doigts)"
 echo "  Molette         - Zoom (trackpad : glisser a deux doigts)"
+echo "  F2              - Multijoueur"
 echo
 ./target/release/spacespore
 code=$?

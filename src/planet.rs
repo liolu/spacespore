@@ -1,5 +1,6 @@
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
+use crate::net::UniverseClock;
 use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use rand::Rng;
@@ -1674,10 +1675,11 @@ fn spawn_system_bodies(
 
 fn orbit_planets(
     time: Res<Time>,
+    clock: Res<UniverseClock>,
     settings: Res<GameSettings>,
     mut planet_q: Query<(&mut Transform, &PlanetId, &SystemIdx), With<PlanetRoot>>,
 ) {
-    let t = time.elapsed_secs();
+    let t = clock.secs(&time);
     for (mut tf, pid, si) in &mut planet_q {
         let Some(sys) = settings.systems.get(si.0) else { continue };
         let local_idx = pid.0 - si.0 * 1000;
@@ -1698,10 +1700,11 @@ fn orbit_planets(
 
 fn orbit_stars(
     time: Res<Time>,
+    clock: Res<UniverseClock>,
     settings: Res<GameSettings>,
     mut star_q: Query<(&mut Transform, &StarId, &SystemIdx), With<StarRoot>>,
 ) {
-    let t = time.elapsed_secs();
+    let t = clock.secs(&time);
     for (mut tf, sid, si) in &mut star_q {
         let Some(sys) = settings.systems.get(si.0) else { continue };
         let local_idx = sid.0 - si.0 * 1000;
@@ -1721,11 +1724,12 @@ fn orbit_stars(
 
 fn orbit_moons(
     time: Res<Time>,
+    clock: Res<UniverseClock>,
     settings: Res<GameSettings>,
     planet_q: Query<(&GlobalTransform, &PlanetId), With<PlanetRoot>>,
     mut moon_q: Query<(&mut Transform, &MoonId, &SystemIdx), With<MoonRoot>>,
 ) {
-    let t = time.elapsed_secs();
+    let t = clock.secs(&time);
     let moon_mu = DEFAULT_MU * 0.001;
     for (mut tf, mid, si) in &mut moon_q {
         let planet_pos = planet_q

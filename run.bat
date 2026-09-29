@@ -21,6 +21,7 @@ echo Controles:
 echo   WASD / Fleches  - Rotation camera
 echo   Clic droit      - Rotation libre
 echo   Molette         - Zoom
+echo   F2              - Multijoueur
 echo.
 echo.
 echo Le jeu est en cours d'execution. Fermez cette fenetre pour quitter.

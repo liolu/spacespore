@@ -2,6 +2,8 @@ mod astre;
 mod kepler;
 mod lod;
 mod mesher;
+mod net;
+mod net_ui;
 mod planet;
 mod settings;
 mod ship;
@@ -18,6 +20,8 @@ use planet::{FarStar, GalacticCore, MoonId, MoonRoot, PlanetId, PlanetPlugin, Pl
 use settings::{GameSettings, SYSTEM_CELL_SIZE, SYSTEM_GRID_SIZE};
 use ship::{Ship, ShipMode, ShipPlugin};
 use ui::{CameraTarget, MenuState, TargetKind, UiPlugin};
+use net::{Net, NetPlugin};
+use net_ui::{NetPanel, NetUiPlugin};
 
 // ── Planètes ──────────────────────────────────────────────────────────────
 use astre::{astre_lod_cull, process_pending_reloads, profiling_snapshot, toggle_profiling, ProfilingLog, ReloadAstre};
@@ -229,6 +233,9 @@ fn main() {
         // ── UI ──────────────────────────────────────────────────────────
         .add_plugins(UiPlugin)
 
+        // ── Multijoueur ─────────────────────────────────────────────────
+        .add_plugins((NetPlugin, NetUiPlugin))
+
         .add_event::<ReloadAstre>()
         .init_resource::<ProfilingLog>()
         .insert_resource(ZoomLevel::Planet)
@@ -373,8 +380,13 @@ fn select_world_target(
     settings: Res<GameSettings>,
     mut target: ResMut<CameraTarget>,
     zoom: Res<ZoomLevel>,
+    ui_interactions: Query<&Interaction>,
 ) {
     if !buttons.just_pressed(MouseButton::Left) {
+        return;
+    }
+    // Clic sur un élément d'interface : ne pas sélectionner d'astre derrière
+    if ui_interactions.iter().any(|i| *i != Interaction::None) {
         return;
     }
     let Ok(window) = primary_window.get_single() else { return; };
@@ -496,8 +508,9 @@ fn select_next_moon(
     keys: Res<ButtonInput<KeyCode>>,
     settings: Res<GameSettings>,
     mut target: ResMut<CameraTarget>,
+    net_panel: Res<NetPanel>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyM) {
+    if !keys.just_pressed(KeyCode::KeyM) || net_panel.focus.is_some() {
         return;
     }
 
@@ -524,7 +537,7 @@ fn select_next_moon(
 // ─────────────────────────────────────────────────────────────────────────
 
 #[derive(Component)]
-struct CameraController {
+pub struct CameraController {
     yaw: f32,
     pitch: f32,
     distance: f32,
@@ -622,7 +635,13 @@ fn camera_controller(
 
     mut cam_q:
         Query<(&mut Transform, &mut CameraController), Without<Ship>>,
+
+    net_panel: Res<NetPanel>,
+    net: Res<Net>,
 ) {
+    // Saisie de texte en cours (panneau multijoueur) : clavier réservé au champ
+    let menu_open = menu_state.open || net_panel.focus.is_some();
+
     let Ok((mut cam_tf, mut ctrl)) =
         cam_q.get_single_mut()
     else {
@@ -631,7 +650,7 @@ fn camera_controller(
 
     // ── Mode vue libre (F1) : caméra libre sans vaisseau ─────────────
     if *ship_mode == ShipMode::Free {
-        if menu_state.open {
+        if menu_open {
             mouse_motion.clear();
             mouse_wheel.clear();
             return;
@@ -681,7 +700,7 @@ fn camera_controller(
         raw_target
     };
 
-    if menu_state.open {
+    if menu_open {
         mouse_motion.clear();
         mouse_wheel.clear();
 
@@ -696,7 +715,7 @@ fn camera_controller(
                 return;
             }
             *ship_vis = Visibility::Inherited;
-            let hover_pos = target_pos + Vec3::Y * 80.0;
+            let hover_pos = target_pos + Vec3::Y * 80.0 + net.hover_offset(ctrl.distance);
             let to_hover = hover_pos - ship_tf.translation;
             let dist = to_hover.length();
             if dist > 30.0 {
@@ -774,7 +793,7 @@ fn camera_controller(
         *ship_vis = Visibility::Inherited;
 
         let hover_height = 80.0_f32;
-        let hover_pos = target_pos + Vec3::Y * hover_height;
+        let hover_pos = target_pos + Vec3::Y * hover_height + net.hover_offset(ctrl.distance);
         let to_hover = hover_pos - ship_tf.translation;
         let dist = to_hover.length();
 
