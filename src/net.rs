@@ -372,6 +372,104 @@ fn start_upnp(state: Arc<Mutex<Upnp>>) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+//  STUN : découverte de l'IP publique (fallback quand UPnP échoue)
+//
+//  Envoie un Binding Request à un serveur STUN public (Google). La réponse
+//  contient l'adresse IP:port vue depuis Internet. On utilise l'IP obtenue
+//  + le port du jeu (NET_PORT) pour générer le code d'invitation.
+//  Fonctionne sur la majorité des box (Full Cone / Restricted Cone NAT).
+// ─────────────────────────────────────────────────────────────────────────
+
+enum StunResult {
+    Pending,
+    Ready(Ipv4Addr),
+    Failed,
+}
+
+fn start_stun(state: Arc<Mutex<StunResult>>) {
+    std::thread::spawn(move || {
+        let result = (|| -> Option<Ipv4Addr> {
+            let sock = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
+            sock.set_read_timeout(Some(Duration::from_secs(3))).ok()?;
+
+            let stun_servers = [
+                "stun.l.google.com:19302",
+                "stun1.l.google.com:19302",
+                "stun2.l.google.com:19302",
+            ];
+
+            for server in &stun_servers {
+                if let Some(ip) = stun_query(&sock, server) {
+                    return Some(ip);
+                }
+            }
+            None
+        })();
+
+        if let Ok(mut s) = state.lock() {
+            match result {
+                Some(ip) if !is_non_public(ip) => *s = StunResult::Ready(ip),
+                _ => *s = StunResult::Failed,
+            }
+        }
+    });
+}
+
+fn stun_query(sock: &UdpSocket, server: &str) -> Option<Ipv4Addr> {
+    let addr = server.to_socket_addrs().ok()?.find(|a| a.is_ipv4())?;
+
+    // STUN Binding Request: type 0x0001, length 0, magic cookie, random txn id
+    let mut req = [0u8; 20];
+    req[0] = 0x00; req[1] = 0x01; // Binding Request
+    // req[2..4] = 0 (length)
+    req[4] = 0x21; req[5] = 0x12; req[6] = 0xA4; req[7] = 0x42; // Magic Cookie
+    for b in &mut req[8..20] { *b = rand::random(); }
+
+    sock.send_to(&req, addr).ok()?;
+
+    let mut buf = [0u8; 256];
+    let n = sock.recv(&mut buf).ok()?;
+    if n < 20 { return None; }
+
+    // Vérifier que c'est un Binding Response (0x0101)
+    if buf[0] != 0x01 || buf[1] != 0x01 { return None; }
+
+    // Parser les attributs pour trouver XOR-MAPPED-ADDRESS (0x0020) ou MAPPED-ADDRESS (0x0001)
+    let msg_len = u16::from_be_bytes([buf[2], buf[3]]) as usize;
+    let end = (20 + msg_len).min(n);
+    let mut i = 20;
+    while i + 4 <= end {
+        let attr_type = u16::from_be_bytes([buf[i], buf[i + 1]]);
+        let attr_len = u16::from_be_bytes([buf[i + 2], buf[i + 3]]) as usize;
+        let attr_start = i + 4;
+
+        if attr_type == 0x0020 && attr_len >= 8 && attr_start + attr_len <= end {
+            // XOR-MAPPED-ADDRESS: family at +1, port at +2..4, ip at +4..8
+            if buf[attr_start + 1] == 0x01 { // IPv4
+                let ip_bytes = [
+                    buf[attr_start + 4] ^ 0x21,
+                    buf[attr_start + 5] ^ 0x12,
+                    buf[attr_start + 6] ^ 0xA4,
+                    buf[attr_start + 7] ^ 0x42,
+                ];
+                return Some(Ipv4Addr::from(ip_bytes));
+            }
+        }
+
+        if attr_type == 0x0001 && attr_len >= 8 && attr_start + attr_len <= end {
+            // MAPPED-ADDRESS (non-XOR)
+            if buf[attr_start + 1] == 0x01 {
+                let ip_bytes = [buf[attr_start + 4], buf[attr_start + 5], buf[attr_start + 6], buf[attr_start + 7]];
+                return Some(Ipv4Addr::from(ip_bytes));
+            }
+        }
+
+        i = attr_start + ((attr_len + 3) & !3); // padding to 4-byte boundary
+    }
+    None
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 //  État réseau
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -480,6 +578,8 @@ pub struct Net {
     upnp_started: bool,
     /// Le multijoueur a été activé (panneau ouvert au moins une fois).
     enabled: bool,
+    stun: Arc<Mutex<StunResult>>,
+    stun_started: bool,
     my_sys: Option<u32>,
     sys_since: f64,
 }
@@ -502,6 +602,8 @@ impl Default for Net {
             upnp: Arc::new(Mutex::new(Upnp::Pending)),
             upnp_started: false,
             enabled: false,
+            stun: Arc::new(Mutex::new(StunResult::Pending)),
+            stun_started: false,
             my_sys: None,
             sys_since: 0.0,
         }
@@ -531,6 +633,21 @@ impl Net {
         )
     }
 
+    fn public_address(&self) -> Option<(Ipv4Addr, u16)> {
+        if let Ok(Upnp::Ready { ip, port, .. }) = self.upnp.lock().as_deref() {
+            return Some((*ip, *port));
+        }
+        if let Ok(StunResult::Ready(ip)) = self.stun.lock().as_deref() {
+            return Some((*ip, NET_PORT));
+        }
+        None
+    }
+
+    fn public_pending(&self) -> bool {
+        matches!(self.upnp.lock().as_deref(), Ok(Upnp::Pending))
+            || matches!(self.stun.lock().as_deref(), Ok(StunResult::Pending))
+    }
+
     /// Code à donner à un ami pour qu'il rejoigne la partie en cours.
     pub fn invite(&self) -> Invite {
         match &self.session {
@@ -538,20 +655,21 @@ impl Net {
             Session::Connected { .. } => {
                 Invite::Unavailable("La box de l'hote n'accepte pas les joueurs venant d'Internet.".into())
             }
-            Session::Hosting { .. } => match self.upnp.lock().as_deref() {
-                Ok(Upnp::Ready { ip, port, .. }) => Invite::Ready(encode_invite(*ip, *port)),
-                Ok(Upnp::Failed(reason)) => Invite::Unavailable(reason.clone()),
-                _ => Invite::Pending,
-            },
+            Session::Hosting { .. } => {
+                if let Some((ip, port)) = self.public_address() {
+                    Invite::Ready(encode_invite(ip, port))
+                } else if self.public_pending() {
+                    Invite::Pending
+                } else {
+                    Invite::Unavailable("Impossible de determiner votre adresse Internet.".into())
+                }
+            }
             _ => Invite::Pending,
         }
     }
 
     fn own_code(&self) -> Option<String> {
-        match self.upnp.lock().as_deref() {
-            Ok(Upnp::Ready { ip, port, .. }) => Some(encode_invite(*ip, *port)),
-            _ => None,
-        }
+        self.public_address().map(|(ip, port)| encode_invite(ip, port))
     }
 
     /// Identifiant du joueur local (0 = hôte ou hors ligne).
@@ -777,6 +895,10 @@ fn net_update(
     if !net.upnp_started {
         net.upnp_started = true;
         start_upnp(net.upnp.clone());
+    }
+    if !net.stun_started {
+        net.stun_started = true;
+        start_stun(net.stun.clone());
     }
 
     // ── Mode automatique : toujours dans une partie ─────────────────────
