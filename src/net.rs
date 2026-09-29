@@ -1326,6 +1326,7 @@ fn update_remote_labels(
     ships: Query<(&RemoteShip, &GlobalTransform)>,
     mut labels: Query<(&RemoteLabel, &mut Node, &mut Visibility, &Children)>,
     mut texts: Query<(&mut Text, &mut TextColor), With<RemoteLabelText>>,
+    viewport: Res<crate::graphics::ViewportScale>,
 ) {
     let Ok((camera, cam_gt)) = cam_q.get_single() else { return };
     for (label, mut node, mut vis, children) in &mut labels {
@@ -1334,7 +1335,9 @@ fn update_remote_labels(
             .iter()
             .find(|(rs, _)| rs.id == label.0)
             .map(|(_, gt)| gt.translation());
-        let screen = ship_pos.and_then(|p| camera.world_to_viewport(cam_gt, p).ok());
+        let screen = ship_pos
+            .and_then(|p| camera.world_to_viewport(cam_gt, p).ok())
+            .map(|p| viewport.to_window(p));
         match screen {
             Some(sp) => {
                 node.left = Val::Px(sp.x - 120.0);

@@ -6,6 +6,10 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+use crate::graphics::{
+    fps_limit_label, lod_quality_label, msaa_label, next_choice, render_scale_label, QualityPreset,
+    FPS_LIMIT_CHOICES, LOD_QUALITY_CHOICES, MSAA_CHOICES, RENDER_SCALE_CHOICES,
+};
 use crate::planet::RegeneratePlanet;
 use crate::settings::{AsteroidBeltConfig, GameSettings, PlanetConfig, StarConfig};
 use crate::astre::{AstreLodRoot, AstreUnloaded};
@@ -198,6 +202,9 @@ impl Plugin for UiPlugin {
                     handle_apply_button,
                     handle_center_buttons,
                     handle_select_astre,
+                    handle_gfx_buttons,
+                    handle_gfx_toggles,
+                    update_gfx_visuals,
                 ),
             )
             .add_systems(
@@ -357,6 +364,54 @@ struct ToggleShowSystems;
 
 #[derive(Component)]
 struct ToggleAtmosphere(usize);
+
+/// Réglage graphique à choix multiples (clic = valeur suivante).
+#[derive(Clone, Copy, PartialEq)]
+enum GfxChoice {
+    Preset,
+    FpsLimit,
+    Msaa,
+    LodQuality,
+    RenderScale,
+}
+
+#[derive(Component)]
+struct GfxButton(GfxChoice);
+
+#[derive(Component)]
+struct GfxValueText(GfxChoice);
+
+/// Réglage graphique on/off.
+#[derive(Clone, Copy, PartialEq)]
+enum GfxFlag {
+    VSync,
+    Shadows,
+    Clouds,
+    Flares,
+}
+
+impl GfxFlag {
+    fn get(self, s: &GameSettings) -> bool {
+        match self {
+            Self::VSync => s.vsync,
+            Self::Shadows => s.shadows,
+            Self::Clouds => s.show_clouds,
+            Self::Flares => s.show_flares,
+        }
+    }
+
+    fn toggle(self, s: &mut GameSettings) {
+        match self {
+            Self::VSync => s.vsync = !s.vsync,
+            Self::Shadows => s.shadows = !s.shadows,
+            Self::Clouds => s.show_clouds = !s.show_clouds,
+            Self::Flares => s.show_flares = !s.show_flares,
+        }
+    }
+}
+
+#[derive(Component)]
+struct GfxToggle(GfxFlag);
 
 #[derive(Component)]
 struct ApplyPlanetButton;
@@ -823,12 +878,12 @@ fn setup_game_ui(mut commands: Commands, settings: Res<GameSettings>) {
                 position_type: PositionType::Absolute,
                 left: Val::Percent(50.0),
                 top: Val::Percent(50.0),
-                width: Val::Px(400.0),
+                width: Val::Px(800.0),
                 flex_direction: FlexDirection::Column,
                 border: UiRect::all(Val::Px(2.0)),
                 margin: UiRect {
-                    left: Val::Px(-200.0),
-                    top: Val::Px(-160.0),
+                    left: Val::Px(-400.0),
+                    top: Val::Px(-190.0),
                     ..default()
                 },
                 ..default()
@@ -853,21 +908,36 @@ fn setup_game_ui(mut commands: Commands, settings: Res<GameSettings>) {
             BorderColor(BG_SLIDER),
         ))
         .with_child((
-            Text::new("CAMERA"),
+            Text::new("OPTIONS"),
             TextFont { font_size: 20.0, ..default() },
             TextColor(TEXT_COLOR),
         ))
         .id();
 
-    let content = commands
+    let columns = commands
         .spawn(Node {
             width: Val::Percent(100.0),
-            flex_direction: FlexDirection::Column,
-            padding: UiRect::all(Val::Px(14.0)),
-            row_gap: Val::Px(10.0),
+            flex_direction: FlexDirection::Row,
             ..default()
         })
         .id();
+
+    let column = |commands: &mut Commands| {
+        commands
+            .spawn(Node {
+                width: Val::Percent(50.0),
+                flex_direction: FlexDirection::Column,
+                padding: UiRect::all(Val::Px(14.0)),
+                row_gap: Val::Px(10.0),
+                ..default()
+            })
+            .id()
+    };
+    let content = column(&mut commands);
+    let gfx_content = column(&mut commands);
+    commands.entity(columns).add_children(&[content, gfx_content]);
+
+    let camera_header = spawn_column_header(&mut commands, "CAMERA");
 
     let s1 = spawn_slider(&mut commands, &settings, SettingKey::MouseSensitivity, 0.05, 2.0);
     let s2 = spawn_slider(&mut commands, &settings, SettingKey::ScrollSpeed, 1.0, 30.0);
@@ -891,8 +961,24 @@ fn setup_game_ui(mut commands: Commands, settings: Res<GameSettings>) {
         settings.show_systems,
         ToggleShowSystems,
     );
-    commands.entity(content).add_children(&[s1, s2, s3, invert, show_light, show_orbits, show_systems]);
-    commands.entity(menu_root).add_children(&[title, content]);
+    commands.entity(content).add_children(&[camera_header, s1, s2, s3, invert, show_light, show_orbits, show_systems]);
+
+    // ── Graphismes / performances ──
+    let gfx_rows = [
+        spawn_column_header(&mut commands, "GRAPHISMES / PERFORMANCES"),
+        spawn_gfx_choice(&mut commands, &settings, "Qualite globale", GfxChoice::Preset),
+        spawn_gfx_toggle(&mut commands, &settings, "VSync", GfxFlag::VSync),
+        spawn_gfx_choice(&mut commands, &settings, "Limite FPS", GfxChoice::FpsLimit),
+        spawn_gfx_choice(&mut commands, &settings, "Echelle de rendu", GfxChoice::RenderScale),
+        spawn_gfx_choice(&mut commands, &settings, "Anti-aliasing (MSAA)", GfxChoice::Msaa),
+        spawn_gfx_toggle(&mut commands, &settings, "Ombres des etoiles", GfxFlag::Shadows),
+        spawn_gfx_choice(&mut commands, &settings, "Detail planetes", GfxChoice::LodQuality),
+        spawn_gfx_toggle(&mut commands, &settings, "Nuages", GfxFlag::Clouds),
+        spawn_gfx_toggle(&mut commands, &settings, "Eruptions solaires", GfxFlag::Flares),
+    ];
+    commands.entity(gfx_content).add_children(&gfx_rows);
+
+    commands.entity(menu_root).add_children(&[title, columns]);
 
 }
 
@@ -1168,6 +1254,86 @@ fn spawn_slider(
     row
 }
 
+fn spawn_column_header(commands: &mut Commands, label: &str) -> Entity {
+    commands
+        .spawn((
+            Text::new(label.to_string()),
+            TextFont { font_size: 14.0, ..default() },
+            TextColor(ACCENT),
+        ))
+        .id()
+}
+
+fn gfx_choice_text(choice: GfxChoice, s: &GameSettings) -> String {
+    match choice {
+        GfxChoice::Preset => QualityPreset::detect(s).map(|p| p.label()).unwrap_or("Perso").into(),
+        GfxChoice::FpsLimit => fps_limit_label(s.fps_limit),
+        GfxChoice::Msaa => msaa_label(s.msaa_samples),
+        GfxChoice::LodQuality => lod_quality_label(s.lod_quality).into(),
+        GfxChoice::RenderScale => render_scale_label(s.render_scale),
+    }
+}
+
+fn spawn_gfx_choice(
+    commands: &mut Commands,
+    settings: &GameSettings,
+    label: &str,
+    choice: GfxChoice,
+) -> Entity {
+    let row = commands
+        .spawn(Node {
+            width: Val::Percent(100.0),
+            justify_content: JustifyContent::SpaceBetween,
+            align_items: AlignItems::Center,
+            padding: UiRect::axes(Val::Px(0.0), Val::Px(2.0)),
+            ..default()
+        })
+        .id();
+
+    let name = commands
+        .spawn((
+            Text::new(label.to_string()),
+            TextFont { font_size: 13.0, ..default() },
+            TextColor(TEXT_DIM),
+        ))
+        .id();
+
+    let btn = commands
+        .spawn((
+            Node {
+                min_width: Val::Px(90.0),
+                padding: UiRect::axes(Val::Px(10.0), Val::Px(3.0)),
+                border: UiRect::all(Val::Px(1.0)),
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            BackgroundColor(BG_SLIDER),
+            BorderColor(ACCENT),
+            BorderRadius::all(Val::Px(5.0)),
+            Button,
+            GfxButton(choice),
+        ))
+        .with_child((
+            Text::new(format!("< {} >", gfx_choice_text(choice, settings))),
+            TextFont { font_size: 13.0, ..default() },
+            TextColor(TEXT_COLOR),
+            GfxValueText(choice),
+        ))
+        .id();
+
+    commands.entity(row).add_children(&[name, btn]);
+    row
+}
+
+fn spawn_gfx_toggle(
+    commands: &mut Commands,
+    settings: &GameSettings,
+    label: &str,
+    flag: GfxFlag,
+) -> Entity {
+    spawn_toggle(commands, label, flag.get(settings), GfxToggle(flag))
+}
+
 fn spawn_toggle(
     commands: &mut Commands,
     label: &str,
@@ -1406,6 +1572,80 @@ fn handle_toggle_show_systems(
                 };
             }
         }
+    }
+}
+
+fn handle_gfx_buttons(
+    interactions: Query<(&Interaction, &GfxButton), Changed<Interaction>>,
+    mut settings: ResMut<GameSettings>,
+) {
+    for (interaction, btn) in &interactions {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        match btn.0 {
+            GfxChoice::Preset => {
+                let next = match QualityPreset::detect(&settings) {
+                    Some(p) => next_choice(&QualityPreset::ALL, p),
+                    None => QualityPreset::High,
+                };
+                next.apply(&mut settings);
+            }
+            GfxChoice::FpsLimit => settings.fps_limit = next_choice(&FPS_LIMIT_CHOICES, settings.fps_limit),
+            GfxChoice::Msaa => settings.msaa_samples = next_choice(&MSAA_CHOICES, settings.msaa_samples),
+            GfxChoice::LodQuality => {
+                let current = LOD_QUALITY_CHOICES
+                    .iter()
+                    .copied()
+                    .find(|q| (q - settings.lod_quality).abs() < 0.01)
+                    .unwrap_or(1.0);
+                settings.lod_quality = next_choice(&LOD_QUALITY_CHOICES, current);
+            }
+            GfxChoice::RenderScale => {
+                let current = RENDER_SCALE_CHOICES
+                    .iter()
+                    .copied()
+                    .find(|q| (q - settings.render_scale).abs() < 0.01)
+                    .unwrap_or(1.0);
+                settings.render_scale = next_choice(&RENDER_SCALE_CHOICES, current);
+            }
+        }
+        settings.save();
+    }
+}
+
+fn handle_gfx_toggles(
+    interactions: Query<(&Interaction, &GfxToggle), Changed<Interaction>>,
+    mut settings: ResMut<GameSettings>,
+) {
+    for (interaction, toggle) in &interactions {
+        if *interaction == Interaction::Pressed {
+            toggle.0.toggle(&mut settings);
+            settings.save();
+        }
+    }
+}
+
+/// Rafraîchit tous les boutons graphiques (un préréglage en modifie plusieurs).
+fn update_gfx_visuals(
+    settings: Res<GameSettings>,
+    mut texts: Query<(&GfxValueText, &mut Text)>,
+    mut toggles: Query<(&GfxToggle, &mut BackgroundColor, &mut BorderColor, &mut Node)>,
+) {
+    if !settings.is_changed() {
+        return;
+    }
+    for (value, mut text) in &mut texts {
+        let wanted = format!("< {} >", gfx_choice_text(value.0, &settings));
+        if **text != wanted {
+            **text = wanted;
+        }
+    }
+    for (toggle, mut bg, mut border, mut node) in &mut toggles {
+        let on = toggle.0.get(&settings);
+        *bg = BackgroundColor(if on { ACCENT } else { BG_SLIDER });
+        *border = BorderColor(if on { ACCENT } else { TEXT_DIM });
+        node.justify_content = if on { JustifyContent::End } else { JustifyContent::Start };
     }
 }
 

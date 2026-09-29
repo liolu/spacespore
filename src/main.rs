@@ -1,4 +1,5 @@
 mod astre;
+mod graphics;
 mod kepler;
 mod lod;
 mod mesher;
@@ -16,6 +17,7 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowCloseRequested};
 
+use kepler::OrbitalElements;
 use planet::{FarStar, GalacticCore, MoonId, MoonRoot, PlanetId, PlanetPlugin, PlanetRoot, StarId, StarRoot};
 use settings::{GameSettings, SYSTEM_CELL_SIZE, SYSTEM_GRID_SIZE};
 use ship::{Ship, ShipMode, ShipPlugin};
@@ -169,6 +171,12 @@ fn main() {
     });
 
     let settings = GameSettings::load();
+    lod::set_lod_quality(settings.lod_quality);
+    let present_mode = if settings.vsync {
+        bevy::window::PresentMode::AutoVsync
+    } else {
+        bevy::window::PresentMode::AutoNoVsync
+    };
     let update_state = update_checker::spawn_update_check();
 
     App::new()
@@ -177,6 +185,7 @@ fn main() {
                 primary_window: Some(Window {
                     title: "SpaceSpore - Voxel Universe".into(),
                     resolution: (1280.0_f32, 720.0_f32).into(),
+                    present_mode,
                     ..default()
                 }),
                 ..default()
@@ -184,6 +193,7 @@ fn main() {
         )
 
         .add_plugins(FrameTimeDiagnosticsPlugin)
+        .add_plugins(graphics::GraphicsPlugin)
 
         .insert_resource(settings)
         .insert_resource(update_state)
@@ -250,6 +260,7 @@ fn main() {
                 setup_fps_display,
             ),
         )
+        .add_systems(PostUpdate, lock_system_at_planet_zoom)
 
         // ── Update ──────────────────────────────────────────────────────
         .add_systems(
@@ -381,6 +392,7 @@ fn select_world_target(
     mut target: ResMut<CameraTarget>,
     zoom: Res<ZoomLevel>,
     ui_interactions: Query<&Interaction>,
+    viewport: Res<graphics::ViewportScale>,
 ) {
     if !buttons.just_pressed(MouseButton::Left) {
         return;
@@ -391,6 +403,8 @@ fn select_world_target(
     }
     let Ok(window) = primary_window.get_single() else { return; };
     let Some(cursor) = window.cursor_position() else { return; };
+    // Échelle de rendu < 100 % : la caméra 3D a son propre repère écran
+    let cursor = viewport.to_viewport(cursor);
     let Ok((camera, camera_transform, ctrl)) = camera_q.get_single() else { return; };
     let ctrl_dist = ctrl.distance;
     let Ok(ray) = camera.viewport_to_world(camera_transform, cursor) else { return; };
@@ -412,7 +426,7 @@ fn select_world_target(
         let Ok(screen_position) = camera.world_to_viewport(camera_transform, position) else {
             return;
         };
-        let screen_distance = screen_position.distance(cursor);
+        let screen_distance = viewport.to_window(screen_position).distance(viewport.to_window(cursor));
         if screen_distance <= tolerance && best.map_or(true, |(distance, _)| screen_distance < distance) {
             best = Some((screen_distance, candidate));
         }
@@ -504,6 +518,55 @@ fn select_world_target(
     }
 }
 
+/// Système auquel appartient une cible (`None` = hors de tout système, ex. noyau).
+fn target_system(
+    kind: &TargetKind,
+    star_q: &Query<&StarId, With<StarRoot>>,
+) -> Option<Option<usize>> {
+    match *kind {
+        TargetKind::Planet(id) => Some(Some(id / 1000)),
+        TargetKind::Moon(planet_idx, _) => Some(Some(planet_idx / 1000)),
+        // Étoile chargée : id = sys * 1000 + i ; étoile lointaine : id = index du système
+        TargetKind::Star(id) => {
+            if star_q.iter().any(|sid| sid.0 == id) {
+                Some(Some(id / 1000))
+            } else {
+                Some(Some(id))
+            }
+        }
+        TargetKind::GalacticCore => Some(None),
+        // Astres historiques (désactivés) : pas de contrainte
+        _ => None,
+    }
+}
+
+/// Au zoom 1 (< 10 000), on ne peut pas sortir du système courant :
+/// toute nouvelle cible appartenant à un autre système est annulée.
+fn lock_system_at_planet_zoom(
+    mut target: ResMut<CameraTarget>,
+    zoom: Res<ZoomLevel>,
+    spawned: Res<planet::SpawnedSystems>,
+    star_q: Query<&StarId, With<StarRoot>>,
+    mut previous: Local<Option<TargetKind>>,
+) {
+    if target.is_changed() && *zoom == ZoomLevel::Planet {
+        if let Some(&current_sys) = spawned.0.iter().next() {
+            let leaves_system = match target_system(&target.0, &star_q) {
+                Some(Some(si)) => si != current_sys,
+                Some(None) => true,
+                None => false,
+            };
+            if leaves_system {
+                if let Some(prev) = *previous {
+                    target.0 = prev;
+                }
+                return;
+            }
+        }
+    }
+    *previous = Some(target.0);
+}
+
 fn select_next_moon(
     keys: Res<ButtonInput<KeyCode>>,
     settings: Res<GameSettings>,
@@ -544,6 +607,9 @@ pub struct CameraController {
     last_target_pos: Vec3,
 }
 
+/// Limite du zoom 1 : en dessous, on reste verrouillé dans le système courant.
+pub const ZOOM_PLANET_MAX: f32 = 10_000.0;
+
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZoomLevel {
     Planet,
@@ -556,7 +622,7 @@ pub enum ZoomLevel {
 
 impl ZoomLevel {
     fn from_distance(d: f32) -> Self {
-        if d < 5_000.0 {
+        if d < ZOOM_PLANET_MAX {
             ZoomLevel::Planet
         } else if d < 50_000.0 {
             ZoomLevel::System
@@ -1747,6 +1813,7 @@ fn draw_orbits(
     settings: Res<GameSettings>,
     cam_q: Query<&GlobalTransform, With<Camera3d>>,
     spatial: Res<settings::SystemSpatialIndex>,
+    spawned: Res<planet::SpawnedSystems>,
 
     planet_q:
         Query<
@@ -1896,26 +1963,56 @@ fn draw_orbits(
         );
 
 
-    // ── Planètes, étoiles, lunes, ceintures (tous systèmes) ─────────
+    // ── Planètes, étoiles, lunes, ceintures (système courant uniquement) ─
+    // Les autres systèmes ne sont pas chargés : tracer leurs ~12 500 orbites
+    // coûtait des millions de segments par image pour rien.
 
-    for (si, sys) in settings.systems.iter().enumerate() {
+    let draw_ellipse = |gizmos: &mut Gizmos, elems: &OrbitalElements, color: Color, center: Vec3| {
+        let mut prev = center + elems.point_at(0.0);
+        for i in 1..=seg {
+            let e_anom = i as f32 / seg as f32 * std::f32::consts::TAU;
+            let p = center + elems.point_at(e_anom);
+            gizmos.line(prev, p, color);
+            prev = p;
+        }
+    };
+
+    let current_sys = spawned.0.iter().next().copied();
+    if let Some((si, sys)) = current_sys.and_then(|si| settings.systems.get(si).map(|s| (si, s))) {
         let sc = sys.center();
 
         for (pi, pcfg) in sys.planets.iter().enumerate() {
-            let r = pcfg.orbit_distance;
-            if r >= 1.0 {
-                draw_ring(&mut gizmos, r, planet_color, sc);
+            if pcfg.orbit_distance >= 1.0 {
+                let elems = OrbitalElements {
+                    a: pcfg.orbit_distance,
+                    e: pcfg.eccentricity,
+                    i: pcfg.inclination,
+                    omega_big: pcfg.ascending_node,
+                    omega: pcfg.arg_periapsis,
+                    m0: 0.0,
+                };
+                draw_ellipse(&mut gizmos, &elems, planet_color, sc);
             }
 
             let id = si * 1000 + pi;
-            let planet_pos = planet_q
+            let Some(planet_pos) = planet_q
                 .iter()
                 .find(|(_, pid)| pid.0 == id)
                 .map(|(gt, _)| gt.translation())
-                .unwrap_or(sc + Vec3::new(r, 0.0, 0.0));
+            else {
+                continue;
+            };
 
             for mcfg in &pcfg.moons {
-                draw_ring(&mut gizmos, mcfg.orbit_distance, moon_color, planet_pos);
+                let elems = OrbitalElements {
+                    a: mcfg.orbit_distance,
+                    e: mcfg.eccentricity,
+                    i: mcfg.inclination,
+                    omega_big: mcfg.ascending_node,
+                    omega: mcfg.arg_periapsis,
+                    m0: 0.0,
+                };
+                draw_ellipse(&mut gizmos, &elems, moon_color, planet_pos);
             }
         }
 

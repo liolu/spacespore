@@ -9,7 +9,9 @@ use std::collections::{HashMap, HashSet};
 use crate::kepler::{OrbitalElements, DEFAULT_MU};
 use crate::lod::{compute_lod_level, LodChunk, LodLevel};
 use crate::mesher::{build_celestial_chunk_mesh, build_chunk_mesh};
-use crate::settings::{GameSettings, SystemSpatialIndex, SYSTEM_CELL_SIZE, STREAM_RADIUS};
+use crate::settings::{GameSettings, PlanetConfig, SystemSpatialIndex, SYSTEM_CELL_SIZE, STREAM_RADIUS};
+use bevy::render::view::NoFrustumCulling;
+use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, ComputeTaskPool, Task};
 use crate::astre::{AstreLodRoot, ReloadAstre};
 use crate::ship::Ship;
 const STAR_DIVISIONS: usize = 4;
@@ -100,10 +102,10 @@ pub struct MoonId {
 }
 
 #[derive(Component)]
+/// Éruptions d'une étoile : un seul maillage regroupant tous les cubes,
+/// reconstruit à chaque image (au lieu de 320 entités par étoile).
 pub struct FlareVoxel {
     pub star_idx: usize,
-    pub flare_idx: u32,
-    pub sample_idx: u32,
 }
 
 #[derive(Component)]
@@ -148,11 +150,9 @@ pub struct ArmCapsule {
 }
 
 #[derive(Component)]
+/// Couche de nuages d'une planète : un seul maillage qui tourne autour de l'axe Y.
 pub struct CloudVoxel {
     pub planet_idx: usize,
-    pub theta: f32,
-    pub phi: f32,
-    pub altitude: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -763,480 +763,253 @@ fn spawn_distant_galaxies(
     }
 }
 
-fn spawn_all_bodies(
+/// Couche de nuages d'une planète : tous les patchs fusionnés en un seul
+/// maillage, dans le repère local de la planète.
+fn build_cloud_layer_mesh(pcfg: &PlanetConfig) -> Option<Mesh> {
+    let mut all_positions: Vec<[f32; 3]> = Vec::new();
+    let mut all_normals: Vec<[f32; 3]> = Vec::new();
+    let mut all_indices: Vec<u32> = Vec::new();
+
+    let density = pcfg.cloud_density.clamp(0.1, 1.0);
+    let cloud_r = pcfg.radius + pcfg.terrain_height + pcfg.cloud_altitude;
+
+    use noise::{NoiseFn, Perlin};
+    let perlin = Perlin::new(pcfg.seed + 500);
+    let perlin2 = Perlin::new(pcfg.seed + 501);
+
+    let patch_count = 40 + (density * 60.0) as u32;
+    let patch_grid = 16_i32;
+    let cell = cloud_r * 0.04;
+
+    for ci in 0..patch_count {
+        let seed_a = pseudo_hash(pcfg.seed as f32, ci as f32 * 3.7);
+        let seed_b = pseudo_hash(pcfg.seed as f32, ci as f32 * 7.1);
+        let theta_c = seed_a * std::f32::consts::TAU;
+        let phi_c = (seed_b * 2.0 - 1.0).clamp(-1.0, 1.0).acos();
+
+        let center_dir = Vec3::new(
+            theta_c.cos() * phi_c.sin(),
+            phi_c.cos(),
+            theta_c.sin() * phi_c.sin(),
+        ).normalize();
+
+        let up = if center_dir.y.abs() > 0.9 { Vec3::X } else { Vec3::Y };
+        let tangent_u = center_dir.cross(up).normalize();
+        let tangent_v = center_dir.cross(tangent_u).normalize();
+
+        let mut grid = vec![0_u32; (patch_grid * patch_grid) as usize];
+        let threshold = 0.1 - density as f64 * 0.15;
+
+        for gx in 0..patch_grid {
+            for gz in 0..patch_grid {
+                let lx = (gx as f32 - patch_grid as f32 * 0.5) * cell;
+                let lz = (gz as f32 - patch_grid as f32 * 0.5) * cell;
+
+                let world = center_dir * cloud_r + tangent_u * lx + tangent_v * lz;
+                let wd = world.normalize();
+                let nx = wd.x as f64;
+                let ny = wd.y as f64;
+                let nz = wd.z as f64;
+
+                let n1 = perlin.get([nx * 4.0 + ci as f64 * 10.0, ny * 4.0, nz * 4.0]);
+                let n2 = perlin2.get([nx * 8.0 + ci as f64 * 5.0, ny * 8.0, nz * 8.0]);
+                let n = n1 * 0.65 + n2 * 0.35;
+
+                let dx = (gx as f32 - patch_grid as f32 * 0.5).abs() / (patch_grid as f32 * 0.5);
+                let dz = (gz as f32 - patch_grid as f32 * 0.5).abs() / (patch_grid as f32 * 0.5);
+                let edge = 1.0 - (dx * dx + dz * dz).sqrt().min(1.0);
+
+                if n > threshold && edge as f64 > 0.2 {
+                    let h = (1 + ((n - threshold) * 3.0) as u32).min(4);
+                    grid[(gx * patch_grid + gz) as usize] = h;
+                }
+            }
+        }
+
+        let mut positions: Vec<[f32; 3]> = Vec::new();
+        let mut normals: Vec<[f32; 3]> = Vec::new();
+        let mut indices: Vec<u32> = Vec::new();
+
+        let get_h = |x: i32, z: i32| -> u32 {
+            if x < 0 || x >= patch_grid || z < 0 || z >= patch_grid { return 0; }
+            grid[(x * patch_grid + z) as usize]
+        };
+
+        for gx in 0..patch_grid {
+            for gz in 0..patch_grid {
+                let h = get_h(gx, gz);
+                if h == 0 { continue; }
+
+                let x0 = (gx as f32 - patch_grid as f32 * 0.5) * cell;
+                let z0 = (gz as f32 - patch_grid as f32 * 0.5) * cell;
+                let x1 = x0 + cell;
+                let z1 = z0 + cell;
+
+                for y_layer in 0..h {
+                    let y0 = y_layer as f32 * cell * 0.5;
+                    let y1 = y0 + cell * 0.5;
+
+                    if y_layer == h - 1 {
+                        let vi = positions.len() as u32;
+                        positions.extend_from_slice(&[
+                            [x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0],
+                        ]);
+                        normals.extend_from_slice(&[[0.0,1.0,0.0]; 4]);
+                        indices.extend_from_slice(&[vi, vi+1, vi+2, vi, vi+2, vi+3]);
+                    }
+
+                    if y_layer == 0 {
+                        let vi = positions.len() as u32;
+                        positions.extend_from_slice(&[
+                            [x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1],
+                        ]);
+                        normals.extend_from_slice(&[[0.0,-1.0,0.0]; 4]);
+                        indices.extend_from_slice(&[vi, vi+1, vi+2, vi, vi+2, vi+3]);
+                    }
+
+                    if get_h(gx - 1, gz) <= y_layer {
+                        let vi = positions.len() as u32;
+                        positions.extend_from_slice(&[
+                            [x0, y0, z0], [x0, y1, z0], [x0, y1, z1], [x0, y0, z1],
+                        ]);
+                        normals.extend_from_slice(&[[-1.0,0.0,0.0]; 4]);
+                        indices.extend_from_slice(&[vi, vi+1, vi+2, vi, vi+2, vi+3]);
+                    }
+
+                    if get_h(gx + 1, gz) <= y_layer {
+                        let vi = positions.len() as u32;
+                        positions.extend_from_slice(&[
+                            [x1, y0, z1], [x1, y1, z1], [x1, y1, z0], [x1, y0, z0],
+                        ]);
+                        normals.extend_from_slice(&[[1.0,0.0,0.0]; 4]);
+                        indices.extend_from_slice(&[vi, vi+1, vi+2, vi, vi+2, vi+3]);
+                    }
+
+                    if get_h(gx, gz - 1) <= y_layer {
+                        let vi = positions.len() as u32;
+                        positions.extend_from_slice(&[
+                            [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [x0, y0, z0],
+                        ]);
+                        normals.extend_from_slice(&[[0.0,0.0,-1.0]; 4]);
+                        indices.extend_from_slice(&[vi, vi+1, vi+2, vi, vi+2, vi+3]);
+                    }
+
+                    if get_h(gx, gz + 1) <= y_layer {
+                        let vi = positions.len() as u32;
+                        positions.extend_from_slice(&[
+                            [x0, y0, z1], [x0, y1, z1], [x1, y1, z1], [x1, y0, z1],
+                        ]);
+                        normals.extend_from_slice(&[[0.0,0.0,1.0]; 4]);
+                        indices.extend_from_slice(&[vi, vi+1, vi+2, vi, vi+2, vi+3]);
+                    }
+                }
+            }
+        }
+
+        if positions.is_empty() { continue; }
+
+        let rotation = Quat::from_rotation_arc(Vec3::Y, center_dir);
+        let offset = center_dir * cloud_r;
+        let base = all_positions.len() as u32;
+        all_positions.extend(positions.iter().map(|p| (rotation * Vec3::from_array(*p) + offset).to_array()));
+        all_normals.extend(normals.iter().map(|n| (rotation * Vec3::from_array(*n)).to_array()));
+        all_indices.extend(indices.iter().map(|i| i + base));
+    }
+
+    if all_positions.is_empty() {
+        return None;
+    }
+    let mut mesh = Mesh::new(
+        bevy::render::mesh::PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, all_positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, all_normals);
+    mesh.insert_indices(bevy::render::mesh::Indices::U32(all_indices));
+    Some(mesh)
+}
+
+fn spawn_cloud_layer(
     commands: &mut Commands,
-    settings: &GameSettings,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    materials: &mut ResMut<Assets<StandardMaterial>>,
-    cam_pos: Vec3,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    pcfg: &PlanetConfig,
+    planet_idx: usize,
+    planet_pos: Vec3,
 ) {
-    let star_material = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        emissive: LinearRgba::new(12.0, 10.0, 3.0, 1.0),
+    let Some(mesh) = build_cloud_layer_mesh(pcfg) else { return };
+    let cloud_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.95, 0.95, 0.97),
+        alpha_mode: AlphaMode::Opaque,
+        unlit: false,
+        perceptual_roughness: 1.0,
+        ..default()
+    });
+    commands.spawn((
+        Mesh3d(meshes.add(mesh)),
+        MeshMaterial3d(cloud_material),
+        Transform::from_translation(planet_pos),
+        CloudVoxel { planet_idx },
+    ));
+}
+
+/// Construit tous les chunks d'une planète en parallèle sur tous les cœurs.
+fn build_planet_chunks(
+    pcfg: &PlanetConfig,
+    divs: usize,
+    cam_local: Vec3,
+) -> Vec<(CubeFace, usize, usize, LodLevel, Mesh)> {
+    let temp = pcfg.temperature();
+    let mut jobs = Vec::with_capacity(6 * divs * divs);
+    for face in CubeFace::all() {
+        for gx in 0..divs {
+            for gy in 0..divs {
+                let u = (gx as f32 + 0.5) / divs as f32;
+                let v = (gy as f32 + 0.5) / divs as f32;
+                let chunk_center = face.to_sphere_pos(u, v) * pcfg.radius;
+                jobs.push((face, gx, gy, compute_lod_level(cam_local, chunk_center, pcfg.radius)));
+            }
+        }
+    }
+    ComputeTaskPool::get().scope(|scope| {
+        for (face, gx, gy, lod) in jobs {
+            scope.spawn(async move {
+                let mesh = build_chunk_mesh(
+                    face, gx, gy, divs,
+                    pcfg.radius, pcfg.sea_level, pcfg.terrain_height,
+                    pcfg.seed, pcfg.noise_scale, pcfg.detail_scale, lod, temp,
+                );
+                (face, gx, gy, lod, mesh)
+            });
+        }
+    })
+}
+
+/// Maillage vide (un cube) pour les éruptions, remplacé à chaque image.
+fn spawn_flare_mesh(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    star_idx: usize,
+    (r, g, b): (f32, f32, f32),
+    star_pos: Vec3,
+) {
+    let flare_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(r * 1.0, g * 0.7, b * 0.4),
+        emissive: LinearRgba::new(r * 2.0, g * 1.2, b * 0.5, 1.0),
         unlit: true,
         ..default()
     });
-
-    let star_color_low: [f32; 4] = [0.85, 0.35, 0.05, 1.0];
-    let star_color_high: [f32; 4] = [1.0, 0.95, 0.55, 1.0];
-    let star_lod = LodLevel::Lod2;
-
-    for (i, star_cfg) in settings.stars.iter().enumerate() {
-        let pos = if star_cfg.orbit_distance > 1.0 {
-            Vec3::new(star_cfg.orbit_distance, 0.0, 0.0)
-        } else {
-            Vec3::ZERO
-        };
-
-        let star_entity = commands
-            .spawn((
-                Transform::from_translation(pos),
-                Visibility::default(),
-                StarRoot,
-                StarId(i),
-            ))
-            .id();
-
-        for face in CubeFace::all() {
-            for gx in 0..STAR_DIVISIONS {
-                for gy in 0..STAR_DIVISIONS {
-                    let mesh = build_celestial_chunk_mesh(
-                        face,
-                        gx,
-                        gy,
-                        STAR_DIVISIONS,
-                        star_cfg.radius,
-                        5.0,
-                        99 + i as u32,
-                        2.0,
-                        star_color_low,
-                        star_color_high,
-                        star_lod,
-                    );
-                    let chunk = commands
-                        .spawn((
-                            Mesh3d(meshes.add(mesh)),
-                            MeshMaterial3d(star_material.clone()),
-                            Transform::IDENTITY,
-                            NotShadowCaster,
-                            StarChunk,
-                        ))
-                        .id();
-                    commands.entity(star_entity).add_child(chunk);
-                }
-            }
-        }
-
-        let beacon_radius = star_cfg.radius * 0.8;
-        let beacon = commands
-            .spawn((
-                Mesh3d(meshes.add(Sphere::new(beacon_radius).mesh().ico(3).unwrap())),
-                MeshMaterial3d(star_material.clone()),
-                Transform::IDENTITY,
-                Visibility::Hidden,
-                NotShadowCaster,
-                StarBeacon,
-            ))
-            .id();
-        commands.entity(star_entity).add_child(beacon);
-
-        let intensity = star_cfg.intensity * 2_000_000.0 * 100.0;
-        let light = commands
-            .spawn((
-                PointLight {
-                    intensity,
-                    range: star_cfg.light_range,
-                    shadows_enabled: true,
-                    shadow_depth_bias: 0.02,
-                    shadow_normal_bias: 1.0,
-                    color: Color::srgb(star_cfg.light_color_r, star_cfg.light_color_g, star_cfg.light_color_b),
-                    ..default()
-                },
-                Transform::IDENTITY,
-            ))
-            .id();
-        commands.entity(star_entity).add_child(light);
-
-        // Flare voxels
-        let voxel_size = 6.0;
-        let samples_per_flare = 64_u32;
-        let r = star_cfg.light_color_r;
-        let g = star_cfg.light_color_g;
-        let b = star_cfg.light_color_b;
-        let flare_material = materials.add(StandardMaterial {
-            base_color: Color::srgb(r * 1.0, g * 0.7, b * 0.4),
-            emissive: LinearRgba::new(r * 2.0, g * 1.2, b * 0.5, 1.0),
-            unlit: true,
-            ..default()
-        });
-        let flare_mesh = meshes.add(Mesh::from(Cuboid::new(voxel_size, voxel_size, voxel_size)));
-
-        for fi in 0..star_cfg.flare_count {
-            for si in 0..samples_per_flare {
-                commands.spawn((
-                    Mesh3d(flare_mesh.clone()),
-                    MeshMaterial3d(flare_material.clone()),
-                    Transform::from_translation(Vec3::ZERO).with_scale(Vec3::ZERO),
-                    Visibility::default(),
-                    FlareVoxel { star_idx: i, flare_idx: fi, sample_idx: si },
-                    NotShadowCaster,
-                ));
-            }
-        }
-    }
-
-    let planet_material = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 0.9,
-        ..default()
-    });
-
-    let divs = settings.planet_chunk_divisions;
-
-    for (i, pcfg) in settings.planets.iter().enumerate() {
-        let planet_world_pos = Vec3::new(pcfg.orbit_distance, 0.0, 0.0);
-        let cam_local = cam_pos - planet_world_pos;
-
-        let root = commands
-            .spawn((
-                Transform::from_translation(planet_world_pos),
-                Visibility::default(),
-                PlanetRoot,
-                PlanetId(i),
-            ))
-            .id();
-
-        let temp = pcfg.temperature();
-
-        for face in CubeFace::all() {
-            for gx in 0..divs {
-                for gy in 0..divs {
-                    let u = (gx as f32 + 0.5) / divs as f32;
-                    let v = (gy as f32 + 0.5) / divs as f32;
-                    let center = face.to_sphere_pos(u, v) * pcfg.radius;
-                    let lod = compute_lod_level(cam_local, center, pcfg.radius);
-
-                    let mesh = build_chunk_mesh(
-                        face,
-                        gx,
-                        gy,
-                        divs,
-                        pcfg.radius,
-                        pcfg.sea_level,
-                        pcfg.terrain_height,
-                        pcfg.seed,
-                        pcfg.noise_scale,
-                        pcfg.detail_scale,
-                        lod,
-                        temp,
-                    );
-
-                    let chunk = commands
-                        .spawn((
-                            Mesh3d(meshes.add(mesh)),
-                            MeshMaterial3d(planet_material.clone()),
-                            Transform::IDENTITY,
-                            PlanetChunk {
-                                face,
-                                grid_x: gx,
-                                grid_y: gy,
-                                current_lod: lod,
-                                planet_id: i,
-                            },
-                            LodChunk,
-                        ))
-                        .id();
-                    commands.entity(root).add_child(chunk);
-                }
-            }
-        }
-
-        // Atmosphere clouds — one mesh per cloud patch
-        if pcfg.atmosphere {
-            let cloud_material = materials.add(StandardMaterial {
-                base_color: Color::srgb(0.95, 0.95, 0.97),
-                alpha_mode: AlphaMode::Opaque,
-                unlit: false,
-                perceptual_roughness: 1.0,
-                ..default()
-            });
-            let density = pcfg.cloud_density.clamp(0.1, 1.0);
-            let cloud_r = pcfg.radius + pcfg.terrain_height + pcfg.cloud_altitude;
-
-            use noise::{NoiseFn, Perlin};
-            let perlin = Perlin::new(pcfg.seed + 500);
-            let perlin2 = Perlin::new(pcfg.seed + 501);
-
-            let patch_count = 40 + (density * 60.0) as u32;
-            let patch_grid = 16_i32;
-            let cell = cloud_r * 0.04;
-
-            for ci in 0..patch_count {
-                let seed_a = pseudo_hash(pcfg.seed as f32, ci as f32 * 3.7);
-                let seed_b = pseudo_hash(pcfg.seed as f32, ci as f32 * 7.1);
-                let theta_c = seed_a * std::f32::consts::TAU;
-                let phi_c = (seed_b * 2.0 - 1.0).clamp(-1.0, 1.0).acos();
-
-                let center_dir = Vec3::new(
-                    theta_c.cos() * phi_c.sin(),
-                    phi_c.cos(),
-                    theta_c.sin() * phi_c.sin(),
-                ).normalize();
-
-                let up = if center_dir.y.abs() > 0.9 { Vec3::X } else { Vec3::Y };
-                let tangent_u = center_dir.cross(up).normalize();
-                let tangent_v = center_dir.cross(tangent_u).normalize();
-
-                // Build height map from 2D noise
-                let mut grid = vec![0_u32; (patch_grid * patch_grid) as usize];
-                let threshold = 0.1 - density as f64 * 0.15;
-
-                for gx in 0..patch_grid {
-                    for gz in 0..patch_grid {
-                        let lx = (gx as f32 - patch_grid as f32 * 0.5) * cell;
-                        let lz = (gz as f32 - patch_grid as f32 * 0.5) * cell;
-
-                        let world = center_dir * cloud_r + tangent_u * lx + tangent_v * lz;
-                        let wd = world.normalize();
-                        let nx = wd.x as f64;
-                        let ny = wd.y as f64;
-                        let nz = wd.z as f64;
-
-                        let n1 = perlin.get([nx * 4.0 + ci as f64 * 10.0, ny * 4.0, nz * 4.0]);
-                        let n2 = perlin2.get([nx * 8.0 + ci as f64 * 5.0, ny * 8.0, nz * 8.0]);
-                        let n = n1 * 0.65 + n2 * 0.35;
-
-                        // Fade at edges of patch
-                        let dx = (gx as f32 - patch_grid as f32 * 0.5).abs() / (patch_grid as f32 * 0.5);
-                        let dz = (gz as f32 - patch_grid as f32 * 0.5).abs() / (patch_grid as f32 * 0.5);
-                        let edge = 1.0 - (dx * dx + dz * dz).sqrt().min(1.0);
-
-                        if n > threshold && edge as f64 > 0.2 {
-                            let h = (1 + ((n - threshold) * 3.0) as u32).min(4);
-                            grid[(gx * patch_grid + gz) as usize] = h;
-                        }
-                    }
-                }
-
-                // Build mesh with face culling
-                let mut positions: Vec<[f32; 3]> = Vec::new();
-                let mut normals: Vec<[f32; 3]> = Vec::new();
-                let mut indices: Vec<u32> = Vec::new();
-
-                let get_h = |x: i32, z: i32| -> u32 {
-                    if x < 0 || x >= patch_grid || z < 0 || z >= patch_grid { return 0; }
-                    grid[(x * patch_grid + z) as usize]
-                };
-
-                for gx in 0..patch_grid {
-                    for gz in 0..patch_grid {
-                        let h = get_h(gx, gz);
-                        if h == 0 { continue; }
-
-                        let x0 = (gx as f32 - patch_grid as f32 * 0.5) * cell;
-                        let z0 = (gz as f32 - patch_grid as f32 * 0.5) * cell;
-                        let x1 = x0 + cell;
-                        let z1 = z0 + cell;
-
-                        for y_layer in 0..h {
-                            let y0 = y_layer as f32 * cell * 0.5;
-                            let y1 = y0 + cell * 0.5;
-
-                            // Top face (always if top layer)
-                            if y_layer == h - 1 {
-                                let vi = positions.len() as u32;
-                                positions.extend_from_slice(&[
-                                    [x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0],
-                                ]);
-                                normals.extend_from_slice(&[[0.0,1.0,0.0]; 4]);
-                                indices.extend_from_slice(&[vi, vi+1, vi+2, vi, vi+2, vi+3]);
-                            }
-
-                            // Bottom face (only if bottom layer)
-                            if y_layer == 0 {
-                                let vi = positions.len() as u32;
-                                positions.extend_from_slice(&[
-                                    [x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1],
-                                ]);
-                                normals.extend_from_slice(&[[0.0,-1.0,0.0]; 4]);
-                                indices.extend_from_slice(&[vi, vi+1, vi+2, vi, vi+2, vi+3]);
-                            }
-
-                            // -X face
-                            if get_h(gx - 1, gz) <= y_layer {
-                                let vi = positions.len() as u32;
-                                positions.extend_from_slice(&[
-                                    [x0, y0, z0], [x0, y1, z0], [x0, y1, z1], [x0, y0, z1],
-                                ]);
-                                normals.extend_from_slice(&[[-1.0,0.0,0.0]; 4]);
-                                indices.extend_from_slice(&[vi, vi+1, vi+2, vi, vi+2, vi+3]);
-                            }
-
-                            // +X face
-                            if get_h(gx + 1, gz) <= y_layer {
-                                let vi = positions.len() as u32;
-                                positions.extend_from_slice(&[
-                                    [x1, y0, z1], [x1, y1, z1], [x1, y1, z0], [x1, y0, z0],
-                                ]);
-                                normals.extend_from_slice(&[[1.0,0.0,0.0]; 4]);
-                                indices.extend_from_slice(&[vi, vi+1, vi+2, vi, vi+2, vi+3]);
-                            }
-
-                            // -Z face
-                            if get_h(gx, gz - 1) <= y_layer {
-                                let vi = positions.len() as u32;
-                                positions.extend_from_slice(&[
-                                    [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [x0, y0, z0],
-                                ]);
-                                normals.extend_from_slice(&[[0.0,0.0,-1.0]; 4]);
-                                indices.extend_from_slice(&[vi, vi+1, vi+2, vi, vi+2, vi+3]);
-                            }
-
-                            // +Z face
-                            if get_h(gx, gz + 1) <= y_layer {
-                                let vi = positions.len() as u32;
-                                positions.extend_from_slice(&[
-                                    [x0, y0, z1], [x0, y1, z1], [x1, y1, z1], [x1, y0, z1],
-                                ]);
-                                normals.extend_from_slice(&[[0.0,0.0,1.0]; 4]);
-                                indices.extend_from_slice(&[vi, vi+1, vi+2, vi, vi+2, vi+3]);
-                            }
-                        }
-                    }
-                }
-
-                if positions.is_empty() { continue; }
-
-                let mut mesh = Mesh::new(
-                    bevy::render::mesh::PrimitiveTopology::TriangleList,
-                    bevy::render::render_asset::RenderAssetUsages::default(),
-                );
-                mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-                mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-                mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
-
-                let rotation = Quat::from_rotation_arc(Vec3::Y, center_dir);
-                let pos = center_dir * cloud_r;
-
-                commands.spawn((
-                    Mesh3d(meshes.add(mesh)),
-                    MeshMaterial3d(cloud_material.clone()),
-                    Transform::from_translation(pos).with_rotation(rotation),
-                    CloudVoxel {
-                        planet_idx: i,
-                        theta: theta_c,
-                        phi: phi_c,
-                        altitude: cloud_r,
-                    },
-                ));
-            }
-        }
-    }
-
-    // Moons
-    let moon_material = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 0.95,
-        ..default()
-    });
-
-    let moon_color_low: [f32; 4] = [0.55, 0.53, 0.50, 1.0];
-    let moon_color_high: [f32; 4] = [0.80, 0.78, 0.75, 1.0];
-    let moon_lod = LodLevel::Lod2;
-
-    for (pi, pcfg) in settings.planets.iter().enumerate() {
-        for (mi, mcfg) in pcfg.moons.iter().enumerate() {
-            let offset = Vec3::new(mcfg.orbit_distance, 0.0, 0.0);
-            let moon_entity = commands
-                .spawn((
-                    Transform::from_translation(Vec3::new(pcfg.orbit_distance, 0.0, 0.0) + offset),
-                    Visibility::default(),
-                    MoonRoot,
-                    MoonId { planet_idx: pi, moon_idx: mi },
-                ))
-                .id();
-
-            for face in CubeFace::all() {
-                for gx in 0..MOON_DIVISIONS {
-                    for gy in 0..MOON_DIVISIONS {
-                        let mesh = build_celestial_chunk_mesh(
-                            face,
-                            gx,
-                            gy,
-                            MOON_DIVISIONS,
-                            mcfg.radius,
-                            2.0,
-                            mcfg.seed,
-                            1.5,
-                            moon_color_low,
-                            moon_color_high,
-                            moon_lod,
-                        );
-                        let chunk = commands
-                            .spawn((
-                                Mesh3d(meshes.add(mesh)),
-                                MeshMaterial3d(moon_material.clone()),
-                                Transform::IDENTITY,
-                            ))
-                            .id();
-                        commands.entity(moon_entity).add_child(chunk);
-                    }
-                }
-            }
-        }
-    }
-
-    // Asteroid belts
-    let asteroid_material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.45, 0.42, 0.38),
-        perceptual_roughness: 0.95,
-        ..default()
-    });
-
-    let mut rng = rand::thread_rng();
-
-    for (i, belt) in settings.asteroid_belts.iter().enumerate() {
-        let belt_entity = commands
-            .spawn((
-                Transform::IDENTITY,
-                Visibility::default(),
-                AsteroidBeltRoot,
-                AsteroidBeltId(i),
-                SystemIdx(0),
-                SystemOffset(Vec3::ZERO),
-                AstreLodRoot { cull_dist: 30000.0, radius: belt.distance, streamable: true, label: "AsteroidBelt" },
-            ))
-            .id();
-
-        for _ in 0..belt.count.min(500) {
-            let angle = rng.gen::<f32>() * std::f32::consts::TAU;
-            let dist_offset = (rng.gen::<f32>() - 0.5) * belt.width;
-            let dist = belt.distance + dist_offset;
-            let y_offset = (rng.gen::<f32>() - 0.5) * belt.width * 0.3;
-
-            let size = belt.min_size + rng.gen::<f32>() * (belt.max_size - belt.min_size);
-
-            let pos = Vec3::new(angle.cos() * dist, y_offset, angle.sin() * dist);
-
-            let rotation = Quat::from_euler(
-                EulerRot::XYZ,
-                rng.gen::<f32>() * std::f32::consts::TAU,
-                rng.gen::<f32>() * std::f32::consts::TAU,
-                rng.gen::<f32>() * std::f32::consts::TAU,
-            );
-
-            let mesh = Mesh::from(Cuboid::new(size, size * 0.7, size * 0.85));
-
-            let asteroid = commands
-                .spawn((
-                    Mesh3d(meshes.add(mesh)),
-                    MeshMaterial3d(asteroid_material.clone()),
-                    Transform::from_translation(pos).with_rotation(rotation),
-                ))
-                .id();
-            commands.entity(belt_entity).add_child(asteroid);
-        }
-    }
+    commands.spawn((
+        Mesh3d(meshes.add(Mesh::from(Cuboid::new(1.0, 1.0, 1.0)))),
+        MeshMaterial3d(flare_material),
+        Transform::from_translation(star_pos),
+        Visibility::Hidden,
+        FlareVoxel { star_idx },
+        NotShadowCaster,
+        // Le maillage change à chaque image : sa boîte englobante initiale serait fausse
+        NoFrustumCulling,
+    ));
 }
 
 fn spawn_system_bodies(
@@ -1336,29 +1109,7 @@ fn spawn_system_bodies(
             .id();
         commands.entity(star_entity).add_child(light);
 
-        // Flare voxels
-        let voxel_size = 6.0;
-        let samples_per_flare = 64_u32;
-        let flare_material = materials.add(StandardMaterial {
-            base_color: Color::srgb(r * 1.0, g * 0.7, b * 0.4),
-            emissive: LinearRgba::new(r * 2.0, g * 1.2, b * 0.5, 1.0),
-            unlit: true,
-            ..default()
-        });
-        let flare_mesh = meshes.add(Mesh::from(Cuboid::new(voxel_size, voxel_size, voxel_size)));
-
-        for fi in 0..star_cfg.flare_count {
-            for si in 0..samples_per_flare {
-                commands.spawn((
-                    Mesh3d(flare_mesh.clone()),
-                    MeshMaterial3d(flare_material.clone()),
-                    Transform::from_translation(pos).with_scale(Vec3::ZERO),
-                    Visibility::default(),
-                    FlareVoxel { star_idx: id_base + i, flare_idx: fi, sample_idx: si },
-                    NotShadowCaster,
-                ));
-            }
-        }
+        spawn_flare_mesh(commands, meshes, materials, id_base + i, (r, g, b), pos);
     }
 
     let planet_material = materials.add(StandardMaterial {
@@ -1384,210 +1135,27 @@ fn spawn_system_bodies(
             ))
             .id();
 
-        let temp = pcfg.temperature();
-        for face in CubeFace::all() {
-            for gx in 0..divs {
-                for gy in 0..divs {
-                    let u = (gx as f32 + 0.5) / divs as f32;
-                    let v = (gy as f32 + 0.5) / divs as f32;
-                    let chunk_center = face.to_sphere_pos(u, v) * pcfg.radius;
-                    let lod = compute_lod_level(cam_local, chunk_center, pcfg.radius);
-
-                    let mesh = build_chunk_mesh(
-                        face, gx, gy, divs,
-                        pcfg.radius, pcfg.sea_level, pcfg.terrain_height,
-                        pcfg.seed, pcfg.noise_scale, pcfg.detail_scale, lod, temp,
-                    );
-                    let child = commands
-                        .spawn((
-                            Mesh3d(meshes.add(mesh)),
-                            MeshMaterial3d(planet_material.clone()),
-                            Transform::IDENTITY,
-                            PlanetChunk {
-                                face,
-                                grid_x: gx,
-                                grid_y: gy,
-                                current_lod: lod,
-                                planet_id: id_base + i,
-                            },
-                            LodChunk,
-                        ))
-                        .id();
-                    commands.entity(root).add_child(child);
-                }
-            }
+        for (face, gx, gy, lod, mesh) in build_planet_chunks(pcfg, divs, cam_local) {
+            let child = commands
+                .spawn((
+                    Mesh3d(meshes.add(mesh)),
+                    MeshMaterial3d(planet_material.clone()),
+                    Transform::IDENTITY,
+                    PlanetChunk {
+                        face,
+                        grid_x: gx,
+                        grid_y: gy,
+                        current_lod: lod,
+                        planet_id: id_base + i,
+                    },
+                    LodChunk,
+                ))
+                .id();
+            commands.entity(root).add_child(child);
         }
 
-        // Atmosphere clouds
         if pcfg.atmosphere {
-            let cloud_material = materials.add(StandardMaterial {
-                base_color: Color::srgb(0.95, 0.95, 0.97),
-                alpha_mode: AlphaMode::Opaque,
-                unlit: false,
-                perceptual_roughness: 1.0,
-                ..default()
-            });
-            let density = pcfg.cloud_density.clamp(0.1, 1.0);
-            let cloud_r = pcfg.radius + pcfg.terrain_height + pcfg.cloud_altitude;
-
-            use noise::{NoiseFn, Perlin};
-            let perlin = Perlin::new(pcfg.seed + 500);
-            let perlin2 = Perlin::new(pcfg.seed + 501);
-
-            let patch_count = 40 + (density * 60.0) as u32;
-            let patch_grid = 16_i32;
-            let cell = cloud_r * 0.04;
-
-            for ci in 0..patch_count {
-                let seed_a = pseudo_hash(pcfg.seed as f32, ci as f32 * 3.7);
-                let seed_b = pseudo_hash(pcfg.seed as f32, ci as f32 * 7.1);
-                let theta_c = seed_a * std::f32::consts::TAU;
-                let phi_c = (seed_b * 2.0 - 1.0).clamp(-1.0, 1.0).acos();
-
-                let center_dir = Vec3::new(
-                    theta_c.cos() * phi_c.sin(),
-                    phi_c.cos(),
-                    theta_c.sin() * phi_c.sin(),
-                ).normalize();
-
-                let up = if center_dir.y.abs() > 0.9 { Vec3::X } else { Vec3::Y };
-                let tangent_u = center_dir.cross(up).normalize();
-                let tangent_v = center_dir.cross(tangent_u).normalize();
-
-                let mut grid = vec![0_u32; (patch_grid * patch_grid) as usize];
-                let threshold = 0.1 - density as f64 * 0.15;
-
-                for gx in 0..patch_grid {
-                    for gz in 0..patch_grid {
-                        let lx = (gx as f32 - patch_grid as f32 * 0.5) * cell;
-                        let lz = (gz as f32 - patch_grid as f32 * 0.5) * cell;
-
-                        let world = center_dir * cloud_r + tangent_u * lx + tangent_v * lz;
-                        let wd = world.normalize();
-                        let nx = wd.x as f64;
-                        let ny = wd.y as f64;
-                        let nz = wd.z as f64;
-
-                        let n1 = perlin.get([nx * 4.0 + ci as f64 * 10.0, ny * 4.0, nz * 4.0]);
-                        let n2 = perlin2.get([nx * 8.0 + ci as f64 * 5.0, ny * 8.0, nz * 8.0]);
-                        let n = n1 * 0.65 + n2 * 0.35;
-
-                        let dx = (gx as f32 - patch_grid as f32 * 0.5).abs() / (patch_grid as f32 * 0.5);
-                        let dz = (gz as f32 - patch_grid as f32 * 0.5).abs() / (patch_grid as f32 * 0.5);
-                        let edge = 1.0 - (dx * dx + dz * dz).sqrt().min(1.0);
-
-                        if n > threshold && edge as f64 > 0.2 {
-                            let h = (1 + ((n - threshold) * 3.0) as u32).min(4);
-                            grid[(gx * patch_grid + gz) as usize] = h;
-                        }
-                    }
-                }
-
-                let mut positions: Vec<[f32; 3]> = Vec::new();
-                let mut normals: Vec<[f32; 3]> = Vec::new();
-                let mut indices: Vec<u32> = Vec::new();
-
-                let get_h = |x: i32, z: i32| -> u32 {
-                    if x < 0 || x >= patch_grid || z < 0 || z >= patch_grid { return 0; }
-                    grid[(x * patch_grid + z) as usize]
-                };
-
-                for gx in 0..patch_grid {
-                    for gz in 0..patch_grid {
-                        let h = get_h(gx, gz);
-                        if h == 0 { continue; }
-
-                        let x0 = (gx as f32 - patch_grid as f32 * 0.5) * cell;
-                        let z0 = (gz as f32 - patch_grid as f32 * 0.5) * cell;
-                        let x1 = x0 + cell;
-                        let z1 = z0 + cell;
-
-                        for y_layer in 0..h {
-                            let y0 = y_layer as f32 * cell * 0.5;
-                            let y1 = y0 + cell * 0.5;
-
-                            if y_layer == h - 1 {
-                                let vi = positions.len() as u32;
-                                positions.extend_from_slice(&[
-                                    [x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0],
-                                ]);
-                                normals.extend_from_slice(&[[0.0,1.0,0.0]; 4]);
-                                indices.extend_from_slice(&[vi, vi+1, vi+2, vi, vi+2, vi+3]);
-                            }
-
-                            if y_layer == 0 {
-                                let vi = positions.len() as u32;
-                                positions.extend_from_slice(&[
-                                    [x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1],
-                                ]);
-                                normals.extend_from_slice(&[[0.0,-1.0,0.0]; 4]);
-                                indices.extend_from_slice(&[vi, vi+1, vi+2, vi, vi+2, vi+3]);
-                            }
-
-                            if get_h(gx - 1, gz) <= y_layer {
-                                let vi = positions.len() as u32;
-                                positions.extend_from_slice(&[
-                                    [x0, y0, z0], [x0, y1, z0], [x0, y1, z1], [x0, y0, z1],
-                                ]);
-                                normals.extend_from_slice(&[[-1.0,0.0,0.0]; 4]);
-                                indices.extend_from_slice(&[vi, vi+1, vi+2, vi, vi+2, vi+3]);
-                            }
-
-                            if get_h(gx + 1, gz) <= y_layer {
-                                let vi = positions.len() as u32;
-                                positions.extend_from_slice(&[
-                                    [x1, y0, z1], [x1, y1, z1], [x1, y1, z0], [x1, y0, z0],
-                                ]);
-                                normals.extend_from_slice(&[[1.0,0.0,0.0]; 4]);
-                                indices.extend_from_slice(&[vi, vi+1, vi+2, vi, vi+2, vi+3]);
-                            }
-
-                            if get_h(gx, gz - 1) <= y_layer {
-                                let vi = positions.len() as u32;
-                                positions.extend_from_slice(&[
-                                    [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [x0, y0, z0],
-                                ]);
-                                normals.extend_from_slice(&[[0.0,0.0,-1.0]; 4]);
-                                indices.extend_from_slice(&[vi, vi+1, vi+2, vi, vi+2, vi+3]);
-                            }
-
-                            if get_h(gx, gz + 1) <= y_layer {
-                                let vi = positions.len() as u32;
-                                positions.extend_from_slice(&[
-                                    [x0, y0, z1], [x0, y1, z1], [x1, y1, z1], [x1, y0, z1],
-                                ]);
-                                normals.extend_from_slice(&[[0.0,0.0,1.0]; 4]);
-                                indices.extend_from_slice(&[vi, vi+1, vi+2, vi, vi+2, vi+3]);
-                            }
-                        }
-                    }
-                }
-
-                if positions.is_empty() { continue; }
-
-                let mut mesh = Mesh::new(
-                    bevy::render::mesh::PrimitiveTopology::TriangleList,
-                    bevy::render::render_asset::RenderAssetUsages::default(),
-                );
-                mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-                mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-                mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
-
-                let rotation = Quat::from_rotation_arc(Vec3::Y, center_dir);
-                let cloud_pos = planet_world_pos + center_dir * cloud_r;
-
-                commands.spawn((
-                    Mesh3d(meshes.add(mesh)),
-                    MeshMaterial3d(cloud_material.clone()),
-                    Transform::from_translation(cloud_pos).with_rotation(rotation),
-                    CloudVoxel {
-                        planet_idx: id_base + i,
-                        theta: theta_c,
-                        phi: phi_c,
-                        altitude: cloud_r,
-                    },
-                ));
-            }
+            spawn_cloud_layer(commands, meshes, materials, pcfg, id_base + i, planet_world_pos);
         }
 
         for (mi, mcfg) in pcfg.moons.iter().enumerate() {
@@ -1779,34 +1347,59 @@ fn pseudo_hash(a: f32, b: f32) -> f32 {
     ((a * 12.9898 + b * 78.233).sin() * 43758.5453).fract()
 }
 
+/// Ajoute un cube (centre, demi-taille) à un maillage en construction.
+fn push_cube(c: Vec3, h: f32, positions: &mut Vec<[f32; 3]>, normals: &mut Vec<[f32; 3]>, indices: &mut Vec<u32>) {
+    const FACES: [([f32; 3], [[f32; 3]; 4]); 6] = [
+        ([1.0, 0.0, 0.0], [[1.0, -1.0, 1.0], [1.0, -1.0, -1.0], [1.0, 1.0, -1.0], [1.0, 1.0, 1.0]]),
+        ([-1.0, 0.0, 0.0], [[-1.0, -1.0, -1.0], [-1.0, -1.0, 1.0], [-1.0, 1.0, 1.0], [-1.0, 1.0, -1.0]]),
+        ([0.0, 1.0, 0.0], [[-1.0, 1.0, 1.0], [1.0, 1.0, 1.0], [1.0, 1.0, -1.0], [-1.0, 1.0, -1.0]]),
+        ([0.0, -1.0, 0.0], [[-1.0, -1.0, -1.0], [1.0, -1.0, -1.0], [1.0, -1.0, 1.0], [-1.0, -1.0, 1.0]]),
+        ([0.0, 0.0, 1.0], [[-1.0, -1.0, 1.0], [1.0, -1.0, 1.0], [1.0, 1.0, 1.0], [-1.0, 1.0, 1.0]]),
+        ([0.0, 0.0, -1.0], [[1.0, -1.0, -1.0], [-1.0, -1.0, -1.0], [-1.0, 1.0, -1.0], [1.0, 1.0, -1.0]]),
+    ];
+    for (n, corners) in FACES {
+        let vi = positions.len() as u32;
+        for k in corners {
+            positions.push([c.x + k[0] * h, c.y + k[1] * h, c.z + k[2] * h]);
+            normals.push(n);
+        }
+        indices.extend_from_slice(&[vi, vi + 1, vi + 2, vi, vi + 2, vi + 3]);
+    }
+}
+
+const MAX_FLARES_PER_STAR: u32 = 32;
+
 fn update_flare_voxels(
     time: Res<Time>,
     settings: Res<GameSettings>,
     star_q: Query<(&GlobalTransform, &StarId), With<StarRoot>>,
     cam_q: Query<&GlobalTransform, With<Camera3d>>,
-    mut flare_q: Query<(&FlareVoxel, &mut Transform, &mut Visibility)>,
+    mut flare_q: Query<(&FlareVoxel, &Mesh3d, &mut Transform, &mut Visibility)>,
+    mut meshes: ResMut<Assets<Mesh>>,
 ) {
+    if !settings.show_flares {
+        for (_, _, _, mut vis) in &mut flare_q {
+            if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
+        }
+        return;
+    }
+
     let max_samples = 64_u32;
     let cam_pos = cam_q.iter().next().map(|gt| gt.translation()).unwrap_or_default();
+    let star_positions: HashMap<usize, Vec3> =
+        star_q.iter().map(|(gt, sid)| (sid.0, gt.translation())).collect();
 
-    for (fv, mut tf, mut vis) in &mut flare_q {
+    for (fv, mesh3d, mut tf, mut vis) in &mut flare_q {
         let sys_i = fv.star_idx / 1000;
         let local_i = fv.star_idx % 1000;
-        let Some(scfg) = settings.systems.get(sys_i).and_then(|s| s.stars.get(local_i)) else {
-            *vis = Visibility::Hidden;
+        let (Some(scfg), Some(&star_pos)) = (
+            settings.systems.get(sys_i).and_then(|s| s.stars.get(local_i)),
+            star_positions.get(&fv.star_idx),
+        ) else {
+            if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
             continue;
         };
-
-        if fv.flare_idx >= scfg.flare_count {
-            *vis = Visibility::Hidden;
-            continue;
-        }
-
-        let star_pos = star_q
-            .iter()
-            .find(|(_, sid)| sid.0 == fv.star_idx)
-            .map(|(gt, _)| gt.translation())
-            .unwrap_or_default();
+        tf.translation = star_pos;
 
         // LOD: fewer samples when far away
         let dist = cam_pos.distance(star_pos);
@@ -1821,84 +1414,96 @@ fn update_flare_voxels(
             16
         };
 
-        if fv.sample_idx >= active_samples {
-            *vis = Visibility::Hidden;
-            continue;
-        }
-
         let t = time.elapsed_secs() * scfg.flare_speed;
-        let base_seed = (fv.star_idx as f32 + 1.0) * 100.0 + fv.flare_idx as f32 * 37.7;
-
-        // Each flare has a unique cycle duration and pause
-        let rise_dur = 2.0 + pseudo_hash(base_seed, 1.0) * 3.0;
-        let hold_dur = 0.5 + pseudo_hash(base_seed, 2.0) * 1.5;
-        let fall_dur = 2.0 + pseudo_hash(base_seed, 3.0) * 3.0;
-        let pause_dur = 1.0 + pseudo_hash(base_seed, 4.0) * 4.0;
-        let total_dur = rise_dur + hold_dur + fall_dur + pause_dur;
-        let offset = pseudo_hash(base_seed, 5.0) * total_dur;
-        let local_t = ((t + offset) % total_dur).max(0.0);
-
-        let life = if local_t < rise_dur {
-            local_t / rise_dur
-        } else if local_t < rise_dur + hold_dur {
-            1.0
-        } else if local_t < rise_dur + hold_dur + fall_dur {
-            1.0 - (local_t - rise_dur - hold_dur) / fall_dur
-        } else {
-            0.0
-        };
-
-        if life <= 0.001 {
-            *vis = Visibility::Hidden;
-            continue;
-        }
-
-        // Each cycle gets a different position
-        let cycle_id = ((t + offset) / total_dur).floor();
-        let h1 = pseudo_hash(base_seed, cycle_id * 3.1);
-        let h2 = pseudo_hash(base_seed, cycle_id * 7.3);
-
-        let theta = h1 * std::f32::consts::TAU;
-        let phi = (h2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos();
-
-        let dir = Vec3::new(
-            theta.cos() * phi.sin(),
-            phi.cos(),
-            theta.sin() * phi.sin(),
-        )
-        .normalize();
-
-        let perp = if dir.y.abs() > 0.9 {
-            dir.cross(Vec3::X).normalize()
-        } else {
-            dir.cross(Vec3::Y).normalize()
-        };
-
-        let height = scfg.flare_height * life;
-        let half_spread = scfg.flare_distance.max(5.0) * 0.5;
-
-        let start_dir = (dir + perp * half_spread / scfg.radius).normalize();
-        let end_dir = (dir - perp * half_spread / scfg.radius).normalize();
-        let start = star_pos + start_dir * scfg.radius;
-        let end = star_pos + end_dir * scfg.radius;
-        let control = star_pos + dir * (scfg.radius + height);
-
-        let frac = fv.sample_idx as f32 / active_samples as f32;
-
-        if frac > life {
-            *vis = Visibility::Hidden;
-            continue;
-        }
-
         let voxel_size = scfg.flare_size;
-        let inv = 1.0 - frac;
-        let point = start * inv * inv + control * 2.0 * inv * frac + end * frac * frac;
-        let snapped = snap_grid(point, voxel_size.max(1.0));
+        let half = voxel_size * 0.5;
 
-        *vis = Visibility::Visible;
-        tf.translation = snapped;
-        let s = voxel_size / 6.0;
-        tf.scale = Vec3::splat(s);
+        let mut positions: Vec<[f32; 3]> = Vec::new();
+        let mut normals: Vec<[f32; 3]> = Vec::new();
+        let mut indices: Vec<u32> = Vec::new();
+
+        for flare_idx in 0..scfg.flare_count.min(MAX_FLARES_PER_STAR) {
+            let base_seed = (fv.star_idx as f32 + 1.0) * 100.0 + flare_idx as f32 * 37.7;
+
+            // Each flare has a unique cycle duration and pause
+            let rise_dur = 2.0 + pseudo_hash(base_seed, 1.0) * 3.0;
+            let hold_dur = 0.5 + pseudo_hash(base_seed, 2.0) * 1.5;
+            let fall_dur = 2.0 + pseudo_hash(base_seed, 3.0) * 3.0;
+            let pause_dur = 1.0 + pseudo_hash(base_seed, 4.0) * 4.0;
+            let total_dur = rise_dur + hold_dur + fall_dur + pause_dur;
+            let offset = pseudo_hash(base_seed, 5.0) * total_dur;
+            let local_t = ((t + offset) % total_dur).max(0.0);
+
+            let life = if local_t < rise_dur {
+                local_t / rise_dur
+            } else if local_t < rise_dur + hold_dur {
+                1.0
+            } else if local_t < rise_dur + hold_dur + fall_dur {
+                1.0 - (local_t - rise_dur - hold_dur) / fall_dur
+            } else {
+                0.0
+            };
+            if life <= 0.001 {
+                continue;
+            }
+
+            // Each cycle gets a different position
+            let cycle_id = ((t + offset) / total_dur).floor();
+            let h1 = pseudo_hash(base_seed, cycle_id * 3.1);
+            let h2 = pseudo_hash(base_seed, cycle_id * 7.3);
+
+            let theta = h1 * std::f32::consts::TAU;
+            let phi = (h2 * 2.0 - 1.0).clamp(-1.0, 1.0).acos();
+
+            let dir = Vec3::new(
+                theta.cos() * phi.sin(),
+                phi.cos(),
+                theta.sin() * phi.sin(),
+            )
+            .normalize();
+
+            let perp = if dir.y.abs() > 0.9 {
+                dir.cross(Vec3::X).normalize()
+            } else {
+                dir.cross(Vec3::Y).normalize()
+            };
+
+            let height = scfg.flare_height * life;
+            let half_spread = scfg.flare_distance.max(5.0) * 0.5;
+
+            // Positions relatives à l'étoile (le maillage suit l'étoile)
+            let start = (dir + perp * half_spread / scfg.radius).normalize() * scfg.radius;
+            let end = (dir - perp * half_spread / scfg.radius).normalize() * scfg.radius;
+            let control = dir * (scfg.radius + height);
+
+            for sample_idx in 0..active_samples {
+                let frac = sample_idx as f32 / active_samples as f32;
+                if frac > life {
+                    break;
+                }
+                let inv = 1.0 - frac;
+                let point = start * inv * inv + control * 2.0 * inv * frac + end * frac * frac;
+                let snapped = snap_grid(point, voxel_size.max(1.0));
+                push_cube(snapped, half, &mut positions, &mut normals, &mut indices);
+            }
+        }
+
+        if positions.is_empty() {
+            if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
+            continue;
+        }
+        if *vis != Visibility::Inherited { *vis = Visibility::Inherited; }
+
+        let mut mesh = Mesh::new(
+            bevy::render::mesh::PrimitiveTopology::TriangleList,
+            RenderAssetUsages::default(),
+        );
+        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+        mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
+        if let Some(m) = meshes.get_mut(&mesh3d.0) {
+            *m = mesh;
+        }
     }
 }
 
@@ -1906,35 +1511,31 @@ fn rotate_clouds(
     time: Res<Time>,
     settings: Res<GameSettings>,
     planet_q: Query<(&GlobalTransform, &PlanetId), With<PlanetRoot>>,
-    mut cloud_q: Query<(&CloudVoxel, &mut Transform)>,
+    mut cloud_q: Query<(&CloudVoxel, &mut Transform, &mut Visibility)>,
 ) {
-    let t = time.elapsed_secs();
+    if !settings.show_clouds {
+        for (_, _, mut vis) in &mut cloud_q {
+            if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
+        }
+        return;
+    }
 
-    for (cloud, mut tf) in &mut cloud_q {
+    let t = time.elapsed_secs();
+    let planet_positions: HashMap<usize, Vec3> =
+        planet_q.iter().map(|(gt, pid)| (pid.0, gt.translation())).collect();
+
+    for (cloud, mut tf, mut vis) in &mut cloud_q {
+        if *vis == Visibility::Hidden { *vis = Visibility::Inherited; }
         let sys_i = cloud.planet_idx / 1000;
         let local_i = cloud.planet_idx % 1000;
         let Some(pcfg) = settings.systems.get(sys_i).and_then(|s| s.planets.get(local_i)) else {
             continue;
         };
+        let Some(&planet_pos) = planet_positions.get(&cloud.planet_idx) else { continue };
 
-        let planet_pos = planet_q
-            .iter()
-            .find(|(_, pid)| pid.0 == cloud.planet_idx)
-            .map(|(gt, _)| gt.translation())
-            .unwrap_or_default();
-
-        let speed = pcfg.cloud_speed;
-        let theta = cloud.theta + t * speed;
-        let phi = cloud.phi;
-        let alt = cloud.altitude;
-
-        let dir = Vec3::new(
-            phi.sin() * theta.cos(),
-            phi.cos(),
-            phi.sin() * theta.sin(),
-        ).normalize();
-        tf.translation = planet_pos + dir * alt;
-        tf.rotation = Quat::from_rotation_arc(Vec3::Y, dir);
+        // Toute la couche tourne d'un bloc autour de l'axe Y de la planète
+        tf.translation = planet_pos;
+        tf.rotation = Quat::from_rotation_y(-t * pcfg.cloud_speed);
     }
 }
 
@@ -1951,6 +1552,7 @@ fn regenerate_all(
     camera_q: Query<&Transform, With<Camera3d>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    spawned: Res<SpawnedSystems>,
 ) {
     let mut fired = false;
     for _ in events.read() {
@@ -1979,9 +1581,9 @@ fn regenerate_all(
     for entity in &belt_q {
         commands.entity(entity).despawn_recursive();
     }
-    for (si, sys) in settings.systems.iter().enumerate() {
-        let center = sys.center();
-        let sys_cam = center + Vec3::new(0.0, 80.0, 200.0);
+    // Seul le système chargé est régénéré (les autres ne sont pas instanciés)
+    for &si in &spawned.0 {
+        let Some(sys) = settings.systems.get(si) else { continue };
         spawn_system_bodies(
             &mut commands,
             sys,
@@ -1989,27 +1591,58 @@ fn regenerate_all(
             si,
             &mut meshes,
             &mut materials,
-            sys_cam,
-            center,
+            cam_pos,
+            sys.center(),
         );
     }
 }
 
-const MAX_LOD_UPDATES_PER_FRAME: usize = 4;
+/// Nombre max de chunks reconstruits en même temps en arrière-plan.
+const MAX_LOD_TASKS_IN_FLIGHT: usize = 8;
+
+/// Reconstruction d'un chunk de planète en cours sur le pool de threads async.
+#[derive(Component)]
+pub struct LodTask {
+    task: Task<Mesh>,
+    lod: LodLevel,
+}
 
 fn update_lod(
+    mut commands: Commands,
     settings: Res<GameSettings>,
     camera_q: Query<&Transform, With<Camera3d>>,
     planet_q: Query<(&GlobalTransform, &PlanetId), With<PlanetRoot>>,
-    mut chunk_q: Query<(&mut PlanetChunk, &Mesh3d, &LodChunk)>,
+    mut chunk_q: Query<(Entity, &mut PlanetChunk, &Mesh3d, Option<&mut LodTask>), With<LodChunk>>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     let cam_world = camera_q.single().translation;
-    let mut updates = 0;
+    let divs = settings.planet_chunk_divisions;
+    let planet_positions: HashMap<usize, Vec3> =
+        planet_q.iter().map(|(gt, pid)| (pid.0, gt.translation())).collect();
 
-    for (mut chunk, mesh_handle, _) in chunk_q.iter_mut() {
-        if updates >= MAX_LOD_UPDATES_PER_FRAME {
+    // 1. Récupère les maillages terminés (sans jamais bloquer l'image)
+    let mut in_flight = 0;
+    for (entity, mut chunk, mesh_handle, task) in chunk_q.iter_mut() {
+        let Some(mut task) = task else { continue };
+        if let Some(new_mesh) = block_on(future::poll_once(&mut task.task)) {
+            if let Some(mesh) = meshes.get_mut(&mesh_handle.0) {
+                *mesh = new_mesh;
+            }
+            chunk.current_lod = task.lod;
+            commands.entity(entity).remove::<LodTask>();
+        } else {
+            in_flight += 1;
+        }
+    }
+
+    // 2. Lance les reconstructions nécessaires en arrière-plan
+    let pool = AsyncComputeTaskPool::get();
+    for (entity, chunk, _, task) in chunk_q.iter_mut() {
+        if in_flight >= MAX_LOD_TASKS_IN_FLIGHT {
             break;
+        }
+        if task.is_some() {
+            continue;
         }
 
         let sys_i = chunk.planet_id / 1000;
@@ -2017,41 +1650,26 @@ fn update_lod(
         let Some(pcfg) = settings.systems.get(sys_i).and_then(|s| s.planets.get(local_i)) else {
             continue;
         };
-
-        let planet_pos = planet_q
-            .iter()
-            .find(|(_, pid)| pid.0 == chunk.planet_id)
-            .map(|(gt, _)| gt.translation())
-            .unwrap_or_default();
+        let planet_pos = planet_positions.get(&chunk.planet_id).copied().unwrap_or_default();
 
         let cam_local = cam_world - planet_pos;
-        let divs = settings.planet_chunk_divisions;
         let u = (chunk.grid_x as f32 + 0.5) / divs as f32;
         let v = (chunk.grid_y as f32 + 0.5) / divs as f32;
         let center = chunk.face.to_sphere_pos(u, v) * pcfg.radius;
         let new_lod = compute_lod_level(cam_local, center, pcfg.radius);
 
         if new_lod != chunk.current_lod {
-            let temp = pcfg.temperature();
-            let new_mesh = build_chunk_mesh(
-                chunk.face,
-                chunk.grid_x,
-                chunk.grid_y,
-                divs,
-                pcfg.radius,
-                pcfg.sea_level,
-                pcfg.terrain_height,
-                pcfg.seed,
-                pcfg.noise_scale,
-                pcfg.detail_scale,
-                new_lod,
-                temp,
+            let (face, gx, gy) = (chunk.face, chunk.grid_x, chunk.grid_y);
+            let (radius, sea, height, seed, noise, detail) = (
+                pcfg.radius, pcfg.sea_level, pcfg.terrain_height,
+                pcfg.seed, pcfg.noise_scale, pcfg.detail_scale,
             );
-            if let Some(mesh) = meshes.get_mut(&mesh_handle.0) {
-                *mesh = new_mesh;
-            }
-            chunk.current_lod = new_lod;
-            updates += 1;
+            let temp = pcfg.temperature();
+            let task = pool.spawn(async move {
+                build_chunk_mesh(face, gx, gy, divs, radius, sea, height, seed, noise, detail, new_lod, temp)
+            });
+            commands.entity(entity).insert(LodTask { task, lod: new_lod });
+            in_flight += 1;
         }
     }
 }
@@ -2184,28 +1802,7 @@ fn reload_stars(
         )).id();
         commands.entity(entity).add_child(light);
 
-        let pos = gt.translation();
-        let flare_material = materials.add(StandardMaterial {
-            base_color: Color::srgb(r * 1.0, g * 0.7, b * 0.4),
-            emissive: LinearRgba::new(r * 2.0, g * 1.2, b * 0.5, 1.0),
-            unlit: true,
-            ..default()
-        });
-        let voxel_size = 6.0;
-        let flare_mesh = meshes.add(Mesh::from(Cuboid::new(voxel_size, voxel_size, voxel_size)));
-        let samples_per_flare = 64_u32;
-        for fi in 0..star_cfg.flare_count {
-            for si_f in 0..samples_per_flare {
-                commands.spawn((
-                    Mesh3d(flare_mesh.clone()),
-                    MeshMaterial3d(flare_material.clone()),
-                    Transform::from_translation(pos).with_scale(Vec3::ZERO),
-                    Visibility::default(),
-                    FlareVoxel { star_idx: sid.0, flare_idx: fi, sample_idx: si_f },
-                    NotShadowCaster,
-                ));
-            }
-        }
+        spawn_flare_mesh(&mut commands, &mut meshes, &mut materials, sid.0, (r, g, b), gt.translation());
     }
 }
 
@@ -2234,183 +1831,25 @@ fn reload_planets(
         let cam_pos = camera_q.single().translation;
         let cam_local = cam_pos - planet_world_pos;
         let divs = settings.planet_chunk_divisions;
-        let temp = pcfg.temperature();
-
-        for face in CubeFace::all() {
-            for gx in 0..divs {
-                for gy in 0..divs {
-                    let u = (gx as f32 + 0.5) / divs as f32;
-                    let v = (gy as f32 + 0.5) / divs as f32;
-                    let chunk_center = face.to_sphere_pos(u, v) * pcfg.radius;
-                    let lod = compute_lod_level(cam_local, chunk_center, pcfg.radius);
-
-                    let mesh = build_chunk_mesh(
-                        face, gx, gy, divs,
-                        pcfg.radius, pcfg.sea_level, pcfg.terrain_height,
-                        pcfg.seed, pcfg.noise_scale, pcfg.detail_scale, lod, temp,
-                    );
-                    let child = commands.spawn((
-                        Mesh3d(meshes.add(mesh)),
-                        MeshMaterial3d(planet_material.clone()),
-                        Transform::IDENTITY,
-                        PlanetChunk {
-                            face,
-                            grid_x: gx,
-                            grid_y: gy,
-                            current_lod: lod,
-                            planet_id: pid.0,
-                        },
-                        LodChunk,
-                    )).id();
-                    commands.entity(entity).add_child(child);
-                }
-            }
+        for (face, gx, gy, lod, mesh) in build_planet_chunks(pcfg, divs, cam_local) {
+            let child = commands.spawn((
+                Mesh3d(meshes.add(mesh)),
+                MeshMaterial3d(planet_material.clone()),
+                Transform::IDENTITY,
+                PlanetChunk {
+                    face,
+                    grid_x: gx,
+                    grid_y: gy,
+                    current_lod: lod,
+                    planet_id: pid.0,
+                },
+                LodChunk,
+            )).id();
+            commands.entity(entity).add_child(child);
         }
 
         if pcfg.atmosphere {
-            let cloud_material = materials.add(StandardMaterial {
-                base_color: Color::srgb(0.95, 0.95, 0.97),
-                alpha_mode: AlphaMode::Opaque,
-                unlit: false,
-                perceptual_roughness: 1.0,
-                ..default()
-            });
-            let density = pcfg.cloud_density.clamp(0.1, 1.0);
-            let cloud_r = pcfg.radius + pcfg.terrain_height + pcfg.cloud_altitude;
-
-            use noise::{NoiseFn, Perlin};
-            let perlin = Perlin::new(pcfg.seed + 500);
-            let perlin2 = Perlin::new(pcfg.seed + 501);
-
-            let patch_count = 40 + (density * 60.0) as u32;
-            let patch_grid = 16_i32;
-            let cell = cloud_r * 0.04;
-
-            for ci in 0..patch_count {
-                let seed_a = pseudo_hash(pcfg.seed as f32, ci as f32 * 3.7);
-                let seed_b = pseudo_hash(pcfg.seed as f32, ci as f32 * 7.1);
-                let theta_c = seed_a * std::f32::consts::TAU;
-                let phi_c = (seed_b * 2.0 - 1.0).clamp(-1.0, 1.0).acos();
-
-                let center_dir = Vec3::new(
-                    theta_c.cos() * phi_c.sin(),
-                    phi_c.cos(),
-                    theta_c.sin() * phi_c.sin(),
-                ).normalize();
-
-                let up = if center_dir.y.abs() > 0.9 { Vec3::X } else { Vec3::Y };
-                let tangent_u = center_dir.cross(up).normalize();
-                let tangent_v = center_dir.cross(tangent_u).normalize();
-
-                let mut grid = vec![0_u32; (patch_grid * patch_grid) as usize];
-                let threshold = 0.1 - density as f64 * 0.15;
-
-                for gx in 0..patch_grid {
-                    for gz in 0..patch_grid {
-                        let lx = (gx as f32 - patch_grid as f32 * 0.5) * cell;
-                        let lz = (gz as f32 - patch_grid as f32 * 0.5) * cell;
-                        let world = center_dir * cloud_r + tangent_u * lx + tangent_v * lz;
-                        let wd = world.normalize();
-                        let nx = wd.x as f64;
-                        let ny = wd.y as f64;
-                        let nz = wd.z as f64;
-                        let n1 = perlin.get([nx * 4.0 + ci as f64 * 10.0, ny * 4.0, nz * 4.0]);
-                        let n2 = perlin2.get([nx * 8.0 + ci as f64 * 5.0, ny * 8.0, nz * 8.0]);
-                        let n = n1 * 0.65 + n2 * 0.35;
-                        let dx = (gx as f32 - patch_grid as f32 * 0.5).abs() / (patch_grid as f32 * 0.5);
-                        let dz = (gz as f32 - patch_grid as f32 * 0.5).abs() / (patch_grid as f32 * 0.5);
-                        let edge = 1.0 - (dx * dx + dz * dz).sqrt().min(1.0);
-                        if n > threshold && edge as f64 > 0.2 {
-                            let h = (1 + ((n - threshold) * 3.0) as u32).min(4);
-                            grid[(gx * patch_grid + gz) as usize] = h;
-                        }
-                    }
-                }
-
-                let get_h = |x: i32, z: i32| -> u32 {
-                    if x < 0 || x >= patch_grid || z < 0 || z >= patch_grid { return 0; }
-                    grid[(x * patch_grid + z) as usize]
-                };
-
-                let mut positions: Vec<[f32; 3]> = Vec::new();
-                let mut normals: Vec<[f32; 3]> = Vec::new();
-                let mut indices: Vec<u32> = Vec::new();
-
-                for gx in 0..patch_grid {
-                    for gz in 0..patch_grid {
-                        let h = get_h(gx, gz);
-                        if h == 0 { continue; }
-                        let x0 = (gx as f32 - patch_grid as f32 * 0.5) * cell;
-                        let z0 = (gz as f32 - patch_grid as f32 * 0.5) * cell;
-                        let x1 = x0 + cell;
-                        let z1 = z0 + cell;
-                        for y_layer in 0..h {
-                            let y0 = y_layer as f32 * cell * 0.5;
-                            let y1 = y0 + cell * 0.5;
-                            if y_layer == h - 1 {
-                                let vi = positions.len() as u32;
-                                positions.extend_from_slice(&[[x0,y1,z1],[x1,y1,z1],[x1,y1,z0],[x0,y1,z0]]);
-                                normals.extend_from_slice(&[[0.0,1.0,0.0];4]);
-                                indices.extend_from_slice(&[vi,vi+1,vi+2,vi,vi+2,vi+3]);
-                            }
-                            if y_layer == 0 {
-                                let vi = positions.len() as u32;
-                                positions.extend_from_slice(&[[x0,y0,z0],[x1,y0,z0],[x1,y0,z1],[x0,y0,z1]]);
-                                normals.extend_from_slice(&[[0.0,-1.0,0.0];4]);
-                                indices.extend_from_slice(&[vi,vi+1,vi+2,vi,vi+2,vi+3]);
-                            }
-                            if get_h(gx-1,gz) <= y_layer {
-                                let vi = positions.len() as u32;
-                                positions.extend_from_slice(&[[x0,y0,z0],[x0,y1,z0],[x0,y1,z1],[x0,y0,z1]]);
-                                normals.extend_from_slice(&[[-1.0,0.0,0.0];4]);
-                                indices.extend_from_slice(&[vi,vi+1,vi+2,vi,vi+2,vi+3]);
-                            }
-                            if get_h(gx+1,gz) <= y_layer {
-                                let vi = positions.len() as u32;
-                                positions.extend_from_slice(&[[x1,y0,z1],[x1,y1,z1],[x1,y1,z0],[x1,y0,z0]]);
-                                normals.extend_from_slice(&[[1.0,0.0,0.0];4]);
-                                indices.extend_from_slice(&[vi,vi+1,vi+2,vi,vi+2,vi+3]);
-                            }
-                            if get_h(gx,gz-1) <= y_layer {
-                                let vi = positions.len() as u32;
-                                positions.extend_from_slice(&[[x1,y0,z0],[x1,y1,z0],[x0,y1,z0],[x0,y0,z0]]);
-                                normals.extend_from_slice(&[[0.0,0.0,-1.0];4]);
-                                indices.extend_from_slice(&[vi,vi+1,vi+2,vi,vi+2,vi+3]);
-                            }
-                            if get_h(gx,gz+1) <= y_layer {
-                                let vi = positions.len() as u32;
-                                positions.extend_from_slice(&[[x0,y0,z1],[x0,y1,z1],[x1,y1,z1],[x1,y0,z1]]);
-                                normals.extend_from_slice(&[[0.0,0.0,1.0];4]);
-                                indices.extend_from_slice(&[vi,vi+1,vi+2,vi,vi+2,vi+3]);
-                            }
-                        }
-                    }
-                }
-
-                if positions.is_empty() { continue; }
-                let mut mesh = Mesh::new(
-                    bevy::render::mesh::PrimitiveTopology::TriangleList,
-                    bevy::render::render_asset::RenderAssetUsages::default(),
-                );
-                mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-                mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-                mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
-
-                let rotation = Quat::from_rotation_arc(Vec3::Y, center_dir);
-                let cloud_pos = planet_world_pos + center_dir * cloud_r;
-
-                commands.spawn((
-                    Mesh3d(meshes.add(mesh)),
-                    MeshMaterial3d(cloud_material.clone()),
-                    Transform::from_translation(cloud_pos).with_rotation(rotation),
-                    CloudVoxel {
-                        planet_idx: pid.0,
-                        theta: theta_c,
-                        phi: phi_c,
-                        altitude: cloud_r,
-                    },
-                ));
-            }
+            spawn_cloud_layer(&mut commands, &mut meshes, &mut materials, pcfg, pid.0, planet_world_pos);
         }
     }
 }
@@ -2506,15 +1945,36 @@ fn reload_asteroid_belts(
     }
 }
 
+/// Renvoie `true` (et mémorise la pose) si la caméra a assez bougé depuis la
+/// dernière mise à jour des billboards lointains. Les étoiles lointaines sont à
+/// des dizaines de milliers d'unités : un seuil de 20 unités / ~2.5° est invisible.
+/// `fwd` = `Vec3::ZERO` pour ignorer l'orientation.
+fn camera_moved_enough(last: &mut Option<(Vec3, Vec3)>, pos: Vec3, fwd: Vec3) -> bool {
+    if let Some((lp, lf)) = *last {
+        let same_dir = fwd == Vec3::ZERO || lf.dot(fwd) > 0.999;
+        if same_dir && lp.distance_squared(pos) < 20.0 * 20.0 {
+            return false;
+        }
+    }
+    *last = Some((pos, fwd));
+    true
+}
+
 fn update_far_star_scale(
     camera_q: Query<(&GlobalTransform, &Transform), With<Camera3d>>,
     spawned: Res<SpawnedSystems>,
     brightness_mats: Res<StarBrightnessMaterials>,
     mut far_q: Query<(&FarStar, &mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>), Without<Camera3d>>,
+    mut last_cam: Local<Option<(Vec3, Vec3)>>,
 ) {
     let (cam_gt, cam_tf) = camera_q.single();
     let cam_pos = cam_gt.translation();
     let cam_fwd = cam_tf.forward().as_vec3();
+
+    // ~12 500 billboards : inutile de tout recalculer si la caméra n'a quasiment pas bougé
+    if !spawned.is_changed() && !camera_moved_enough(&mut last_cam, cam_pos, cam_fwd) {
+        return;
+    }
 
     let main_dist = cam_pos.length();
     let raw = ((main_dist - LOD_STARS_END) / (LOD_STARS_GONE - LOD_STARS_END)).clamp(0.0, 1.0);
@@ -2564,8 +2024,12 @@ fn update_distant_star_scale(
     galaxy_q: Query<&GalaxyMeta>,
     brightness_mats: Res<StarBrightnessMaterials>,
     mut star_q: Query<(&DistantStar, &mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>), Without<Camera3d>>,
+    mut last_cam: Local<Option<(Vec3, Vec3)>>,
 ) {
     let cam_pos = camera_q.single().translation();
+    if !camera_moved_enough(&mut last_cam, cam_pos, Vec3::ZERO) {
+        return;
+    }
 
     let mut gal_cache: HashMap<u32, (f32, usize)> = HashMap::new();
     for meta in &galaxy_q {
