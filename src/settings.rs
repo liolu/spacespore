@@ -175,6 +175,8 @@ impl Default for AsteroidBeltConfig {
 pub struct StarSystemConfig {
     pub name: String,
     pub position: [f32; 3],
+    /// Galaxie d'appartenance (0 = galaxie principale, 1.. = galaxies extérieures).
+    #[serde(default)]                     pub galaxy_id:      u32,
     #[serde(default = "default_stars")]   pub stars:          Vec<StarConfig>,
     #[serde(default = "default_planets")] pub planets:        Vec<PlanetConfig>,
     #[serde(default)]                     pub asteroid_belts: Vec<AsteroidBeltConfig>,
@@ -185,6 +187,7 @@ impl Default for StarSystemConfig {
         Self {
             name: "Systeme Sol".into(),
             position: [0.0, 0.0, 0.0],
+            galaxy_id: 0,
             stars: default_stars(),
             planets: default_planets(),
             asteroid_belts: Vec::new(),
@@ -214,6 +217,85 @@ pub const STREAM_RADIUS: f32 = 3.0;
 pub const CLICKABLE_RADIUS: f32 = 30.0;
 pub const GALAXY_RADIUS: f32 = 4_500_000.0;
 
+/// Nombre de galaxies extérieures (ids 1..=NUM_DISTANT_GALAXIES).
+pub const NUM_DISTANT_GALAXIES: usize = 100;
+/// Aucun système n'est généré à moins de cette distance d'un trou noir galactique.
+pub const CORE_EXCLUSION: f32 = 15_000.0;
+
+/// Forme d'une galaxie. Index 0 = galaxie principale, 1.. = galaxies extérieures.
+#[derive(Clone, Debug)]
+pub struct GalaxyConfig {
+    pub center:        bevy::math::Vec3,
+    pub tilt:          bevy::math::Quat,
+    pub radius:        f32,
+    pub num_arms:      usize,
+    pub twist:         f32,
+    pub core_radius:   f32,
+    /// Graine des étoiles de la galaxie (galaxies extérieures uniquement).
+    pub seed:          u32,
+    pub arm_stars:     usize,
+    pub scatter_stars: usize,
+}
+
+/// Galaxie principale + galaxies extérieures disposées sur une méta-spirale.
+pub fn default_galaxies() -> Vec<GalaxyConfig> {
+    use bevy::math::{EulerRot, Quat, Vec3};
+    const META_ARMS: usize = 5;
+    const META_RADIUS: f32 = 80_000_000.0;
+    const META_TWIST: f32 = 4.0;
+    const MIN_DIST: f32 = 15_000_000.0;
+    let tau = std::f32::consts::TAU;
+
+    let mut galaxies = Vec::with_capacity(NUM_DISTANT_GALAXIES + 1);
+    galaxies.push(GalaxyConfig {
+        center: Vec3::ZERO,
+        tilt: Quat::IDENTITY,
+        radius: GALAXY_RADIUS,
+        num_arms: 5,
+        twist: 5.0,
+        core_radius: 3000.0,
+        seed: 0,
+        arm_stars: 0,
+        scatter_stars: 0,
+    });
+
+    for gi in 0..NUM_DISTANT_GALAXIES {
+        let gs = gi as u32 + 300_000;
+
+        // Position de la galaxie sur les bras de la méta-spirale
+        let arm = gi % META_ARMS;
+        let arm_base = arm as f32 * tau / META_ARMS as f32;
+        let t = pseudo_rand(gs * 13 + 1);
+        let r = MIN_DIST + t * t * (META_RADIUS - MIN_DIST);
+        let spiral = arm_base + (r / META_RADIUS) * META_TWIST;
+        let scatter = (pseudo_rand(gs * 13 + 3) - 0.5) * 0.4;
+        let theta = spiral + scatter;
+        let center = Vec3::new(
+            r * theta.cos(),
+            (pseudo_rand(gs * 13 + 5) - 0.5) * 8_000_000.0,
+            r * theta.sin(),
+        );
+
+        galaxies.push(GalaxyConfig {
+            center,
+            tilt: Quat::from_euler(
+                EulerRot::XYZ,
+                (pseudo_rand(gs * 13 + 13) - 0.5) * 1.5,
+                pseudo_rand(gs * 13 + 15) * tau,
+                (pseudo_rand(gs * 13 + 17) - 0.5) * 1.0,
+            ),
+            radius: 800_000.0 + pseudo_rand(gs * 13 + 7) * 2_500_000.0,
+            num_arms: 2 + (pseudo_rand(gs * 13 + 9) * 4.0) as usize,
+            twist: 3.0 + pseudo_rand(gs * 13 + 11) * 4.0,
+            core_radius: 1000.0 + pseudo_rand(gs * 13 + 23) * 2000.0,
+            seed: gs * 1000,
+            arm_stars: 200 + (pseudo_rand(gs * 13 + 19) * 300.0) as usize,
+            scatter_stars: 50 + (pseudo_rand(gs * 13 + 21) * 100.0) as usize,
+        });
+    }
+    galaxies
+}
+
 fn star_color(seed: u32) -> [f32; 3] {
     let c = pseudo_rand(seed);
     if c < 0.2 { [1.0, 0.5, 0.3] }
@@ -223,7 +305,7 @@ fn star_color(seed: u32) -> [f32; 3] {
     else { [0.6, 0.7, 1.0] }
 }
 
-fn default_systems() -> Vec<StarSystemConfig> {
+fn default_systems(galaxies: &[GalaxyConfig]) -> Vec<StarSystemConfig> {
     const NUM_ARMS: usize = 5;
     const ARM_STARS: usize = 10_000;
     const SCATTER_STARS: usize = 2_500;
@@ -260,9 +342,9 @@ fn default_systems() -> Vec<StarSystemConfig> {
         (radius, intensity, sc)
     };
 
-    let make_planets = |seed: u32| -> Vec<PlanetConfig> {
+    // `sb` : base des graines de planètes (doit rester loin de u32::MAX)
+    let make_planets = |seed: u32, sb: u32| -> Vec<PlanetConfig> {
         let n = (pseudo_rand(seed * 3 + 41) * 2.5) as usize;
-        let sb = (seed + 1) * 100;
         (0..n).map(|pi| {
             let pu = pi as u32;
             PlanetConfig {
@@ -275,7 +357,8 @@ fn default_systems() -> Vec<StarSystemConfig> {
         }).collect()
     };
 
-    let mut systems = Vec::with_capacity(ARM_STARS + SCATTER_STARS + 1);
+    let distant_count: usize = galaxies.iter().skip(1).map(|g| g.arm_stars + g.scatter_stars).sum();
+    let mut systems = Vec::with_capacity(ARM_STARS + SCATTER_STARS + distant_count);
 
     // ── Bras spiraux ──────────────────────────────────────────────────
     for i in 0..ARM_STARS {
@@ -300,12 +383,13 @@ fn default_systems() -> Vec<StarSystemConfig> {
         systems.push(StarSystemConfig {
             name: gen_name(i),
             position: [x, y, z],
+            galaxy_id: 0,
             stars: vec![StarConfig {
                 radius: sr, intensity: si,
                 light_color_r: sc[0], light_color_g: sc[1], light_color_b: sc[2],
                 ..Default::default()
             }],
-            planets: make_planets(s),
+            planets: make_planets(s, (s + 1) * 100),
             asteroid_belts: Vec::new(),
         });
     }
@@ -324,14 +408,63 @@ fn default_systems() -> Vec<StarSystemConfig> {
         systems.push(StarSystemConfig {
             name: gen_name(ARM_STARS + i),
             position: [x, y, z],
+            galaxy_id: 0,
             stars: vec![StarConfig {
                 radius: sr, intensity: si,
                 light_color_r: sc[0], light_color_g: sc[1], light_color_b: sc[2],
                 ..Default::default()
             }],
-            planets: make_planets(s),
+            planets: make_planets(s, (s + 1) * 100),
             asteroid_belts: Vec::new(),
         });
+    }
+
+    // ── Galaxies extérieures : mêmes systèmes (étoile + planètes) ─────
+    for (gid, gal) in galaxies.iter().enumerate().skip(1) {
+        let gr = gal.radius;
+        let arms = gal.num_arms.max(1);
+        let mut local_idx = 0usize;
+        for i in 0..(gal.arm_stars + gal.scatter_stars) {
+            let s = i as u32 + gal.seed;
+            let (lx, ly, lz) = if i < gal.arm_stars {
+                // Étoiles sur les bras
+                let ab = (i % arms) as f32 * tau / arms as f32;
+                let st = pseudo_rand(s * 7 + 3);
+                let sr = st * st * gr;
+                let sp = ab + (sr / gr) * gal.twist;
+                let w = 0.35 * (1.0 - sr / gr * 0.65);
+                let sc = (pseudo_rand(s * 7 + 5) - 0.5) * w;
+                let thick = 12000.0 * (1.0 - sr / gr * 0.8);
+                (sr * (sp + sc).cos(), (pseudo_rand(s * 7 + 7) - 0.5) * thick, sr * (sp + sc).sin())
+            } else {
+                // Étoiles dispersées entre les bras
+                let st = pseudo_rand(s * 7 + 3);
+                let sr = st * st * gr * 0.85;
+                let stheta = pseudo_rand(s * 7 + 5) * tau;
+                (sr * stheta.cos(), (pseudo_rand(s * 7 + 7) - 0.5) * 8000.0, sr * stheta.sin())
+            };
+            let local = bevy::math::Vec3::new(lx, ly, lz);
+            // Pas de système dans le trou noir central
+            if local.length() < CORE_EXCLUSION { continue; }
+            let world = gal.center + gal.tilt * local;
+
+            let (sr, si, sc) = make_star(s);
+            let global_idx = systems.len() as u32;
+            let pi = local_idx % prefixes.len();
+            systems.push(StarSystemConfig {
+                name: format!("G{}-{}-{}", gid, prefixes[pi], local_idx * 7 + 1031),
+                position: [world.x, world.y, world.z],
+                galaxy_id: gid as u32,
+                stars: vec![StarConfig {
+                    radius: sr, intensity: si,
+                    light_color_r: sc[0], light_color_g: sc[1], light_color_b: sc[2],
+                    ..Default::default()
+                }],
+                planets: make_planets(s, (global_idx + 1) * 100),
+                asteroid_belts: Vec::new(),
+            });
+            local_idx += 1;
+        }
     }
 
     systems
@@ -400,6 +533,8 @@ pub struct GameSettings {
 
     // ── Systèmes stellaires (régénérés au lancement, jamais sauvegardés) ─
     #[serde(skip)] pub systems: Vec<StarSystemConfig>,
+    /// Galaxies (index 0 = principale), régénérées au lancement.
+    #[serde(skip)] pub galaxies: Vec<GalaxyConfig>,
 
     // ── Corps historiques (rétrocompat, migré vers systems[0]) ───────────
     #[serde(default = "default_planets")] pub planets:       Vec<PlanetConfig>,
@@ -441,7 +576,8 @@ impl Default for GameSettings {
             player_name: default_player_name(),
             aura_color: default_aura_color(),
             last_join_address: String::new(),
-            systems: default_systems(),
+            systems: default_systems(&default_galaxies()),
+            galaxies: default_galaxies(),
             planets: default_planets(), stars: default_stars(),
             asteroid_belts: Vec::new(),
             comets: Vec::new(), meteoroids: Vec::new(),
@@ -502,7 +638,8 @@ impl GameSettings {
             settings.save();
             settings
         };
-        s.systems = default_systems();
+        s.galaxies = default_galaxies();
+        s.systems = default_systems(&s.galaxies);
         s.comets.clear();
         s.meteoroids.clear();
         s.voxel_stars.clear();

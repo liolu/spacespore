@@ -316,6 +316,7 @@ pub enum TargetKind {
     Supernova(usize),
     // ── Centre galactique ────────────────────────────────────────────────
     GalacticCore,
+    DistantGalaxyCore(u32),
 }
 
 #[derive(Resource)]

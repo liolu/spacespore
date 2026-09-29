@@ -1,10 +1,10 @@
 {
-  "version": "0.6.2",
-  "version_code": 602,
+  "version": "0.6.4",
+  "version_code": 604,
   "release_date": "2026-09-29",
-  "download_url": "https://github.com/liolu/spacespore/releases/download/v0.6.2/spacespore-v0.6.2-windows.zip",
-  "download_url_linux": "https://github.com/liolu/spacespore/releases/download/v0.6.2/spacespore-v0.6.2-linux.zip",
-  "download_url_macos": "https://github.com/liolu/spacespore/releases/download/v0.6.2/spacespore-v0.6.2-macos.zip",
+  "download_url": "https://github.com/liolu/spacespore/releases/download/v0.6.4/spacespore-v0.6.4-windows.zip",
+  "download_url_linux": "https://github.com/liolu/spacespore/releases/download/v0.6.4/spacespore-v0.6.4-linux.zip",
+  "download_url_macos": "https://github.com/liolu/spacespore/releases/download/v0.6.4/spacespore-v0.6.4-macos.zip",
   "release_notes": "See release page for details",
   "min_updater_version": 1
 }

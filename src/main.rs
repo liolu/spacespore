@@ -18,7 +18,7 @@ use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowCloseRequested};
 
 use kepler::OrbitalElements;
-use planet::{FarStar, GalacticCore, MoonId, MoonRoot, PlanetId, PlanetPlugin, PlanetRoot, StarId, StarRoot};
+use planet::{DistantGalaxyCore, FarStar, GalacticCore, MoonId, MoonRoot, PlanetId, PlanetPlugin, PlanetRoot, StarId, StarRoot};
 use settings::{GameSettings, SYSTEM_CELL_SIZE, SYSTEM_GRID_SIZE};
 use ship::{Ship, ShipMode, ShipPlugin};
 use ui::{CameraTarget, MenuState, TargetKind, UiPlugin};
@@ -152,6 +152,9 @@ pub struct TargetQueries<'w, 's> {
 
     pub core_q:
         Query<'w, 's, &'static GlobalTransform, With<GalacticCore>>,
+
+    pub dist_core_q:
+        Query<'w, 's, (&'static GlobalTransform, &'static DistantGalaxyCore)>,
 }
 
 
@@ -492,6 +495,16 @@ fn select_world_target(
         consider(gt.translation(), 120.0, TargetKind::GalacticCore);
     }
 
+    // ── DistantGalaxyCore : depuis un trou noir au zoom 6 (saut entre
+    //    galaxies), ou le trou noir de la galaxie où l'on se trouve ────
+    let on_core = *zoom == ZoomLevel::DeepSpace && ZoomLevel::is_core(&target.0);
+    let current_gal = current_galaxy(&target.0, &queries, &settings);
+    for (gt, dc) in &queries.dist_core_q {
+        if on_core || dc.galaxy_id == current_gal {
+            consider(gt.translation(), 120.0, TargetKind::DistantGalaxyCore(dc.galaxy_id));
+        }
+    }
+
     // ── FarStar : clic sur étoiles lointaines (spatial hash) ──────
     let cam_pos = camera_transform.translation();
     let cell = SYSTEM_CELL_SIZE;
@@ -518,6 +531,21 @@ fn select_world_target(
     }
 }
 
+/// Galaxie dans laquelle se trouve la cible (0 = galaxie principale).
+fn current_galaxy(kind: &TargetKind, queries: &TargetQueries, settings: &GameSettings) -> u32 {
+    let sys_idx = match *kind {
+        TargetKind::DistantGalaxyCore(id) => return id,
+        TargetKind::Planet(id) => id / 1000,
+        TargetKind::Moon(planet_idx, _) => planet_idx / 1000,
+        // Étoile chargée : id = sys * 1000 + i ; étoile lointaine : id = index du système
+        TargetKind::Star(id) => {
+            if queries.star_q.iter().any(|(_, sid)| sid.0 == id) { id / 1000 } else { id }
+        }
+        _ => return 0,
+    };
+    settings.systems.get(sys_idx).map_or(0, |s| s.galaxy_id)
+}
+
 /// Système auquel appartient une cible (`None` = hors de tout système, ex. noyau).
 fn target_system(
     kind: &TargetKind,
@@ -534,7 +562,7 @@ fn target_system(
                 Some(Some(id))
             }
         }
-        TargetKind::GalacticCore => Some(None),
+        TargetKind::GalacticCore | TargetKind::DistantGalaxyCore(_) => Some(None),
         // Astres historiques (désactivés) : pas de contrainte
         _ => None,
     }
@@ -610,6 +638,10 @@ pub struct CameraController {
 /// Limite du zoom 1 : en dessous, on reste verrouillé dans le système courant.
 pub const ZOOM_PLANET_MAX: f32 = 10_000.0;
 
+/// Au-delà de cette distance (changement de galaxie), le vaisseau saute
+/// directement à destination au lieu de voyager en croisière.
+const HYPERJUMP_DIST: f32 = 10_000_000.0;
+
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZoomLevel {
     Planet,
@@ -667,12 +699,16 @@ impl ZoomLevel {
         )
     }
 
+    fn is_core(kind: &TargetKind) -> bool {
+        matches!(kind, TargetKind::GalacticCore | TargetKind::DistantGalaxyCore(_))
+    }
+
     fn can_navigate_to(&self, kind: &TargetKind) -> bool {
         match self {
             ZoomLevel::Planet | ZoomLevel::System => true,
-            ZoomLevel::Sector | ZoomLevel::Galaxy => Self::is_star(kind) || matches!(kind, TargetKind::GalacticCore),
-            ZoomLevel::Cosmos => matches!(kind, TargetKind::GalacticCore),
-            ZoomLevel::DeepSpace => false,
+            ZoomLevel::Sector | ZoomLevel::Galaxy => Self::is_star(kind) || Self::is_core(kind),
+            ZoomLevel::Cosmos => Self::is_core(kind),
+            ZoomLevel::DeepSpace => matches!(kind, TargetKind::GalacticCore | TargetKind::DistantGalaxyCore(_)),
         }
     }
 }
@@ -784,7 +820,9 @@ fn camera_controller(
             let hover_pos = target_pos + Vec3::Y * 80.0 + net.hover_offset(ctrl.distance);
             let to_hover = hover_pos - ship_tf.translation;
             let dist = to_hover.length();
-            if dist > 30.0 {
+            if dist > HYPERJUMP_DIST {
+                ship_tf.translation = hover_pos;
+            } else if dist > 30.0 {
                 let cruise = (dist * 0.8).max(3000.0).min(500_000.0);
                 let step = (cruise * time.delta_secs()).min(dist);
                 ship_tf.translation += to_hover.normalize() * step;
@@ -863,7 +901,10 @@ fn camera_controller(
         let to_hover = hover_pos - ship_tf.translation;
         let dist = to_hover.length();
 
-        if dist > 30.0 {
+        if dist > HYPERJUMP_DIST {
+            // Autre galaxie : saut direct plutôt que des minutes de croisière
+            ship_tf.translation = hover_pos;
+        } else if dist > 30.0 {
             let cruise = (dist * 0.8).max(3000.0).min(500_000.0);
             let step = (cruise * time.delta_secs()).min(dist);
             ship_tf.translation += to_hover.normalize() * step;
@@ -915,9 +956,7 @@ fn resolve_target(
                 .iter()
                 .find(|(_, sid)| sid.0 == i)
                 .map(|(gt, _)| gt.translation())
-                .or_else(|| q.far_star_q.iter()
-                    .find(|(_, fs)| fs.sys_idx == i)
-                    .map(|(gt, _)| gt.translation()))
+                // Étoile lointaine : le billboard est posé au centre du système
                 .unwrap_or_else(|| settings.systems.get(i)
                     .map(|s| s.center())
                     .unwrap_or_default()),
@@ -1040,6 +1079,13 @@ fn resolve_target(
                 .next()
                 .map(|gt| gt.translation())
                 .unwrap_or(Vec3::ZERO),
+
+        TargetKind::DistantGalaxyCore(id) =>
+            q.dist_core_q
+                .iter()
+                .find(|(_, dc)| dc.galaxy_id == id)
+                .map(|(gt, _)| gt.translation())
+                .unwrap_or_default(),
     }
 }
 
@@ -1052,8 +1098,7 @@ fn camera_distance_range(
     target: &CameraTarget,
     settings: &GameSettings,
 ) -> (f32, f32) {
-    let is_core = matches!(target.0, TargetKind::GalacticCore);
-    let (min_d, max_d) = match target.0 {
+    match target.0 {
         TargetKind::Planet(i) => {
             let r = settings
                 .planets
@@ -1061,13 +1106,10 @@ fn camera_distance_range(
                 .map(|p| p.radius)
                 .unwrap_or(50.0);
 
-            (
-                r * 1.4,
-                10_000_000.0,
-            )
+            (r * 1.4, 9_999_999.0)
         }
 
-        TargetKind::Moon(_, _) => (20.0, 10_000_000.0),
+        TargetKind::Moon(_, _) => (20.0, 9_999_999.0),
 
         TargetKind::Star(i) => {
             let r = settings
@@ -1076,121 +1118,38 @@ fn camera_distance_range(
                 .map(|s| s.radius)
                 .unwrap_or(200.0);
 
-            (
-                r * 0.5,
-                r * 60000.0,
-            )
+            (r * 0.5, 9_999_999.0)
         }
 
         // ── Planètes / corps ──────────────────────────────────────────
 
-        TargetKind::GasPlanet(_) =>
-            (
-                220.0 * 1.3,
-                220.0 * 20000.0,
-            ),
-
-        TargetKind::Comet(_) =>
-            (
-                80.0,
-                2000000.0,
-            ),
-
-        TargetKind::Meteoroid(_) =>
-            (
-                30.0,
-                400000.0,
-            ),
+        TargetKind::GasPlanet(_) => (220.0 * 1.3, 9_999_999.0),
+        TargetKind::Comet(_) => (80.0, 9_999_999.0),
+        TargetKind::Meteoroid(_) => (30.0, 9_999_999.0),
 
         // ── Étoiles ───────────────────────────────────────────────────
 
-        TargetKind::VoxelStar(_) =>
-            (
-                120.0 * 0.5,
-                120.0 * 20000.0,
-            ),
-
-        TargetKind::Protostar(_) =>
-            (
-                60.0 * 1.2,
-                1200000.0,
-            ),
-
-        TargetKind::DwarfStar(_) =>
-            (
-                45.0 * 1.5,
-                800000.0,
-            ),
-
-        TargetKind::MainSequence(_) =>
-            (
-                100.0 * 1.2,
-                2000000.0,
-            ),
-
-        TargetKind::GiantStar(_) =>
-            (
-                350.0 * 0.6,
-                350.0 * 15000.0,
-            ),
-
-        TargetKind::Supergiant(_) =>
-            (
-                700.0 * 0.4,
-                700.0 * 12000.0,
-            ),
-
-        TargetKind::Hypergiant(_) =>
-            (
-                1400.0 * 0.3,
-                1400.0 * 10000.0,
-            ),
+        TargetKind::VoxelStar(_) => (120.0 * 0.5, 9_999_999.0),
+        TargetKind::Protostar(_) => (60.0 * 1.2, 9_999_999.0),
+        TargetKind::DwarfStar(_) => (45.0 * 1.5, 9_999_999.0),
+        TargetKind::MainSequence(_) => (100.0 * 1.2, 9_999_999.0),
+        TargetKind::GiantStar(_) => (350.0 * 0.6, 9_999_999.0),
+        TargetKind::Supergiant(_) => (700.0 * 0.4, 9_999_999.0),
+        TargetKind::Hypergiant(_) => (1400.0 * 0.3, 9_999_999.0),
 
         // ── Rémanents ─────────────────────────────────────────────────
 
-        TargetKind::Nebula =>
-            (
-                600.0 * 0.5,
-                600.0 * 10000.0,
-            ),
+        TargetKind::Nebula => (600.0 * 0.5, 9_999_999.0),
+        TargetKind::BlackHole(_) => (40.0 * 3.0, 100_000_000.0),
+        TargetKind::Pulsar(_) => (28.0 * 4.0, 9_999_999.0),
+        TargetKind::Magnetar(_) => (35.0 * 3.0, 9_999_999.0),
+        TargetKind::NeutronStar(_) => (22.0 * 4.0, 9_999_999.0),
+        TargetKind::Supernova(_) => (500.0, 9_999_999.0),
 
-        TargetKind::BlackHole(_) =>
-            (
-                40.0 * 3.0,
-                40.0 * 80000.0,
-            ),
-
-        TargetKind::Pulsar(_) =>
-            (
-                28.0 * 4.0,
-                2000000.0,
-            ),
-
-        TargetKind::Magnetar(_) =>
-            (
-                35.0 * 3.0,
-                1500000.0,
-            ),
-
-        TargetKind::NeutronStar(_) =>
-            (
-                22.0 * 4.0,
-                1200000.0,
-            ),
-
-        TargetKind::Supernova(_) =>
-            (
-                500.0,
-                5000000.0,
-            ),
-
-        TargetKind::GalacticCore =>
-            (
-                5000.0,
-                100_000_000.0,
-            ),
-    };
-    if is_core { (min_d, max_d) } else { (min_d, max_d.min(10_000_000.0)) }
+        TargetKind::GalacticCore => (5000.0, 100_000_000.0),
+        // Comme le trou noir principal : on peut zoomer dans la galaxie extérieure
+        TargetKind::DistantGalaxyCore(_) => (5000.0, 100_000_000.0),
+    }
 }
 
 
@@ -1515,7 +1474,7 @@ fn update_fps_display(
             TargetKind::Supernova(_) =>
                 500_000.0,
 
-            TargetKind::GalacticCore =>
+            TargetKind::GalacticCore | TargetKind::DistantGalaxyCore(_) =>
                 1_000_000_000_000.0,
 
             _ =>
@@ -1601,6 +1560,7 @@ fn update_system_hud(
             (Some(si), label)
         }
         TargetKind::GalacticCore => (None, Some("Trou Noir Galactique".to_string())),
+        TargetKind::DistantGalaxyCore(id) => (None, Some(format!("Galaxie {}", id))),
         _ => (None, None),
     };
 

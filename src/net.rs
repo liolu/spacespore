@@ -40,7 +40,7 @@ pub const NET_PORT: u16 = 27777;
 pub const MAX_NAME_LEN: usize = 16;
 const PROTOCOL: u32 = 3;
 const MAGIC: &str = "SPACESPORE";
-const GAME_VERSION: &str = env!("CARGO_PKG_VERSION");
+const GAME_VERSION: &str = spacespore_common::VERSION;
 const MAX_PLAYERS: usize = 16;
 const SEND_INTERVAL: f64 = 0.05;
 const TIMEOUT: f64 = 6.0;
@@ -1382,6 +1382,8 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .init_resource::<Assets<StandardMaterial>>()
+            // Fourni par GraphicsPlugin dans le jeu (pas d'échelle de rendu ici)
+            .insert_resource(crate::graphics::ViewportScale(1.0))
             .insert_resource(GameSettings {
                 player_name: name.into(),
                 aura_color: color,
