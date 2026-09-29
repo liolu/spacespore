@@ -352,6 +352,16 @@ pub struct OrbitConfig {
 // ─────────────────────────────────────────────────────────────────────────
 
 fn default_planets()  -> Vec<PlanetConfig>  { vec![PlanetConfig::default()] }
+
+/// Pseudo par défaut : le nom de session du système, sinon "Pilote".
+pub fn default_player_name() -> String {
+    let raw = std::env::var("USERNAME")
+        .or_else(|_| std::env::var("USER"))
+        .unwrap_or_default();
+    let name: String = raw.chars().filter(|c| !c.is_control()).take(16).collect();
+    if name.trim().is_empty() { "Pilote".into() } else { name.trim().to_string() }
+}
+fn default_aura_color() -> [f32; 3] { [0.2, 0.9, 1.0] }
 fn default_stars()    -> Vec<StarConfig>    { vec![StarConfig::default()] }
 
 #[derive(Resource, Serialize, Deserialize, Clone, Debug)]
@@ -368,6 +378,11 @@ pub struct GameSettings {
     pub planet_chunk_divisions: usize,
 
     #[serde(default)] pub world_seed: u64,
+
+    // ── Multijoueur ──────────────────────────────────────────────────────
+    #[serde(default = "default_player_name")] pub player_name: String,
+    #[serde(default = "default_aura_color")]  pub aura_color:  [f32; 3],
+    #[serde(default)]                         pub last_join_address: String,
 
     // ── Systèmes stellaires (régénérés au lancement, jamais sauvegardés) ─
     #[serde(skip)] pub systems: Vec<StarSystemConfig>,
@@ -407,6 +422,9 @@ impl Default for GameSettings {
             show_light_indicator: false, show_orbits: false, show_systems: false,
             planet_chunk_divisions: 6,
             world_seed: 42,
+            player_name: default_player_name(),
+            aura_color: default_aura_color(),
+            last_join_address: String::new(),
             systems: default_systems(),
             planets: default_planets(), stars: default_stars(),
             asteroid_belts: Vec::new(),

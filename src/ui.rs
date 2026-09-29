@@ -1227,7 +1227,15 @@ fn spawn_toggle(
 // Systems
 // ══════════════════════════════════════════════════════════
 
-fn toggle_menu(keys: Res<ButtonInput<KeyCode>>, mut state: ResMut<MenuState>) {
+fn toggle_menu(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut state: ResMut<MenuState>,
+    net_panel: Res<crate::net_ui::NetPanel>,
+) {
+    // Échap est géré par le panneau multijoueur quand il est ouvert
+    if net_panel.open || net_panel.esc_consumed {
+        return;
+    }
     if keys.just_pressed(KeyCode::Escape) {
         state.open = !state.open;
     }
