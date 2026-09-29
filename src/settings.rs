@@ -363,6 +363,10 @@ pub fn default_player_name() -> String {
 }
 fn default_aura_color() -> [f32; 3] { [0.2, 0.9, 1.0] }
 fn default_stars()    -> Vec<StarConfig>    { vec![StarConfig::default()] }
+fn default_true()        -> bool { true }
+fn default_msaa()        -> u32  { 4 }
+fn default_lod_quality() -> f32  { 1.0 }
+fn default_render_scale() -> f32 { 1.0 }
 
 #[derive(Resource, Serialize, Deserialize, Clone, Debug)]
 pub struct GameSettings {
@@ -376,6 +380,16 @@ pub struct GameSettings {
     #[serde(default)] pub show_orbits:          bool,
     #[serde(default)] pub show_systems:         bool,
     pub planet_chunk_divisions: usize,
+
+    // ── Graphismes / performances ────────────────────────────────────────
+    #[serde(default = "default_true")]        pub vsync:         bool,
+    #[serde(default)]                         pub fps_limit:     u32,
+    #[serde(default = "default_msaa")]        pub msaa_samples:  u32,
+    #[serde(default = "default_true")]        pub shadows:       bool,
+    #[serde(default = "default_lod_quality")] pub lod_quality:   f32,
+    #[serde(default = "default_true")]        pub show_clouds:   bool,
+    #[serde(default = "default_true")]        pub show_flares:   bool,
+    #[serde(default = "default_render_scale")] pub render_scale: f32,
 
     #[serde(default)] pub world_seed: u64,
 
@@ -421,6 +435,8 @@ impl Default for GameSettings {
             keyboard_speed: 2.0, invert_y: true,
             show_light_indicator: false, show_orbits: false, show_systems: false,
             planet_chunk_divisions: 6,
+            vsync: true, fps_limit: 0, msaa_samples: 4, shadows: true,
+            lod_quality: 1.0, show_clouds: true, show_flares: true, render_scale: 1.0,
             world_seed: 42,
             player_name: default_player_name(),
             aura_color: default_aura_color(),
@@ -531,6 +547,34 @@ impl SystemSpatialIndex {
             cells.entry((col, row)).or_default().push(si);
         }
         Self { cells }
+    }
+
+    /// Système le plus proche de `pos`, en explorant la grille par anneaux croissants.
+    pub fn nearest(&self, pos: bevy::math::Vec3, settings: &GameSettings) -> Option<usize> {
+        let cell = SYSTEM_CELL_SIZE;
+        let half = SYSTEM_GRID_SIZE as f32 * cell / 2.0;
+        let cx = ((pos.x + half) / cell) as i32;
+        let cz = ((pos.z + half) / cell) as i32;
+        let mut best: Option<(usize, f32)> = None;
+        for r in 0..=(SYSTEM_GRID_SIZE as i32 * 2) {
+            // Tout système hors de l'anneau r est à plus de (r - 1) cellules
+            if let Some((_, d2)) = best {
+                let min_d = (r - 1).max(0) as f32 * cell;
+                if min_d * min_d > d2 { break; }
+            }
+            for col in (cx - r)..=(cx + r) {
+                for row in (cz - r)..=(cz + r) {
+                    if (col - cx).abs() != r && (row - cz).abs() != r { continue; }
+                    let Some(indices) = self.cells.get(&(col, row)) else { continue };
+                    for &si in indices {
+                        let Some(sys) = settings.systems.get(si) else { continue };
+                        let d2 = pos.distance_squared(sys.center());
+                        if best.map_or(true, |(_, b)| d2 < b) { best = Some((si, d2)); }
+                    }
+                }
+            }
+        }
+        best.map(|(si, _)| si)
     }
 
     pub fn systems_in_radius(&self, pos: bevy::math::Vec3, radius: f32) -> Vec<usize> {

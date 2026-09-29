@@ -258,6 +258,8 @@ pub fn astre_lod_cull(
     mut profiling: ResMut<ProfilingLog>,
     diagnostics: Res<DiagnosticsStore>,
     settings: Res<crate::settings::GameSettings>,
+    spawned: Res<crate::planet::SpawnedSystems>,
+    spatial: Res<crate::settings::SystemSpatialIndex>,
     time: Res<Time>,
 ) {
     let Ok(cam_tf) = cam_q.get_single() else { return };
@@ -265,13 +267,10 @@ pub fn astre_lod_cull(
     let cam_fwd = cam_tf.forward().as_vec3();
     let dt = time.delta_secs();
 
-    let player_sys = settings.systems.iter().enumerate()
-        .min_by(|(_, a), (_, b)| {
-            let da = cp.distance_squared(a.center());
-            let db = cp.distance_squared(b.center());
-            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .map(|(i, _)| i);
+    // Système du joueur : celui qui est chargé, sinon le plus proche via l'index spatial
+    // (évite de parcourir les ~12 500 systèmes à chaque image).
+    let player_sys = spawned.0.iter().next().copied()
+        .or_else(|| spatial.nearest(cp, &settings));
 
     let (fps, frame_time) = if profiling.active {
         let f = diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS)
@@ -283,13 +282,6 @@ pub fn astre_lod_cull(
         (0.0, 0.0)
     };
 
-    let is_star_label = |label: &str| -> bool {
-        matches!(label,
-            "Star" | "VoxelStar" | "Protostar" | "DwarfStar" | "MainSequence"
-            | "GiantStar" | "Supergiant" | "Hypergiant"
-        )
-    };
-
     for (entity, gt, lod, mut vis, unloaded, pending, pending_reload) in &mut root_q {
         // skip entities already queued for reload
         if pending_reload.is_some() { continue; }
@@ -297,10 +289,11 @@ pub fn astre_lod_cull(
         let pos = gt.translation();
         let d = cp.distance(pos);
 
-        // bodies with SystemIdx in a different system get hidden immediately (except stars)
+        // Astres d'un système : ceux du système du joueur sont toujours affichés,
+        // ceux des autres systèmes sont masqués.
         if let Ok(si) = sys_q.get(entity) {
             if let Some(ps) = player_sys {
-                if si.0 != ps && !is_star_label(lod.label) {
+                if si.0 != ps {
                     if let Some(mut ec) = commands.get_entity(entity) {
                         ec.remove::<AstrePendingUnload>();
                         if unloaded.is_none() {
@@ -320,14 +313,12 @@ pub fn astre_lod_cull(
                     if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
                     continue;
                 }
-                if si.0 == ps && unloaded.is_some() {
-                    if let Some(mut ec) = commands.get_entity(entity) {
-                        ec.remove::<AstrePendingUnload>();
-                        ec.try_insert(AstrePendingReload);
-                    }
-                    if *vis != Visibility::Inherited { *vis = Visibility::Inherited; }
-                    continue;
+                if let Some(mut ec) = commands.get_entity(entity) {
+                    if pending.is_some() { ec.remove::<AstrePendingUnload>(); }
+                    if unloaded.is_some() { ec.try_insert(AstrePendingReload); }
                 }
+                if *vis != Visibility::Inherited { *vis = Visibility::Inherited; }
+                continue;
             }
         }
 

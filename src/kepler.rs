@@ -49,6 +49,13 @@ impl OrbitalElements {
         // Rotation 3D : Rz(Ω) × Rx(i) × Rz(ω)
         rotate_to_3d(x_orb, y_orb, self.omega, self.i, self.omega_big)
     }
+
+    /// Point de l'orbite pour une anomalie excentrique donnée (tracé de l'ellipse).
+    pub fn point_at(&self, ecc_anomaly: f32) -> Vec3 {
+        let x_orb = self.a * (ecc_anomaly.cos() - self.e);
+        let y_orb = self.a * (1.0 - self.e * self.e).sqrt() * ecc_anomaly.sin();
+        rotate_to_3d(x_orb, y_orb, self.omega, self.i, self.omega_big)
+    }
 }
 
 /// Newton-Raphson : M = E - e*sin(E)  →  E
