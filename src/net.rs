@@ -1382,6 +1382,8 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .init_resource::<Assets<StandardMaterial>>()
+            // Fourni par GraphicsPlugin dans le jeu (pas d'échelle de rendu ici)
+            .insert_resource(crate::graphics::ViewportScale(1.0))
             .insert_resource(GameSettings {
                 player_name: name.into(),
                 aura_color: color,
