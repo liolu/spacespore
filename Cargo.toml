@@ -19,6 +19,7 @@ chrono = "0.4"
 ureq = { version = "3", features = ["native-tls"], default-features = false }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 igd-next = { version = "0.17.1", default-features = false }
+arboard = "3"
 
 [profile.dev]
 opt-level = 1
