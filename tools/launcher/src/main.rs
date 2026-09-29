@@ -8,13 +8,13 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use spacespore_common::{exe_name, VersionInfo, GAME_BIN, LAUNCHER_BIN, VERSION};
+use spacespore_common::{exe_name, Channel, VersionInfo, CHANNEL, GAME_BIN, LAUNCHER_BIN};
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("SpaceSpore Launcher")
-            .with_inner_size([440.0, 240.0])
+            .with_inner_size([460.0, 290.0])
             .with_resizable(false),
         centered: true,
         ..Default::default()
@@ -27,18 +27,53 @@ fn main() -> eframe::Result {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+//  Canal choisi (stable / instable), mémorisé dans launcher.json
+// ─────────────────────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct LauncherConfig {
+    channel: String,
+}
+
+fn config_path() -> PathBuf {
+    spacespore_common::exe_dir().join("launcher.json")
+}
+
+fn load_channel() -> Channel {
+    let saved = fs::read_to_string(config_path())
+        .ok()
+        .and_then(|s| serde_json::from_str::<LauncherConfig>(&s).ok())
+        .map(|c| Channel::from_name(&c.channel));
+    match saved {
+        Some(c @ (Channel::Stable | Channel::Unstable)) => c,
+        // Par défaut : le canal de la version installée (stable si compilation locale)
+        _ if CHANNEL == Channel::Unstable => Channel::Unstable,
+        _ => Channel::Stable,
+    }
+}
+
+fn save_channel(channel: Channel) {
+    let cfg = LauncherConfig { channel: channel.name().into() };
+    if let Ok(json) = serde_json::to_string_pretty(&cfg) {
+        let _ = fs::write(config_path(), json);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 //  État partagé entre la fenêtre et le thread de mise à jour
 // ─────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
 enum Stage {
     Checking,
+    /// Une autre version est disponible sur le canal choisi.
     Available(VersionInfo),
-    /// Rien à faire : on lance directement le jeu. Le message est affiché
-    /// brièvement (ex. "hors-ligne").
+    /// Rien à installer : le joueur peut lancer le jeu.
     ReadyToPlay(String),
     Downloading,
     Extracting,
+    /// Mise à jour installée : on lance le jeu.
+    Installed(String),
     Failed(String),
 }
 
@@ -46,6 +81,9 @@ struct Shared {
     stage: Mutex<Stage>,
     downloaded: AtomicU64,
     total: AtomicU64,
+    /// Incrémenté à chaque vérification : une vérification périmée
+    /// (changement de canal entre-temps) est ignorée.
+    check_id: AtomicU64,
 }
 
 impl Shared {
@@ -58,8 +96,9 @@ struct LauncherApp {
     shared: Arc<Shared>,
     ctx: egui::Context,
     install_dir: PathBuf,
-    launched: bool,
     game_exe: PathBuf,
+    channel: Channel,
+    launched: bool,
     launch_error: Option<String>,
 }
 
@@ -71,34 +110,51 @@ impl LauncherApp {
             stage: Mutex::new(Stage::Checking),
             downloaded: AtomicU64::new(0),
             total: AtomicU64::new(0),
+            check_id: AtomicU64::new(0),
         });
+        let app = Self {
+            shared,
+            ctx,
+            install_dir,
+            game_exe,
+            channel: load_channel(),
+            launched: false,
+            launch_error: None,
+        };
+        app.start_check();
+        app
+    }
 
-        {
-            let shared = shared.clone();
-            let ctx = ctx.clone();
-            std::thread::spawn(move || {
-                let stage = match check_for_update() {
-                    Ok(Some(info)) => Stage::Available(info),
-                    Ok(None) => Stage::ReadyToPlay("Le jeu est a jour".into()),
-                    Err(e) => Stage::ReadyToPlay(format!("Hors-ligne ({})", e)),
-                };
+    fn start_check(&self) {
+        let shared = self.shared.clone();
+        let ctx = self.ctx.clone();
+        let channel = self.channel;
+        let id = shared.check_id.fetch_add(1, Ordering::SeqCst) + 1;
+        shared.set(Stage::Checking);
+        std::thread::spawn(move || {
+            let stage = match spacespore_common::fetch_channel(channel, 5) {
+                Ok(info) if spacespore_common::should_install(channel, &info) => Stage::Available(info),
+                Ok(_) => Stage::ReadyToPlay("Le jeu est a jour".into()),
+                Err(e) => Stage::ReadyToPlay(format!("Hors-ligne ou aucune version disponible ({})", e)),
+            };
+            if shared.check_id.load(Ordering::SeqCst) == id {
                 shared.set(stage);
-                ctx.request_repaint();
-            });
-        }
-
-        Self { shared, ctx, install_dir, game_exe, launch_error: None, launched: false }
+            }
+            ctx.request_repaint();
+        });
     }
 
     fn start_update(&self, info: VersionInfo) {
         let shared = self.shared.clone();
         let ctx = self.ctx.clone();
         let dir = self.install_dir.clone();
+        shared.downloaded.store(0, Ordering::Relaxed);
+        shared.total.store(0, Ordering::Relaxed);
         shared.set(Stage::Downloading);
         std::thread::spawn(move || {
             let result = download_and_apply(&info, &dir, &shared, &ctx);
             shared.set(match result {
-                Ok(()) => Stage::ReadyToPlay(format!("Mise a jour v{} installee", info.version)),
+                Ok(()) => Stage::Installed(format!("{} installee", info.label())),
                 Err(e) => Stage::Failed(e.to_string()),
             });
             ctx.request_repaint();
@@ -107,7 +163,9 @@ impl LauncherApp {
 
     /// Lance le jeu et ferme le launcher.
     fn launch_game(&mut self, ctx: &egui::Context) {
-        if self.launched { return; }
+        if self.launched {
+            return;
+        }
         if !self.game_exe.exists() {
             self.launch_error = Some(format!("{} introuvable", self.game_exe.display()));
             return;
@@ -126,13 +184,32 @@ impl eframe::App for LauncherApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let ctx = ctx.clone();
         let stage = self.shared.stage.lock().unwrap().clone();
+        let busy = matches!(stage, Stage::Downloading | Stage::Extracting | Stage::Installed(_));
 
         egui::CentralPanel::default().show(&ctx, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(8.0);
                 ui.heading("SpaceSpore");
-                ui.label(format!("Version installee : v{}", VERSION));
-                ui.add_space(16.0);
+                ui.label(format!("Installe : {}", spacespore_common::installed_label()));
+                ui.add_space(8.0);
+
+                // ── Choix du canal ──
+                ui.add_enabled_ui(!busy, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Version :");
+                        let before = self.channel;
+                        ui.radio_value(&mut self.channel, Channel::Stable, "Stable")
+                            .on_hover_text("Versions publiees, testees");
+                        ui.radio_value(&mut self.channel, Channel::Unstable, "Instable")
+                            .on_hover_text("Derniere version en cours de developpement (peut contenir des bugs)");
+                        if self.channel != before {
+                            save_channel(self.channel);
+                            self.start_check();
+                        }
+                    });
+                });
+                ui.separator();
+                ui.add_space(4.0);
 
                 if let Some(err) = self.launch_error.clone() {
                     ui.colored_label(egui::Color32::LIGHT_RED, err);
@@ -151,25 +228,36 @@ impl eframe::App for LauncherApp {
                         });
                     }
                     Stage::Available(info) => {
-                        ui.label(
-                            egui::RichText::new(format!("Nouvelle version disponible : v{}", info.version))
-                                .strong(),
-                        );
+                        let switching = CHANNEL != self.channel;
+                        let title = if switching {
+                            format!("Disponible : {}", info.label())
+                        } else {
+                            format!("Nouvelle version disponible : {}", info.label())
+                        };
+                        ui.label(egui::RichText::new(title).strong());
                         ui.label(&info.release_notes);
-                        ui.add_space(12.0);
+                        ui.add_space(10.0);
                         ui.horizontal(|ui| {
-                            if ui.button("Mettre a jour").clicked() {
+                            let action = if switching { "Installer" } else { "Mettre a jour" };
+                            if ui.button(action).clicked() {
                                 self.start_update(info.clone());
                             }
-                            if ui.button("Jouer sans mettre a jour").clicked() {
+                            if ui.button("Jouer sans changer").clicked() {
                                 self.launch_game(&ctx);
                             }
                         });
                     }
+                    Stage::ReadyToPlay(msg) => {
+                        ui.label(msg);
+                        ui.add_space(10.0);
+                        if ui.add_sized([140.0, 34.0], egui::Button::new("Jouer")).clicked() {
+                            self.launch_game(&ctx);
+                        }
+                    }
                     Stage::Downloading => {
                         let done = self.shared.downloaded.load(Ordering::Relaxed);
                         let total = self.shared.total.load(Ordering::Relaxed);
-                        ui.label("Telechargement de la mise a jour...");
+                        ui.label("Telechargement...");
                         let (frac, text) = if total > 0 {
                             (
                                 done as f32 / total as f32,
@@ -183,17 +271,17 @@ impl eframe::App for LauncherApp {
                     Stage::Extracting => {
                         ui.horizontal(|ui| {
                             ui.spinner();
-                            ui.label("Installation de la mise a jour...");
+                            ui.label("Installation...");
                         });
                     }
-                    Stage::ReadyToPlay(msg) => {
+                    Stage::Installed(msg) => {
                         ui.label(msg);
                         ui.label("Lancement de SpaceSpore...");
                         self.launch_game(&ctx);
                     }
                     Stage::Failed(err) => {
-                        ui.colored_label(egui::Color32::LIGHT_RED, format!("Erreur de mise a jour : {}", err));
-                        ui.add_space(12.0);
+                        ui.colored_label(egui::Color32::LIGHT_RED, format!("Erreur : {}", err));
+                        ui.add_space(10.0);
                         ui.horizontal(|ui| {
                             if ui.button("Jouer quand meme").clicked() {
                                 self.launch_game(&ctx);
@@ -210,38 +298,8 @@ impl eframe::App for LauncherApp {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-//  Réseau / mise à jour
+//  Téléchargement / installation
 // ─────────────────────────────────────────────────────────────────────────
-
-fn make_agent(timeout_secs: u64) -> ureq::Agent {
-    let tls = ureq::tls::TlsConfig::builder()
-        .provider(ureq::tls::TlsProvider::NativeTls)
-        .build();
-    let config = ureq::Agent::config_builder()
-        .tls_config(tls)
-        .timeout_global(Some(std::time::Duration::from_secs(timeout_secs)))
-        .build();
-    ureq::Agent::new_with_config(config)
-}
-
-/// `Ok(Some(info))` si une mise à jour existe pour cette plateforme.
-fn check_for_update() -> Result<Option<VersionInfo>, String> {
-    let agent = make_agent(5);
-    let body = agent
-        .get(spacespore_common::VERSION_URL)
-        .call()
-        .map_err(|e| e.to_string())?
-        .body_mut()
-        .read_to_string()
-        .map_err(|e| e.to_string())?;
-    let info: VersionInfo = serde_json::from_str(&body).map_err(|e| e.to_string())?;
-
-    if spacespore_common::needs_update(info.version_code) && info.platform_download_url().is_some() {
-        Ok(Some(info))
-    } else {
-        Ok(None)
-    }
-}
 
 fn download_and_apply(
     info: &VersionInfo,
@@ -257,7 +315,7 @@ fn download_and_apply(
     fs::create_dir_all(&temp_dir)?;
     let zip_path = temp_dir.join("update.zip");
 
-    let agent = make_agent(120);
+    let agent = spacespore_common::make_agent(120);
     let response = agent.get(url).call()?;
 
     let total_size = response
