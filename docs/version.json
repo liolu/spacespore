@@ -5,6 +5,6 @@
   "download_url": "https://github.com/liolu/spacespore/releases/download/v0.6.3/spacespore-v0.6.3-windows.zip",
   "download_url_linux": "https://github.com/liolu/spacespore/releases/download/v0.6.3/spacespore-v0.6.3-linux.zip",
   "download_url_macos": "https://github.com/liolu/spacespore/releases/download/v0.6.3/spacespore-v0.6.3-macos.zip",
-  "release_notes": "Options graphiques et optimisations FPS",
+  "release_notes": "See release page for details",
   "min_updater_version": 1
 }
