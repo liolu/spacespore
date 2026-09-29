@@ -12,9 +12,14 @@
 //
 //  La carte est générée localement chez chaque joueur (même code, même
 //  graine). Seuls s'échangent : position/orientation du vaisseau, pseudo et
-//  couleur d'aura. L'hôte relaie l'état de tout le monde et partage son
-//  horloge d'univers pour que les planètes soient au même endroit
-//  sur toutes les machines.
+//  couleur d'aura, plus le système stellaire où l'on se trouve et son
+//  horloge d'univers. L'hôte relaie l'état de tout le monde.
+//
+//  Orbites : chacun garde sa propre horloge. Elle n'est alignée que lorsque
+//  deux joueurs sont dans le même système : celui qui arrive prend l'horloge
+//  de celui qui y est depuis le plus longtemps, pour que les planètes soient
+//  au même endroit chez les deux. Dans des systèmes différents, rien n'est
+//  synchronisé (inutile : on ne voit pas les planètes de l'autre).
 // ─────────────────────────────────────────────────────────────────────────
 
 use bevy::prelude::*;
@@ -25,13 +30,14 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::planet::SpawnedSystems;
 use crate::settings::GameSettings;
 use crate::ship::{aura_materials, LocalAura, Ship, ShipAssets};
 use crate::CameraController;
 
 pub const NET_PORT: u16 = 27777;
 pub const MAX_NAME_LEN: usize = 16;
-const PROTOCOL: u32 = 2;
+const PROTOCOL: u32 = 3;
 const MAGIC: &str = "SPACESPORE";
 const GAME_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MAX_PLAYERS: usize = 16;
@@ -44,6 +50,8 @@ const LAN_EXPIRY: f64 = 5.0;
 const HOST_RETRY: f64 = 3.0;
 const AVOID_DURATION: f64 = 30.0;
 const HOST_ID: u32 = 0;
+/// Écart d'horloge toléré entre deux joueurs d'un même système (secondes).
+const CLOCK_TOLERANCE: f64 = 0.5;
 
 pub struct NetPlugin;
 
@@ -97,6 +105,12 @@ struct PlayerState {
     color: [f32; 3],
     pos: [f32; 3],
     rot: [f32; 4],
+    /// Système stellaire où se trouve le joueur (None = espace profond).
+    sys: Option<u32>,
+    /// Depuis combien de secondes il est dans ce système.
+    stay: f64,
+    /// Son horloge d'univers.
+    clock: f64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -105,10 +119,10 @@ enum Msg {
     Discover { magic: String },
     HostInfo { magic: String, sid: u64, players: usize, game: String, world: u64 },
     Hello { magic: String, proto: u32, game: String, world: u64, name: String, color: [f32; 3] },
-    Welcome { id: u32, clock: f64 },
+    Welcome { id: u32 },
     Reject { reason: String },
-    State { name: String, color: [f32; 3], pos: [f32; 3], rot: [f32; 4] },
-    Snapshot { clock: f64, code: Option<String>, players: Vec<PlayerState> },
+    State { state: PlayerState },
+    Snapshot { code: Option<String>, players: Vec<PlayerState> },
     Bye,
 }
 
@@ -405,6 +419,26 @@ pub struct Peer {
     rot: Quat,
     vel: Vec3,
     last_update: f64,
+    sys: Option<u32>,
+    stay: f64,
+    clock: f64,
+}
+
+impl Peer {
+    /// État actuel estimé (durée et horloge avancées depuis la réception).
+    fn state_now(&self, id: u32, now: f64) -> PlayerState {
+        let age = (now - self.last_update).max(0.0);
+        PlayerState {
+            id,
+            name: self.name.clone(),
+            color: self.color,
+            pos: self.pos.to_array(),
+            rot: self.rot.to_array(),
+            sys: self.sys,
+            stay: self.stay + age,
+            clock: self.clock + age,
+        }
+    }
 }
 
 /// Partie trouvée sur le réseau local.
@@ -436,6 +470,8 @@ pub struct Net {
     last_send: f64,
     upnp: Arc<Mutex<Upnp>>,
     upnp_started: bool,
+    my_sys: Option<u32>,
+    sys_since: f64,
 }
 
 impl Default for Net {
@@ -455,6 +491,8 @@ impl Default for Net {
             last_send: f64::NEG_INFINITY,
             upnp: Arc::new(Mutex::new(Upnp::Pending)),
             upnp_started: false,
+            my_sys: None,
+            sys_since: 0.0,
         }
     }
 }
@@ -600,8 +638,12 @@ fn update_peer(peers: &mut HashMap<u32, Peer>, st: PlayerState, now: f64) {
     let pos = Vec3::from_array(st.pos);
     let q = Quat::from_array(st.rot);
     let rot = if q.length_squared() > 1.0e-6 { q.normalize() } else { Quat::IDENTITY };
+    if !st.clock.is_finite() || !st.stay.is_finite() {
+        return;
+    }
     let name = sanitize_name(&st.name);
     let color = sanitize_color(st.color);
+    let (sys, stay, clock) = (st.sys, st.stay.max(0.0), st.clock);
     match peers.get_mut(&st.id) {
         Some(p) => {
             let dt = (now - p.last_update) as f32;
@@ -613,9 +655,12 @@ fn update_peer(peers: &mut HashMap<u32, Peer>, st: PlayerState, now: f64) {
             p.name = name;
             p.color = color;
             p.last_update = now;
+            p.sys = sys;
+            p.stay = stay;
+            p.clock = clock;
         }
         None => {
-            peers.insert(st.id, Peer { name, color, pos, rot, vel: Vec3::ZERO, last_update: now });
+            peers.insert(st.id, Peer { name, color, pos, rot, vel: Vec3::ZERO, last_update: now, sys, stay, clock });
         }
     }
 }
@@ -668,6 +713,7 @@ fn net_update(
     time: Res<Time>,
     settings: Res<GameSettings>,
     ship_q: Query<&GlobalTransform, With<Ship>>,
+    spawned: Option<Res<SpawnedSystems>>,
     mut clock: ResMut<UniverseClock>,
     mut net: ResMut<Net>,
 ) {
@@ -684,6 +730,23 @@ fn net_update(
 
     let net = &mut *net;
     let world = *net.world.get_or_insert_with(|| world_fingerprint(&settings));
+
+    // Système stellaire actuel (celui chargé autour du vaisseau)
+    let sys = spawned.and_then(|s| s.0.iter().next().map(|&i| i as u32));
+    if sys != net.my_sys {
+        net.my_sys = sys;
+        net.sys_since = now;
+    }
+    let me = PlayerState {
+        id: net.my_id(),
+        name: my_name.clone(),
+        color: my_color,
+        pos: pos.to_array(),
+        rot: rot.to_array(),
+        sys,
+        stay: now - net.sys_since,
+        clock: clock.secs_f64(&time),
+    };
     if !net.upnp_started {
         net.upnp_started = true;
         start_upnp(net.upnp.clone());
@@ -723,9 +786,8 @@ fn net_update(
                         });
                     }
                     Msg::Hello { magic, proto, game, world: their_world, .. } if magic == MAGIC => {
-                        let clock_now = clock.secs_f64(&time);
                         if let Some(slot) = clients.get(&addr) {
-                            send(socket, addr, &Msg::Welcome { id: slot.id, clock: clock_now });
+                            send(socket, addr, &Msg::Welcome { id: slot.id });
                             continue;
                         }
                         let reject = if proto != PROTOCOL || game != GAME_VERSION {
@@ -745,14 +807,14 @@ fn net_update(
                                 let id = *next_id;
                                 *next_id += 1;
                                 clients.insert(addr, ClientSlot { id, last_seen: now });
-                                send(socket, addr, &Msg::Welcome { id, clock: clock_now });
+                                send(socket, addr, &Msg::Welcome { id });
                             }
                         }
                     }
-                    Msg::State { name, color, pos, rot } => {
+                    Msg::State { state } => {
                         if let Some(slot) = clients.get_mut(&addr) {
                             slot.last_seen = now;
-                            update_peer(&mut net.peers, PlayerState { id: slot.id, name, color, pos, rot }, now);
+                            update_peer(&mut net.peers, PlayerState { id: slot.id, ..state }, now);
                         }
                     }
                     Msg::Bye => {
@@ -773,25 +835,13 @@ fn net_update(
             });
 
             if tick && !clients.is_empty() {
-                let mut players = vec![PlayerState {
-                    id: HOST_ID,
-                    name: my_name.clone(),
-                    color: my_color,
-                    pos: pos.to_array(),
-                    rot: rot.to_array(),
-                }];
+                let mut players = vec![me.clone()];
                 for slot in clients.values() {
                     if let Some(p) = net.peers.get(&slot.id) {
-                        players.push(PlayerState {
-                            id: slot.id,
-                            name: p.name.clone(),
-                            color: p.color,
-                            pos: p.pos.to_array(),
-                            rot: p.rot.to_array(),
-                        });
+                        players.push(p.state_now(slot.id, now));
                     }
                 }
-                let snapshot = Msg::Snapshot { clock: clock.secs_f64(&time), code: own_code, players };
+                let snapshot = Msg::Snapshot { code: own_code, players };
                 for addr in clients.keys() {
                     send(socket, *addr, &snapshot);
                 }
@@ -815,8 +865,7 @@ fn net_update(
                     continue;
                 }
                 match msg {
-                    Msg::Welcome { id, clock: host_clock } => {
-                        clock.offset = host_clock - now;
+                    Msg::Welcome { id } => {
                         if let Ok(socket) = socket.try_clone() {
                             let text = if *manual { "Vous avez rejoint votre ami !" } else { "" };
                             next = Some((
@@ -859,13 +908,9 @@ fn net_update(
                     continue;
                 }
                 match msg {
-                    Msg::Snapshot { clock: host_clock, code, players } => {
+                    Msg::Snapshot { code, players } => {
                         *last_recv = now;
                         *host_code = code.filter(|c| decode_invite(c).is_some());
-                        // Resynchronise l'horloge seulement en cas de dérive notable.
-                        if (host_clock - clock.secs_f64(&time)).abs() > 0.5 {
-                            clock.offset = host_clock - now;
-                        }
                         let ids: Vec<u32> = players.iter().map(|p| p.id).filter(|id| id != my_id).collect();
                         net.peers.retain(|id, _| ids.contains(id));
                         for st in players.into_iter().take(MAX_PLAYERS) {
@@ -890,12 +935,7 @@ fn net_update(
                 if now - *last_recv > TIMEOUT {
                     next = Some((Session::Offline, "Connexion perdue avec l'hote.".into(), true, None));
                 } else if tick {
-                    send(socket, *host, &Msg::State {
-                        name: my_name.clone(),
-                        color: my_color,
-                        pos: pos.to_array(),
-                        rot: rot.to_array(),
-                    });
+                    send(socket, *host, &Msg::State { state: me.clone() });
                 }
             }
         }
@@ -914,6 +954,33 @@ fn net_update(
         if !text.is_empty() || !error {
             net.set_notice(text, error);
         }
+    }
+
+    sync_clock_with_system(net, &mut clock, &me, now, time.elapsed_secs_f64());
+}
+
+/// Aligne l'horloge d'univers sur celle du joueur présent depuis le plus
+/// longtemps dans notre système stellaire. Aucun effet si l'on est seul
+/// dans son système (les autres joueurs sont ailleurs).
+fn sync_clock_with_system(net: &Net, clock: &mut UniverseClock, me: &PlayerState, now: f64, elapsed: f64) {
+    let Some(sys) = me.sys else { return };
+    let reference = net
+        .peers
+        .iter()
+        .filter(|(_, p)| p.sys == Some(sys))
+        .map(|(id, p)| p.state_now(*id, now))
+        .chain(std::iter::once(me.clone()))
+        .max_by(|a, b| {
+            // Le plus ancien dans le système ; à quasi-égalité, le plus petit identifiant.
+            if (a.stay - b.stay).abs() > 1.0 {
+                a.stay.total_cmp(&b.stay)
+            } else {
+                b.id.cmp(&a.id)
+            }
+        });
+    let Some(reference) = reference else { return };
+    if reference.id != me.id && (reference.clock - me.clock).abs() > CLOCK_TOLERANCE {
+        clock.offset = reference.clock - elapsed;
     }
 }
 
@@ -1210,6 +1277,33 @@ mod tests {
         assert_eq!(pick_lan_host(&[big.clone()], 5, true, 1, &avoid, 0.0), Some(big.addr));
         // Carte différente : ignorée
         assert_eq!(pick_lan_host(&[big], 5, true, 2, &avoid, 0.0), None);
+    }
+
+    fn state(id: u32, sys: Option<u32>, stay: f64, clock: f64) -> PlayerState {
+        PlayerState { id, name: "x".into(), color: [1.0; 3], pos: [0.0; 3], rot: [0.0, 0.0, 0.0, 1.0], sys, stay, clock }
+    }
+
+    #[test]
+    fn orbits_sync_only_inside_the_same_system() {
+        let mut net = Net::default();
+        // Un ami est dans le système 7 depuis 100 s, son horloge vaut 5000 s.
+        update_peer(&mut net.peers, state(1, Some(7), 100.0, 5000.0), 0.0);
+
+        // Moi dans un autre système : aucune synchro.
+        let mut clock = UniverseClock::default();
+        sync_clock_with_system(&net, &mut clock, &state(2, Some(3), 1.0, 10.0), 0.0, 10.0);
+        assert_eq!(clock.offset, 0.0);
+
+        // J'arrive dans son système : je prends son horloge.
+        sync_clock_with_system(&net, &mut clock, &state(2, Some(7), 1.0, 10.0), 0.0, 10.0);
+        assert_eq!(clock.offset, 5000.0 - 10.0);
+
+        // S'il arrive dans mon système où je suis depuis longtemps : je ne bouge pas.
+        let mut net = Net::default();
+        update_peer(&mut net.peers, state(1, Some(7), 1.0, 5000.0), 0.0);
+        let mut clock = UniverseClock::default();
+        sync_clock_with_system(&net, &mut clock, &state(2, Some(7), 300.0, 10.0), 0.0, 10.0);
+        assert_eq!(clock.offset, 0.0);
     }
 
     #[test]
