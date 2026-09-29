@@ -336,6 +336,7 @@ fn toggle_net_panel(
     close_btn: Query<&Interaction, (Changed<Interaction>, With<CloseButton>)>,
     mut panel: ResMut<NetPanel>,
     mut settings: ResMut<GameSettings>,
+    mut net: ResMut<Net>,
 ) {
     let clicked_open = open_btn.iter().any(|i| *i == Interaction::Pressed);
     let clicked_close = close_btn.iter().any(|i| *i == Interaction::Pressed);
@@ -350,7 +351,10 @@ fn toggle_net_panel(
     } else {
         return;
     }
-    if !panel.open {
+    if panel.open {
+        // Les ports ne sont ouverts qu'à partir d'ici
+        net.enable();
+    } else {
         commit_focus(&mut panel, &mut settings);
     }
 }
@@ -591,7 +595,11 @@ fn update_texts(
             "Donnez ce code a votre ami : il le tape dans \"Rejoindre un ami\".".to_string(),
         ),
         Invite::Pending => ("...".to_string(), TEXT_DIM, "Preparation du code...".to_string()),
-        Invite::Unavailable(reason) => ("Indisponible".to_string(), TEXT_DIM, reason),
+        Invite::Unavailable(reason) => (
+            "Indisponible".to_string(),
+            TEXT_DIM,
+            format!("{reason}\nVous pouvez quand meme jouer : demandez son code a votre ami (c'est lui qui heberge)."),
+        ),
     };
     for (mut t, mut c) in &mut q.p2() {
         set_text(&mut t, &mut c, code.clone(), code_color);
