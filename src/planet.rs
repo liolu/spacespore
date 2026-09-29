@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use crate::kepler::{OrbitalElements, DEFAULT_MU};
 use crate::lod::{compute_lod_level, LodChunk, LodLevel};
 use crate::mesher::{build_celestial_chunk_mesh, build_chunk_mesh};
-use crate::settings::{GameSettings, PlanetConfig, SystemSpatialIndex, SYSTEM_CELL_SIZE, STREAM_RADIUS};
+use crate::settings::{GalaxyConfig, GameSettings, PlanetConfig, SystemSpatialIndex, CORE_EXCLUSION, SYSTEM_CELL_SIZE, STREAM_RADIUS};
 use bevy::render::view::NoFrustumCulling;
 use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, ComputeTaskPool, Task};
 use crate::astre::{AstreLodRoot, ReloadAstre};
@@ -57,7 +57,7 @@ impl Plugin for PlanetPlugin {
             .add_systems(Startup, (build_spatial_index, generate_all).chain())
             .add_systems(
                 Update,
-                (orbit_planets, orbit_stars, orbit_moons, orbit_asteroid_belts, update_flare_voxels, rotate_clouds, regenerate_all, update_lod, update_star_visibility, update_far_star_scale, update_distant_star_scale, update_arm_capsule_lod, stream_system_bodies, reload_stars, reload_planets, reload_moons, reload_asteroid_belts, cleanup_hidden_toplevel, rotate_accretion_disk),
+                (orbit_planets, orbit_stars, orbit_moons, orbit_asteroid_belts, update_flare_voxels, rotate_clouds, regenerate_all, update_lod, update_star_visibility, update_far_star_scale, update_arm_capsule_lod, stream_system_bodies, reload_stars, reload_planets, reload_moons, reload_asteroid_belts, cleanup_hidden_toplevel, rotate_accretion_disk),
             );
     }
 }
@@ -90,6 +90,7 @@ pub struct StarChunk;
 pub struct FarStar {
     pub sys_idx: usize,
     pub radius: f32,
+    pub galaxy_id: u32,
 }
 
 #[derive(Component)]
@@ -128,12 +129,6 @@ pub struct AccretionDisk;
 
 #[derive(Component)]
 pub struct DistantGalaxyCore {
-    pub galaxy_id: u32,
-}
-
-#[derive(Component)]
-pub struct DistantStar {
-    pub radius: f32,
     pub galaxy_id: u32,
 }
 
@@ -336,10 +331,11 @@ fn generate_all(
         .map(|i| make_atlas_quad(&mut meshes, i))
         .collect();
 
-    let core_exclusion = 15000.0_f32;
+    // Toutes les galaxies (principale et extérieures) : un billboard par système
     for (si, sys) in settings.systems.iter().enumerate() {
         let center = sys.center();
-        if center.length() < core_exclusion { continue; }
+        let gal_center = settings.galaxies.get(sys.galaxy_id as usize).map_or(Vec3::ZERO, |g| g.center);
+        if center.distance(gal_center) < CORE_EXCLUSION { continue; }
         if let Some(star_cfg) = sys.stars.first() {
             let group = star_color_group(
                 star_cfg.light_color_r,
@@ -351,7 +347,7 @@ fn generate_all(
                 MeshMaterial3d(atlas_mat.clone()),
                 Transform::from_translation(center).with_scale(Vec3::splat(star_cfg.radius * 0.5)),
                 NotShadowCaster,
-                FarStar { sys_idx: si, radius: star_cfg.radius },
+                FarStar { sys_idx: si, radius: star_cfg.radius, galaxy_id: sys.galaxy_id },
             ));
         }
     }
@@ -394,19 +390,17 @@ fn generate_all(
     commands.insert_resource(GalaxyLodMaterials { capsule_steps: capsule_steps.clone() });
     let capsule_mat = capsule_steps[1].last().unwrap().clone();
 
-    // GalaxyMeta + capsules pour la galaxie principale
-    commands.spawn(GalaxyMeta { id: 0, center: Vec3::ZERO });
-    spawn_arm_capsules(
-        &mut commands, &capsule_mesh, &capsule_mat,
-        0, Vec3::ZERO, Quat::IDENTITY,
-        5, 5.0, 4_500_000.0,
-    );
+    // GalaxyMeta + capsules pour chaque galaxie (0 = principale)
+    for (gid, gal) in settings.galaxies.iter().enumerate() {
+        commands.spawn(GalaxyMeta { id: gid as u32, center: gal.center });
+        spawn_arm_capsules(
+            &mut commands, &capsule_mesh, &capsule_mat,
+            gid as u32, gal.center, gal.tilt,
+            gal.num_arms, gal.twist, gal.radius,
+        );
+    }
 
-    spawn_distant_galaxies(
-        &mut commands, &mut meshes, &mut materials,
-        &quad_meshes, atlas_mat.clone(),
-        &capsule_mesh, &capsule_mat,
-    );
+    spawn_distant_galaxy_cores(&mut commands, &mut meshes, &mut materials, &settings.galaxies);
 }
 
 fn spawn_galactic_core(
@@ -563,130 +557,23 @@ fn spawn_arm_capsules(
     }
 }
 
-fn spawn_distant_galaxies(
+/// Trou noir + disque d'accrétion des galaxies extérieures. Les étoiles de ces
+/// galaxies sont de vrais systèmes (`settings.systems`) affichés en `FarStar`.
+fn spawn_distant_galaxy_cores(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
-    quad_meshes: &[Handle<Mesh>],
-    atlas_mat: Handle<StandardMaterial>,
-    capsule_mesh: &Handle<Mesh>,
-    capsule_mat: &Handle<StandardMaterial>,
+    galaxies: &[GalaxyConfig],
 ) {
-    fn prand(seed: u32) -> f32 {
-        let mut x = seed;
-        x ^= x >> 16;
-        x = x.wrapping_mul(0x45d9f3b);
-        x ^= x >> 16;
-        x = x.wrapping_mul(0x45d9f3b);
-        x ^= x >> 16;
-        (x & 0xFFFF) as f32 / 65535.0
-    }
-
     let tau = std::f32::consts::TAU;
-    const NUM_GALAXIES: usize = 100;
-    const META_ARMS: usize = 5;
-    const META_RADIUS: f32 = 80_000_000.0;
-    const META_TWIST: f32 = 4.0;
-    const MIN_DIST: f32 = 15_000_000.0;
-
     let core_mesh = meshes.add(Sphere::new(1.0).mesh().ico(3).unwrap());
 
-    for gi in 0..NUM_GALAXIES {
-        let gs = gi as u32 + 300_000;
+    for (gi, gal) in galaxies.iter().skip(1).enumerate() {
+        let center = gal.center;
+        let tilt = gal.tilt;
 
-        // Position de la galaxie sur les bras de la méta-spirale
-        let arm = gi % META_ARMS;
-        let arm_base = arm as f32 * tau / META_ARMS as f32;
-        let t = prand(gs * 13 + 1);
-        let r = MIN_DIST + t * t * (META_RADIUS - MIN_DIST);
-        let spiral = arm_base + (r / META_RADIUS) * META_TWIST;
-        let scatter = (prand(gs * 13 + 3) - 0.5) * 0.4;
-        let theta = spiral + scatter;
-
-        let gx = r * theta.cos();
-        let gz = r * theta.sin();
-        let gy = (prand(gs * 13 + 5) - 0.5) * 8_000_000.0;
-        let center = Vec3::new(gx, gy, gz);
-
-        // Propriétés variables par galaxie
-        let gal_radius = 800_000.0 + prand(gs * 13 + 7) * 2_500_000.0;
-        let num_arms = 2 + (prand(gs * 13 + 9) * 4.0) as usize;
-        let twist = 3.0 + prand(gs * 13 + 11) * 4.0;
-        let tilt = Quat::from_euler(
-            EulerRot::XYZ,
-            (prand(gs * 13 + 13) - 0.5) * 1.5,
-            prand(gs * 13 + 15) * tau,
-            (prand(gs * 13 + 17) - 0.5) * 1.0,
-        );
-
-        let arm_stars = 200 + (prand(gs * 13 + 19) * 300.0) as usize;
-        let scatter_stars = 50 + (prand(gs * 13 + 21) * 100.0) as usize;
-        let seed_off = gs * 1000;
-
-        // Étoiles sur les bras
-        for i in 0..arm_stars {
-            let s = i as u32 + seed_off;
-            let a = i % num_arms;
-            let ab = a as f32 * tau / num_arms as f32;
-
-            let st = prand(s * 7 + 3);
-            let sr = st * st * gal_radius;
-            let sp = ab + (sr / gal_radius) * twist;
-            let w = 0.35 * (1.0 - sr / gal_radius * 0.65);
-            let sc = (prand(s * 7 + 5) - 0.5) * w;
-
-            let lx = sr * (sp + sc).cos();
-            let lz = sr * (sp + sc).sin();
-            let thick = 12000.0 * (1.0 - sr / gal_radius * 0.8);
-            let ly = (prand(s * 7 + 7) - 0.5) * thick;
-
-            let world = center + tilt * Vec3::new(lx, ly, lz);
-            let star_r = 75.0 + prand(s * 5 + 31) * 175.0;
-            let group = (prand(s * 5 + 37) * 5.0) as usize % 5;
-
-            commands.spawn((
-                Mesh3d(quad_meshes[group].clone()),
-                MeshMaterial3d(atlas_mat.clone()),
-                Transform::from_translation(world).with_scale(Vec3::splat(star_r * 0.5)),
-                NotShadowCaster,
-                DistantStar { radius: star_r, galaxy_id: gi as u32 + 1 },
-            ));
-        }
-
-        // Étoiles dispersées
-        for i in 0..scatter_stars {
-            let s = (arm_stars + i) as u32 + seed_off;
-            let st = prand(s * 7 + 3);
-            let sr = st * st * gal_radius * 0.85;
-            let stheta = prand(s * 7 + 5) * tau;
-
-            let lx = sr * stheta.cos();
-            let lz = sr * stheta.sin();
-            let ly = (prand(s * 7 + 7) - 0.5) * 8000.0;
-
-            let world = center + tilt * Vec3::new(lx, ly, lz);
-            let star_r = 75.0 + prand(s * 5 + 31) * 175.0;
-            let group = (prand(s * 5 + 37) * 5.0) as usize % 5;
-
-            commands.spawn((
-                Mesh3d(quad_meshes[group].clone()),
-                MeshMaterial3d(atlas_mat.clone()),
-                Transform::from_translation(world).with_scale(Vec3::splat(star_r * 0.5)),
-                NotShadowCaster,
-                DistantStar { radius: star_r, galaxy_id: gi as u32 + 1 },
-            ));
-        }
-
-        // GalaxyMeta + capsules LOD
-        commands.spawn(GalaxyMeta { id: gi as u32 + 1, center });
-        spawn_arm_capsules(
-            commands, capsule_mesh, capsule_mat,
-            gi as u32 + 1, center, tilt,
-            num_arms, twist, gal_radius,
-        );
-
-        // Trou noir décoratif
-        let core_r = 1000.0 + prand(gs * 13 + 23) * 2000.0;
+        // Trou noir central
+        let core_r = gal.core_radius;
         let core_mat = materials.add(StandardMaterial {
             base_color: Color::srgb(0.01, 0.0, 0.02),
             emissive: LinearRgba::new(0.0, 0.0, 0.0, 1.0),
@@ -1965,6 +1852,7 @@ fn camera_moved_enough(last: &mut Option<(Vec3, Vec3)>, pos: Vec3, fwd: Vec3) ->
 fn update_far_star_scale(
     camera_q: Query<(&GlobalTransform, &Transform), With<Camera3d>>,
     spawned: Res<SpawnedSystems>,
+    settings: Res<GameSettings>,
     brightness_mats: Res<StarBrightnessMaterials>,
     mut far_q: Query<(&FarStar, &mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>), Without<Camera3d>>,
     mut last_cam: Local<Option<(Vec3, Vec3)>>,
@@ -1973,19 +1861,23 @@ fn update_far_star_scale(
     let cam_pos = cam_gt.translation();
     let cam_fwd = cam_tf.forward().as_vec3();
 
-    // ~12 500 billboards : inutile de tout recalculer si la caméra n'a quasiment pas bougé
+    // ~60 000 billboards (toutes galaxies) : inutile de tout recalculer si la caméra n'a quasiment pas bougé
     if !spawned.is_changed() && !camera_moved_enough(&mut last_cam, cam_pos, cam_fwd) {
         return;
     }
 
-    let main_dist = cam_pos.length();
-    let raw = ((main_dist - LOD_STARS_END) / (LOD_STARS_GONE - LOD_STARS_END)).clamp(0.0, 1.0);
-    let lod_fade = smoothstep(raw);
-
-    let brightness = (5_000_000.0 / main_dist.max(1.0)).clamp(0.05, 1.0) * (1.0 - lod_fade);
-    let step = ((brightness * (STAR_BRIGHTNESS_STEPS - 1) as f32).round() as usize).min(STAR_BRIGHTNESS_STEPS - 1);
+    // Fondu / luminosité calculés une fois par galaxie (distance caméra → centre galactique)
+    let gal_lod: Vec<(f32, f32, usize)> = settings.galaxies.iter().map(|g| {
+        let gal_dist = cam_pos.distance(g.center);
+        let raw = ((gal_dist - LOD_STARS_END) / (LOD_STARS_GONE - LOD_STARS_END)).clamp(0.0, 1.0);
+        let fade = smoothstep(raw);
+        let brightness = (5_000_000.0 / gal_dist.max(1.0)).clamp(0.05, 1.0) * (1.0 - fade);
+        let step = ((brightness * (STAR_BRIGHTNESS_STEPS - 1) as f32).round() as usize).min(STAR_BRIGHTNESS_STEPS - 1);
+        (gal_dist, fade, step)
+    }).collect();
 
     for (fs, mut tf, mut vis, mut mat) in &mut far_q {
+        let (gal_dist, lod_fade, step) = gal_lod.get(fs.galaxy_id as usize).copied().unwrap_or((f32::MAX, 1.0, 0));
         if lod_fade >= 1.0 {
             if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
             continue;
@@ -2007,7 +1899,7 @@ fn update_far_star_scale(
         if *vis != Visibility::Inherited { *vis = Visibility::Inherited; }
         let min_scale = fs.radius * 0.5;
         let angular_scale = dist * 0.005;
-        let dist_shrink = (10_000_000.0 / main_dist.max(1.0)).clamp(0.05, 1.0);
+        let dist_shrink = (10_000_000.0 / gal_dist.max(1.0)).clamp(0.05, 1.0);
         let mut scale = angular_scale.max(min_scale) * dist_shrink;
         if lod_fade > 0.0 { scale *= 1.0 - lod_fade; }
         tf.scale = Vec3::splat(scale);
@@ -2018,56 +1910,6 @@ fn update_far_star_scale(
 
         let n = to_star / dist.max(0.001);
         tf.look_to(n, Vec3::Y);
-    }
-}
-
-fn update_distant_star_scale(
-    camera_q: Query<&GlobalTransform, With<Camera3d>>,
-    galaxy_q: Query<&GalaxyMeta>,
-    brightness_mats: Res<StarBrightnessMaterials>,
-    mut star_q: Query<(&DistantStar, &mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>), Without<Camera3d>>,
-    mut last_cam: Local<Option<(Vec3, Vec3)>>,
-) {
-    let cam_pos = camera_q.single().translation();
-    if !camera_moved_enough(&mut last_cam, cam_pos, Vec3::ZERO) {
-        return;
-    }
-
-    let mut gal_cache: HashMap<u32, (f32, usize)> = HashMap::new();
-    for meta in &galaxy_q {
-        let d = (cam_pos - meta.center).length();
-        let raw = ((d - LOD_STARS_END) / (LOD_STARS_GONE - LOD_STARS_END)).clamp(0.0, 1.0);
-        let fade = smoothstep(raw);
-        let b = (5_000_000.0 / d.max(1.0)).clamp(0.05, 1.0) * (1.0 - fade);
-        let s = ((b * (STAR_BRIGHTNESS_STEPS - 1) as f32).round() as usize).min(STAR_BRIGHTNESS_STEPS - 1);
-        gal_cache.insert(meta.id, (d, s));
-    }
-
-    for (ds, mut tf, mut vis, mut mat) in &mut star_q {
-        let (gal_dist, bstep) = gal_cache.get(&ds.galaxy_id).copied().unwrap_or((f32::MAX, 0));
-        let raw = ((gal_dist - LOD_STARS_END) / (LOD_STARS_GONE - LOD_STARS_END)).clamp(0.0, 1.0);
-        let fade = smoothstep(raw);
-
-        if fade >= 1.0 {
-            if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
-            continue;
-        }
-
-        let to_star = tf.translation - cam_pos;
-        let dist = to_star.length();
-        let min_scale = ds.radius * 0.5;
-        let angular_scale = dist * 0.005;
-        let dist_shrink = (10_000_000.0 / gal_dist.max(1.0)).clamp(0.05, 1.0);
-        let mut scale = angular_scale.max(min_scale) * dist_shrink;
-        scale *= 1.0 - fade;
-
-        tf.scale = Vec3::splat(scale);
-        if mat.0 != brightness_mats.steps[bstep] {
-            mat.0 = brightness_mats.steps[bstep].clone();
-        }
-        let n = to_star / dist.max(0.001);
-        tf.look_to(n, Vec3::Y);
-        if *vis != Visibility::Inherited { *vis = Visibility::Inherited; }
     }
 }
 

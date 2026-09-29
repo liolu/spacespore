@@ -495,9 +495,12 @@ fn select_world_target(
         consider(gt.translation(), 120.0, TargetKind::GalacticCore);
     }
 
-    // ── DistantGalaxyCore : uniquement si on est déjà sur le trou noir central ──
-    if matches!(target.0, TargetKind::GalacticCore) {
-        for (gt, dc) in &queries.dist_core_q {
+    // ── DistantGalaxyCore : depuis un trou noir au zoom 6 (saut entre
+    //    galaxies), ou le trou noir de la galaxie où l'on se trouve ────
+    let on_core = *zoom == ZoomLevel::DeepSpace && ZoomLevel::is_core(&target.0);
+    let current_gal = current_galaxy(&target.0, &queries, &settings);
+    for (gt, dc) in &queries.dist_core_q {
+        if on_core || dc.galaxy_id == current_gal {
             consider(gt.translation(), 120.0, TargetKind::DistantGalaxyCore(dc.galaxy_id));
         }
     }
@@ -528,6 +531,21 @@ fn select_world_target(
     }
 }
 
+/// Galaxie dans laquelle se trouve la cible (0 = galaxie principale).
+fn current_galaxy(kind: &TargetKind, queries: &TargetQueries, settings: &GameSettings) -> u32 {
+    let sys_idx = match *kind {
+        TargetKind::DistantGalaxyCore(id) => return id,
+        TargetKind::Planet(id) => id / 1000,
+        TargetKind::Moon(planet_idx, _) => planet_idx / 1000,
+        // Étoile chargée : id = sys * 1000 + i ; étoile lointaine : id = index du système
+        TargetKind::Star(id) => {
+            if queries.star_q.iter().any(|(_, sid)| sid.0 == id) { id / 1000 } else { id }
+        }
+        _ => return 0,
+    };
+    settings.systems.get(sys_idx).map_or(0, |s| s.galaxy_id)
+}
+
 /// Système auquel appartient une cible (`None` = hors de tout système, ex. noyau).
 fn target_system(
     kind: &TargetKind,
@@ -544,7 +562,7 @@ fn target_system(
                 Some(Some(id))
             }
         }
-        TargetKind::GalacticCore => Some(None),
+        TargetKind::GalacticCore | TargetKind::DistantGalaxyCore(_) => Some(None),
         // Astres historiques (désactivés) : pas de contrainte
         _ => None,
     }
@@ -620,6 +638,10 @@ pub struct CameraController {
 /// Limite du zoom 1 : en dessous, on reste verrouillé dans le système courant.
 pub const ZOOM_PLANET_MAX: f32 = 10_000.0;
 
+/// Au-delà de cette distance (changement de galaxie), le vaisseau saute
+/// directement à destination au lieu de voyager en croisière.
+const HYPERJUMP_DIST: f32 = 10_000_000.0;
+
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZoomLevel {
     Planet,
@@ -677,11 +699,15 @@ impl ZoomLevel {
         )
     }
 
+    fn is_core(kind: &TargetKind) -> bool {
+        matches!(kind, TargetKind::GalacticCore | TargetKind::DistantGalaxyCore(_))
+    }
+
     fn can_navigate_to(&self, kind: &TargetKind) -> bool {
         match self {
             ZoomLevel::Planet | ZoomLevel::System => true,
-            ZoomLevel::Sector | ZoomLevel::Galaxy => Self::is_star(kind) || matches!(kind, TargetKind::GalacticCore),
-            ZoomLevel::Cosmos => matches!(kind, TargetKind::GalacticCore),
+            ZoomLevel::Sector | ZoomLevel::Galaxy => Self::is_star(kind) || Self::is_core(kind),
+            ZoomLevel::Cosmos => Self::is_core(kind),
             ZoomLevel::DeepSpace => matches!(kind, TargetKind::GalacticCore | TargetKind::DistantGalaxyCore(_)),
         }
     }
@@ -794,7 +820,9 @@ fn camera_controller(
             let hover_pos = target_pos + Vec3::Y * 80.0 + net.hover_offset(ctrl.distance);
             let to_hover = hover_pos - ship_tf.translation;
             let dist = to_hover.length();
-            if dist > 30.0 {
+            if dist > HYPERJUMP_DIST {
+                ship_tf.translation = hover_pos;
+            } else if dist > 30.0 {
                 let cruise = (dist * 0.8).max(3000.0).min(500_000.0);
                 let step = (cruise * time.delta_secs()).min(dist);
                 ship_tf.translation += to_hover.normalize() * step;
@@ -873,7 +901,10 @@ fn camera_controller(
         let to_hover = hover_pos - ship_tf.translation;
         let dist = to_hover.length();
 
-        if dist > 30.0 {
+        if dist > HYPERJUMP_DIST {
+            // Autre galaxie : saut direct plutôt que des minutes de croisière
+            ship_tf.translation = hover_pos;
+        } else if dist > 30.0 {
             let cruise = (dist * 0.8).max(3000.0).min(500_000.0);
             let step = (cruise * time.delta_secs()).min(dist);
             ship_tf.translation += to_hover.normalize() * step;
@@ -925,9 +956,7 @@ fn resolve_target(
                 .iter()
                 .find(|(_, sid)| sid.0 == i)
                 .map(|(gt, _)| gt.translation())
-                .or_else(|| q.far_star_q.iter()
-                    .find(|(_, fs)| fs.sys_idx == i)
-                    .map(|(gt, _)| gt.translation()))
+                // Étoile lointaine : le billboard est posé au centre du système
                 .unwrap_or_else(|| settings.systems.get(i)
                     .map(|s| s.center())
                     .unwrap_or_default()),
@@ -1118,7 +1147,8 @@ fn camera_distance_range(
         TargetKind::Supernova(_) => (500.0, 9_999_999.0),
 
         TargetKind::GalacticCore => (5000.0, 100_000_000.0),
-        TargetKind::DistantGalaxyCore(_) => (10_000_001.0, 100_000_000.0),
+        // Comme le trou noir principal : on peut zoomer dans la galaxie extérieure
+        TargetKind::DistantGalaxyCore(_) => (5000.0, 100_000_000.0),
     }
 }
 
