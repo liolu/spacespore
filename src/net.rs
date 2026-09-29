@@ -2,8 +2,9 @@
 //  Multijoueur
 //
 //  Réseau UDP direct, sans aucun service externe (pas de Steam, Hamachi…).
-//  Tout est automatique :
-//   - au lancement, chaque jeu ouvre une partie (port UDP NET_PORT) ;
+//  Rien n'est ouvert tant que le joueur n'a pas ouvert le panneau
+//  Multijoueur (F2). Ensuite tout est automatique :
+//   - le jeu ouvre une partie (port UDP NET_PORT) ;
 //   - les jeux d'un même réseau local se trouvent par broadcast et se
 //     regroupent tout seuls dans une seule partie ;
 //   - pour Internet, la box est ouverte automatiquement (UPnP) et l'hôte
@@ -12,7 +13,7 @@
 //
 //  La carte est générée localement chez chaque joueur (même code, même
 //  graine). Seuls s'échangent : position/orientation du vaisseau, pseudo et
-//  couleur d'aura, plus le système stellaire où l'on se trouve et son
+//  couleur de contour, plus le système stellaire où l'on se trouve et son
 //  horloge d'univers. L'hôte relaie l'état de tout le monde.
 //
 //  Orbites : chacun garde sa propre horloge. Elle n'est alignée que lorsque
@@ -32,7 +33,7 @@ use std::time::Duration;
 
 use crate::planet::SpawnedSystems;
 use crate::settings::GameSettings;
-use crate::ship::{aura_materials, LocalAura, Ship, ShipAssets};
+use crate::ship::{outline_material, LocalOutline, Ship, ShipAssets};
 use crate::CameraController;
 
 pub const NET_PORT: u16 = 27777;
@@ -67,7 +68,7 @@ impl Plugin for NetPlugin {
                     net_update,
                     sync_remote_ships,
                     update_remote_labels,
-                    update_local_aura,
+                    update_local_outline,
                 )
                     .chain(),
             )
@@ -321,11 +322,18 @@ fn start_upnp(state: Arc<Mutex<Upnp>>) {
                 Some(IpAddr::V4(ip)) => ip,
                 _ => return Err("Pas de connexion reseau.".into()),
             };
-            let gw = igd_next::search_gateway(igd_next::SearchOptions {
-                timeout: Some(Duration::from_secs(5)),
-                ..Default::default()
-            })
-            .map_err(|_| "Votre box n'accepte pas l'ouverture automatique (UPnP desactive).".to_string())?;
+            // Recherche de la box depuis la bonne carte réseau (important sous
+            // Windows avec VPN / cartes virtuelles), puis sur toutes à défaut.
+            let search = |bind: SocketAddr| {
+                igd_next::search_gateway(igd_next::SearchOptions {
+                    bind_addr: bind,
+                    timeout: Some(Duration::from_secs(8)),
+                    ..Default::default()
+                })
+            };
+            let gw = search(SocketAddr::new(IpAddr::V4(local), 0))
+                .or_else(|_| search((Ipv4Addr::UNSPECIFIED, 0).into()))
+                .map_err(|_| "Votre box n'a pas repondu a la demande d'ouverture automatique (UPnP desactive sur la box ?).".to_string())?;
             let ext = match gw.get_external_ip() {
                 Ok(IpAddr::V4(ip)) => ip,
                 _ => return Err("Adresse Internet introuvable.".into()),
@@ -340,7 +348,7 @@ fn start_upnp(state: Arc<Mutex<Upnp>>) {
                     return Ok((ext, port, gw, local_addr));
                 }
             }
-            Err("La box refuse d'ouvrir le port.".into())
+            Err("La box a refuse d'ouvrir le port (UPnP limite sur la box ?).".into())
         })();
 
         match result {
@@ -470,6 +478,8 @@ pub struct Net {
     last_send: f64,
     upnp: Arc<Mutex<Upnp>>,
     upnp_started: bool,
+    /// Le multijoueur a été activé (panneau ouvert au moins une fois).
+    enabled: bool,
     my_sys: Option<u32>,
     sys_since: f64,
 }
@@ -491,6 +501,7 @@ impl Default for Net {
             last_send: f64::NEG_INFINITY,
             upnp: Arc::new(Mutex::new(Upnp::Pending)),
             upnp_started: false,
+            enabled: false,
             my_sys: None,
             sys_since: 0.0,
         }
@@ -560,6 +571,18 @@ impl Net {
         }
         let angle = id as f32 * 2.399_963; // angle d'or : bonne répartition
         Vec3::new(angle.cos(), 0.0, angle.sin()) * zoom_distance.max(1.0) * 0.06
+    }
+
+    /// Active le multijoueur (ouverture du panneau). Relance aussi
+    /// l'ouverture automatique de la box si elle avait échoué.
+    pub fn enable(&mut self) {
+        self.enabled = true;
+        if let Ok(mut state) = self.upnp.lock() {
+            if matches!(*state, Upnp::Failed(_)) {
+                *state = Upnp::Pending;
+                self.upnp_started = false;
+            }
+        }
     }
 
     fn set_notice(&mut self, text: impl Into<String>, error: bool) {
@@ -686,6 +709,7 @@ fn handle_net_commands(
         let now = time.elapsed_secs_f64();
         match ev {
             NetCommand::JoinCode(code) => {
+                net.enable();
                 let Some(host) = parse_target(code) else {
                     net.set_notice(format!("Code invalide : \"{}\"", code.trim()), true);
                     continue;
@@ -717,6 +741,9 @@ fn net_update(
     mut clock: ResMut<UniverseClock>,
     mut net: ResMut<Net>,
 ) {
+    if !net.enabled {
+        return; // aucun port ouvert avant l'ouverture du panneau Multijoueur
+    }
     let now = time.elapsed_secs_f64();
     let (pos, rot) = ship_q
         .get_single()
@@ -1060,8 +1087,7 @@ fn cleanup_on_exit(mut exit: EventReader<AppExit>, mut net: ResMut<Net>) {
 struct RemoteShip {
     id: u32,
     color: [f32; 3],
-    inner: Handle<StandardMaterial>,
-    outer: Handle<StandardMaterial>,
+    outline: Handle<StandardMaterial>,
 }
 
 #[derive(Component)]
@@ -1123,9 +1149,7 @@ fn sync_remote_ships(
 
         if rs.color != peer.color {
             rs.color = peer.color;
-            let (inner, outer) = aura_materials(peer.color);
-            if let Some(m) = materials.get_mut(&rs.inner) { *m = inner; }
-            if let Some(m) = materials.get_mut(&rs.outer) { *m = outer; }
+            if let Some(m) = materials.get_mut(&rs.outline) { *m = outline_material(peer.color); }
         }
     }
 
@@ -1134,18 +1158,16 @@ fn sync_remote_ships(
         if present.contains(id) {
             continue;
         }
-        let (inner, outer) = aura_materials(peer.color);
-        let inner = materials.add(inner);
-        let outer = materials.add(outer);
+        let outline = materials.add(outline_material(peer.color));
         commands
             .spawn((
                 Transform::from_translation(peer.pos).with_rotation(peer.rot),
                 Visibility::default(),
-                RemoteShip { id: *id, color: peer.color, inner: inner.clone(), outer: outer.clone() },
+                RemoteShip { id: *id, color: peer.color, outline: outline.clone() },
             ))
             .with_children(|p| {
                 assets.spawn_model(p);
-                assets.spawn_aura(p, inner, outer);
+                assets.spawn_outline(p, outline);
             });
 
         commands
@@ -1213,20 +1235,18 @@ fn update_remote_labels(
     }
 }
 
-fn update_local_aura(
+fn update_local_outline(
     settings: Res<GameSettings>,
-    aura_q: Query<&LocalAura>,
+    outline_q: Query<&LocalOutline>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut last: Local<Option<[f32; 3]>>,
 ) {
     if *last == Some(settings.aura_color) {
         return;
     }
-    let Ok(aura) = aura_q.get_single() else { return };
+    let Ok(outline) = outline_q.get_single() else { return };
     *last = Some(settings.aura_color);
-    let (inner, outer) = aura_materials(settings.aura_color);
-    if let Some(m) = materials.get_mut(&aura.inner) { *m = inner; }
-    if let Some(m) = materials.get_mut(&aura.outer) { *m = outer; }
+    if let Some(m) = materials.get_mut(&outline.0) { *m = outline_material(settings.aura_color); }
 }
 
 #[cfg(test)]
@@ -1244,7 +1264,9 @@ mod tests {
             })
             .add_plugins(NetPlugin);
         // Pas de recherche UPnP pendant les tests
-        app.world_mut().resource_mut::<Net>().upnp_started = true;
+        let mut net = app.world_mut().resource_mut::<Net>();
+        net.upnp_started = true;
+        net.enabled = true;
         app.world_mut().spawn((Transform::from_translation(pos), GlobalTransform::from_translation(pos), Ship));
         app
     }

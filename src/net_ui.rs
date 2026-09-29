@@ -3,7 +3,7 @@
 //
 //  La connexion est automatique : rien à faire pour jouer en réseau local.
 //  Le panneau sert seulement à :
-//   - choisir son pseudo et la couleur de son aura ;
+//   - choisir son pseudo et la couleur du contour de son vaisseau ;
 //   - voir qui est connecté ;
 //   - donner son code à un ami (Internet) ou taper le code d'un ami.
 // ─────────────────────────────────────────────────────────────────────────
@@ -26,7 +26,7 @@ const OK_COLOR: Color = Color::srgb(0.45, 0.9, 0.55);
 const CODE_COLOR: Color = Color::srgb(1.0, 0.85, 0.35);
 const RED_SOFT: Color = Color::srgb(0.85, 0.35, 0.35);
 
-/// Couleurs d'aura proposées.
+/// Couleurs de contour proposées.
 pub const AURA_PALETTE: [[f32; 3]; 12] = [
     [0.20, 0.90, 1.00], // cyan
     [0.25, 0.45, 1.00], // bleu
@@ -242,7 +242,7 @@ fn setup_net_panel(mut commands: Commands) {
     // Profil
     let name_title = section_title(&mut commands, "VOTRE PSEUDO");
     let name_field = field(&mut commands, Field::Name, Val::Percent(100.0));
-    let color_title = section_title(&mut commands, "COULEUR DE VOTRE AURA");
+    let color_title = section_title(&mut commands, "COULEUR DU CONTOUR DE VOTRE VAISSEAU");
     let palette = commands
         .spawn(Node {
             width: Val::Percent(100.0),
@@ -336,6 +336,7 @@ fn toggle_net_panel(
     close_btn: Query<&Interaction, (Changed<Interaction>, With<CloseButton>)>,
     mut panel: ResMut<NetPanel>,
     mut settings: ResMut<GameSettings>,
+    mut net: ResMut<Net>,
 ) {
     let clicked_open = open_btn.iter().any(|i| *i == Interaction::Pressed);
     let clicked_close = close_btn.iter().any(|i| *i == Interaction::Pressed);
@@ -350,7 +351,10 @@ fn toggle_net_panel(
     } else {
         return;
     }
-    if !panel.open {
+    if panel.open {
+        // Les ports ne sont ouverts qu'à partir d'ici
+        net.enable();
+    } else {
         commit_focus(&mut panel, &mut settings);
     }
 }
@@ -591,7 +595,11 @@ fn update_texts(
             "Donnez ce code a votre ami : il le tape dans \"Rejoindre un ami\".".to_string(),
         ),
         Invite::Pending => ("...".to_string(), TEXT_DIM, "Preparation du code...".to_string()),
-        Invite::Unavailable(reason) => ("Indisponible".to_string(), TEXT_DIM, reason),
+        Invite::Unavailable(reason) => (
+            "Indisponible".to_string(),
+            TEXT_DIM,
+            format!("{reason}\nVous pouvez quand meme jouer : demandez son code a votre ami (c'est lui qui heberge)."),
+        ),
     };
     for (mut t, mut c) in &mut q.p2() {
         set_text(&mut t, &mut c, code.clone(), code_color);
