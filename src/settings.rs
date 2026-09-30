@@ -530,6 +530,18 @@ pub struct GameSettings {
     #[serde(default = "default_player_name")] pub player_name: String,
     #[serde(default = "default_aura_color")]  pub aura_color:  [f32; 3],
     #[serde(default)]                         pub last_join_address: String,
+    /// Tag de clan / guilde affiché entre crochets devant le pseudo (vide = sans guilde).
+    #[serde(default)]                         pub clan_tag: String,
+    /// Systèmes stellaires revendiqués par le joueur (5 au plus).
+    #[serde(default)]                         pub claims: Vec<u32>,
+    /// Factions déclarées alliées / ennemies (les autres sont neutres).
+    #[serde(default)]                         pub allies: Vec<String>,
+    #[serde(default)]                         pub enemies: Vec<String>,
+    /// Identifiant permanent du joueur (tiré au hasard au premier lancement).
+    #[serde(default)]                         pub player_id: u64,
+    /// Ma guilde (fiche complète), et fiches gardées après un départ ou une dissolution.
+    #[serde(default)]                         pub guild: Option<crate::guild::GuildRecord>,
+    #[serde(default)]                         pub guild_archive: Vec<crate::guild::GuildRecord>,
 
     // ── Systèmes stellaires (régénérés au lancement, jamais sauvegardés) ─
     #[serde(skip)] pub systems: Vec<StarSystemConfig>,
@@ -576,6 +588,13 @@ impl Default for GameSettings {
             player_name: default_player_name(),
             aura_color: default_aura_color(),
             last_join_address: String::new(),
+            clan_tag: String::new(),
+            claims: Vec::new(),
+            allies: Vec::new(),
+            enemies: Vec::new(),
+            player_id: 0,
+            guild: None,
+            guild_archive: Vec::new(),
             systems: default_systems(&default_galaxies()),
             galaxies: default_galaxies(),
             planets: default_planets(), stars: default_stars(),
@@ -658,6 +677,10 @@ impl GameSettings {
     }
 
     pub fn save(&self) {
+        // Les tests ne touchent pas aux fichiers du joueur
+        if cfg!(test) {
+            return;
+        }
         let path = Self::config_path();
         if let Ok(json) = serde_json::to_string(self) {
             fs::write(path, json).ok();

@@ -16,6 +16,16 @@
 //  couleur de contour, plus le système stellaire où l'on se trouve et son
 //  horloge d'univers. L'hôte relaie l'état de tout le monde.
 //
+//  Échanges limités au nécessaire :
+//   - à chaque tick, seulement ce qui bouge (position, système, horloge,
+//     coque / tirs en combat) et l'empreinte du profil du joueur ;
+//   - le profil (pseudo, couleur, étoiles revendiquées, diplomatie, guilde)
+//     n'est transmis que lorsqu'il change, à ceux qui n'ont pas son empreinte ;
+//   - les fiches de guilde ne sont transmises que lorsqu'elles changent ou
+//     qu'un joueur annonce une révision plus récente que celle qu'on a ;
+//   - profils et fiches reçus sont gardés sur disque (`net_cache.json`) :
+//     à la prochaine rencontre, rien n'est redemandé si rien n'a changé.
+//
 //  Orbites : chacun garde sa propre horloge. Elle n'est alignée que lorsque
 //  deux joueurs sont dans le même système : celui qui arrive prend l'horloge
 //  de celui qui y est depuis le plus longtemps, pour que les planètes soient
@@ -25,7 +35,7 @@
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::sync::{Arc, Mutex};
@@ -38,7 +48,22 @@ use crate::CameraController;
 
 pub const NET_PORT: u16 = 27777;
 pub const MAX_NAME_LEN: usize = 16;
-const PROTOCOL: u32 = 3;
+pub const MAX_TAG_LEN: usize = 5;
+/// Étoiles revendiquées au plus par joueur.
+pub const MAX_CLAIMS: usize = 5;
+const PROTOCOL: u32 = 5;
+pub const MAX_CHAT_LEN: usize = 120;
+/// Messages gardés à l'écran / dans l'historique de l'hôte.
+const CHAT_HISTORY: usize = 50;
+/// Messages de chat au plus par paquet (taille des paquets UDP).
+const CHAT_PER_PACKET: usize = 8;
+const CHAT_OUTBOX_MAX: usize = 20;
+const GUILD_INBOX_MAX: usize = 64;
+/// Délai entre deux demandes de profils / fiches manquants (secondes).
+const WANT_INTERVAL: f64 = if cfg!(test) { 0.05 } else { 0.5 };
+/// Le code d'invitation est rappelé aux clients à cet intervalle (secondes).
+const CODE_INTERVAL: f64 = 2.0;
+const PROFILES_PER_PACKET: usize = 4;
 const MAGIC: &str = "SPACESPORE";
 const GAME_VERSION: &str = spacespore_common::VERSION;
 const MAX_PLAYERS: usize = 16;
@@ -99,11 +124,14 @@ impl UniverseClock {
 //  Protocole
 // ─────────────────────────────────────────────────────────────────────────
 
+/// Ce qui change sans arrêt : envoyé à chaque tick. Tout le reste est dans
+/// le `Profile`, désigné ici par son empreinte et envoyé seulement à ceux
+/// qui ne l'ont pas encore.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct PlayerState {
     id: u32,
-    name: String,
-    color: [f32; 3],
+    /// Empreinte du profil actuel du joueur (voir `Profile::fingerprint`).
+    ph: u64,
     pos: [f32; 3],
     rot: [f32; 4],
     /// Système stellaire où se trouve le joueur (None = espace profond).
@@ -112,6 +140,108 @@ struct PlayerState {
     stay: f64,
     /// Son horloge d'univers.
     clock: f64,
+    /// Coque du vaisseau (absente du paquet quand elle est intacte).
+    #[serde(default = "full_hp", skip_serializing_if = "is_full_hp")]
+    hp: u8,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    hits: Vec<(u32, u32)>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    siege: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    taken: Vec<u32>,
+}
+
+fn is_full_hp(hp: &u8) -> bool {
+    *hp >= MAX_HP
+}
+
+/// Ce qui change rarement chez un joueur. N'est transmis que lorsqu'il
+/// change, et gardé sur disque par ceux qui l'ont reçu : à la prochaine
+/// rencontre, l'empreinte suffit.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct Profile {
+    /// Identifiant permanent du joueur.
+    pub pid: u64,
+    pub name: String,
+    pub color: [f32; 3],
+    /// Systèmes stellaires revendiqués (MAX_CLAIMS au plus).
+    #[serde(default)]
+    pub claims: Vec<u32>,
+    /// Factions déclarées alliées / ennemies (voir `diplomacy::faction_key`).
+    #[serde(default)]
+    pub allies: Vec<String>,
+    #[serde(default)]
+    pub enemies: Vec<String>,
+    /// Guilde dont il se dit membre et révision de la fiche qu'il en a (0 = aucune).
+    #[serde(default)]
+    pub gid: u64,
+    #[serde(default)]
+    pub grev: u64,
+    /// Guilde qu'il demande à rejoindre (0 = aucune).
+    #[serde(default)]
+    pub req: u64,
+    /// Fiches de guildes qu'il a quittées ou dissoutes : (guilde, révision).
+    #[serde(default)]
+    pub archive: Vec<(u64, u64)>,
+}
+
+impl Profile {
+    fn sanitized(mut self) -> Self {
+        let keys = |v: &mut Vec<String>| {
+            v.truncate(MAX_RELATIONS);
+            for k in v.iter_mut() {
+                *k = k.chars().filter(|c| !c.is_control()).take(MAX_NAME_LEN + 2).collect();
+            }
+        };
+        self.name = sanitize_name(&self.name);
+        self.color = sanitize_color(self.color);
+        self.claims.truncate(MAX_CLAIMS);
+        keys(&mut self.allies);
+        keys(&mut self.enemies);
+        self.archive.truncate(8);
+        self
+    }
+
+    /// Empreinte du contenu : deux profils identiques ont la même, partout.
+    pub fn fingerprint(&self) -> u64 {
+        let json = serde_json::to_string(self).unwrap_or_default();
+        json.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3))
+    }
+}
+
+/// Profils connus, par empreinte (les plus anciens sont oubliés).
+#[derive(Default)]
+pub struct ProfileCache {
+    map: HashMap<u64, Profile>,
+    order: VecDeque<u64>,
+}
+
+impl ProfileCache {
+    const MAX: usize = 64;
+
+    pub fn get(&self, fingerprint: u64) -> Option<&Profile> {
+        self.map.get(&fingerprint)
+    }
+
+    /// Ajoute un profil ; renvoie vrai s'il était inconnu.
+    pub fn insert(&mut self, profile: Profile) -> bool {
+        let profile = profile.sanitized();
+        let key = profile.fingerprint();
+        if self.map.insert(key, profile).is_some() {
+            return false;
+        }
+        self.order.push_back(key);
+        while self.order.len() > Self::MAX {
+            if let Some(old) = self.order.pop_front() {
+                self.map.remove(&old);
+            }
+        }
+        true
+    }
+
+    pub fn all(&self) -> Vec<Profile> {
+        self.order.iter().filter_map(|k| self.map.get(k).cloned()).collect()
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -122,9 +252,210 @@ enum Msg {
     Hello { magic: String, proto: u32, game: String, world: u64, name: String, color: [f32; 3] },
     Welcome { id: u32 },
     Reject { reason: String },
-    State { state: PlayerState },
-    Snapshot { code: Option<String>, players: Vec<PlayerState> },
+    /// `chat` : messages pas encore confirmés par l'hôte ; `seen` : dernier
+    /// message de l'hôte reçu.
+    /// `profile` : mon profil, tant que l'hôte ne l'a pas ; `want` : profils
+    /// qui me manquent ; `gwant` : fiches de guilde qui me manquent.
+    State {
+        state: PlayerState,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")] chat: Vec<ChatOut>,
+        #[serde(default)] seen: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")] profile: Option<Profile>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")] want: Vec<u64>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")] gwant: Vec<u64>,
+    },
+    /// `chat` : messages que ce client n'a pas encore reçus ; `ack` : dernier
+    /// message du client enregistré par l'hôte ; `code` : code d'invitation
+    /// (seulement de temps en temps) ; `pack` : empreinte du profil que l'hôte
+    /// a de ce client ; `profiles` : profils demandés ; `gwant` : fiches de
+    /// guilde que l'hôte demande à ce client.
+    Snapshot {
+        #[serde(default, skip_serializing_if = "Option::is_none")] code: Option<String>,
+        players: Vec<PlayerState>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")] chat: Vec<ChatLine>,
+        #[serde(default)] ack: u32,
+        #[serde(default)] pack: u64,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")] profiles: Vec<Profile>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")] gwant: Vec<u64>,
+    },
+    /// Fiche de guilde, envoyée quand elle change ou quand elle est demandée.
+    Guild { guild: crate::guild::GuildRecord },
     Bye,
+}
+
+pub const MAX_HP: u8 = 100;
+/// Relations déclarées au plus (alliés, et autant d'ennemis).
+pub const MAX_RELATIONS: usize = 16;
+
+fn full_hp() -> u8 { MAX_HP }
+
+/// Combat, sièges et diplomatie connus pour un joueur : le combat vient de
+/// son état (chaque tick), le reste de son profil.
+#[derive(Clone, Debug)]
+pub struct PlayerStatus {
+    /// Coque du vaisseau (0 = détruit, en attente de réapparition).
+    pub hp: u8,
+    /// Tirs réussis sur chaque joueur (identifiant, total depuis le début de la partie).
+    pub hits: Vec<(u32, u32)>,
+    /// Étoile en cours de siège.
+    pub siege: Option<u32>,
+    /// Étoiles prises par siège tout récemment.
+    pub taken: Vec<u32>,
+    /// Factions déclarées alliées / ennemies (voir `diplomacy::faction_key`).
+    pub allies: Vec<String>,
+    pub enemies: Vec<String>,
+    /// Identifiant permanent du joueur.
+    pub pid: u64,
+    /// Guilde dont il se dit membre, révision de la fiche qu'il en a, et
+    /// guilde qu'il demande à rejoindre (0 = aucune).
+    pub gid: u64,
+    pub grev: u64,
+    pub req: u64,
+    /// Fiches de guildes quittées ou dissoutes qu'il garde : (guilde, révision).
+    pub archive: Vec<(u64, u64)>,
+}
+
+impl Default for PlayerStatus {
+    fn default() -> Self {
+        Self {
+            hp: MAX_HP, hits: Vec::new(), siege: None, taken: Vec::new(), allies: Vec::new(), enemies: Vec::new(),
+            pid: 0, gid: 0, grev: 0, req: 0, archive: Vec::new(),
+        }
+    }
+}
+
+/// Combat et sièges du joueur local.
+pub struct LocalCombat {
+    pub hp: u8,
+    pub hits: Vec<(u32, u32)>,
+    pub siege: Option<u32>,
+    /// Étoiles prises par siège (système, heure de fin de l'annonce).
+    pub taken: Vec<(u32, f64)>,
+    /// Identifiant permanent du joueur, et guilde qu'il demande à rejoindre (0 = aucune).
+    pub pid: u64,
+    pub req: u64,
+}
+
+impl Default for LocalCombat {
+    fn default() -> Self {
+        Self { hp: MAX_HP, hits: Vec::new(), siege: None, taken: Vec::new(), pid: 0, req: 0 }
+    }
+}
+
+/// Message écrit par un client, renvoyé jusqu'à confirmation de l'hôte (UDP).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct ChatOut {
+    cseq: u32,
+    text: String,
+    /// Message réservé à la guilde de l'auteur.
+    #[serde(default)]
+    guild: bool,
+}
+
+/// Message du chat numéroté par l'hôte, diffusé à tous (ou à la guilde `tag`
+/// seulement si `guild`).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct ChatLine {
+    seq: u64,
+    name: String,
+    #[serde(default)]
+    tag: String,
+    color: [f32; 3],
+    text: String,
+    #[serde(default)]
+    guild: bool,
+}
+
+impl ChatLine {
+    fn visible_to(&self, tag: &str) -> bool {
+        !self.guild || (!tag.is_empty() && self.tag == tag)
+    }
+}
+
+/// Message affiché à l'écran.
+pub struct ChatEntry {
+    pub name: String,
+    pub tag: String,
+    pub color: [f32; 3],
+    pub text: String,
+    /// Message de guilde.
+    pub guild: bool,
+    /// Message du jeu (pas d'un joueur).
+    pub system: bool,
+    /// Heure de réception (`Time::elapsed_secs_f64`).
+    pub time: f64,
+}
+
+pub fn sanitize_chat(text: &str) -> Option<String> {
+    let clean: String = text.chars().filter(|c| !c.is_control()).take(MAX_CHAT_LEN).collect();
+    let clean = clean.trim();
+    (!clean.is_empty()).then(|| clean.to_string())
+}
+
+/// Tag de guilde : lettres et chiffres en majuscules, 5 au plus.
+pub fn sanitize_tag(tag: &str) -> String {
+    tag.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(|c| c.to_uppercase())
+        .take(MAX_TAG_LEN)
+        .collect()
+}
+
+/// « [TAG] Pseudo », ou juste le pseudo sans guilde.
+pub fn display_name(tag: &str, name: &str) -> String {
+    if tag.is_empty() { name.to_string() } else { format!("[{tag}] {name}") }
+}
+
+fn push_chat(chat: &mut ChatState, entry: ChatEntry) {
+    chat.lines.push_back(entry);
+    while chat.lines.len() > CHAT_HISTORY {
+        chat.lines.pop_front();
+    }
+    chat.total += 1;
+}
+
+fn system_chat(chat: &mut ChatState, text: &str, now: f64) {
+    push_chat(chat, ChatEntry {
+        name: String::new(), tag: String::new(), color: [1.0; 3], text: text.into(),
+        guild: false, system: true, time: now,
+    });
+}
+
+fn line_entry(line: ChatLine, now: f64) -> ChatEntry {
+    ChatEntry {
+        name: line.name, tag: line.tag, color: line.color, text: line.text,
+        guild: line.guild, system: false, time: now,
+    }
+}
+
+/// Enregistre un message côté hôte : numéroté, gardé pour les clients, et
+/// affiché chez l'hôte s'il y a droit (`my_tag` = guilde de l'hôte).
+fn host_chat(chat: &mut ChatState, line: ChatLine, my_tag: &str, now: f64) {
+    chat.host_seq += 1;
+    let line = ChatLine { seq: chat.host_seq, ..line };
+    chat.host_log.push_back(line.clone());
+    while chat.host_log.len() > CHAT_HISTORY {
+        chat.host_log.pop_front();
+    }
+    if line.visible_to(my_tag) {
+        push_chat(chat, line_entry(line, now));
+    }
+}
+
+/// Tout l'état du chat (affichage, envoi côté client, historique côté hôte).
+#[derive(Default)]
+pub struct ChatState {
+    /// Messages affichés, du plus ancien au plus récent.
+    pub lines: VecDeque<ChatEntry>,
+    /// Nombre total de messages reçus (pour savoir quand rafraîchir l'écran).
+    pub total: u64,
+    outbox: Vec<ChatOut>,
+    next_cseq: u32,
+    /// Client : dernier message de l'hôte reçu.
+    seen: u64,
+    /// Hôte : historique numéroté.
+    host_log: VecDeque<ChatLine>,
+    host_seq: u64,
 }
 
 fn send(socket: &UdpSocket, addr: SocketAddr, msg: &Msg) {
@@ -136,7 +467,7 @@ fn send(socket: &UdpSocket, addr: SocketAddr, msg: &Msg) {
 /// Lit tous les paquets en attente sans bloquer.
 fn recv_all(socket: &UdpSocket) -> Vec<(SocketAddr, Msg)> {
     let mut out = Vec::new();
-    let mut buf = [0u8; 16 * 1024];
+    let mut buf = [0u8; 64 * 1024];
     for _ in 0..512 {
         match socket.recv_from(&mut buf) {
             Ok((n, addr)) => {
@@ -476,6 +807,16 @@ fn stun_query(sock: &UdpSocket, server: &str) -> Option<Ipv4Addr> {
 struct ClientSlot {
     id: u32,
     last_seen: f64,
+    /// Dernier message de chat de ce client déjà enregistré.
+    last_cseq: u32,
+    /// Dernier message de l'hôte que ce client a reçu.
+    chat_seen: u64,
+    /// Empreinte du profil reçu de ce client (0 = pas encore reçu).
+    pack: u64,
+    /// Profils que ce client a demandés.
+    send_profiles: Vec<u64>,
+    /// Le code d'invitation lui a déjà été envoyé.
+    sent_code: bool,
 }
 
 enum Session {
@@ -499,6 +840,8 @@ enum Session {
         last_recv: f64,
         manual: bool,
         host_code: Option<String>,
+        /// Empreinte du profil que l'hôte a de moi (0 = aucun).
+        host_pack: u64,
     },
 }
 
@@ -520,6 +863,16 @@ pub enum Invite {
 /// Un autre joueur, tel qu'affiché localement.
 pub struct Peer {
     pub name: String,
+    /// Tag et identifiant de sa guilde, confirmés par la fiche de la guilde
+    /// (vide / 0 = sans guilde). Tenus à jour par `guild::guild_sync`.
+    pub tag: String,
+    pub gid: u64,
+    /// Empreinte du profil appliqué à ce joueur.
+    ph: u64,
+    /// Systèmes stellaires revendiqués par ce joueur.
+    pub claims: Vec<u32>,
+    /// Combat, sièges et diplomatie annoncés par ce joueur.
+    pub status: PlayerStatus,
     pub color: [f32; 3],
     pos: Vec3,
     rot: Quat,
@@ -531,18 +884,26 @@ pub struct Peer {
 }
 
 impl Peer {
+    /// Dernière position connue du vaisseau.
+    pub fn pos(&self) -> Vec3 {
+        self.pos
+    }
+
     /// État actuel estimé (durée et horloge avancées depuis la réception).
     fn state_now(&self, id: u32, now: f64) -> PlayerState {
         let age = (now - self.last_update).max(0.0);
         PlayerState {
             id,
-            name: self.name.clone(),
-            color: self.color,
+            ph: self.ph,
             pos: self.pos.to_array(),
             rot: self.rot.to_array(),
             sys: self.sys,
             stay: self.stay + age,
             clock: self.clock + age,
+            hp: self.status.hp,
+            hits: self.status.hits.clone(),
+            siege: self.status.siege,
+            taken: self.status.taken.clone(),
         }
     }
 }
@@ -582,6 +943,26 @@ pub struct Net {
     stun_started: bool,
     my_sys: Option<u32>,
     sys_since: f64,
+    pub chat: ChatState,
+    /// Combat et sièges du joueur local (annoncés aux autres).
+    pub local: LocalCombat,
+    /// Change à chaque changement de partie : les identifiants des joueurs
+    /// ne sont valables que pour une même valeur.
+    pub epoch: u64,
+    /// Fiches de guilde à annoncer / reçues (traitées par `guild::guild_sync`).
+    pub guild_outbox: Vec<crate::guild::GuildRecord>,
+    pub guild_inbox: Vec<crate::guild::GuildRecord>,
+    /// Fiches de guilde qui me manquent (une version plus récente est annoncée).
+    pub guild_want: Vec<u64>,
+    /// Fiches de guilde qu'un autre joueur me demande.
+    pub guild_asked: Vec<u64>,
+    /// Profils connus (les miens, ceux reçus, ceux relus du disque).
+    pub profiles: ProfileCache,
+    profile_want: Vec<u64>,
+    /// Un profil a été reçu : le cache sur disque est à réécrire.
+    pub cache_dirty: bool,
+    last_want: f64,
+    last_code: f64,
 }
 
 impl Default for Net {
@@ -606,6 +987,18 @@ impl Default for Net {
             stun_started: false,
             my_sys: None,
             sys_since: 0.0,
+            chat: ChatState::default(),
+            local: LocalCombat::default(),
+            epoch: 0,
+            guild_outbox: Vec::new(),
+            guild_inbox: Vec::new(),
+            guild_want: Vec::new(),
+            guild_asked: Vec::new(),
+            profiles: ProfileCache::default(),
+            profile_want: Vec::new(),
+            cache_dirty: false,
+            last_want: f64::NEG_INFINITY,
+            last_code: f64::NEG_INFINITY,
         }
     }
 }
@@ -703,6 +1096,36 @@ impl Net {
         }
     }
 
+    /// Le multijoueur est actif (panneau ouvert au moins une fois).
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Met un message de chat en file d'envoi. « /g message » : guilde seulement.
+    fn queue_chat(&mut self, text: &str, my_tag: &str, now: f64) {
+        let trimmed = text.trim_start();
+        let (guild, body) = match trimmed.strip_prefix("/g") {
+            Some(rest) if rest.is_empty() || rest.starts_with(' ') => (true, rest),
+            _ => (false, trimmed),
+        };
+        let Some(text) = sanitize_chat(body) else { return };
+        if guild && my_tag.is_empty() {
+            system_chat(&mut self.chat, "Vous n'avez pas de guilde : choisissez un tag dans le panneau Multijoueur (F2).", now);
+            return;
+        }
+        if self.chat.outbox.len() >= CHAT_OUTBOX_MAX {
+            return;
+        }
+        self.chat.next_cseq += 1;
+        let cseq = self.chat.next_cseq;
+        self.chat.outbox.push(ChatOut { cseq, text, guild });
+    }
+
+    /// Affiche un message du jeu dans le chat.
+    pub fn notify(&mut self, text: &str, now: f64) {
+        system_chat(&mut self.chat, text, now);
+    }
+
     fn set_notice(&mut self, text: impl Into<String>, error: bool) {
         self.notice = text.into();
         self.notice_is_error = error;
@@ -722,6 +1145,7 @@ impl Net {
         }
         self.session = Session::Offline;
         self.peers.clear();
+        self.epoch += 1;
     }
 
     fn try_host(&mut self, now: f64) {
@@ -772,7 +1196,10 @@ fn pick_lan_host(lan: &[LanHost], my_sid: u64, hosting_alone: bool, world: u64, 
         .map(|h| h.addr)
 }
 
-fn update_peer(peers: &mut HashMap<u32, Peer>, st: PlayerState, now: f64) {
+/// Met à jour un joueur d'après son état. Son profil (pseudo, couleur,
+/// étoiles, diplomatie…) est repris du cache quand son empreinte change ;
+/// un joueur dont on n'a encore aucun profil n'est pas affiché.
+fn update_peer(peers: &mut HashMap<u32, Peer>, profiles: &ProfileCache, st: PlayerState, now: f64) {
     if !valid_vec(&st.pos) || !valid_vec(&st.rot) {
         return;
     }
@@ -782,27 +1209,46 @@ fn update_peer(peers: &mut HashMap<u32, Peer>, st: PlayerState, now: f64) {
     if !st.clock.is_finite() || !st.stay.is_finite() {
         return;
     }
-    let name = sanitize_name(&st.name);
-    let color = sanitize_color(st.color);
-    let (sys, stay, clock) = (st.sys, st.stay.max(0.0), st.clock);
-    match peers.get_mut(&st.id) {
-        Some(p) => {
-            let dt = (now - p.last_update) as f32;
-            if dt > 0.001 {
-                p.vel = (pos - p.pos) / dt;
-            }
-            p.pos = pos;
-            p.rot = rot;
-            p.name = name;
-            p.color = color;
-            p.last_update = now;
-            p.sys = sys;
-            p.stay = stay;
-            p.clock = clock;
+    let profile = profiles.get(st.ph);
+    if !peers.contains_key(&st.id) {
+        if profile.is_none() {
+            return;
         }
-        None => {
-            peers.insert(st.id, Peer { name, color, pos, rot, vel: Vec3::ZERO, last_update: now, sys, stay, clock });
-        }
+        peers.insert(st.id, Peer {
+            name: String::new(), tag: String::new(), gid: 0, ph: 0, claims: Vec::new(),
+            status: PlayerStatus::default(), color: [1.0; 3],
+            pos, rot, vel: Vec3::ZERO, last_update: now, sys: st.sys, stay: 0.0, clock: 0.0,
+        });
+    }
+    let Some(p) = peers.get_mut(&st.id) else { return };
+
+    let dt = (now - p.last_update) as f32;
+    if dt > 0.001 {
+        p.vel = (pos - p.pos) / dt;
+    }
+    p.pos = pos;
+    p.rot = rot;
+    p.last_update = now;
+    p.sys = st.sys;
+    p.stay = st.stay.max(0.0);
+    p.clock = st.clock;
+    p.status.hp = st.hp.min(MAX_HP);
+    p.status.hits = st.hits.into_iter().take(MAX_PLAYERS).collect();
+    p.status.siege = st.siege;
+    p.status.taken = st.taken.into_iter().take(MAX_CLAIMS).collect();
+
+    if let Some(profile) = profile.filter(|_| p.ph != st.ph) {
+        p.ph = st.ph;
+        p.name = profile.name.clone();
+        p.color = profile.color;
+        p.claims = profile.claims.clone();
+        p.status.allies = profile.allies.clone();
+        p.status.enemies = profile.enemies.clone();
+        p.status.pid = profile.pid;
+        p.status.gid = profile.gid;
+        p.status.grev = profile.grev;
+        p.status.req = profile.req;
+        p.status.archive = profile.archive.clone();
     }
 }
 
@@ -816,11 +1262,14 @@ pub enum NetCommand {
     JoinCode(String),
     /// Quitter la partie de l'ami et revenir au mode automatique.
     Leave,
+    /// Envoyer un message dans le chat.
+    Chat(String),
 }
 
 fn handle_net_commands(
     mut events: EventReader<NetCommand>,
     mut net: ResMut<Net>,
+    settings: Res<GameSettings>,
     time: Res<Time>,
 ) {
     for ev in events.read() {
@@ -843,6 +1292,7 @@ fn handle_net_commands(
                 net.next_host_try = now;
                 net.set_notice("", false);
             }
+            NetCommand::Chat(text) => net.queue_chat(text, &sanitize_tag(&settings.clan_tag), now),
         }
     }
 }
@@ -851,7 +1301,7 @@ fn handle_net_commands(
 //  Boucle réseau
 // ─────────────────────────────────────────────────────────────────────────
 
-fn net_update(
+pub(crate) fn net_update(
     time: Res<Time>,
     settings: Res<GameSettings>,
     ship_q: Query<&GlobalTransform, With<Ship>>,
@@ -872,6 +1322,8 @@ fn net_update(
         .unwrap_or((Vec3::ZERO, Quat::IDENTITY));
     let my_name = sanitize_name(&settings.player_name);
     let my_color = sanitize_color(settings.aura_color);
+    let my_tag = sanitize_tag(&settings.clan_tag);
+    let (allies, enemies) = crate::diplomacy::declared_lists(&settings);
 
     let net = &mut *net;
     let world = *net.world.get_or_insert_with(|| world_fingerprint(&settings));
@@ -882,10 +1334,31 @@ fn net_update(
         net.my_sys = sys;
         net.sys_since = now;
     }
-    let me = PlayerState {
-        id: net.my_id(),
+    // Mon profil : n'est transmis que si son empreinte est inconnue en face
+    let my_profile = Profile {
+        pid: net.local.pid,
         name: my_name.clone(),
         color: my_color,
+        claims: settings.claims.clone(),
+        allies,
+        enemies,
+        gid: crate::diplomacy::my_gid(&settings),
+        grev: settings.guild.as_ref().map_or(0, |g| g.rev),
+        req: net.local.req,
+        archive: settings.guild_archive.iter().map(|g| (g.id, g.rev)).collect(),
+    }
+    .sanitized();
+    let my_ph = my_profile.fingerprint();
+    if net.profiles.get(my_ph).is_none() {
+        net.profiles.insert(my_profile.clone());
+    }
+    let me = PlayerState {
+        id: net.my_id(),
+        ph: my_ph,
+        hp: net.local.hp,
+        hits: net.local.hits.clone(),
+        siege: net.local.siege,
+        taken: net.local.taken.iter().map(|t| t.0).collect(),
         pos: pos.to_array(),
         rot: rot.to_array(),
         sys,
@@ -912,6 +1385,22 @@ fn net_update(
     let tick = now - net.last_send >= SEND_INTERVAL;
     if tick {
         net.last_send = now;
+    }
+    let wants_due = tick && now - net.last_want >= WANT_INTERVAL;
+    if wants_due {
+        net.last_want = now;
+    }
+
+    // Hôte (ou seul) : ses propres messages sont enregistrés directement.
+    // Client : ils partent avec son état jusqu'à confirmation de l'hôte.
+    if matches!(net.mode(), NetMode::Hosting | NetMode::Offline) {
+        for out in std::mem::take(&mut net.chat.outbox) {
+            let line = ChatLine {
+                seq: 0, name: my_name.clone(), tag: my_tag.clone(), color: my_color,
+                text: out.text, guild: out.guild,
+            };
+            host_chat(&mut net.chat, line, &my_tag, now);
+        }
     }
 
     let own_code = net.own_code();
@@ -955,15 +1444,58 @@ fn net_update(
                             None => {
                                 let id = *next_id;
                                 *next_id += 1;
-                                clients.insert(addr, ClientSlot { id, last_seen: now });
+                                clients.insert(addr, ClientSlot { id, last_seen: now, last_cseq: 0, chat_seen: 0, pack: 0, send_profiles: Vec::new(), sent_code: false });
                                 send(socket, addr, &Msg::Welcome { id });
                             }
                         }
                     }
-                    Msg::State { state } => {
+                    Msg::State { state, mut chat, seen, profile, want, gwant } => {
                         if let Some(slot) = clients.get_mut(&addr) {
                             slot.last_seen = now;
-                            update_peer(&mut net.peers, PlayerState { id: slot.id, ..state }, now);
+                            slot.chat_seen = slot.chat_seen.max(seen.min(net.chat.host_seq));
+                            // Profil du client, et ce qu'il lui manque
+                            if let Some(profile) = profile {
+                                net.cache_dirty |= net.profiles.insert(profile);
+                            }
+                            slot.pack = if net.profiles.get(state.ph).is_some() { state.ph } else { 0 };
+                            for h in want.into_iter().take(MAX_PLAYERS) {
+                                if !slot.send_profiles.contains(&h) {
+                                    slot.send_profiles.push(h);
+                                }
+                            }
+                            for g in gwant.into_iter().take(MAX_PLAYERS) {
+                                if !net.guild_asked.contains(&g) {
+                                    net.guild_asked.push(g);
+                                }
+                            }
+                            // Pseudo et couleur viennent du profil : sans lui, le chat attend
+                            let author = net.profiles.get(state.ph).cloned();
+                            chat.sort_by_key(|c| c.cseq);
+                            for c in chat {
+                                let Some(author) = &author else { break };
+                                if c.cseq <= slot.last_cseq {
+                                    continue; // déjà reçu (renvoi UDP)
+                                }
+                                slot.last_cseq = c.cseq;
+                                // Guilde confirmée par sa fiche, pas celle que le joueur annonce
+                                let tag = net.peers.get(&slot.id).map(|p| p.tag.clone()).unwrap_or_default();
+                                if c.guild && tag.is_empty() {
+                                    continue; // message de guilde sans guilde
+                                }
+                                if let Some(text) = sanitize_chat(&c.text) {
+                                    let line = ChatLine {
+                                        seq: 0, name: author.name.clone(), tag,
+                                        color: author.color, text, guild: c.guild,
+                                    };
+                                    host_chat(&mut net.chat, line, &my_tag, now);
+                                }
+                            }
+                            update_peer(&mut net.peers, &net.profiles, PlayerState { id: slot.id, ..state }, now);
+                        }
+                    }
+                    Msg::Guild { guild } => {
+                        if clients.contains_key(&addr) && net.guild_inbox.len() < GUILD_INBOX_MAX {
+                            net.guild_inbox.push(guild);
                         }
                     }
                     Msg::Bye => {
@@ -983,6 +1515,16 @@ fn net_update(
                 alive
             });
 
+            // Fiches de guilde modifiées par moi ou demandées par un client
+            if tick {
+                for guild in net.guild_outbox.drain(..) {
+                    let msg = Msg::Guild { guild };
+                    for addr in clients.keys() {
+                        send(socket, *addr, &msg);
+                    }
+                }
+            }
+
             if tick && !clients.is_empty() {
                 let mut players = vec![me.clone()];
                 for slot in clients.values() {
@@ -990,9 +1532,49 @@ fn net_update(
                         players.push(p.state_now(slot.id, now));
                     }
                 }
-                let snapshot = Msg::Snapshot { code: own_code, players };
-                for addr in clients.keys() {
-                    send(socket, *addr, &snapshot);
+                let remind_code = now - net.last_code >= CODE_INTERVAL;
+                if remind_code {
+                    net.last_code = now;
+                }
+                for (addr, slot) in clients.iter_mut() {
+                    let peer = net.peers.get(&slot.id);
+                    // Profils demandés par ce client, quelques-uns par paquet
+                    let count = slot.send_profiles.len().min(PROFILES_PER_PACKET);
+                    let profiles: Vec<Profile> = slot.send_profiles.drain(..count)
+                        .filter_map(|h| net.profiles.get(h).cloned())
+                        .collect();
+                    // Fiches de guilde qui me manquent et que ce client annonce avoir
+                    let gwant: Vec<u64> = if wants_due {
+                        net.guild_want.iter().copied()
+                            .filter(|g| peer.is_some_and(|p| {
+                                p.status.gid == *g || p.status.archive.iter().any(|a| a.0 == *g)
+                            }))
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                    // Le code d'invitation ne change presque jamais : rappel de temps en temps
+                    let code = (remind_code || !slot.sent_code).then(|| own_code.clone().unwrap_or_default());
+                    slot.sent_code = true;
+                    // Seulement les messages que ce client n'a pas encore
+                    // (et pas ceux des autres guildes)
+                    let their_tag = peer.map_or("", |p| p.tag.as_str());
+                    let mut chat: Vec<ChatLine> = net.chat.host_log.iter()
+                        .rev()
+                        .filter(|l| l.seq > slot.chat_seen && l.visible_to(their_tag))
+                        .take(CHAT_PER_PACKET)
+                        .cloned()
+                        .collect();
+                    chat.reverse();
+                    send(socket, *addr, &Msg::Snapshot {
+                        code,
+                        players: players.clone(),
+                        chat,
+                        ack: slot.last_cseq,
+                        pack: slot.pack,
+                        profiles,
+                        gwant,
+                    });
                 }
             }
         }
@@ -1025,6 +1607,7 @@ fn net_update(
                                     last_recv: now,
                                     manual: *manual,
                                     host_code: None,
+                                    host_pack: 0,
                                 },
                                 text.into(),
                                 false,
@@ -1051,24 +1634,67 @@ fn net_update(
             }
         }
 
-        Session::Connected { socket, host, my_id, last_recv, host_code, .. } => {
+        Session::Connected { socket, host, my_id, last_recv, host_code, host_pack, .. } => {
             for (addr, msg) in recv_all(socket) {
                 if addr != *host {
                     continue;
                 }
                 match msg {
-                    Msg::Snapshot { code, players } => {
+                    Msg::Snapshot { code, players, chat, ack, pack, profiles, gwant } => {
                         *last_recv = now;
-                        *host_code = code.filter(|c| decode_invite(c).is_some());
+                        *host_pack = pack;
+                        for profile in profiles.into_iter().take(PROFILES_PER_PACKET) {
+                            net.cache_dirty |= net.profiles.insert(profile);
+                        }
+                        for g in gwant.into_iter().take(MAX_PLAYERS) {
+                            if !net.guild_asked.contains(&g) {
+                                net.guild_asked.push(g);
+                            }
+                        }
+                        net.chat.outbox.retain(|c| c.cseq > ack);
+                        for line in chat {
+                            if line.seq <= net.chat.seen {
+                                continue;
+                            }
+                            net.chat.seen = line.seq;
+                            if !line.visible_to(&my_tag) {
+                                continue;
+                            }
+                            if let Some(text) = sanitize_chat(&line.text) {
+                                let line = ChatLine {
+                                    name: sanitize_name(&line.name),
+                                    tag: sanitize_tag(&line.tag),
+                                    color: sanitize_color(line.color),
+                                    text,
+                                    ..line
+                                };
+                                push_chat(&mut net.chat, line_entry(line, now));
+                            }
+                        }
+                        // Code d'invitation : absent du paquet = inchangé
+                        if let Some(code) = code {
+                            *host_code = Some(code).filter(|c| decode_invite(c).is_some());
+                        }
                         let ids: Vec<u32> = players.iter().map(|p| p.id).filter(|id| id != my_id).collect();
                         net.peers.retain(|id, _| ids.contains(id));
+                        net.profile_want.clear();
                         for st in players.into_iter().take(MAX_PLAYERS) {
-                            if st.id != *my_id {
-                                update_peer(&mut net.peers, st, now);
+                            if st.id == *my_id {
+                                continue;
                             }
+                            // Profil inconnu : à demander à l'hôte
+                            if net.profiles.get(st.ph).is_none() && !net.profile_want.contains(&st.ph) {
+                                net.profile_want.push(st.ph);
+                            }
+                            update_peer(&mut net.peers, &net.profiles, st, now);
                         }
                     }
                     Msg::Welcome { .. } => *last_recv = now,
+                    Msg::Guild { guild } => {
+                        if net.guild_inbox.len() < GUILD_INBOX_MAX {
+                            net.guild_inbox.push(guild);
+                        }
+                    }
                     Msg::Bye => {
                         next = Some((Session::Offline, "L'hote a quitte la partie.".into(), false, None));
                         break;
@@ -1084,7 +1710,15 @@ fn net_update(
                 if now - *last_recv > TIMEOUT {
                     next = Some((Session::Offline, "Connexion perdue avec l'hote.".into(), true, None));
                 } else if tick {
-                    send(socket, *host, &Msg::State { state: me.clone() });
+                    let chat = net.chat.outbox.iter().take(CHAT_PER_PACKET).cloned().collect();
+                    // Mon profil part tant que l'hôte ne l'a pas confirmé ; les demandes, de temps en temps
+                    let profile = (*host_pack != my_ph).then(|| my_profile.clone());
+                    let want = if wants_due { net.profile_want.clone() } else { Vec::new() };
+                    let gwant = if wants_due { net.guild_want.clone() } else { Vec::new() };
+                    send(socket, *host, &Msg::State { state: me.clone(), chat, seen: net.chat.seen, profile, want, gwant });
+                    for guild in net.guild_outbox.drain(..) {
+                        send(socket, *host, &Msg::Guild { guild });
+                    }
                 }
             }
         }
@@ -1092,7 +1726,12 @@ fn net_update(
 
     if let Some((session, text, error, avoid)) = next {
         let offline = matches!(session, Session::Offline);
+        if matches!(session, Session::Connected { .. }) {
+            // Nouvel hôte : sa numérotation des messages repart de zéro
+            net.chat.seen = 0;
+        }
         net.session = session;
+        net.epoch += 1;
         if offline {
             net.peers.clear();
             net.next_host_try = now; // on rouvre aussitôt sa propre partie
@@ -1229,7 +1868,7 @@ fn sync_remote_ships(
     assets: Option<Res<ShipAssets>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     cam_q: Query<&GlobalTransform, With<CameraController>>,
-    mut ships: Query<(Entity, &mut RemoteShip, &mut Transform)>,
+    mut ships: Query<(Entity, &mut RemoteShip, &mut Transform, &mut Visibility)>,
     labels: Query<(Entity, &RemoteLabel)>,
 ) {
     let Some(assets) = assets else { return };
@@ -1238,7 +1877,7 @@ fn sync_remote_ships(
     let cam_pos = cam_q.get_single().map(|gt| gt.translation()).unwrap_or_default();
 
     // Disparus
-    for (e, rs, _) in &ships {
+    for (e, rs, _, _) in &ships {
         if !net.peers.contains_key(&rs.id) {
             commands.entity(e).despawn_recursive();
         }
@@ -1251,7 +1890,7 @@ fn sync_remote_ships(
 
     // Mise à jour des existants
     let mut present = Vec::new();
-    for (_, mut rs, mut tf) in &mut ships {
+    for (_, mut rs, mut tf, mut vis) in &mut ships {
         let Some(peer) = net.peers.get(&rs.id) else { continue };
         present.push(rs.id);
 
@@ -1268,6 +1907,11 @@ fn sync_remote_ships(
         tf.rotation = tf.rotation.slerp(peer.rot, (1.0 - (-12.0 * dt).exp()).clamp(0.0, 1.0));
         // Même taille apparente que notre propre vaisseau
         tf.scale = Vec3::splat((cam_pos.distance(tf.translation) * 0.008).max(0.05));
+        // Vaisseau détruit : invisible jusqu'à sa réapparition
+        let want = if peer.status.hp == 0 { Visibility::Hidden } else { Visibility::Inherited };
+        if *vis != want {
+            *vis = want;
+        }
 
         if rs.color != peer.color {
             rs.color = peer.color;
@@ -1311,7 +1955,7 @@ fn sync_remote_ships(
                 },
                 BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
                 BorderRadius::all(Val::Px(4.0)),
-                Text::new(peer.name.clone()),
+                Text::new(display_name(&peer.tag, &peer.name)),
                 TextFont { font_size: 15.0, ..default() },
                 TextColor(label_color(peer.color)),
                 RemoteLabelText,
@@ -1322,6 +1966,7 @@ fn sync_remote_ships(
 /// Place le pseudo de chaque joueur au-dessus de son vaisseau, à l'écran.
 fn update_remote_labels(
     net: Res<Net>,
+    settings: Res<GameSettings>,
     cam_q: Query<(&Camera, &GlobalTransform), With<CameraController>>,
     ships: Query<(&RemoteShip, &GlobalTransform)>,
     mut labels: Query<(&RemoteLabel, &mut Node, &mut Visibility, &Children)>,
@@ -1348,10 +1993,26 @@ fn update_remote_labels(
         }
         for child in children.iter() {
             if let Ok((mut text, mut color)) = texts.get_mut(*child) {
-                if text.0 != peer.name {
-                    text.0 = peer.name.clone();
+                // Allié en vert, ennemi en rouge, neutre à sa couleur ; coque si entamée
+                let relation = crate::diplomacy::relation_with(peer, &settings);
+                let mut label = display_name(&peer.tag, &peer.name);
+                match relation {
+                    crate::diplomacy::Relation::Ally => label.push_str(" (allie)"),
+                    crate::diplomacy::Relation::Enemy => label.push_str(" (ennemi)"),
+                    crate::diplomacy::Relation::Neutral => {}
                 }
-                let c = label_color(peer.color);
+                match peer.status.hp {
+                    0 => label.push_str("\nDETRUIT"),
+                    hp if hp < MAX_HP => label.push_str(&format!("\nCoque {hp}/{MAX_HP}")),
+                    _ => {}
+                }
+                if text.0 != label {
+                    text.0 = label;
+                }
+                let c = match relation {
+                    crate::diplomacy::Relation::Neutral => label_color(peer.color),
+                    other => other.color(),
+                };
                 if color.0 != c {
                     color.0 = c;
                 }
@@ -1389,7 +2050,8 @@ mod tests {
                 aura_color: color,
                 ..GameSettings::default()
             })
-            .add_plugins(NetPlugin);
+            .init_resource::<crate::net_ui::NetPanel>()
+            .add_plugins((NetPlugin, crate::guild::GuildPlugin));
         // Pas de recherche UPnP pendant les tests
         let mut net = app.world_mut().resource_mut::<Net>();
         net.upnp_started = true;
@@ -1429,14 +2091,63 @@ mod tests {
     }
 
     fn state(id: u32, sys: Option<u32>, stay: f64, clock: f64) -> PlayerState {
-        PlayerState { id, name: "x".into(), color: [1.0; 3], pos: [0.0; 3], rot: [0.0, 0.0, 0.0, 1.0], sys, stay, clock }
+        let ph = Profile { name: "x".into(), ..Profile::default() }.sanitized().fingerprint();
+        PlayerState { id, ph, pos: [0.0; 3], rot: [0.0, 0.0, 0.0, 1.0], sys, stay, clock, hp: MAX_HP, hits: Vec::new(), siege: None, taken: Vec::new() }
+    }
+
+    #[test]
+    fn steady_state_packets_carry_no_profile() {
+        let profile = Profile {
+            pid: 42,
+            name: "UnLongPseudo1234".into(),
+            color: [0.2, 0.9, 1.0],
+            claims: vec![1, 2, 3, 4, 5],
+            allies: vec!["g:abcdef".into(), "p:Quelquun".into()],
+            enemies: vec!["g:123456".into()],
+            gid: 77,
+            grev: 12,
+            req: 0,
+            archive: vec![(5, 3)],
+        }
+        .sanitized();
+        let st = PlayerState {
+            ph: profile.fingerprint(),
+            pos: [123456.7, -2345.6, 98765.4],
+            ..state(3, Some(7), 12.5, 5000.25)
+        };
+        let size = |profile: Option<Profile>| {
+            let msg = Msg::State { state: st.clone(), chat: Vec::new(), seen: 9, profile, want: Vec::new(), gwant: Vec::new() };
+            serde_json::to_string(&msg).unwrap()
+        };
+        let steady = size(None);
+        let with_profile = size(Some(profile.clone()));
+        // Le paquet de chaque tick ne contient ni pseudo, ni étoiles, ni relations, ni champs vides
+        for absent in ["UnLongPseudo", "claims", "allies", "profile", "want", "chat", "hits", "hp"] {
+            assert!(!steady.contains(absent), "{absent} dans {steady}");
+        }
+        assert!(steady.len() < 200, "{} octets : {steady}", steady.len());
+        assert!(with_profile.len() > steady.len() + 150);
+
+        // Le même profil a la même empreinte après un aller-retour réseau ou disque,
+        // et la moindre modification la change
+        let back: Profile = serde_json::from_str(&serde_json::to_string(&profile).unwrap()).unwrap();
+        assert_eq!(back.sanitized().fingerprint(), profile.fingerprint());
+        let changed = Profile { claims: vec![1, 2, 3, 4], ..profile.clone() };
+        assert_ne!(changed.fingerprint(), profile.fingerprint());
+
+        // Un profil déjà connu n'est pas compté comme nouveau (pas de réécriture du cache)
+        let mut cache = ProfileCache::default();
+        assert!(cache.insert(profile.clone()));
+        assert!(!cache.insert(profile.clone()));
+        assert_eq!(cache.get(profile.fingerprint()), Some(&profile));
     }
 
     #[test]
     fn orbits_sync_only_inside_the_same_system() {
         let mut net = Net::default();
         // Un ami est dans le système 7 depuis 100 s, son horloge vaut 5000 s.
-        update_peer(&mut net.peers, state(1, Some(7), 100.0, 5000.0), 0.0);
+        net.profiles.insert(Profile { name: "x".into(), ..Profile::default() });
+        update_peer(&mut net.peers, &net.profiles, state(1, Some(7), 100.0, 5000.0), 0.0);
 
         // Moi dans un autre système : aucune synchro.
         let mut clock = UniverseClock::default();
@@ -1449,7 +2160,8 @@ mod tests {
 
         // S'il arrive dans mon système où je suis depuis longtemps : je ne bouge pas.
         let mut net = Net::default();
-        update_peer(&mut net.peers, state(1, Some(7), 1.0, 5000.0), 0.0);
+        net.profiles.insert(Profile { name: "x".into(), ..Profile::default() });
+        update_peer(&mut net.peers, &net.profiles, state(1, Some(7), 1.0, 5000.0), 0.0);
         let mut clock = UniverseClock::default();
         sync_clock_with_system(&net, &mut clock, &state(2, Some(7), 300.0, 10.0), 0.0, 10.0);
         assert_eq!(clock.offset, 0.0);
@@ -1481,6 +2193,207 @@ mod tests {
         let hote = cnet.peers.values().find(|p| p.name == "Hote").unwrap();
         assert_eq!(hote.color, [1.0, 0.0, 0.0]);
         assert!(hote.pos.distance(Vec3::new(100.0, 0.0, 0.0)) < 0.01);
+
+        // Chat : chacun écrit, les deux voient les deux messages une seule fois
+        host.world_mut().send_event(NetCommand::Chat("salut".into()));
+        client.world_mut().send_event(NetCommand::Chat("  coucou  ".into()));
+        let texts = |app: &App| -> Vec<String> {
+            app.world().resource::<Net>().chat.lines.iter().map(|l| format!("{}: {}", l.name, l.text)).collect()
+        };
+        let start = std::time::Instant::now();
+        while texts(&host).len() < 2 || texts(&client).len() < 2 {
+            host.update();
+            client.update();
+            assert!(start.elapsed().as_secs() < 8, "chat timeout");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        for _ in 0..20 {
+            host.update();
+            client.update();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        for app in [&host, &client] {
+            let mut t = texts(app);
+            t.sort();
+            assert_eq!(t, vec!["Client: coucou".to_string(), "Hote: salut".to_string()]);
+        }
+        assert!(client.world().resource::<Net>().chat.outbox.is_empty());
+
+        let pump = |host: &mut App, client: &mut App, frames: usize| {
+            for _ in 0..frames * 2 {
+                host.update();
+                client.update();
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        };
+        use crate::diplomacy::{faction_key, relation_with, Relation};
+        use crate::guild::{self, Guilds, Role};
+        // Agit sur la guilde d'un jeu comme le ferait son panneau Guilde
+        fn act<R>(app: &mut App, f: impl FnOnce(&mut GameSettings, &mut Guilds, &mut Net) -> R) -> R {
+            app.world_mut().resource_scope(|world, mut settings: Mut<GameSettings>| {
+                world.resource_scope(|world, mut guilds: Mut<Guilds>| {
+                    f(&mut settings, &mut guilds, &mut world.resource_mut::<Net>())
+                })
+            })
+        }
+        let peer_tag = |app: &App| app.world().resource::<Net>().peers.values().next().unwrap().tag.clone();
+        let last = |app: &App| app.world().resource::<Net>().chat.lines.back().map(|l| (l.text.clone(), l.guild, l.system));
+        let relation = |app: &App| {
+            let world = app.world();
+            let peer = world.resource::<Net>().peers.values().next().unwrap();
+            relation_with(peer, world.resource::<GameSettings>())
+        };
+        let my_role = |app: &App| guild::my_role(app.world().resource::<GameSettings>());
+
+        // Guildes : l'hôte crée [ABC] et en devient le Chef ; le client la découvre
+        assert!(act(&mut host, |s, g, n| guild::create(s, g, n, 0.0, "Les Spores", "abc", 3, [1.0, 0.0, 0.0])));
+        assert_eq!(my_role(&host), Some(Role::Chief));
+        pump(&mut host, &mut client, 30);
+        assert_eq!(peer_tag(&client), "ABC");
+        let gid = host.world().resource::<GameSettings>().guild.as_ref().unwrap().id;
+        assert_eq!(client.world().resource::<Guilds>().active(gid).unwrap().name, "Les Spores");
+        assert_eq!(relation(&client), Relation::Neutral);
+
+        // Chat de guilde : invisible pour le client, qui n'a pas de guilde
+        host.world_mut().send_event(NetCommand::Chat("/g secret".into()));
+        client.world_mut().send_event(NetCommand::Chat("/g perdu".into()));
+        pump(&mut host, &mut client, 30);
+        assert_eq!(last(&host), Some(("secret".into(), true, false)));
+        assert!(client.world().resource::<Net>().chat.lines.iter().all(|l| l.text != "secret"));
+        assert!(last(&client).unwrap().2);
+        assert!(host.world().resource::<Net>().chat.lines.iter().all(|l| l.text != "perdu"));
+
+        // Un joueur ne peut pas s'attribuer une guilde : sans fiche qui le confirme, pas de tag
+        client.world_mut().resource_mut::<GameSettings>().clan_tag = "ABC".into();
+        pump(&mut host, &mut client, 20);
+        assert_eq!(peer_tag(&host), "");
+
+        // Le client demande à rejoindre ; le Chef accepte : il devient Membre
+        let rev = client.world().resource::<Guilds>().active(gid).unwrap().rev;
+        client.world_mut().resource_mut::<Guilds>().request = Some((gid, rev));
+        pump(&mut host, &mut client, 20);
+        let (client_pid, req) = {
+            let p = host.world().resource::<Net>().peers.values().next().unwrap();
+            (p.status.pid, p.status.req)
+        };
+        assert_eq!(req, gid);
+        assert!(act(&mut host, |s, g, n| guild::edit(s, g, n, 0.0, |rec, me| {
+            rec.add_member(me, client_pid, "Client")?;
+            Ok(None)
+        })));
+        pump(&mut host, &mut client, 30);
+        assert_eq!(my_role(&client), Some(Role::Member));
+        assert_eq!(client.world().resource::<Guilds>().request, None);
+        assert_eq!(peer_tag(&host), "ABC");
+        assert_eq!((relation(&host), relation(&client)), (Relation::Ally, Relation::Ally));
+
+        // Une fois tout le monde à jour, plus rien d'autre que les positions ne circule :
+        // profil confirmé par l'hôte, aucun profil ni fiche de guilde en attente ou demandé
+        for app in [&host, &client] {
+            let net = app.world().resource::<Net>();
+            assert!(net.profile_want.is_empty() && net.guild_want.is_empty());
+            assert!(net.guild_outbox.is_empty() && net.guild_asked.is_empty());
+        }
+        match &client.world().resource::<Net>().session {
+            Session::Connected { host_pack, .. } => assert_ne!(*host_pack, 0),
+            _ => panic!("client non connecte"),
+        }
+
+        // Il reçoit maintenant les messages de guilde
+        host.world_mut().send_event(NetCommand::Chat("/g bienvenue".into()));
+        pump(&mut host, &mut client, 30);
+        {
+            let cnet = client.world().resource::<Net>();
+            let l = cnet.chat.lines.back().unwrap();
+            assert_eq!((l.text.as_str(), l.tag.as_str(), l.guild), ("bienvenue", "ABC", true));
+            assert_eq!(display_name(&l.tag, &l.name), "[ABC] Hote");
+        }
+
+        // Un Membre ne gère rien ; promu Officier par le Chef, il ne change toujours aucun rôle
+        let host_pid = host.world().resource::<GameSettings>().player_id;
+        assert!(!act(&mut client, |s, g, n| guild::edit(s, g, n, 0.0, |rec, me| {
+            rec.kick(me, host_pid)?;
+            Ok(None)
+        })));
+        assert!(act(&mut host, |s, g, n| guild::edit(s, g, n, 0.0, |rec, me| {
+            rec.set_role(me, client_pid, Role::Officer)?;
+            Ok(None)
+        })));
+        pump(&mut host, &mut client, 30);
+        assert_eq!(my_role(&client), Some(Role::Officer));
+        assert!(!act(&mut client, |s, g, n| guild::edit(s, g, n, 0.0, |rec, me| {
+            rec.set_role(me, host_pid, Role::Member)?;
+            Ok(None)
+        })));
+
+        // Étoiles revendiquées : annoncées aux autres joueurs, 5 au plus
+        host.world_mut().resource_mut::<GameSettings>().claims = vec![3, 8];
+        client.world_mut().resource_mut::<GameSettings>().claims = (10..20).collect();
+        pump(&mut host, &mut client, 20);
+        let peer_claims = |app: &App| app.world().resource::<Net>().peers.values().next().unwrap().claims.clone();
+        assert_eq!(peer_claims(&client), vec![3, 8]);
+        assert_eq!(peer_claims(&host), vec![10, 11, 12, 13, 14]);
+
+        // Le client quitte la guilde : l'hôte l'apprend, ils redeviennent neutres
+        act(&mut client, |s, g, n| guild::leave(s, g, n, 0.0));
+        assert_eq!(my_role(&client), None);
+        pump(&mut host, &mut client, 30);
+        assert_eq!(host.world().resource::<GameSettings>().guild.as_ref().unwrap().members.len(), 1);
+        assert_eq!(peer_tag(&host), "");
+        assert_eq!((relation(&host), relation(&client)), (Relation::Neutral, Relation::Neutral));
+
+        // Alliance proposée par la guilde seule : toujours neutres ; acceptée par le joueur : alliés
+        let guild_relation = |host: &mut App, r: Relation| {
+            assert!(act(host, |s, g, n| guild::edit(s, g, n, 0.0, |rec, me| {
+                rec.set_relation(me, &faction_key(0, "Client"), "Client", r)?;
+                Ok(None)
+            })));
+        };
+        let personal = |client: &mut App, r: Relation| {
+            let mut s = client.world_mut().resource_mut::<GameSettings>();
+            let key = faction_key(gid, "Hote");
+            s.allies.retain(|k| *k != key);
+            s.enemies.retain(|k| *k != key);
+            match r {
+                Relation::Ally => s.allies.push(key),
+                Relation::Enemy => s.enemies.push(key),
+                Relation::Neutral => {}
+            }
+        };
+        guild_relation(&mut host, Relation::Ally);
+        pump(&mut host, &mut client, 20);
+        assert_eq!((relation(&host), relation(&client)), (Relation::Neutral, Relation::Neutral));
+        personal(&mut client, Relation::Ally);
+        pump(&mut host, &mut client, 20);
+        assert_eq!((relation(&host), relation(&client)), (Relation::Ally, Relation::Ally));
+        // Le client déclare la guerre : ennemis des deux côtés
+        personal(&mut client, Relation::Enemy);
+        pump(&mut host, &mut client, 20);
+        assert_eq!((relation(&host), relation(&client)), (Relation::Enemy, Relation::Enemy));
+
+        // Combat : la coque, les tirs et les sièges sont annoncés
+        {
+            let mut net = host.world_mut().resource_mut::<Net>();
+            let target = *net.peers.keys().next().unwrap();
+            net.local.hp = 40;
+            net.local.hits = vec![(target, 3)];
+            net.local.siege = Some(12);
+        }
+        pump(&mut host, &mut client, 20);
+        {
+            let cnet = client.world().resource::<Net>();
+            let status = &cnet.peers.values().next().unwrap().status;
+            assert_eq!((status.hp, status.hits.clone(), status.siege), (40, vec![(cnet.my_id(), 3)], Some(12)));
+        }
+
+        // Dissolution par le Chef : la guilde disparaît aussi chez le client
+        assert!(act(&mut host, |s, g, n| guild::edit(s, g, n, 0.0, |rec, me| {
+            rec.dissolve(me)?;
+            Ok(None)
+        })));
+        assert_eq!(my_role(&host), None);
+        pump(&mut host, &mut client, 30);
+        assert!(client.world().resource::<Guilds>().active(gid).is_none());
 
         // L'hôte ferme : le client revient à sa propre partie (ou hors ligne si le port est encore pris)
         host.world_mut().resource_mut::<Net>().leave();

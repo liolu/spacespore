@@ -1,5 +1,10 @@
 mod astre;
+mod claims;
+mod combat;
+mod diplomacy;
 mod graphics;
+mod guild;
+mod guild_ui;
 mod kepler;
 mod lod;
 mod mesher;
@@ -247,7 +252,7 @@ fn main() {
         .add_plugins(UiPlugin)
 
         // ── Multijoueur ─────────────────────────────────────────────────
-        .add_plugins((NetPlugin, NetUiPlugin))
+        .add_plugins((NetPlugin, NetUiPlugin, claims::ClaimsPlugin, combat::CombatPlugin, guild::GuildPlugin, guild_ui::GuildUiPlugin))
 
         .add_event::<ReloadAstre>()
         .init_resource::<ProfilingLog>()
@@ -548,7 +553,7 @@ fn current_galaxy(kind: &TargetKind, queries: &TargetQueries, settings: &GameSet
 }
 
 /// Système auquel appartient une cible (`None` = hors de tout système, ex. noyau).
-fn target_system(
+pub(crate) fn target_system(
     kind: &TargetKind,
     star_q: &Query<&StarId, With<StarRoot>>,
 ) -> Option<Option<usize>> {
@@ -1574,7 +1579,16 @@ fn update_system_hud(
     settings: Res<GameSettings>,
     camera_target: Res<CameraTarget>,
     mut hud_q: Query<&mut Text, With<SystemHudText>>,
+    net: Res<Net>,
+    guilds: Res<guild::Guilds>,
+    star_q: Query<&StarId, With<StarRoot>>,
 ) {
+    // Étoile revendiquée : on affiche son propriétaire
+    let claim_line = match target_system(&camera_target.0, &star_q) {
+        Some(Some(si)) => claims::claim_owner_label(si, &net, &settings, &guilds)
+            .map(|who| format!("\nRevendiquee par {who}")),
+        _ => None,
+    };
     let (sys_idx, body_label) = match camera_target.0 {
         TargetKind::Star(id) => {
             let si = id / 1000;
@@ -1621,6 +1635,12 @@ fn update_system_hud(
         body.clone()
     } else {
         String::new()
+    };
+
+    let label = match claim_line {
+        Some(line) if !label.is_empty() => label + &line,
+        Some(line) => line.trim_start().to_string(),
+        None => label,
     };
 
     for mut text in &mut hud_q {
