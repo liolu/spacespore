@@ -6,25 +6,32 @@
 //   - choisir son pseudo et la couleur du contour de son vaisseau ;
 //   - voir qui est connecté ;
 //   - donner son code à un ami (Internet) ou taper le code d'un ami.
+//
+//  Chat écrit : Entrée pour écrire, Entrée pour envoyer, Échap pour annuler.
+//  « /g message » : message réservé à sa guilde (joueurs du même tag [TAG]).
+//  Les messages s'affichent en bas à gauche et s'effacent après un moment.
 // ─────────────────────────────────────────────────────────────────────────
 
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::ButtonState;
 use bevy::prelude::*;
 
-use crate::net::{Invite, Net, NetCommand, NetMode, MAX_NAME_LEN};
+use crate::net::{display_name, sanitize_tag, Invite, Net, NetCommand, NetMode, MAX_CHAT_LEN, MAX_NAME_LEN, MAX_TAG_LEN};
+use crate::diplomacy::{faction_key, faction_label, my_declared, relation_with, same_guild, set_personal, Relation};
+use crate::guild::{has_rank, Guilds, Role, MAX_GUILD_NAME};
 use crate::settings::GameSettings;
 
-const BG_DARK: Color = Color::srgba(0.06, 0.06, 0.10, 0.97);
+pub(crate) const BG_DARK: Color = Color::srgba(0.06, 0.06, 0.10, 0.97);
 const BG_FIELD: Color = Color::srgba(0.12, 0.12, 0.18, 1.0);
-const BG_BUTTON: Color = Color::srgba(0.14, 0.14, 0.22, 1.0);
-const ACCENT: Color = Color::srgb(0.3, 0.6, 1.0);
-const TEXT_COLOR: Color = Color::srgb(0.9, 0.9, 0.95);
-const TEXT_DIM: Color = Color::srgb(0.55, 0.55, 0.62);
+pub(crate) const BG_BUTTON: Color = Color::srgba(0.14, 0.14, 0.22, 1.0);
+pub(crate) const ACCENT: Color = Color::srgb(0.3, 0.6, 1.0);
+pub(crate) const TEXT_COLOR: Color = Color::srgb(0.9, 0.9, 0.95);
+pub(crate) const TEXT_DIM: Color = Color::srgb(0.55, 0.55, 0.62);
 const ERROR_COLOR: Color = Color::srgb(1.0, 0.45, 0.4);
-const OK_COLOR: Color = Color::srgb(0.45, 0.9, 0.55);
-const CODE_COLOR: Color = Color::srgb(1.0, 0.85, 0.35);
-const RED_SOFT: Color = Color::srgb(0.85, 0.35, 0.35);
+pub(crate) const OK_COLOR: Color = Color::srgb(0.45, 0.9, 0.55);
+const GUILD_COLOR: Color = Color::srgb(0.55, 1.0, 0.7);
+pub(crate) const CODE_COLOR: Color = Color::srgb(1.0, 0.85, 0.35);
+pub(crate) const RED_SOFT: Color = Color::srgb(0.85, 0.35, 0.35);
 
 /// Couleurs de contour proposées.
 pub const AURA_PALETTE: [[f32; 3]; 12] = [
@@ -47,7 +54,7 @@ pub struct NetUiPlugin;
 impl Plugin for NetUiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<NetPanel>()
-            .add_systems(Startup, setup_net_panel)
+            .add_systems(Startup, (setup_net_panel, setup_chat))
             // Avant Update : le menu Options (Échap) doit voir que le panneau a consommé la touche
             .add_systems(PreUpdate, toggle_net_panel)
             .add_systems(
@@ -59,7 +66,10 @@ impl Plugin for NetUiPlugin {
                     update_fields,
                     update_swatches,
                     update_texts,
+                    handle_relation_buttons,
+                    update_guild_summary,
                     rebuild_players_list,
+                    update_chat,
                 )
                     .chain(),
             );
@@ -70,16 +80,41 @@ impl Plugin for NetUiPlugin {
 pub enum Field {
     Name,
     Code,
+    /// Nom et tag de la guilde à créer (panneau Guilde).
+    GuildName,
+    GuildTag,
+    /// Saisie d'un message de chat (bloque les touches du jeu, comme les champs du panneau).
+    Chat,
 }
 
 #[derive(Resource, Default)]
 pub struct NetPanel {
     pub open: bool,
+    /// Panneau Guilde (touche G ou bouton « Guilde »).
+    pub guild_open: bool,
     pub focus: Option<Field>,
     /// Échap a été utilisé par ce panneau pendant cette frame.
     pub esc_consumed: bool,
     code: String,
+    chat: String,
+    /// Nom et tag saisis pour créer une guilde.
+    pub guild_name: String,
+    pub guild_tag: String,
 }
+
+#[derive(Component)]
+struct ChatLines;
+
+#[derive(Component)]
+struct ChatInputBox;
+
+#[derive(Component)]
+struct ChatInputText;
+
+/// Durée d'affichage d'un message quand le chat est fermé (secondes).
+const CHAT_SHOW_SECS: f64 = 12.0;
+const CHAT_FADE_SECS: f64 = 2.0;
+const CHAT_VISIBLE_LINES: usize = 10;
 
 #[derive(Component)]
 struct NetPanelRoot;
@@ -126,6 +161,20 @@ struct NoticeText;
 #[derive(Component)]
 struct PlayersList;
 
+/// Bouton de diplomatie d'un joueur : (faction, ma déclaration actuelle).
+#[derive(Component)]
+struct RelationButton {
+    key: String,
+    label: String,
+    current: Relation,
+}
+
+#[derive(Component)]
+struct GuildOpenButton;
+
+#[derive(Component)]
+struct GuildSummaryText;
+
 /// Ligne « code d'un ami + Rejoindre » (masquée quand on a déjà rejoint un ami).
 #[derive(Component)]
 struct JoinRow;
@@ -134,11 +183,11 @@ struct JoinRow;
 //  Construction
 // ─────────────────────────────────────────────────────────────────────────
 
-fn text(label: impl Into<String>, size: f32, color: Color) -> impl Bundle {
+pub(crate) fn text(label: impl Into<String>, size: f32, color: Color) -> impl Bundle {
     (Text::new(label.into()), TextFont { font_size: size, ..default() }, TextColor(color))
 }
 
-fn button(commands: &mut Commands, label: &str, border: Color, marker: impl Component) -> Entity {
+pub(crate) fn button(commands: &mut Commands, label: &str, border: Color, marker: impl Component) -> Entity {
     commands
         .spawn((
             Node {
@@ -157,7 +206,7 @@ fn button(commands: &mut Commands, label: &str, border: Color, marker: impl Comp
         .id()
 }
 
-fn field(commands: &mut Commands, kind: Field, width: Val) -> Entity {
+pub(crate) fn field(commands: &mut Commands, kind: Field, width: Val) -> Entity {
     commands
         .spawn((
             Node {
@@ -179,7 +228,7 @@ fn field(commands: &mut Commands, kind: Field, width: Val) -> Entity {
         .id()
 }
 
-fn section_title(commands: &mut Commands, label: &str) -> Entity {
+pub(crate) fn section_title(commands: &mut Commands, label: &str) -> Entity {
     commands
         .spawn((
             text(label, 12.0, TEXT_DIM),
@@ -245,6 +294,18 @@ fn setup_net_panel(mut commands: Commands) {
     // Profil
     let name_title = section_title(&mut commands, "VOTRE PSEUDO");
     let name_field = field(&mut commands, Field::Name, Val::Percent(100.0));
+    let tag_title = section_title(&mut commands, "GUILDE");
+    let tag_row = commands
+        .spawn(Node {
+            width: Val::Percent(100.0),
+            column_gap: Val::Px(8.0),
+            align_items: AlignItems::Center,
+            ..default()
+        })
+        .id();
+    let guild_btn = button(&mut commands, "Guilde (G)", ACCENT, GuildOpenButton);
+    let guild_label = commands.spawn((text("", 12.0, TEXT_DIM), GuildSummaryText)).id();
+    commands.entity(tag_row).add_children(&[guild_btn, guild_label]);
     let color_title = section_title(&mut commands, "COULEUR DU CONTOUR DE VOTRE VAISSEAU");
     let palette = commands
         .spawn(Node {
@@ -323,13 +384,13 @@ fn setup_net_panel(mut commands: Commands) {
 
     let help = commands
         .spawn((
-            text("Sur le meme wifi / la meme box, les joueurs se retrouvent tout seuls.\nF2 : ouvrir / fermer ce panneau", 11.0, TEXT_DIM),
+            text("Sur le meme wifi / la meme box, les joueurs se retrouvent tout seuls.\nF2 : ouvrir / fermer ce panneau\nEntree : ecrire dans le chat  -  /g message : chat de guilde\nC : revendiquer / abandonner une etoile (5 max), ou assieger celle d'un autre\nF : tirer sur le vaisseau neutre ou ennemi le plus proche\nG : panneau Guilde (creer, rejoindre, gerer les membres et les relations)\nBouton Neutre / Allie / Ennemi a cote d'un joueur : changer de relation", 11.0, TEXT_DIM),
             Node { margin: UiRect::top(Val::Px(4.0)), ..default() },
         ))
         .id();
 
     commands.entity(root).add_children(&[
-        header, name_title, name_field, color_title, palette,
+        header, name_title, name_field, tag_title, tag_row, color_title, palette,
         players_title, status, players,
         invite_title, invite_row, invite_hint,
         join_title, join_row, leave, notice,
@@ -345,6 +406,8 @@ fn toggle_net_panel(
     keys: Res<ButtonInput<KeyCode>>,
     open_btn: Query<&Interaction, (Changed<Interaction>, With<NetOpenButton>)>,
     close_btn: Query<&Interaction, (Changed<Interaction>, With<CloseButton>)>,
+    guild_btn: Query<&Interaction, (Changed<Interaction>, With<GuildOpenButton>)>,
+    menu: Res<crate::ui::MenuState>,
     mut panel: ResMut<NetPanel>,
     mut settings: ResMut<GameSettings>,
     mut net: ResMut<Net>,
@@ -352,6 +415,34 @@ fn toggle_net_panel(
     let clicked_open = open_btn.iter().any(|i| *i == Interaction::Pressed);
     let clicked_close = close_btn.iter().any(|i| *i == Interaction::Pressed);
     let key = keys.just_pressed(KeyCode::F2);
+    // Échap pendant la saisie d'un message : annule le message, rien d'autre
+    if keys.just_pressed(KeyCode::Escape) && panel.focus == Some(Field::Chat) {
+        panel.focus = None;
+        panel.chat.clear();
+        panel.esc_consumed = true;
+        return;
+    }
+    // Panneau Guilde : G ou son bouton pour l'ouvrir, Échap le ferme en premier
+    let guild_clicked = guild_btn.iter().any(|i| *i == Interaction::Pressed);
+    let guild_key = keys.just_pressed(KeyCode::KeyG) && panel.focus.is_none() && !menu.open;
+    if guild_clicked || guild_key {
+        panel.guild_open = !panel.guild_open;
+        if panel.guild_open {
+            net.enable();
+        } else if matches!(panel.focus, Some(Field::GuildName | Field::GuildTag)) {
+            panel.focus = None;
+        }
+    }
+    if keys.just_pressed(KeyCode::Escape) && matches!(panel.focus, Some(Field::GuildName | Field::GuildTag)) {
+        panel.focus = None;
+        panel.esc_consumed = true;
+        return;
+    }
+    if keys.just_pressed(KeyCode::Escape) && panel.guild_open && panel.focus.is_none() {
+        panel.guild_open = false;
+        panel.esc_consumed = true;
+        return;
+    }
     let escape = keys.just_pressed(KeyCode::Escape) && panel.open && panel.focus.is_none();
     panel.esc_consumed = escape;
 
@@ -392,7 +483,7 @@ fn handle_panel_buttons(
     mut settings: ResMut<GameSettings>,
     mut commands_out: EventWriter<NetCommand>,
 ) {
-    if !panel.open {
+    if !panel.open && !panel.guild_open {
         return;
     }
     let pressed = |i: &Interaction| *i == Interaction::Pressed;
@@ -434,18 +525,27 @@ fn handle_text_input(
     mut events: EventReader<KeyboardInput>,
     mut panel: ResMut<NetPanel>,
     mut settings: ResMut<GameSettings>,
+    net: Res<Net>,
+    menu: Res<crate::ui::MenuState>,
     mut commands_out: EventWriter<NetCommand>,
 ) {
-    let Some(focus) = panel.focus else {
-        events.clear();
-        return;
-    };
     for ev in events.read() {
         if ev.state != ButtonState::Pressed {
             continue;
         }
+        let Some(focus) = panel.focus else {
+            // Entrée : ouvrir le chat (seulement une fois le multijoueur activé)
+            if ev.logical_key == Key::Enter && net.is_enabled() && !menu.open {
+                panel.focus = Some(Field::Chat);
+            }
+            continue;
+        };
         match &ev.logical_key {
             Key::Enter => {
+                if focus == Field::Chat {
+                    let msg = std::mem::take(&mut panel.chat);
+                    commands_out.send(NetCommand::Chat(msg));
+                }
                 commit_focus(&mut panel, &mut settings);
                 if focus == Field::Code {
                     commands_out.send(NetCommand::JoinCode(panel.code.clone()));
@@ -459,15 +559,39 @@ fn handle_text_input(
             Key::Backspace => match focus {
                 Field::Name => { settings.player_name.pop(); }
                 Field::Code => { panel.code.pop(); }
+                Field::GuildName => { panel.guild_name.pop(); }
+                Field::GuildTag => { panel.guild_tag.pop(); }
+                Field::Chat => { panel.chat.pop(); }
             },
             Key::Space => {
+                if focus == Field::GuildName && panel.guild_name.chars().count() < MAX_GUILD_NAME {
+                    panel.guild_name.push(' ');
+                }
                 if focus == Field::Name && settings.player_name.chars().count() < MAX_NAME_LEN {
                     settings.player_name.push(' ');
+                }
+                if focus == Field::Chat && panel.chat.chars().count() < MAX_CHAT_LEN {
+                    panel.chat.push(' ');
                 }
             }
             Key::Character(s) => {
                 for c in s.chars() {
                     match focus {
+                        Field::GuildTag => {
+                            if c.is_alphanumeric() && panel.guild_tag.chars().count() < MAX_TAG_LEN {
+                                panel.guild_tag.extend(c.to_uppercase());
+                            }
+                        }
+                        Field::GuildName => {
+                            if !c.is_control() && panel.guild_name.chars().count() < MAX_GUILD_NAME {
+                                panel.guild_name.push(c);
+                            }
+                        }
+                        Field::Chat => {
+                            if !c.is_control() && panel.chat.chars().count() < MAX_CHAT_LEN {
+                                panel.chat.push(c);
+                            }
+                        }
                         Field::Name => {
                             if !c.is_control() && settings.player_name.chars().count() < MAX_NAME_LEN {
                                 settings.player_name.push(c);
@@ -492,7 +616,7 @@ fn handle_text_input(
 //  Rafraîchissement de l'affichage
 // ─────────────────────────────────────────────────────────────────────────
 
-fn set_display(node: &mut Node, visible: bool) {
+pub(crate) fn set_display(node: &mut Node, visible: bool) {
     let want = if visible { Display::Flex } else { Display::None };
     if node.display != want {
         node.display = want;
@@ -528,7 +652,7 @@ fn update_fields(
     mut boxes: Query<(&FieldBox, &mut BorderColor)>,
     mut texts: Query<(&FieldText, &mut Text, &mut TextColor)>,
 ) {
-    if !panel.open {
+    if !panel.open && !panel.guild_open {
         return;
     }
     let caret = (time.elapsed_secs() * 2.0) as u32 % 2 == 0;
@@ -541,7 +665,10 @@ fn update_fields(
     for (ft, mut t, mut color) in &mut texts {
         let (value, placeholder) = match ft.0 {
             Field::Name => (settings.player_name.as_str(), "Votre pseudo"),
+            Field::GuildName => (panel.guild_name.as_str(), "Nom de la guilde"),
+            Field::GuildTag => (panel.guild_tag.as_str(), "TAG"),
             Field::Code => (panel.code.as_str(), "Code de votre ami"),
+            Field::Chat => continue,
         };
         let focused = panel.focus == Some(ft.0);
         let shown = if value.is_empty() && !focused {
@@ -634,20 +761,54 @@ fn update_texts(
     }
 }
 
+struct PlayerRow {
+    name: String,
+    tag: String,
+    color: [f32; 3],
+    me: bool,
+    /// (faction, ma déclaration, relation effective, même guilde) pour les autres joueurs.
+    relation: Option<(String, Relation, Relation, bool)>,
+}
+
 fn rebuild_players_list(
     mut commands: Commands,
     net: Res<Net>,
     settings: Res<GameSettings>,
     list: Query<Entity, With<PlayersList>>,
+    guilds: Res<Guilds>,
     mut last: Local<Option<String>>,
 ) {
-    let mut players: Vec<(String, [f32; 3], bool)> =
-        vec![(settings.player_name.clone(), settings.aura_color, true)];
-    let mut others: Vec<_> = net.peers.values().map(|p| (p.name.clone(), p.color, false)).collect();
-    others.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
-    players.extend(others);
+    // Regroupés par guilde, « sans guilde » à la fin
+    let can_set = settings.guild.is_none() || has_rank(&settings, Role::Deputy);
+    let my_tag = sanitize_tag(&settings.clan_tag);
+    let mut players = vec![PlayerRow {
+        name: settings.player_name.clone(),
+        tag: my_tag.clone(),
+        color: settings.aura_color,
+        me: true,
+        relation: None,
+    }];
+    players.extend(net.peers.values().map(|p| {
+        let key = faction_key(p.gid, &p.name);
+        let mine = my_declared(&settings, &key);
+        PlayerRow {
+            name: p.name.clone(),
+            tag: p.tag.clone(),
+            color: p.color,
+            me: false,
+            relation: Some((key, mine, relation_with(p, &settings), same_guild(p, &settings))),
+        }
+    }));
+    players.sort_by(|a, b| {
+        (a.tag.is_empty(), &a.tag, !a.me, a.name.to_lowercase())
+            .cmp(&(b.tag.is_empty(), &b.tag, !b.me, b.name.to_lowercase()))
+    });
+    let any_guild = players.iter().any(|p| !p.tag.is_empty());
 
-    let signature: String = players.iter().map(|(n, c, _)| format!("{n}|{c:?};")).collect();
+    let signature: String = players
+        .iter()
+        .map(|p| format!("{}|{}|{:?}|{:?}|{can_set}|{};", p.tag, p.name, p.color, p.relation, guilds.by_tag(&p.tag).map_or("", |g| g.name.as_str())))
+        .collect();
     if last.as_deref() == Some(signature.as_str()) {
         return;
     }
@@ -655,14 +816,39 @@ fn rebuild_players_list(
     let Ok(list) = list.get_single() else { return };
     commands.entity(list).despawn_descendants();
 
-    for (name, c, me) in players {
+    let mut current_group: Option<String> = None;
+    for p in players {
+        if any_guild && current_group.as_deref() != Some(p.tag.as_str()) {
+            let count = net.peers.values().filter(|o| o.tag == p.tag).count() + usize::from(my_tag == p.tag);
+            // Relation avec cette guilde, bien visible dans l'en-tête
+            let (header, color) = if p.tag.is_empty() {
+                (format!("Sans guilde ({count})"), CODE_COLOR)
+            } else {
+                let name = guilds.by_tag(&p.tag).map_or("", |g| g.name.as_str());
+                let base = format!("Guilde [{}] {name} ({count})", p.tag);
+                match p.relation {
+                    Some((_, _, _, true)) | None => (format!("{base} - VOTRE GUILDE"), CODE_COLOR),
+                    Some((_, _, effective, false)) => {
+                        (format!("{base} - {}", effective.label().to_uppercase()), effective.color())
+                    }
+                }
+            };
+            let h = commands
+                .spawn((text(header, 12.0, color), Node { margin: UiRect::top(Val::Px(3.0)), ..default() }))
+                .id();
+            commands.entity(list).add_child(h);
+            current_group = Some(p.tag.clone());
+        }
         let row = commands
             .spawn(Node {
+                width: Val::Percent(100.0),
                 column_gap: Val::Px(8.0),
                 align_items: AlignItems::Center,
+                flex_wrap: FlexWrap::Wrap,
                 ..default()
             })
             .id();
+        let c = p.color;
         let dot = commands
             .spawn((
                 Node { width: Val::Px(12.0), height: Val::Px(12.0), ..default() },
@@ -670,9 +856,261 @@ fn rebuild_players_list(
                 BorderRadius::all(Val::Px(6.0)),
             ))
             .id();
-        let label = if me { format!("{name} (vous)") } else { name };
+        let name = display_name(&p.tag, &p.name);
+        let label = if p.me { format!("{name} (vous)") } else { name };
         let t = commands.spawn(text(label, 13.0, TEXT_COLOR)).id();
         commands.entity(row).add_children(&[dot, t]);
+
+        // Diplomatie : bouton pour changer ma position, puis la relation réelle
+        match p.relation {
+            Some((_, _, _, true)) => {
+                let note = commands.spawn(text("meme guilde : allie", 11.0, Relation::Ally.color())).id();
+                commands.entity(row).add_child(note);
+            }
+            Some((key, mine, effective, false)) => {
+                // Dans une guilde, seuls le Chef et les Sous-chefs décident des relations
+                let btn = if can_set {
+                    commands
+                        .spawn((
+                            Node {
+                                padding: UiRect::axes(Val::Px(8.0), Val::Px(2.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(BG_BUTTON),
+                            BorderColor(mine.color()),
+                            BorderRadius::all(Val::Px(5.0)),
+                            Button,
+                            RelationButton { key, label: faction_label(&p.tag, &p.name), current: mine },
+                        ))
+                        .with_child(text(mine.label(), 12.0, mine.color()))
+                        .id()
+                } else {
+                    commands.spawn(text(effective.label(), 12.0, effective.color())).id()
+                };
+                commands.entity(row).add_child(btn);
+                let note = match (mine, effective) {
+                    (Relation::Ally, Relation::Ally) => Some("alliance conclue"),
+                    (Relation::Ally, Relation::Neutral) => Some("en attente de son accord"),
+                    (Relation::Ally, Relation::Enemy) | (Relation::Neutral, Relation::Enemy) => {
+                        Some("vous a declare la guerre")
+                    }
+                    (Relation::Neutral, _) => None,
+                    (Relation::Enemy, _) => Some("en guerre"),
+                };
+                if let Some(note) = note {
+                    let n = commands.spawn(text(note, 11.0, effective.color())).id();
+                    commands.entity(row).add_child(n);
+                }
+            }
+            None => {}
+        }
         commands.entity(list).add_child(row);
+    }
+}
+
+/// Clic sur le bouton de relation d'un joueur : Neutre → Allié → Ennemi → Neutre.
+/// Dans une guilde, c'est la relation de toute la guilde qui change.
+fn handle_relation_buttons(
+    time: Res<Time>,
+    buttons: Query<(&Interaction, &RelationButton), Changed<Interaction>>,
+    mut settings: ResMut<GameSettings>,
+    mut guilds: ResMut<Guilds>,
+    mut net: ResMut<Net>,
+) {
+    for (interaction, button) in &buttons {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        change_relation(&mut settings, &mut guilds, &mut net, time.elapsed_secs_f64(), &button.key, &button.label, button.current.next());
+    }
+}
+
+/// Change ma relation (ou celle de ma guilde) envers une faction.
+pub(crate) fn change_relation(
+    settings: &mut GameSettings,
+    guilds: &mut Guilds,
+    net: &mut Net,
+    now: f64,
+    key: &str,
+    label: &str,
+    relation: Relation,
+) {
+    if settings.guild.is_some() {
+        crate::guild::edit(settings, guilds, net, now, |g, me| {
+            g.set_relation(me, key, label, relation)?;
+            Ok(Some(format!("Votre guilde est maintenant {} envers {label}.", relation.label().to_lowercase())))
+        });
+    } else {
+        set_personal(settings, key, relation);
+    }
+}
+
+fn update_guild_summary(settings: Res<GameSettings>, mut q: Query<(&mut Text, &mut TextColor), With<GuildSummaryText>>) {
+    let (label, color) = match &settings.guild {
+        Some(g) => {
+            let role = g.role_of(settings.player_id).map_or("", |r| r.label());
+            (format!("[{}] {}\n{role}", g.tag, g.name), TEXT_COLOR)
+        }
+        None => ("Sans guilde : creez-en une\nou demandez a en rejoindre une.".to_string(), TEXT_DIM),
+    };
+    for (mut t, mut c) in &mut q {
+        set_text(&mut t, &mut c, label.clone(), color);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Chat écrit
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Élément d'un message qui s'efface avec le temps (`base` = couleur pleine).
+#[derive(Component)]
+struct ChatFade {
+    time: f64,
+    base: Color,
+}
+
+fn setup_chat(mut commands: Commands) {
+    let root = commands
+        .spawn(Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(20.0),
+            bottom: Val::Px(20.0),
+            width: Val::Px(440.0),
+            flex_direction: FlexDirection::Column,
+            row_gap: Val::Px(4.0),
+            ..default()
+        })
+        .id();
+    let lines = commands
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::FlexStart,
+                row_gap: Val::Px(2.0),
+                ..default()
+            },
+            ChatLines,
+        ))
+        .id();
+    let input = commands
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                min_height: Val::Px(30.0),
+                padding: UiRect::axes(Val::Px(8.0), Val::Px(5.0)),
+                border: UiRect::all(Val::Px(2.0)),
+                align_items: AlignItems::Center,
+                display: Display::None,
+                ..default()
+            },
+            BackgroundColor(BG_DARK),
+            BorderColor(ACCENT),
+            BorderRadius::all(Val::Px(5.0)),
+            ChatInputBox,
+        ))
+        .with_child((text("", 14.0, TEXT_COLOR), ChatInputText))
+        .id();
+    commands.entity(root).add_children(&[lines, input]);
+}
+
+fn chat_alpha(open: bool, age: f64) -> f32 {
+    if open {
+        1.0
+    } else {
+        (((CHAT_SHOW_SECS + CHAT_FADE_SECS - age) / CHAT_FADE_SECS).clamp(0.0, 1.0)) as f32
+    }
+}
+
+fn update_chat(
+    mut commands: Commands,
+    time: Res<Time>,
+    net: Res<Net>,
+    panel: Res<NetPanel>,
+    lines_q: Query<Entity, With<ChatLines>>,
+    mut input_box: Query<&mut Node, With<ChatInputBox>>,
+    mut input_text: Query<&mut Text, With<ChatInputText>>,
+    mut fade_text: Query<(&ChatFade, &mut TextColor), Without<BackgroundColor>>,
+    mut fade_bg: Query<(&ChatFade, &mut BackgroundColor)>,
+    mut last: Local<Option<(u64, bool, usize)>>,
+) {
+    let now = time.elapsed_secs_f64();
+    let open = panel.focus == Some(Field::Chat);
+
+    // Saisie
+    for mut node in &mut input_box {
+        set_display(&mut node, open);
+    }
+    if open {
+        let caret = if (time.elapsed_secs() * 2.0) as u32 % 2 == 0 { "|" } else { "" };
+        let prompt = if panel.chat.trim_start().starts_with("/g ") { "Guilde >" } else { ">" };
+        let shown = format!("{prompt} {}{caret}", panel.chat);
+        for mut t in &mut input_text {
+            if t.0 != shown {
+                t.0 = shown.clone();
+            }
+        }
+    }
+
+    // Messages : tous les derniers si le chat est ouvert, sinon les récents
+    let entries: Vec<_> = net.chat.lines.iter()
+        .rev()
+        .take(CHAT_VISIBLE_LINES)
+        .filter(|e| open || now - e.time < CHAT_SHOW_SECS + CHAT_FADE_SECS)
+        .collect();
+    let signature = (net.chat.total, open, entries.len());
+    if *last != Some(signature) {
+        *last = Some(signature);
+        let Ok(list) = lines_q.get_single() else { return };
+        commands.entity(list).despawn_descendants();
+        for e in entries.iter().rev() {
+            let name_color = Color::srgb(e.color[0], e.color[1], e.color[2]);
+            let bg = Color::srgba(0.0, 0.0, 0.0, 0.45);
+            let line = commands
+                .spawn((
+                    Text::new(""),
+                    TextFont { font_size: 15.0, ..default() },
+                    Node { padding: UiRect::axes(Val::Px(6.0), Val::Px(2.0)), max_width: Val::Percent(100.0), ..default() },
+                    BackgroundColor(bg),
+                    BorderRadius::all(Val::Px(4.0)),
+                    ChatFade { time: e.time, base: bg },
+                ))
+                .with_children(|p| {
+                    let mut span = |s: String, color: Color| {
+                        p.spawn((
+                            TextSpan::new(s),
+                            TextFont { font_size: 15.0, ..default() },
+                            TextColor(color),
+                            ChatFade { time: e.time, base: color },
+                        ));
+                    };
+                    if e.system {
+                        span(e.text.clone(), TEXT_DIM);
+                        return;
+                    }
+                    if e.guild {
+                        span(format!("(Guilde [{}]) ", e.tag), GUILD_COLOR);
+                    }
+                    span(format!("{} : ", display_name(&e.tag, &e.name)), name_color);
+                    span(e.text.clone(), if e.guild { GUILD_COLOR } else { TEXT_COLOR });
+                })
+                .id();
+            commands.entity(list).add_child(line);
+        }
+    }
+
+    // Effacement progressif
+    for (f, mut c) in &mut fade_text {
+        let a = f.base.alpha() * chat_alpha(open, now - f.time);
+        if (c.0.alpha() - a).abs() > 0.01 {
+            c.0 = f.base.with_alpha(a);
+        }
+    }
+    for (f, mut c) in &mut fade_bg {
+        let a = f.base.alpha() * chat_alpha(open, now - f.time);
+        if (c.0.alpha() - a).abs() > 0.01 {
+            c.0 = f.base.with_alpha(a);
+        }
     }
 }

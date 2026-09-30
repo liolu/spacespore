@@ -790,7 +790,7 @@ fn tick_pulsar_spin(
 
     // Rotation du corps
     for (mut tf, body) in &mut body_q {
-        let Some(cfg) = res.pulsars.get(body.idx) else { continue; };
+        let Some(_cfg) = res.pulsars.get(body.idx) else { continue; };
         if spin.angles.len() <= body.idx { continue; }
         let angle = spin.angles[body.idx];
         // Rotation axiale pure — très rapide
@@ -842,7 +842,7 @@ fn animate_beams(
 
         // Scintillement haute fréquence (interférence synchrotron)
         let flicker_seed = bv.seed * 17.3 + bv.sample_idx as f32;
-        let period = spin.periods.get(bv.idx).copied().unwrap_or(1.0);
+        let _period = spin.periods.get(bv.idx).copied().unwrap_or(1.0);
         let flicker = (spin_angle * 8.0 + flicker_seed).sin() * 0.25 + 0.75;
 
         // Fade exponentiel avec la distance

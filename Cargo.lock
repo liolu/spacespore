@@ -5093,7 +5093,7 @@ dependencies = [
 
 [[package]]
 name = "spacespore"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "arboard",
  "bevy",
@@ -5111,8 +5111,9 @@ dependencies = [
 
 [[package]]
 name = "spacespore-common"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
+ "dirs",
  "serde",
  "serde_json",
  "ureq",
