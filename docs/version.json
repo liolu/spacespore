@@ -1,10 +1,10 @@
 {
-  "version": "0.6.5",
-  "version_code": 605,
-  "release_date": "2026-09-29",
-  "download_url": "https://github.com/liolu/spacespore/releases/download/v0.6.5/spacespore-v0.6.5-windows.zip",
-  "download_url_linux": "https://github.com/liolu/spacespore/releases/download/v0.6.5/spacespore-v0.6.5-linux.zip",
-  "download_url_macos": "https://github.com/liolu/spacespore/releases/download/v0.6.5/spacespore-v0.6.5-macos.zip",
-  "release_notes": "Fix multiplayer test: provide ViewportScale in the test app",
+  "version": "0.7.0",
+  "version_code": 700,
+  "release_date": "2026-09-30",
+  "download_url": "https://github.com/liolu/spacespore/releases/download/v0.7.0/spacespore-v0.7.0-windows.zip",
+  "download_url_linux": "https://github.com/liolu/spacespore/releases/download/v0.7.0/spacespore-v0.7.0-linux.zip",
+  "download_url_macos": "https://github.com/liolu/spacespore/releases/download/v0.7.0/spacespore-v0.7.0-macos.zip",
+  "release_notes": "Bigger galaxies, more space between stars, black holes x10",
   "min_updater_version": 1
 }
