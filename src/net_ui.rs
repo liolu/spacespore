@@ -384,7 +384,7 @@ fn setup_net_panel(mut commands: Commands) {
 
     let help = commands
         .spawn((
-            text("Sur le meme wifi / la meme box, les joueurs se retrouvent tout seuls.\nF2 : ouvrir / fermer ce panneau\nEntree : ecrire dans le chat  -  /g message : chat de guilde\nC : revendiquer / abandonner une etoile (5 max), ou assieger celle d'un autre\nF : tirer sur le vaisseau neutre ou ennemi le plus proche\nG : panneau Guilde (creer, rejoindre, gerer les membres et les relations)\nBouton Neutre / Allie / Ennemi a cote d'un joueur : changer de relation", 11.0, TEXT_DIM),
+            text("Sur le meme wifi / la meme box, les joueurs se retrouvent tout seuls.\nF2 : ouvrir / fermer ce panneau\nEntree : ecrire dans le chat  -  /g message : chat de guilde  -  /tp n : aller au trou noir d une galaxie (/aide)\nC : revendiquer / abandonner une etoile (5 max), ou assieger celle d'un autre\nF : tirer sur le vaisseau neutre ou ennemi le plus proche\nG : panneau Guilde (creer, rejoindre, gerer les membres et les relations)\nBouton Neutre / Allie / Ennemi a cote d'un joueur : changer de relation", 11.0, TEXT_DIM),
             Node { margin: UiRect::top(Val::Px(4.0)), ..default() },
         ))
         .id();
@@ -527,15 +527,18 @@ fn handle_text_input(
     mut settings: ResMut<GameSettings>,
     net: Res<Net>,
     menu: Res<crate::ui::MenuState>,
+    keys: Res<ButtonInput<KeyCode>>,
     mut commands_out: EventWriter<NetCommand>,
+    mut local_cmds: EventWriter<crate::chat_cmd::ChatCommand>,
 ) {
+    let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
     for ev in events.read() {
         if ev.state != ButtonState::Pressed {
             continue;
         }
         let Some(focus) = panel.focus else {
             // Entrée : ouvrir le chat (seulement une fois le multijoueur activé)
-            if ev.logical_key == Key::Enter && net.is_enabled() && !menu.open {
+            if ev.logical_key == Key::Enter && !menu.open {
                 panel.focus = Some(Field::Chat);
             }
             continue;
@@ -544,7 +547,12 @@ fn handle_text_input(
             Key::Enter => {
                 if focus == Field::Chat {
                     let msg = std::mem::take(&mut panel.chat);
-                    commands_out.send(NetCommand::Chat(msg));
+                    // Les commandes du jeu (/tp, /aide…) restent locales ; hors multijoueur, le chat aussi
+                    if crate::chat_cmd::is_local(&msg) || !net.is_enabled() {
+                        local_cmds.send(crate::chat_cmd::ChatCommand(msg));
+                    } else {
+                        commands_out.send(NetCommand::Chat(msg));
+                    }
                 }
                 commit_focus(&mut panel, &mut settings);
                 if focus == Field::Code {
@@ -574,40 +582,79 @@ fn handle_text_input(
                     panel.chat.push(' ');
                 }
             }
-            Key::Character(s) => {
-                for c in s.chars() {
-                    match focus {
-                        Field::GuildTag => {
-                            if c.is_alphanumeric() && panel.guild_tag.chars().count() < MAX_TAG_LEN {
-                                panel.guild_tag.extend(c.to_uppercase());
-                            }
-                        }
-                        Field::GuildName => {
-                            if !c.is_control() && panel.guild_name.chars().count() < MAX_GUILD_NAME {
-                                panel.guild_name.push(c);
-                            }
-                        }
-                        Field::Chat => {
-                            if !c.is_control() && panel.chat.chars().count() < MAX_CHAT_LEN {
-                                panel.chat.push(c);
-                            }
-                        }
-                        Field::Name => {
-                            if !c.is_control() && settings.player_name.chars().count() < MAX_NAME_LEN {
-                                settings.player_name.push(c);
-                            }
-                        }
-                        Field::Code => {
-                            // Code d'invitation (ou, à défaut, une adresse IP)
-                            let allowed = c.is_ascii_alphanumeric() || ".:-[]".contains(c);
-                            if allowed && panel.code.len() < 64 {
-                                panel.code.push(c.to_ascii_uppercase());
+            Key::Character(s) if ctrl => {
+                // Ctrl+V : coller ; Ctrl+C : copier le contenu du champ ; Ctrl+X : le couper
+                match s.to_lowercase().as_str() {
+                    "v" => {
+                        if let Some(text) = arboard::Clipboard::new().ok().and_then(|mut c| c.get_text().ok()) {
+                            for c in text.chars() {
+                                insert_char(focus, c, &mut panel, &mut settings);
                             }
                         }
                     }
+                    "c" | "x" => {
+                        let content = match focus {
+                            Field::Name => settings.player_name.clone(),
+                            Field::Code => panel.code.clone(),
+                            Field::GuildName => panel.guild_name.clone(),
+                            Field::GuildTag => panel.guild_tag.clone(),
+                            Field::Chat => panel.chat.clone(),
+                        };
+                        if let Ok(mut clip) = arboard::Clipboard::new() {
+                            clip.set_text(content).ok();
+                        }
+                        if s.eq_ignore_ascii_case("x") {
+                            match focus {
+                                Field::Name => settings.player_name.clear(),
+                                Field::Code => panel.code.clear(),
+                                Field::GuildName => panel.guild_name.clear(),
+                                Field::GuildTag => panel.guild_tag.clear(),
+                                Field::Chat => panel.chat.clear(),
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Key::Character(s) => {
+                for c in s.chars() {
+                    insert_char(focus, c, &mut panel, &mut settings);
                 }
             }
             _ => {}
+        }
+    }
+}
+
+/// Ajoute un caractère saisi (ou collé) au champ actif, selon ses règles.
+fn insert_char(focus: Field, c: char, panel: &mut NetPanel, settings: &mut GameSettings) {
+    match focus {
+        Field::GuildTag => {
+            if c.is_alphanumeric() && panel.guild_tag.chars().count() < MAX_TAG_LEN {
+                panel.guild_tag.extend(c.to_uppercase());
+            }
+        }
+        Field::GuildName => {
+            if !c.is_control() && panel.guild_name.chars().count() < MAX_GUILD_NAME {
+                panel.guild_name.push(c);
+            }
+        }
+        Field::Chat => {
+            if !c.is_control() && panel.chat.chars().count() < MAX_CHAT_LEN {
+                panel.chat.push(c);
+            }
+        }
+        Field::Name => {
+            if !c.is_control() && settings.player_name.chars().count() < MAX_NAME_LEN {
+                settings.player_name.push(c);
+            }
+        }
+        Field::Code => {
+            // Code d'invitation (ou, à défaut, une adresse IP)
+            let allowed = c.is_ascii_alphanumeric() || ".:-[]".contains(c);
+            if allowed && panel.code.len() < 64 {
+                panel.code.push(c.to_ascii_uppercase());
+            }
         }
     }
 }

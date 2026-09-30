@@ -242,9 +242,11 @@ pub struct GalaxyConfig {
 pub fn default_galaxies() -> Vec<GalaxyConfig> {
     use bevy::math::{EulerRot, Quat, Vec3};
     const META_ARMS: usize = 5;
-    const META_RADIUS: f32 = 160_000_000.0;
+    const META_RADIUS: f32 = 200_000_000.0;
     const META_TWIST: f32 = 4.0;
-    const MIN_DIST: f32 = 30_000_000.0;
+    const MIN_DIST: f32 = 40_000_000.0;
+    /// Deux galaxies restent séparées d'au moins ce multiple de la somme de leurs rayons.
+    const SPACING: f32 = 2.0;
     let tau = std::f32::consts::TAU;
 
     let mut galaxies = Vec::with_capacity(NUM_DISTANT_GALAXIES + 1);
@@ -264,19 +266,38 @@ pub fn default_galaxies() -> Vec<GalaxyConfig> {
     for gi in 0..NUM_DISTANT_GALAXIES {
         let gs = gi as u32 + 300_000;
 
-        // Position de la galaxie sur les bras de la méta-spirale
+        let radius = 1_600_000.0 + pseudo_rand(gs * 13 + 7) * 5_000_000.0;
+
+        // Position de la galaxie sur les bras de la méta-spirale, à l'écart des autres :
+        // on retire au sort jusqu'à trouver une place libre (à défaut, la moins serrée)
         let arm = gi % META_ARMS;
         let arm_base = arm as f32 * tau / META_ARMS as f32;
-        let t = pseudo_rand(gs * 13 + 1);
-        let r = MIN_DIST + t * t * (META_RADIUS - MIN_DIST);
-        let spiral = arm_base + (r / META_RADIUS) * META_TWIST;
-        let scatter = (pseudo_rand(gs * 13 + 3) - 0.5) * 0.4;
-        let theta = spiral + scatter;
-        let center = Vec3::new(
-            r * theta.cos(),
-            (pseudo_rand(gs * 13 + 5) - 0.5) * 16_000_000.0,
-            r * theta.sin(),
-        );
+        let mut best: Option<(Vec3, f32)> = None;
+        for attempt in 0..80u32 {
+            let k = attempt.wrapping_mul(100_003);
+            let t = pseudo_rand((gs * 13 + 1).wrapping_add(k));
+            let r = MIN_DIST + t * t * (META_RADIUS - MIN_DIST);
+            let spiral = arm_base + (r / META_RADIUS) * META_TWIST;
+            let scatter = (pseudo_rand((gs * 13 + 3).wrapping_add(k)) - 0.5) * 0.4;
+            let theta = spiral + scatter;
+            let c = Vec3::new(
+                r * theta.cos(),
+                (pseudo_rand((gs * 13 + 5).wrapping_add(k)) - 0.5) * 16_000_000.0,
+                r * theta.sin(),
+            );
+            // Marge restante par rapport au voisin le plus proche (>= 0 : place libre)
+            let slack = galaxies
+                .iter()
+                .map(|g| c.distance(g.center) - SPACING * (g.radius + radius))
+                .fold(f32::MAX, f32::min);
+            if best.map_or(true, |(_, s)| slack > s) {
+                best = Some((c, slack));
+            }
+            if slack >= 0.0 {
+                break;
+            }
+        }
+        let center = best.map_or(Vec3::ZERO, |(c, _)| c);
 
         galaxies.push(GalaxyConfig {
             center,
@@ -286,7 +307,7 @@ pub fn default_galaxies() -> Vec<GalaxyConfig> {
                 pseudo_rand(gs * 13 + 15) * tau,
                 (pseudo_rand(gs * 13 + 17) - 0.5) * 1.0,
             ),
-            radius: 1_600_000.0 + pseudo_rand(gs * 13 + 7) * 5_000_000.0,
+            radius,
             num_arms: 2 + (pseudo_rand(gs * 13 + 9) * 4.0) as usize,
             twist: 3.0 + pseudo_rand(gs * 13 + 11) * 4.0,
             kind: crate::galaxy_shape::GalaxyKind::pick(gs * 13 + 25),
@@ -758,5 +779,24 @@ impl SystemSpatialIndex {
             }
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn galaxies_do_not_touch_each_other() {
+        let g = default_galaxies();
+        let mut worst = f32::MAX;
+        for i in 0..g.len() {
+            for j in (i + 1)..g.len() {
+                let gap = g[i].center.distance(g[j].center) / (g[i].radius + g[j].radius);
+                worst = worst.min(gap);
+            }
+        }
+        // Jamais collées : au moins 1,5 fois la somme des rayons entre deux centres
+        assert!(worst >= 1.5, "deux galaxies trop proches : {worst}");
     }
 }
