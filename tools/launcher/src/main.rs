@@ -11,6 +11,8 @@ use std::sync::{Arc, Mutex};
 use spacespore_common::{exe_name, Channel, VersionInfo, CHANNEL, GAME_BIN, LAUNCHER_BIN};
 
 fn main() -> eframe::Result {
+    // Raccourcis qui ouvriraient le jeu directement : on les redirige vers ce launcher
+    std::thread::spawn(spacespore_common::repair_shortcuts);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("SpaceSpore Launcher")
@@ -99,12 +101,16 @@ struct LauncherApp {
     game_exe: PathBuf,
     channel: Channel,
     launched: bool,
+    /// La mise à jour automatique a déjà été tentée (pas de boucle en cas d'échec).
+    auto_update_tried: bool,
     launch_error: Option<String>,
 }
 
 impl LauncherApp {
     fn new(ctx: egui::Context) -> Self {
         let install_dir = spacespore_common::exe_dir();
+        // Reste d'une mise à jour précédente du launcher (renommé avant d'être remplacé)
+        let _ = fs::remove_file(install_dir.join(format!("{}.old", exe_name(LAUNCHER_BIN))));
         let game_exe = install_dir.join(exe_name(GAME_BIN));
         let shared = Arc::new(Shared {
             stage: Mutex::new(Stage::Checking),
@@ -119,6 +125,7 @@ impl LauncherApp {
             game_exe,
             channel: load_channel(),
             launched: false,
+            auto_update_tried: false,
             launch_error: None,
         };
         app.start_check();
@@ -229,6 +236,13 @@ impl eframe::App for LauncherApp {
                     }
                     Stage::Available(info) => {
                         let switching = CHANNEL != self.channel;
+                        // Mise à jour du même canal : installée tout de suite, sans clic (le launcher
+                        // fait partie du paquet, il se met donc à jour avec le jeu). Changer de
+                        // canal reste un choix du joueur, et un échec ne se relance pas en boucle.
+                        if !switching && !self.auto_update_tried {
+                            self.auto_update_tried = true;
+                            self.start_update(info.clone());
+                        }
                         let title = if switching {
                             format!("Disponible : {}", info.label())
                         } else {
