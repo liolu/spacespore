@@ -498,18 +498,34 @@ fn select_world_target(
         consider(transform.translation(), 80.0, TargetKind::Supernova(root.idx));
     }
 
+    // Vue d'ensemble (zoom 5-6) : une galaxie se sélectionne en cliquant n'importe où
+    // sur son disque, pas seulement sur son trou noir (minuscule à cette distance)
+    let overview = matches!(*zoom, ZoomLevel::Cosmos | ZoomLevel::DeepSpace);
+    let galaxy_tolerance = |center: Vec3, galaxy_id: usize| -> f32 {
+        if !overview {
+            return 120.0;
+        }
+        let radius = settings.galaxies.get(galaxy_id).map_or(0.0, |g| g.radius);
+        let edge = center + camera_transform.right() * radius;
+        match (camera.world_to_viewport(camera_transform, center), camera.world_to_viewport(camera_transform, edge)) {
+            (Ok(a), Ok(b)) => viewport.to_window(a).distance(viewport.to_window(b)).clamp(120.0, 500.0),
+            _ => 120.0,
+        }
+    };
+
     // ── GalacticCore : clic sur le trou noir central ──────────────
     for gt in &queries.core_q {
-        consider(gt.translation(), 120.0, TargetKind::GalacticCore);
+        let center = gt.translation();
+        consider(center, galaxy_tolerance(center, 0), TargetKind::GalacticCore);
     }
 
-    // ── DistantGalaxyCore : depuis un trou noir au zoom 6 (saut entre
-    //    galaxies), ou le trou noir de la galaxie où l'on se trouve ────
-    let on_core = *zoom == ZoomLevel::DeepSpace && ZoomLevel::is_core(&target.0);
+    // ── DistantGalaxyCore : depuis la vue d'ensemble (saut entre galaxies),
+    //    ou le trou noir de la galaxie où l'on se trouve ────
     let current_gal = current_galaxy(&target.0, &queries, &settings);
     for (gt, dc) in &queries.dist_core_q {
-        if on_core || dc.galaxy_id == current_gal {
-            consider(gt.translation(), 120.0, TargetKind::DistantGalaxyCore(dc.galaxy_id));
+        if overview || dc.galaxy_id == current_gal {
+            let center = gt.translation();
+            consider(center, galaxy_tolerance(center, dc.galaxy_id as usize), TargetKind::DistantGalaxyCore(dc.galaxy_id));
         }
     }
 
