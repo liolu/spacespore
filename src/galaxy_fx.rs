@@ -29,9 +29,10 @@ use crate::{CameraController, ZoomLevel};
 // guildes (étoiles revendiquées, voir `claims.rs`) et ceux des factions PNJ
 // se lisent donc d'un coup d'œil. Une étoile sans propriétaire n'a pas de trait.
 
-/// Liaisons par étoile au plus.
-const MAX_LINKS_PER_STAR: usize = 3;
-/// Portée d'une liaison : la galaxie principale est plus dense que les autres.
+/// Voisines du même territoire auxquelles chaque étoile est reliée.
+const LINKS_PER_STAR: usize = 2;
+/// Portée de voisinage : sert seulement à faire grandir un territoire PNJ d'étoile en étoile
+/// (les traits, eux, n'ont aucune limite de distance).
 const LINK_RANGE_MAIN: f32 = 30_000.0;
 const LINK_RANGE_OTHER: f32 = 60_000.0;
 /// Factions PNJ de la galaxie principale ; les autres en ont selon leur taille.
@@ -73,32 +74,58 @@ fn link_range(settings: &GameSettings, sys: usize) -> f32 {
     if settings.systems[sys].galaxy_id == 0 { LINK_RANGE_MAIN } else { LINK_RANGE_OTHER }
 }
 
-/// Traits d'un groupe d'étoiles d'un même propriétaire : chaque étoile est
-/// reliée à ses voisines les plus proches du groupe (à portée de liaison, ou
-/// `slack` fois plus pour les revendications de joueurs, plus espacées).
-fn group_links(settings: &GameSettings, stars: &[usize], slack: f32) -> Vec<(Vec3, Vec3)> {
-    let mut seen: HashSet<(usize, usize)> = HashSet::new();
-    let mut out = Vec::new();
-    for &a in stars {
-        let Some(sa) = settings.systems.get(a) else { continue };
-        let range = link_range(settings, a) * slack;
-        let mut near: Vec<(usize, f32)> = stars
-            .iter()
-            .filter(|&&b| b != a)
-            .filter_map(|&b| {
-                let sb = settings.systems.get(b)?;
-                let d = sa.center().distance(sb.center());
-                (sb.galaxy_id == sa.galaxy_id && d <= range).then_some((b, d))
-            })
-            .collect();
+/// Traits d'un groupe d'étoiles d'un même propriétaire, sans limite de distance :
+/// chaque étoile est reliée à ses deux plus proches voisines du groupe, puis les
+/// blocs restés séparés sont reliés par leur paire la plus proche. Le territoire
+/// forme ainsi un seul réseau, même si ses étoiles sont très éloignées.
+fn group_links(settings: &GameSettings, stars: &[usize]) -> Vec<(Vec3, Vec3)> {
+    let pts: Vec<(usize, Vec3)> = stars
+        .iter()
+        .filter_map(|&s| settings.systems.get(s).map(|sys| (s, sys.center())))
+        .collect();
+    let n = pts.len();
+    let mut edges: HashSet<(usize, usize)> = HashSet::new();
+    for i in 0..n {
+        let mut near: Vec<(usize, f32)> = (0..n).filter(|&j| j != i).map(|j| (j, pts[i].1.distance(pts[j].1))).collect();
         near.sort_by(|x, y| x.1.total_cmp(&y.1));
-        for (b, _) in near.into_iter().take(MAX_LINKS_PER_STAR) {
-            if seen.insert((a.min(b), a.max(b))) {
-                out.push((sa.center(), settings.systems[b].center()));
-            }
+        for (j, _) in near.into_iter().take(LINKS_PER_STAR) {
+            edges.insert((i.min(j), i.max(j)));
         }
     }
-    out
+    // Composantes connexes, puis on relie la paire la plus proche entre deux blocs
+    let mut group: Vec<usize> = (0..n).collect();
+    fn root(group: &mut [usize], mut i: usize) -> usize {
+        while group[i] != i {
+            group[i] = group[group[i]];
+            i = group[i];
+        }
+        i
+    }
+    for &(i, j) in &edges {
+        let (ri, rj) = (root(&mut group, i), root(&mut group, j));
+        group[ri] = rj;
+    }
+    loop {
+        let mut best: Option<(usize, usize, f32)> = None;
+        for i in 0..n {
+            for j in (i + 1)..n {
+                if root(&mut group, i) == root(&mut group, j) {
+                    continue;
+                }
+                let d = pts[i].1.distance(pts[j].1);
+                if best.map_or(true, |b| d < b.2) {
+                    best = Some((i, j, d));
+                }
+            }
+        }
+        let Some((i, j, _)) = best else { break };
+        edges.insert((i, j));
+        let (ri, rj) = (root(&mut group, i), root(&mut group, j));
+        group[ri] = rj;
+    }
+    let mut lines: Vec<(usize, usize)> = edges.into_iter().collect();
+    lines.sort();
+    lines.into_iter().map(|(i, j)| (pts[i].1, pts[j].1)).collect()
 }
 
 // ── Factions PNJ ────────────────────────────────────────────────────────
@@ -225,7 +252,7 @@ pub fn generate_npcs(settings: &GameSettings, spatial: &SystemSpatialIndex) -> N
                 name: faction_name(mix(seed, counter, 99)),
                 color: Color::hsl(hue, 0.85, 0.58),
                 galaxy: gid as u32,
-                links: group_links(settings, &members, 1.0),
+                links: group_links(settings, &members),
                 stars: members,
                 center,
                 extent,
@@ -252,14 +279,15 @@ fn draw_links(
     cam_q: Query<(&GlobalTransform, &CameraController)>,
     mut gizmos: Gizmos,
 ) {
-    if !show.0 || !matches!(*zoom, ZoomLevel::System | ZoomLevel::Sector | ZoomLevel::Galaxy) {
+    // Vue planète : trop près pour lire un territoire
+    if !show.0 || *zoom == ZoomLevel::Planet {
         return;
     }
     let Ok((cam, ctrl)) = cam_q.get_single() else { return };
     let cam_pos = cam.translation();
     let window = (ctrl.distance * 1.5).clamp(60_000.0, 3_000_000.0);
 
-    // Factions PNJ : seulement celles qui sont près de la caméra
+    // Factions PNJ : seulement celles qui sont près de la caméra (il y en a des milliers dans l'univers)
     for faction in &npcs.factions {
         if cam_pos.distance(faction.center) > window + faction.extent {
             continue;
@@ -273,7 +301,7 @@ fn draw_links(
     // Joueurs et guildes : étoiles revendiquées
     for (color, stars) in crate::claims::owner_groups(&net, &settings, &guilds) {
         let color = color.with_alpha(0.95);
-        for (a, b) in group_links(&settings, &stars, 1.5) {
+        for (a, b) in group_links(&settings, &stars) {
             gizmos.line(a, b, color);
         }
     }
@@ -564,28 +592,48 @@ mod tests {
     }
 
     #[test]
-    fn group_links_stay_inside_the_group_and_its_galaxy() {
+    fn group_links_join_a_territory_whatever_the_distance() {
         let settings = GameSettings::default();
-        // Trois étoiles proches de la galaxie principale
-        let stars: Vec<usize> = (0..settings.systems.len())
-            .filter(|&i| settings.systems[i].galaxy_id == 0)
-            .take(40)
-            .collect();
-        let links = group_links(&settings, &stars, 3.0);
-        let centers: HashSet<[i32; 3]> = stars
-            .iter()
-            .map(|&s| settings.systems[s].center().to_array().map(|v| v as i32))
-            .collect();
-        for (a, b) in &links {
-            assert!(centers.contains(&a.to_array().map(|v| v as i32)));
-            assert!(centers.contains(&b.to_array().map(|v| v as i32)));
+        let key = |v: Vec3| v.to_array().map(|x| x as i32);
+        let reachable = |stars: &[usize], links: &[(Vec3, Vec3)]| -> bool {
+            // Toutes les étoiles sont reliées entre elles par un chemin de traits
+            let centers: Vec<[i32; 3]> = stars.iter().map(|&s| key(settings.systems[s].center())).collect();
+            let mut seen = HashSet::from([centers[0]]);
+            let mut grew = true;
+            while grew {
+                grew = false;
+                for (a, b) in links {
+                    let (a, b) = (key(*a), key(*b));
+                    if seen.contains(&a) != seen.contains(&b) {
+                        seen.insert(a);
+                        seen.insert(b);
+                        grew = true;
+                    }
+                }
+            }
+            centers.iter().all(|c| seen.contains(c))
+        };
+
+        // Étoiles voisines
+        let near: Vec<usize> = (0..settings.systems.len()).filter(|&i| settings.systems[i].galaxy_id == 0).take(40).collect();
+        // Étoiles très éloignées, y compris de galaxies différentes : liées quand même
+        let far: Vec<usize> = (0..5).map(|g| (0..settings.systems.len()).find(|&i| settings.systems[i].galaxy_id == g).unwrap()).collect();
+        assert!(settings.systems[far[0]].center().distance(settings.systems[far[4]].center()) > 10_000_000.0);
+
+        for stars in [near, far] {
+            let links = group_links(&settings, &stars);
+            assert!(reachable(&stars, &links));
+            // Rien en dehors du groupe, pas de doublon, pas de trait sur une seule étoile
+            let centers: HashSet<[i32; 3]> = stars.iter().map(|&s| key(settings.systems[s].center())).collect();
+            let mut pairs: Vec<_> = links.iter().map(|(a, b)| (key(*a), key(*b))).collect();
+            assert!(pairs.iter().all(|(a, b)| a != b && centers.contains(a) && centers.contains(b)));
+            pairs.sort();
+            let n = pairs.len();
+            pairs.dedup();
+            assert_eq!(n, pairs.len());
         }
-        // Pas de doublon : un seul trait par paire
-        let mut pairs: Vec<_> = links.iter().map(|(a, b)| (a.to_array().map(|v| v as i32), b.to_array().map(|v| v as i32))).collect();
-        pairs.sort();
-        let n = pairs.len();
-        pairs.dedup();
-        assert_eq!(n, pairs.len());
+        // Une seule étoile : aucun trait
+        assert!(group_links(&settings, &[3]).is_empty());
     }
 
     #[test]
