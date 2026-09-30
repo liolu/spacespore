@@ -170,6 +170,8 @@ pub struct TargetQueries<'w, 's> {
 // ─────────────────────────────────────────────────────────────────────────
 
 fn main() {
+    // Un raccourci qui ouvre le jeu directement contourne les mises à jour : on le redirige vers le launcher
+    std::thread::spawn(spacespore_common::repair_shortcuts);
     let log_path = settings::data_dir().join("crash.log");
     std::panic::set_hook({
         let log_path = log_path.clone();
