@@ -214,6 +214,8 @@ pub(crate) fn pseudo_rand(seed: u32) -> f32 {
 pub const SYSTEM_GRID_SIZE: usize = 100;
 pub const SYSTEM_CELL_SIZE: f32 = 100_000.0;
 pub const STREAM_RADIUS: f32 = 3.0;
+/// Graine du monde par défaut (partagée par tous les joueurs).
+pub const DEFAULT_WORLD_SEED: u64 = 42;
 pub const GALAXY_RADIUS: f32 = 9_000_000.0;
 
 /// Nombre de galaxies extérieures (ids 1..=NUM_DISTANT_GALAXIES).
@@ -239,7 +241,7 @@ pub struct GalaxyConfig {
 }
 
 /// Galaxie principale + galaxies extérieures disposées sur une méta-spirale.
-pub fn default_galaxies() -> Vec<GalaxyConfig> {
+pub fn default_galaxies(world_seed: u64) -> Vec<GalaxyConfig> {
     use bevy::math::{EulerRot, Quat, Vec3};
     const META_ARMS: usize = 5;
     const META_RADIUS: f32 = 200_000_000.0;
@@ -249,6 +251,10 @@ pub fn default_galaxies() -> Vec<GalaxyConfig> {
     const SPACING: f32 = 2.0;
     let tau = std::f32::consts::TAU;
 
+    let world_hash = {
+        let x = (world_seed as u32) ^ ((world_seed >> 32) as u32);
+        (pseudo_rand(x ^ 0x6A09_E667) * 65_535.0) as u32 * 2 + (x & 1)
+    };
     let mut galaxies = Vec::with_capacity(NUM_DISTANT_GALAXIES + 1);
     galaxies.push(GalaxyConfig {
         center: Vec3::ZERO,
@@ -264,9 +270,12 @@ pub fn default_galaxies() -> Vec<GalaxyConfig> {
     });
 
     for gi in 0..NUM_DISTANT_GALAXIES {
-        let gs = gi as u32 + 300_000;
+        // La graine du monde décale tout : un autre monde, d'autres galaxies
+        let gs = gi as u32 + 300_000 + world_hash % 90_000;
+        let rk = |k: u32| pseudo_rand(gs * 13 + k);
+        let rk_k = |n: u32, k: u32| pseudo_rand((gs * 13 + n).wrapping_add(k));
 
-        let radius = 1_600_000.0 + pseudo_rand(gs * 13 + 7) * 5_000_000.0;
+        let radius = 1_300_000.0 + (rk(7) * 0.6 + rk(27) * 0.4).powf(1.3) * 6_000_000.0;
 
         // Position de la galaxie sur les bras de la méta-spirale, à l'écart des autres :
         // on retire au sort jusqu'à trouver une place libre (à défaut, la moins serrée)
@@ -275,14 +284,14 @@ pub fn default_galaxies() -> Vec<GalaxyConfig> {
         let mut best: Option<(Vec3, f32)> = None;
         for attempt in 0..80u32 {
             let k = attempt.wrapping_mul(100_003);
-            let t = pseudo_rand((gs * 13 + 1).wrapping_add(k));
+            let t = rk_k(1, k);
             let r = MIN_DIST + t * t * (META_RADIUS - MIN_DIST);
             let spiral = arm_base + (r / META_RADIUS) * META_TWIST;
-            let scatter = (pseudo_rand((gs * 13 + 3).wrapping_add(k)) - 0.5) * 0.4;
+            let scatter = (rk_k(3, k) - 0.5) * 0.4;
             let theta = spiral + scatter;
             let c = Vec3::new(
                 r * theta.cos(),
-                (pseudo_rand((gs * 13 + 5).wrapping_add(k)) - 0.5) * 16_000_000.0,
+                (rk_k(5, k) - 0.5) * 16_000_000.0,
                 r * theta.sin(),
             );
             // Marge restante par rapport au voisin le plus proche (>= 0 : place libre)
@@ -303,18 +312,18 @@ pub fn default_galaxies() -> Vec<GalaxyConfig> {
             center,
             tilt: Quat::from_euler(
                 EulerRot::XYZ,
-                (pseudo_rand(gs * 13 + 13) - 0.5) * 1.5,
-                pseudo_rand(gs * 13 + 15) * tau,
-                (pseudo_rand(gs * 13 + 17) - 0.5) * 1.0,
+                (rk(13) - 0.5) * 1.5,
+                rk(15) * tau,
+                (rk(17) - 0.5) * 1.0,
             ),
             radius,
-            num_arms: 2 + (pseudo_rand(gs * 13 + 9) * 4.0) as usize,
-            twist: 3.0 + pseudo_rand(gs * 13 + 11) * 4.0,
-            kind: crate::galaxy_shape::GalaxyKind::pick(gs * 13 + 25),
-            core_radius: 10_000.0 + pseudo_rand(gs * 13 + 23) * 20_000.0,
+            num_arms: 2 + (rk(9) * 5.0) as usize,
+            twist: 1.5 + rk(11) * 7.5,
+            kind: crate::galaxy_shape::GalaxyKind::for_index(gi, world_hash),
+            core_radius: 10_000.0 + rk(23) * 20_000.0,
             seed: gs * 1000,
-            arm_stars: 200 + (pseudo_rand(gs * 13 + 19) * 300.0) as usize,
-            scatter_stars: 50 + (pseudo_rand(gs * 13 + 21) * 100.0) as usize,
+            arm_stars: 170 + (rk(19) * 380.0) as usize,
+            scatter_stars: 40 + (rk(31) * 120.0) as usize,
         });
     }
     galaxies
@@ -605,7 +614,7 @@ impl Default for GameSettings {
             planet_chunk_divisions: 6,
             vsync: true, fps_limit: 0, msaa_samples: 4, shadows: true,
             lod_quality: 1.0, show_clouds: true, show_flares: true, render_scale: 1.0,
-            world_seed: 42,
+            world_seed: DEFAULT_WORLD_SEED,
             player_name: default_player_name(),
             aura_color: default_aura_color(),
             last_join_address: String::new(),
@@ -618,8 +627,8 @@ impl Default for GameSettings {
             guild: None,
             guild_archive: Vec::new(),
             temp_identity: false,
-            systems: default_systems(&default_galaxies()),
-            galaxies: default_galaxies(),
+            systems: default_systems(&default_galaxies(DEFAULT_WORLD_SEED)),
+            galaxies: default_galaxies(DEFAULT_WORLD_SEED),
             planets: default_planets(), stars: default_stars(),
             asteroid_belts: Vec::new(),
             comets: Vec::new(), meteoroids: Vec::new(),
@@ -680,7 +689,7 @@ impl GameSettings {
             settings.save();
             settings
         };
-        s.galaxies = default_galaxies();
+        s.galaxies = default_galaxies(s.world_seed);
         s.systems = default_systems(&s.galaxies);
         s.comets.clear();
         s.meteoroids.clear();
@@ -788,7 +797,7 @@ mod tests {
 
     #[test]
     fn galaxies_do_not_touch_each_other() {
-        let g = default_galaxies();
+        let g = default_galaxies(DEFAULT_WORLD_SEED);
         let mut worst = f32::MAX;
         for i in 0..g.len() {
             for j in (i + 1)..g.len() {

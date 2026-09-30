@@ -74,10 +74,11 @@ impl GalaxyKind {
         }
     }
 
-    /// Type d'une galaxie extérieure à partir de sa graine.
-    pub fn pick(seed: u32) -> Self {
-        let i = (pseudo_rand(seed) * Self::ALL.len() as f32) as usize;
-        Self::ALL[i.min(Self::ALL.len() - 1)]
+    /// Type de la galaxie extérieure n° `gi` : les 20 types reviennent à parts égales, mélangés
+    /// différemment selon le monde (7 est premier avec 20 : deux voisines diffèrent toujours).
+    pub fn for_index(gi: usize, world_hash: u32) -> Self {
+        let offset = (world_hash % 20) as usize;
+        Self::ALL[(gi * 7 + offset) % Self::ALL.len()]
     }
 }
 
@@ -164,6 +165,9 @@ pub struct Shape {
     thickness: f32,
     radius: f32,
     total_weight: f32,
+    /// Étirement du disque (1 = rond) et rotation, appliqués au fond diffus.
+    bg_stretch: f32,
+    bg_yaw: Quat,
 }
 
 // ── Aides de construction ───────────────────────────────────────────────
@@ -255,13 +259,22 @@ impl Shape {
             GalaxyKind::Spiral => {
                 let n = gal.num_arms.max(1);
                 for a in 0..n {
-                    let base = a as f32 * TAU / n as f32;
-                    curves.push(Curve::new(spiral_arm(r, base, tw, 1.0), 0.45, 1.0, CapMode::Arm));
+                    let mut base = a as f32 * TAU / n as f32;
+                    let (mut twist, mut reach, mut weight) = (tw, 1.0, 1.0);
+                    if gal.seed != 0 {
+                        // Galaxies extérieures : bras décalés, de longueur et de serrage différents
+                        base += rng.range(-0.25, 0.25);
+                        twist *= rng.range(0.85, 1.15);
+                        reach = rng.range(0.7, 1.0);
+                        weight = rng.range(0.6, 1.2);
+                    }
+                    curves.push(Curve::new(spiral_arm(r, base, twist, reach), 0.45, weight, CapMode::Arm));
                 }
             }
 
             GalaxyKind::Barred => {
-                let bar = 0.33 * r;
+                let bar = r * rng.range(0.2, 0.5);
+                let pw = rng.range(0.9, 1.5);
                 for s in [1.0_f32, -1.0] {
                     let (bx, bz) = (phase.cos() * s, phase.sin() * s);
                     let dir = Vec3::new(bx, 0.0, bz);
@@ -270,9 +283,9 @@ impl Shape {
                         pts_from(10, |p| dir * bar * p), 0.05, 1.3, CapMode::Few));
                     // Bras qui partent du bout de la barre
                     let th0 = bz.atan2(bx);
-                    let sweep = rng.range(2.2, 3.4);
+                    let sweep = rng.range(1.6, 4.0);
                     curves.push(Curve::new(
-                        pts_from(48, |p| polar(bar + (r - bar) * p.powf(1.15), th0 + sweep * p, 0.0)),
+                        pts_from(48, |p| polar(bar + (r - bar) * p.powf(pw), th0 + sweep * p, 0.0)),
                         0.22, 1.6, CapMode::Arm));
                 }
                 // Bras secondaires discrets
@@ -285,24 +298,29 @@ impl Shape {
             }
 
             GalaxyKind::Lenticular => {
-                thickness = 70_000.0;
-                share = 0.35;
-                background = Background::Disk { reach: 0.95, thick: 50_000.0 };
-                for (i, rr) in [0.3_f32, 0.55, 0.8].iter().enumerate() {
+                thickness = rng.range(40_000.0, 110_000.0);
+                share = rng.range(0.2, 0.5);
+                background = Background::Disk { reach: rng.range(0.75, 1.0), thick: rng.range(30_000.0, 80_000.0) };
+                let nr = rng.range(2.0, 5.99) as usize;
+                for i in 0..nr {
+                    let rr = 0.15 + 0.8 * (i as f32 + rng.f() * 0.6) / nr as f32;
                     let c = ring(&mut rng, r * rr, TAU, 0.0, 0.03);
-                    curves.push(Curve::new(c, 0.04, 0.5 - 0.1 * i as f32, CapMode::Loop));
+                    curves.push(Curve::new(c, 0.04, (0.55 - 0.07 * i as f32).max(0.1), CapMode::Loop));
                 }
             }
 
             GalaxyKind::Ring => {
-                share = 0.88;
-                background = Background::Blobs(vec![(Vec3::ZERO, 0.09 * r, 1.0)]);
-                curves.push(Curve::new(ring(&mut rng, r * 0.62, TAU, 0.0, 0.14), 0.09, 1.0, CapMode::Loop));
-                curves.push(Curve::new(ring(&mut rng, r * 0.92, TAU, 1.0, 0.1), 0.05, 0.18, CapMode::Loop));
+                share = rng.range(0.75, 0.95);
+                background = Background::Blobs(vec![(Vec3::ZERO, r * rng.range(0.04, 0.14), 1.0)]);
+                let (radius, wobble, width) = (rng.range(0.4, 0.78), rng.range(0.05, 0.3), rng.range(0.05, 0.14));
+                curves.push(Curve::new(ring(&mut rng, r * radius, TAU, 0.0, wobble), width, 1.0, CapMode::Loop));
+                let outer_w = if rng.f() < 0.6 { rng.range(0.05, 0.35) } else { 0.0 };
+                let outer_r = r * rng.range(0.85, 1.0);
+                curves.push(Curve::new(ring(&mut rng, outer_r, TAU, 1.0, 0.1), 0.05, outer_w, CapMode::Loop));
             }
 
             GalaxyKind::MultiArm => {
-                let n = rng.range(7.0, 11.0) as usize;
+                let n = rng.range(6.0, 14.0) as usize;
                 for a in 0..n {
                     let base = a as f32 * TAU / n as f32 + rng.range(-0.15, 0.15);
                     let reach = rng.range(0.4, 1.0);
@@ -330,7 +348,7 @@ impl Shape {
 
             GalaxyKind::Flocculent => {
                 share = 0.6;
-                let n = 16;
+                let n = rng.range(8.0, 26.0) as usize;
                 for i in 0..n {
                     let base = i as f32 * TAU / 5.0 + rng.f() * 1.5;
                     let full = spiral_arm(r, base, tw * 0.8, 1.0);
@@ -343,16 +361,17 @@ impl Shape {
             }
 
             GalaxyKind::Asymmetric => {
-                let n = arms.min(3);
+                let n = arms.min(4);
+                let off = polar(r * rng.range(0.04, 0.22), rng.f() * TAU, 0.0);
                 for a in 0..n {
                     let base = a as f32 * TAU / n as f32;
                     let (reach, w) = if a == 0 { (1.0, 1.4) } else { (rng.range(0.4, 0.6), 0.4) };
                     let mut c = spiral_arm(r, base, tw, reach);
-                    translate(&mut c, Vec3::new(0.09 * r, 0.0, -0.06 * r));
+                    translate(&mut c, off);
                     curves.push(Curve::new(c, 0.4, w, CapMode::Arm));
                 }
                 background = Background::Blobs(vec![
-                    (Vec3::new(0.09 * r, 0.0, -0.06 * r), 0.25 * r, 1.0),
+                    (off, r * rng.range(0.15, 0.3), 1.0),
                     (Vec3::new(-0.3 * r, 0.0, 0.2 * r), 0.12 * r, 0.25),
                 ]);
                 share = 0.7;
@@ -360,7 +379,7 @@ impl Shape {
 
             GalaxyKind::Elliptical => {
                 share = 0.0;
-                background = Background::Ellipsoid(Vec3::new(0.7 * r, 0.5 * r, 0.6 * r));
+                background = Background::Ellipsoid(Vec3::new(r * rng.range(0.4, 1.0), r * rng.range(0.25, 0.7), r * rng.range(0.3, 0.9)));
                 for (i, rr) in [0.25_f32, 0.5].iter().enumerate() {
                     let mut c = ring(&mut rng, r * rr, TAU, 0.0, 0.05);
                     let q = Quat::from_rotation_x(i as f32 * 1.1 + 0.5);
@@ -373,16 +392,16 @@ impl Shape {
 
             GalaxyKind::Cigar => {
                 share = 0.25;
-                let len = 0.95 * r;
+                let len = r * rng.range(0.6, 1.0);
                 // Axe long = X local (le tilt de la galaxie l'oriente ensuite)
                 let dir = Vec3::X;
-                background = Background::Ellipsoid(Vec3::new(len, 0.13 * r, 0.16 * r));
+                background = Background::Ellipsoid(Vec3::new(len, r * rng.range(0.06, 0.25), r * rng.range(0.06, 0.25)));
                 curves.push(Curve::new(pts_from(12, |p| dir * len * (2.0 * p - 1.0)), 0.05, 1.0, CapMode::Arm));
             }
 
             GalaxyKind::Irregular => {
                 share = 0.4;
-                let n = rng.range(5.0, 8.0) as usize;
+                let n = rng.range(4.0, 12.0) as usize;
                 let mut blobs = Vec::new();
                 for _ in 0..n {
                     let th = rng.f() * TAU;
@@ -407,7 +426,7 @@ impl Shape {
 
             GalaxyKind::TightSpiral => {
                 let n = arms.min(4);
-                let tight = rng.range(9.0, 13.0);
+                let tight = rng.range(5.0, 16.0);
                 for a in 0..n {
                     let base = a as f32 * TAU / n as f32;
                     // Spirale logarithmique : r = r0·e^(k·θ)
@@ -422,7 +441,7 @@ impl Shape {
 
             GalaxyKind::OpenSpiral => {
                 let n = arms.min(3);
-                let open = rng.range(1.6, 2.6);
+                let open = rng.range(1.0, 3.2);
                 for a in 0..n {
                     let base = a as f32 * TAU / n as f32;
                     curves.push(Curve::new(
@@ -432,10 +451,12 @@ impl Shape {
             }
 
             GalaxyKind::SShape => {
+                let bend = rng.range(0.8, 1.9);
+                let sfreq = rng.range(1.2, 1.8);
                 for s in [1.0_f32, -1.0] {
                     let arm = pts_from(48, |p| {
                         polar(r * p, phase + if s > 0.0 { 0.0 } else { std::f32::consts::PI }
-                            + 1.3 * (p * std::f32::consts::PI * 1.5).sin(), 0.0)
+                            + bend * (p * std::f32::consts::PI * sfreq).sin(), 0.0)
                     });
                     // Filaments secondaires au bout de chaque bras
                     for k in 0..2 {
@@ -453,12 +474,13 @@ impl Shape {
                 share = 0.45;
                 let dir = Vec3::new(phase.cos(), 0.0, phase.sin());
                 background = Background::Blobs(vec![
-                    (dir * 0.45 * r, 0.26 * r, 1.0),
-                    (-dir * 0.55 * r, 0.17 * r, 0.6),
+                    (dir * r * rng.range(0.3, 0.55), r * rng.range(0.15, 0.35), 1.0),
+                    (-dir * r * rng.range(0.3, 0.65), r * rng.range(0.1, 0.3), rng.range(0.3, 0.9)),
                 ]);
+                let spread = rng.range(0.3, 0.9);
                 for s in [1.0_f32, -1.0] {
-                    let len = if s > 0.0 { 0.95 * r } else { 0.6 * r };
-                    for ang in [-0.6_f32, 0.0, 0.6] {
+                    let len = if s > 0.0 { r * rng.range(0.7, 1.0) } else { r * rng.range(0.3, 0.8) };
+                    for ang in [-spread, 0.0, spread] {
                         let q = Quat::from_rotation_y(ang);
                         let d = q * dir * s;
                         let c = pts_from(24, |p| {
@@ -473,7 +495,7 @@ impl Shape {
 
             GalaxyKind::Warped => {
                 let n = arms.min(4);
-                let warp = 0.14 * r;
+                let warp = r * rng.range(0.05, 0.3);
                 for a in 0..n {
                     let base = a as f32 * TAU / n as f32;
                     curves.push(Curve::new(
@@ -489,15 +511,17 @@ impl Shape {
 
             GalaxyKind::Interacting => {
                 share = 0.75;
-                let p_nuc = Vec3::new(-0.12 * r, 0.0, 0.0);
-                let s_nuc = Vec3::new(0.42 * r, 0.03 * r, 0.1 * r);
+                let axis_angle = rng.f() * TAU;
+                let p_nuc = polar(r * rng.range(0.05, 0.2), axis_angle + std::f32::consts::PI, 0.0);
+                let s_nuc = polar(r * rng.range(0.3, 0.6), axis_angle, r * rng.range(-0.05, 0.05));
+                let (reach_p, reach_s) = (rng.range(0.35, 0.65), rng.range(0.2, 0.45));
                 for k in 0..2 {
-                    let mut c = spiral_arm(r, k as f32 * std::f32::consts::PI, 3.0, 0.5);
+                    let mut c = spiral_arm(r, k as f32 * std::f32::consts::PI, 3.0, reach_p);
                     translate(&mut c, p_nuc);
                     curves.push(Curve::new(c, 0.4, 1.0, CapMode::Arm));
                 }
                 for k in 0..2 {
-                    let mut c = spiral_arm(r, phase + k as f32 * std::f32::consts::PI, -3.0, 0.3);
+                    let mut c = spiral_arm(r, phase + k as f32 * std::f32::consts::PI, -3.0, reach_s);
                     translate(&mut c, s_nuc);
                     curves.push(Curve::new(c, 0.45, 0.6, CapMode::Arm));
                 }
@@ -519,7 +543,8 @@ impl Shape {
 
             GalaxyKind::MultiRing => {
                 share = 0.85;
-                let radii = [0.2_f32, 0.38, 0.58, 0.8];
+                let nr = rng.range(3.0, 6.99) as usize;
+                let radii: Vec<f32> = (0..nr).map(|i| 0.12 + 0.8 * (i as f32 + rng.f() * 0.5) / nr as f32).collect();
                 for (i, rr) in radii.iter().enumerate() {
                     let full = i % 2 == 0;
                     let arc = if full { TAU } else { rng.range(3.4, 5.4) };
@@ -531,25 +556,28 @@ impl Shape {
 
             GalaxyKind::Fractal => {
                 share = 0.9;
-                let n = rng.range(4.0, 6.0) as usize;
+                let n = rng.range(3.0, 8.0) as usize;
+                let depth = rng.range(2.0, 4.99) as u32;
                 for a in 0..n {
                     let base = a as f32 * TAU / n as f32;
-                    let trunk = spiral_arm(r, base, tw * 0.6, 0.8);
-                    curves.push(Curve::new(trunk.clone(), 0.04, 1.0, CapMode::Arm));
-                    fractal_branches(&mut rng, &mut curves, &trunk, 3, 0.5);
+                    let trunk = spiral_arm(r, base, tw * 0.6, rng.range(0.6, 1.0));
+                    let caps = if a < 5 { CapMode::Arm } else { CapMode::Few };
+                    curves.push(Curve::new(trunk.clone(), 0.04, 1.0, caps));
+                    fractal_branches(&mut rng, &mut curves, &trunk, depth, 0.5);
                 }
             }
 
             GalaxyKind::Wavy => {
                 let n = arms.min(4);
+                let (amp, amp2) = (rng.range(0.1, 0.6), rng.range(0.03, 0.15));
                 for a in 0..n {
                     let base = a as f32 * TAU / n as f32;
                     let ph = rng.f() * TAU;
                     let freq = rng.range(10.0, 16.0);
                     curves.push(Curve::new(
                         pts_from(80, |p| {
-                            let th = base + p * p * tw + 0.3 * (p * freq + ph).sin() * p;
-                            polar(p * p * r * (1.0 + 0.08 * (p * freq * 0.7 + ph).cos()), th, 0.0)
+                            let th = base + p * p * tw + amp * (p * freq + ph).sin() * p;
+                            polar(p * p * r * (1.0 + amp2 * (p * freq * 0.7 + ph).cos()), th, 0.0)
                         }),
                         0.22, 1.0, CapMode::Arm));
                 }
@@ -558,13 +586,14 @@ impl Shape {
             GalaxyKind::Filamentary => {
                 share = 0.85;
                 background = Background::Disk { reach: 0.3, thick: 12_000.0 };
-                let n = 18;
+                let n = rng.range(10.0, 30.0) as usize;
+                let turn = rng.range(0.4, 1.5);
                 let mut ends = Vec::new();
                 for i in 0..n {
                     let head = i as f32 * TAU / n as f32 + rng.range(-0.15, 0.15);
                     let len = r * rng.range(0.4, 1.0);
                     let start = polar(r * 0.03, head, 0.0);
-                    let c = wander(&mut rng, start, head, len, 16, 0.9);
+                    let c = wander(&mut rng, start, head, len, 16, turn);
                     ends.push(c[10]);
                     let caps = if i % 4 == 0 { CapMode::Arm } else { CapMode::Few };
                     curves.push(Curve::new(c, 0.02, rng.range(0.5, 1.0), caps));
@@ -581,8 +610,93 @@ impl Shape {
             }
         }
 
+        // Variations propres à chaque galaxie extérieure (la principale reste telle quelle) :
+        // largeur des bras, épaisseur, part d'étoiles sur la structure, disque plus ou moins ovale
+        let (mut bg_stretch, mut bg_yaw) = (1.0, Quat::IDENTITY);
+        if gal.seed != 0 {
+            // Sens d'enroulement : une galaxie sur deux tourne dans l'autre sens
+            if rng.f() < 0.5 {
+                for c in &mut curves {
+                    for p in &mut c.pts {
+                        p.z = -p.z;
+                    }
+                }
+                if let Background::Blobs(blobs) = &mut background {
+                    for b in blobs {
+                        b.0.z = -b.0.z;
+                    }
+                }
+            }
+            // Courbes irrégulières : poids, longueur et ondulation propres à chacune
+            let wobble = r * rng.range(0.0, 0.05);
+            for c in &mut curves {
+                c.weight *= rng.range(0.4, 1.5);
+                if matches!(c.caps, CapMode::Arm | CapMode::None) && c.pts.len() > 12 && rng.f() < 0.5 {
+                    let keep = ((c.pts.len() as f32 * rng.range(0.55, 1.0)) as usize).max(6);
+                    c.pts.truncate(keep);
+                }
+                let (k, ph) = (rng.range(3.0, 9.0), rng.f() * TAU);
+                let old = c.pts.clone();
+                let n = old.len();
+                for i in 1..n.saturating_sub(1) {
+                    let t = (old[i + 1] - old[i - 1]).normalize_or_zero();
+                    let side = Vec3::new(-t.z, 0.0, t.x);
+                    let f = i as f32 / (n - 1) as f32;
+                    c.pts[i] = old[i] + side * wobble * (f * k + ph).sin() * f;
+                }
+            }
+            // Éléments en plus (0 à 2) : anneau externe, jets polaires, satellites, queue de marée, barre
+            let extras = rng.range(0.0, 2.99) as usize;
+            for _ in 0..extras {
+                match (rng.f() * 5.0) as u32 {
+                    0 => {
+                        let (rr, start) = (r * rng.range(0.85, 1.05), rng.f() * TAU);
+                        curves.push(Curve::new(ring(&mut rng, rr, TAU, start, 0.12), 0.05, 0.2, CapMode::Loop));
+                    }
+                    1 => {
+                        let len = r * rng.range(0.25, 0.6);
+                        curves.push(Curve::new(pts_from(10, |p| Vec3::new(0.0, len * (2.0 * p - 1.0), 0.0)), 0.03, 0.25, CapMode::Few));
+                    }
+                    2 => {
+                        for _ in 0..rng.range(1.0, 3.99) as usize {
+                            let start = polar(r * rng.range(0.6, 1.1), rng.f() * TAU, r * rng.range(-0.08, 0.08));
+                            let heading = rng.f() * TAU;
+                            curves.push(Curve::new(wander(&mut rng, start, heading, r * 0.08, 6, 1.0), 0.08, 0.15, CapMode::Few));
+                        }
+                    }
+                    3 => {
+                        let th = rng.f() * TAU;
+                        curves.push(Curve::new(
+                            quad(polar(0.4 * r, th, 0.0), polar(0.9 * r, th + 0.8, 0.0), polar(1.05 * r, th + 1.6, 0.0), 24),
+                            0.06, 0.3, CapMode::Few));
+                    }
+                    _ => {
+                        let (len, th) = (r * rng.range(0.12, 0.3), rng.f() * TAU);
+                        let dir = Vec3::new(th.cos(), 0.0, th.sin());
+                        curves.push(Curve::new(pts_from(8, |p| dir * len * (2.0 * p - 1.0)), 0.05, 0.3, CapMode::Few));
+                    }
+                }
+            }
+
+            let width_mul = rng.range(0.6, 1.5);
+            for c in &mut curves {
+                c.width *= width_mul;
+            }
+            thickness *= rng.range(0.6, 2.0);
+            if share > 0.0 {
+                share = (share + rng.range(-0.15, 0.1)).clamp(0.1, 0.95);
+            }
+            bg_stretch = rng.range(0.6, 1.0);
+            bg_yaw = Quat::from_rotation_y(rng.f() * TAU);
+            for c in &mut curves {
+                for p in &mut c.pts {
+                    *p = bg_yaw * Vec3::new(p.x, p.y, p.z * bg_stretch);
+                }
+            }
+        }
+
         let total_weight = curves.iter().map(|c| c.weight).sum();
-        Self { curves, background, structure_share: share, thickness, radius: r, total_weight }
+        Self { curves, background, structure_share: share, thickness, radius: r, total_weight, bg_stretch, bg_yaw }
     }
 
     /// Étoile (ou nuage) posée sur la structure. `p_min` écarte le noyau.
@@ -610,6 +724,11 @@ impl Shape {
 
     /// Étoile du fond diffus.
     pub fn sample_background(&self, rng: &mut Rng) -> Vec3 {
+        let p = self.sample_background_raw(rng);
+        self.bg_yaw * Vec3::new(p.x, p.y, p.z * self.bg_stretch)
+    }
+
+    fn sample_background_raw(&self, rng: &mut Rng) -> Vec3 {
         match &self.background {
             Background::Disk { reach, thick } => {
                 let u = rng.f();
@@ -656,7 +775,7 @@ mod tests {
     use crate::settings::default_galaxies;
 
     fn config(kind: GalaxyKind) -> GalaxyConfig {
-        let mut g = default_galaxies().remove(1);
+        let mut g = default_galaxies(crate::settings::DEFAULT_WORLD_SEED).remove(1);
         g.kind = kind;
         g
     }
@@ -664,7 +783,7 @@ mod tests {
     #[test]
     fn every_kind_builds_finite_bounded_shapes() {
         for kind in GalaxyKind::ALL {
-            for seed in 0..6u32 {
+            for seed in 0..16u32 {
                 let mut g = config(kind);
                 g.seed = 1000 + seed * 77;
                 let shape = g.shape();
@@ -690,33 +809,67 @@ mod tests {
     #[test]
     fn capsule_budget_stays_reasonable() {
         for kind in GalaxyKind::ALL {
-            let shape = config(kind).shape();
+          for seed in 0..12u32 {
+            let mut g = config(kind);
+            g.seed = 7000 + seed * 131;
+            let shape = g.shape();
             let n: usize = shape.curves.iter().map(|c| match c.caps {
                 CapMode::Arm => 17,
                 CapMode::Loop => 12,
                 CapMode::Few => 1,
                 CapMode::None => 0,
             }).sum();
-            assert!(n <= 160, "{kind:?}: {n} capsules");
+            assert!(n <= 170, "{kind:?}: {n} capsules");
             assert!(n >= 1, "{kind:?}: aucune capsule visible de loin");
+          }
         }
     }
 
     #[test]
-    fn kinds_have_distinct_names_and_picking_is_varied() {
+    fn kinds_have_distinct_names_and_every_kind_is_used_equally() {
         let mut names: Vec<_> = GalaxyKind::ALL.iter().map(|k| k.name()).collect();
         names.sort();
         names.dedup();
         assert_eq!(names.len(), GalaxyKind::ALL.len());
-        let picked: std::collections::HashSet<_> =
-            (0..100u32).map(|i| GalaxyKind::pick(i * 13 + 300_000) as usize).collect();
-        assert!(picked.len() >= 14, "seulement {} types sur 100 galaxies", picked.len());
+        for world in [0u32, 5, 12345] {
+            let mut count = [0usize; 20];
+            for gi in 0..100 {
+                count[GalaxyKind::for_index(gi, world) as usize] += 1;
+            }
+            assert!(count.iter().all(|&n| n == 5), "{count:?}");
+            // Deux galaxies voisines ne sont jamais du même type
+            assert!((0..99).all(|gi| GalaxyKind::for_index(gi, world) != GalaxyKind::for_index(gi + 1, world)));
+        }
+    }
+
+    #[test]
+    fn another_world_seed_gives_other_galaxies() {
+        let a = default_galaxies(42);
+        let b = default_galaxies(43);
+        let differing = a.iter().zip(&b).skip(1).filter(|(x, y)| x.center.distance(y.center) > 1.0).count();
+        assert!(differing > 90, "{differing}");
+        assert!(a.iter().zip(&b).skip(1).any(|(x, y)| x.kind != y.kind));
+    }
+
+    #[test]
+    fn galaxies_of_the_same_kind_differ_from_each_other() {
+        let g = default_galaxies(crate::settings::DEFAULT_WORLD_SEED);
+        let same: Vec<&GalaxyConfig> = g.iter().skip(1).filter(|x| x.kind == g[1].kind).collect();
+        assert!(same.len() >= 2);
+        let s0 = same[0].shape();
+        let s1 = same[1].shape();
+        let (mut r0, mut r1) = (Rng::new(1), Rng::new(1));
+        let p0: Vec<Vec3> = (0..20).map(|_| s0.sample_structure(&mut r0, 0.0) / same[0].radius).collect();
+        let p1: Vec<Vec3> = (0..20).map(|_| s1.sample_structure(&mut r1, 0.0) / same[1].radius).collect();
+        assert!(p0.iter().zip(&p1).any(|(a, b)| a.distance(*b) > 0.05));
     }
 
     #[test]
     fn classic_spiral_keeps_the_historic_arm_formula() {
         let mut g = config(GalaxyKind::Spiral);
         g.num_arms = 3;
+        // Graine 0 = galaxie principale : aucune variation aléatoire
+        g.seed = 0;
         let shape = g.shape();
         assert_eq!(shape.curves.len(), 3);
         let (pos, _) = shape.curves[1].at(0.5);

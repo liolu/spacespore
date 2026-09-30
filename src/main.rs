@@ -619,6 +619,23 @@ fn select_world_target(
     }
 
     if let Some((_, selected)) = best {
+        // Changer de galaxie (trou noir d'une autre galaxie, mais aussi n'importe laquelle de ses
+        // étoiles) demande deux choses : être dézoomé à plus de 10 000 000, et que le vaisseau
+        // soit sur le trou noir de la galaxie où l'on est
+        if current_galaxy(&selected, &queries, &settings) != current_gal {
+            let now = time.elapsed_secs_f64();
+            if !ZoomLevel::is_core(&selected) || ctrl_dist < GALAXY_JUMP_MIN_ZOOM {
+                net.notify("Pour changer de galaxie : dezoomez a plus de 10 000 000 et choisissez son trou noir.", now);
+                return;
+            }
+            let at_core = settings.galaxies.get(current_gal as usize).zip(ship_q.get_single().ok()).is_some_and(|(g, ship)| {
+                ship.translation().distance(g.center) <= g.core_radius * 4.0
+            });
+            if !at_core {
+                net.notify("Rejoignez le trou noir de votre galaxie pour sauter vers une autre galaxie.", now);
+                return;
+            }
+        }
         if zoom.can_navigate_to(&selected) {
             // Portée de déplacement fixe : seuls les trous noirs de galaxie (sauts entre galaxies)
             // et les cibles du système où l'on est peuvent être hors de portée
@@ -762,6 +779,9 @@ fn galaxy_view_distance(kind: &TargetKind, settings: &GameSettings) -> f32 {
 /// directement à destination au lieu de voyager en croisière.
 const HYPERJUMP_DIST: f32 = 20_000_000.0;
 
+/// Distance de caméra minimale pour pouvoir sélectionner une autre galaxie (saut entre galaxies).
+const GALAXY_JUMP_MIN_ZOOM: f32 = 10_000_000.0;
+
 /// Portée fixe d'un déplacement du vaisseau (le cercle blanc). Au-delà, il faut avancer par
 /// étapes, passer par un trou de ver, ou sauter entre galaxies via leur trou noir.
 const MAX_TRAVEL_RANGE: f32 = 600_000.0;
@@ -853,6 +873,30 @@ fn hover_height(target: &CameraTarget, settings: &GameSettings) -> f32 {
     }
     let (min_distance, _) = camera_distance_range(target, settings);
     (min_distance * 0.5).max(80.0)
+}
+
+/// Décalage du point de stationnement : aucun sur un trou noir ou un trou de ver (le vaisseau s'y
+/// centre), un léger écart autour des autres astres pour les joueurs qui les partagent.
+fn hover_offset(kind: &TargetKind, net: &Net, zoom_distance: f32) -> Vec3 {
+    match kind {
+        TargetKind::GalacticCore | TargetKind::DistantGalaxyCore(_) | TargetKind::WormholeMouth(_) => Vec3::ZERO,
+        _ => net.hover_offset(zoom_distance),
+    }
+}
+
+/// Amène le vaisseau à son point de stationnement : croisière, ou saut direct si `snap`
+/// (vaisseau caché, autre galaxie, ou déjà arrivé).
+fn steer_ship(ship_tf: &mut Transform, hover_pos: Vec3, snap: bool, dt: f32) {
+    let to_hover = hover_pos - ship_tf.translation;
+    let dist = to_hover.length();
+    if snap || dist > HYPERJUMP_DIST || dist <= 30.0 {
+        ship_tf.translation = hover_pos;
+    } else {
+        let cruise = (dist * 0.8).max(3000.0).min(500_000.0);
+        let step = (cruise * dt).min(dist);
+        ship_tf.translation += to_hover.normalize() * step;
+        ship_tf.look_to(to_hover.normalize(), Vec3::Y);
+    }
 }
 
 fn camera_controller(
@@ -953,6 +997,11 @@ fn camera_controller(
 
         let sp = if let Ok((mut ship_tf, mut ship_vis)) = ship_q.get_single_mut() {
             let hide_ship = matches!(*zoom_level, ZoomLevel::Galaxy | ZoomLevel::Cosmos | ZoomLevel::DeepSpace);
+            let hover_pos = target_pos + Vec3::Y * hover_height(&camera_target, &settings) + hover_offset(&camera_target.0, &net, ctrl.distance);
+            if !travel.active() {
+                // Caché (vue galaxie) : le vaisseau se place quand même sur son astre, sans croisière
+                steer_ship(&mut ship_tf, hover_pos, hide_ship, time.delta_secs());
+            }
             if hide_ship {
                 *ship_vis = Visibility::Hidden;
                 cam_tf.translation = target_pos + cam_rotation * Vec3::new(0.0, 0.0, ctrl.distance);
@@ -960,21 +1009,6 @@ fn camera_controller(
                 return;
             }
             *ship_vis = Visibility::Inherited;
-            let hover_pos = (target_pos + Vec3::Y * hover_height(&camera_target, &settings)) + net.hover_offset(ctrl.distance);
-            let to_hover = hover_pos - ship_tf.translation;
-            let dist = to_hover.length();
-            if travel.active() {
-                // Le voyage en trou de ver pilote le vaisseau
-            } else if dist > HYPERJUMP_DIST {
-                ship_tf.translation = hover_pos;
-            } else if dist > 30.0 {
-                let cruise = (dist * 0.8).max(3000.0).min(500_000.0);
-                let step = (cruise * time.delta_secs()).min(dist);
-                ship_tf.translation += to_hover.normalize() * step;
-                ship_tf.look_to(to_hover.normalize(), Vec3::Y);
-            } else {
-                ship_tf.translation = hover_pos;
-            }
             let pos = ship_tf.translation;
             ship_tf.scale = Vec3::splat(ctrl.distance.max(1.0) * 0.008);
             pos
@@ -1054,6 +1088,11 @@ fn camera_controller(
     // ── Vaisseau : croisière puis posé au-dessus de l'astre ────────
     let ship_pos = if let Ok((mut ship_tf, mut ship_vis)) = ship_q.get_single_mut() {
         let hide_ship = matches!(*zoom_level, ZoomLevel::Galaxy | ZoomLevel::Cosmos | ZoomLevel::DeepSpace);
+        let hover_pos = target_pos + Vec3::Y * hover_height(&camera_target, &settings) + hover_offset(&camera_target.0, &net, ctrl.distance);
+        if !travel.active() {
+            // Caché (vue galaxie) : le vaisseau se place quand même sur son astre, sans croisière
+            steer_ship(&mut ship_tf, hover_pos, hide_ship, time.delta_secs());
+        }
         if hide_ship {
             *ship_vis = Visibility::Hidden;
             cam_tf.translation = target_pos + cam_rotation * Vec3::new(0.0, 0.0, ctrl.distance);
@@ -1061,26 +1100,6 @@ fn camera_controller(
             return;
         }
         *ship_vis = Visibility::Inherited;
-
-        let hover_height = hover_height(&camera_target, &settings);
-        let hover_pos = (target_pos + Vec3::Y * hover_height) + net.hover_offset(ctrl.distance);
-        let to_hover = hover_pos - ship_tf.translation;
-        let dist = to_hover.length();
-
-        if travel.active() {
-            // Le voyage en trou de ver pilote le vaisseau
-        } else if dist > HYPERJUMP_DIST {
-            // Autre galaxie : saut direct plutôt que des minutes de croisière
-            ship_tf.translation = hover_pos;
-        } else if dist > 30.0 {
-            let cruise = (dist * 0.8).max(3000.0).min(500_000.0);
-            let step = (cruise * time.delta_secs()).min(dist);
-            ship_tf.translation += to_hover.normalize() * step;
-            ship_tf.look_to(to_hover.normalize(), Vec3::Y);
-        } else {
-            ship_tf.translation = hover_pos;
-        }
-
         let pos = ship_tf.translation;
         let d = ctrl.distance.max(1.0);
         ship_tf.scale = Vec3::splat(d * 0.008);
