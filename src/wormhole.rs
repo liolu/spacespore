@@ -37,6 +37,9 @@ const MIN_DRAW_RADIUS: f32 = 1_500.0;
 const DRAW_RANGE: f32 = 3_000_000.0;
 /// Le trait entre deux ouvertures connues est dessiné de plus loin.
 const LINE_RANGE: f32 = 30_000_000.0;
+/// Délai, en secondes, entre la fin d'un voyage et le suivant.
+const COOLDOWN: f64 = 5.0;
+
 /// Distance de la caméra après l'arrivée (zoom « Système »).
 const ARRIVAL_DISTANCE: f32 = 30_000.0;
 
@@ -255,6 +258,8 @@ struct Trip {
 #[derive(Resource, Default)]
 pub struct WormholeTravel {
     trip: Option<Trip>,
+    /// Instant (temps de jeu, en secondes) avant lequel un nouveau voyage est impossible.
+    cooldown_until: f64,
     /// Après le voyage : le vaisseau reste centré au-dessus de l'ouverture de sortie tant que
     /// l'étoile d'arrivée reste la cible.
     parked: Option<(TargetKind, Vec3)>,
@@ -359,6 +364,11 @@ fn wormhole_travel(
         return;
     }
     let now = time.elapsed_secs_f64();
+    if now < travel.cooldown_until {
+        let left = (travel.cooldown_until - now).ceil() as u32;
+        net.notify(&format!("Trou de ver en recharge : encore {left} s."), now);
+        return;
+    }
     let Some(Some(sys)) = target_system(&target.0, &star_q) else {
         net.notify("Ciblez une etoile pour chercher un trou de ver.", now);
         return;
@@ -436,6 +446,7 @@ fn run_wormhole_trip(
         let name = trip.dest_name.clone();
         let first = trip.first_time;
         travel.parked = Some((TargetKind::Star(trip.to), trip.dest));
+        travel.cooldown_until = now + COOLDOWN;
         travel.trip = None;
         let text = if first {
             format!("Trou de ver decouvert : il relie les deux etoiles. Vous etes pres de {name}.")

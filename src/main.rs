@@ -460,8 +460,13 @@ fn select_world_target(
     ship_q: Query<&GlobalTransform, With<Ship>>,
     time: Res<Time>,
     mut net: ResMut<Net>,
+    travel: Res<wormhole::WormholeTravel>,
 ) {
     if !buttons.just_pressed(MouseButton::Left) {
+        return;
+    }
+    // Pendant un voyage en trou de ver, on ne change pas de cible
+    if travel.active() {
         return;
     }
     // Clic sur un élément d'interface : ne pas sélectionner d'astre derrière
@@ -687,8 +692,9 @@ fn select_next_moon(
     settings: Res<GameSettings>,
     mut target: ResMut<CameraTarget>,
     net_panel: Res<NetPanel>,
+    travel: Res<wormhole::WormholeTravel>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyM) || net_panel.focus.is_some() {
+    if !keys.just_pressed(KeyCode::KeyM) || net_panel.focus.is_some() || travel.active() {
         return;
     }
 
