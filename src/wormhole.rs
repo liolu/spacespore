@@ -11,7 +11,8 @@
 //  pour tous les joueurs qui ont le même monde.
 //
 //  Pour l'emprunter : cibler l'étoile (ou une planète de son système), être
-//  sur place avec son vaisseau, puis appuyer sur T. Tant qu'il n'a pas été
+//  sur place avec son vaisseau, puis appuyer sur T : le vaisseau s'élance en six temps (préparation,
+//  accélération, bond en avant, vitesse lumière, décélération, sortie). Tant qu'il n'a pas été
 //  emprunté, on ne sait pas où il mène ; ensuite les deux ouvertures sont
 //  reliées par un trait, et c'est retenu sur le PC du joueur.
 // ─────────────────────────────────────────────────────────────────────────
@@ -44,8 +45,9 @@ pub struct WormholePlugin;
 impl Plugin for WormholePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Wormholes>()
-            .add_systems(Startup, build_wormholes)
-            .add_systems(Update, (wormhole_travel, draw_wormholes));
+            .init_resource::<WormholeTravel>()
+            .add_systems(Startup, (build_wormholes, setup_trip_ui))
+            .add_systems(Update, (wormhole_travel, run_wormhole_trip, draw_wormholes, draw_trip_fx, update_trip_ui).chain());
     }
 }
 
@@ -205,6 +207,124 @@ fn build_wormholes(settings: Res<GameSettings>, mut wormholes: ResMut<Wormholes>
 //  Voyage
 // ─────────────────────────────────────────────────────────────────────────
 
+/// Les six temps du voyage : (phase, durée en secondes, texte affiché).
+const PHASES: [(Phase, f32, &str); 6] = [
+    (Phase::Prep, 1.0, "Preparation du saut..."),
+    (Phase::Accel, 1.5, "Acceleration"),
+    (Phase::Leap, 0.6, "Bond en avant !"),
+    (Phase::Light, 2.2, "Vitesse lumiere"),
+    (Phase::Decel, 1.5, "Deceleration"),
+    (Phase::Exit, 0.8, "Sortie du trou de ver"),
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Phase {
+    Prep,
+    Accel,
+    Leap,
+    Light,
+    Decel,
+    Exit,
+}
+
+/// Un voyage en cours.
+struct Trip {
+    /// Temps écoulé depuis le début (secondes).
+    t: f32,
+    /// Étoile d'arrivée et identifiant du trou de ver.
+    to: usize,
+    wormhole_id: u32,
+    dest_name: String,
+    first_time: bool,
+    /// Trajet : départ (vaisseau), ouverture d'entrée, ouverture de sortie, point d'arrivée.
+    start: Vec3,
+    mouth: Vec3,
+    exit_mouth: Vec3,
+    dest: Vec3,
+    /// Étapes déjà faites (une seule fois chacune).
+    arrival_set: bool,
+    light_started: bool,
+}
+
+/// Voyage en trou de ver en cours. Tant qu'il dure, l'animation pilote le vaisseau
+/// (voir `run_wormhole_trip`) et les commandes de déplacement sont bloquées.
+#[derive(Resource, Default)]
+pub struct WormholeTravel {
+    trip: Option<Trip>,
+}
+
+impl WormholeTravel {
+    pub fn active(&self) -> bool {
+        self.trip.is_some()
+    }
+}
+
+/// Phase à l'instant `t`, avancement (0 à 1) dans la phase, et son texte.
+fn phase_at(t: f32) -> Option<(Phase, f32, &'static str)> {
+    let mut start = 0.0;
+    for (phase, duration, label) in PHASES {
+        if t < start + duration {
+            return Some((phase, (t - start) / duration, label));
+        }
+        start += duration;
+    }
+    None
+}
+
+fn smooth(p: f32) -> f32 {
+    let p = p.clamp(0.0, 1.0);
+    p * p * (3.0 - 2.0 * p)
+}
+
+impl Trip {
+    /// Position du vaisseau : il s'élance vers l'ouverture en accélérant, fonce dedans,
+    /// traverse à la vitesse de la lumière, puis ralentit jusqu'à l'étoile d'arrivée.
+    fn ship_pos(&self, phase: Phase, p: f32) -> Vec3 {
+        let before_leap = self.start + (self.mouth - self.start) * 0.7;
+        match phase {
+            Phase::Prep => self.start,
+            Phase::Accel => self.start + (self.mouth - self.start) * (0.7 * p * p),
+            Phase::Leap => before_leap.lerp(self.mouth, p * p * p),
+            Phase::Light => self.mouth.lerp(self.exit_mouth, smooth(p)),
+            Phase::Decel => self.exit_mouth.lerp(self.dest, 1.0 - (1.0 - p) * (1.0 - p)),
+            Phase::Exit => self.dest,
+        }
+    }
+
+    /// Direction du déplacement dans cette phase (axe des traits de vitesse).
+    fn axis(&self, phase: Phase) -> Vec3 {
+        let (a, b) = match phase {
+            Phase::Prep | Phase::Accel | Phase::Leap => (self.start, self.mouth),
+            Phase::Light => (self.mouth, self.exit_mouth),
+            Phase::Decel | Phase::Exit => (self.exit_mouth, self.dest),
+        };
+        (b - a).normalize_or_zero()
+    }
+
+    /// Intensité de l'effet de vitesse (0 à 1).
+    fn speed(&self, phase: Phase, p: f32) -> f32 {
+        match phase {
+            Phase::Prep | Phase::Exit => 0.0,
+            Phase::Accel => 0.3 * p,
+            Phase::Leap => 0.3 + 0.7 * p,
+            Phase::Light => 1.0,
+            Phase::Decel => 1.0 - p,
+        }
+    }
+
+    /// Opacité du voile de couleur plaqué sur l'écran (flash au bond, tunnel, sortie).
+    fn veil(&self, phase: Phase, p: f32) -> f32 {
+        match phase {
+            Phase::Prep => 0.0,
+            Phase::Accel => 0.05 * p,
+            Phase::Leap => 0.75 * p * p,
+            Phase::Light => 0.3 + 0.45 * (1.0 - (p * 5.0).min(1.0)),
+            Phase::Decel => 0.3 * (1.0 - p),
+            Phase::Exit => 0.4 * (1.0 - p) * (1.0 - p),
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn wormhole_travel(
     keys: Res<ButtonInput<KeyCode>>,
@@ -213,14 +333,14 @@ fn wormhole_travel(
     menu: Res<MenuState>,
     wormholes: Res<Wormholes>,
     star_q: Query<&StarId, With<StarRoot>>,
-    mut ship_q: Query<&mut Transform, With<Ship>>,
+    ship_q: Query<&Transform, With<Ship>>,
+    target: Res<CameraTarget>,
+    settings: Res<GameSettings>,
+    mut travel: ResMut<WormholeTravel>,
     mut cam_q: Query<&mut CameraController>,
-    mut target: ResMut<CameraTarget>,
-    mut zoom: ResMut<ZoomLevel>,
-    mut settings: ResMut<GameSettings>,
     mut net: ResMut<Net>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyT) || panel.focus.is_some() || menu.open {
+    if !keys.just_pressed(KeyCode::KeyT) || panel.focus.is_some() || menu.open || travel.active() {
         return;
     }
     let now = time.elapsed_secs_f64();
@@ -239,30 +359,230 @@ fn wormhole_travel(
         net.notify("Votre vaisseau est detruit.", now);
         return;
     }
-    let Ok(mut ship) = ship_q.get_single_mut() else { return };
+    let Ok(ship) = ship_q.get_single() else { return };
     if ship.translation.distance(here.center()) > wormhole.reach_at(sys) {
         net.notify("Approchez-vous de l'etoile pour emprunter son trou de ver.", now);
         return;
     }
 
-    let name = dest.name.clone();
-    // Le vaisseau réapparaît près de l'étoile d'arrivée, et la caméra le suit
-    ship.translation = dest.center() + Vec3::Y * 80.0;
-    target.0 = TargetKind::Star(to);
+    let (mouth, exit_mouth) = if sys == wormhole.a { (wormhole.mouth_a, wormhole.mouth_b) } else { (wormhole.mouth_b, wormhole.mouth_a) };
+    let hover = crate::hover_height(&CameraTarget(TargetKind::Star(to)), &settings);
+    travel.trip = Some(Trip {
+        t: 0.0,
+        to,
+        wormhole_id: wormhole.id(),
+        dest_name: dest.name.clone(),
+        first_time: !settings.known_wormholes.contains(&wormhole.id()),
+        start: ship.translation,
+        mouth,
+        exit_mouth,
+        dest: dest.center() + Vec3::Y * hover,
+        arrival_set: false,
+        light_started: false,
+    });
+    // Caméra en retrait : on voit le vaisseau et les effets, et le zoom reste « Système »
     if let Ok(mut ctrl) = cam_q.get_single_mut() {
-        ctrl.distance = ARRIVAL_DISTANCE;
+        ctrl.distance = ctrl.distance.max(15_000.0);
     }
-    // Au zoom « Planète », une cible hors du système courant serait annulée
-    *zoom = ZoomLevel::System;
     // Un siège en cours est rompu par le départ (le vaisseau quitte le territoire)
     net.local.siege = None;
+}
 
-    if !settings.known_wormholes.contains(&wormhole.id()) {
-        settings.known_wormholes.push(wormhole.id());
-        settings.save();
-        net.notify(&format!("Trou de ver decouvert : il relie les deux etoiles. Vous arrivez pres de {name}."), now);
-    } else {
-        net.notify(&format!("Trou de ver traverse : vous arrivez pres de {name}."), now);
+/// Fait avancer le voyage : place le vaisseau, change la cible à l'arrivée, et termine.
+#[allow(clippy::too_many_arguments)]
+fn run_wormhole_trip(
+    time: Res<Time>,
+    mut travel: ResMut<WormholeTravel>,
+    mut ship_q: Query<&mut Transform, With<Ship>>,
+    mut cam_q: Query<&mut CameraController>,
+    mut target: ResMut<CameraTarget>,
+    mut zoom: ResMut<ZoomLevel>,
+    mut settings: ResMut<GameSettings>,
+    mut net: ResMut<Net>,
+) {
+    let Some(trip) = travel.trip.as_mut() else { return };
+    let now = time.elapsed_secs_f64();
+    trip.t += time.delta_secs();
+    let Ok(mut ship) = ship_q.get_single_mut() else {
+        travel.trip = None;
+        return;
+    };
+    let Some((phase, p, _)) = phase_at(trip.t) else {
+        // Fin : le vaisseau est posé près de l'étoile d'arrivée
+        ship.translation = trip.dest;
+        if let Ok(mut ctrl) = cam_q.get_single_mut() {
+            ctrl.distance = ARRIVAL_DISTANCE;
+        }
+        let name = trip.dest_name.clone();
+        let first = trip.first_time;
+        travel.trip = None;
+        let text = if first {
+            format!("Trou de ver decouvert : il relie les deux etoiles. Vous etes pres de {name}.")
+        } else {
+            format!("Trou de ver traverse : vous etes pres de {name}.")
+        };
+        net.notify(&text, now);
+        return;
+    };
+
+    // Le vaisseau se déplace et regarde dans le sens du mouvement
+    let before = ship.translation;
+    ship.translation = trip.ship_pos(phase, p);
+    let heading = (ship.translation - before).normalize_or_zero();
+    let heading = if heading == Vec3::ZERO { trip.axis(phase) } else { heading };
+    if heading != Vec3::ZERO {
+        ship.look_to(heading, Vec3::Y);
+    }
+
+    // La découverte est retenue dès qu'on entre dans le trou de ver
+    if phase == Phase::Light && !trip.light_started {
+        trip.light_started = true;
+        if trip.first_time {
+            settings.known_wormholes.push(trip.wormhole_id);
+            settings.save();
+        }
+    }
+    // À la décélération : la cible devient l'étoile d'arrivée (la caméra reste en zoom « Système »)
+    if phase == Phase::Decel && !trip.arrival_set {
+        trip.arrival_set = true;
+        target.0 = TargetKind::Star(trip.to);
+        *zoom = ZoomLevel::System;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Effets du voyage : traits de vitesse, anneaux, voile plein écran, texte
+// ─────────────────────────────────────────────────────────────────────────
+
+#[derive(Component)]
+struct TripVeil;
+
+#[derive(Component)]
+struct TripText;
+
+fn setup_trip_ui(mut commands: Commands) {
+    // Voile plein écran : ce n'est pas un bouton, il ne bloque aucun clic
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        BackgroundColor(Color::NONE),
+        GlobalZIndex(40),
+        TripVeil,
+    ));
+    commands.spawn((
+        Text::new(""),
+        TextFont { font_size: 30.0, ..default() },
+        TextColor(Color::srgba(0.85, 0.95, 1.0, 0.0)),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Percent(18.0),
+            width: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+        TextLayout::new_with_justify(JustifyText::Center),
+        GlobalZIndex(41),
+        TripText,
+    ));
+}
+
+fn update_trip_ui(
+    travel: Res<WormholeTravel>,
+    mut veil: Query<&mut BackgroundColor, With<TripVeil>>,
+    mut text: Query<(&mut Text, &mut TextColor), With<TripText>>,
+) {
+    let (alpha, label, text_alpha) = match travel.trip.as_ref().and_then(|trip| phase_at(trip.t).map(|(ph, p, l)| (trip, ph, p, l))) {
+        Some((trip, phase, p, label)) => (trip.veil(phase, p), label, 0.95),
+        None => (0.0, "", 0.0),
+    };
+    for mut bg in &mut veil {
+        let c = Color::srgba(0.78, 0.68, 1.0, alpha);
+        if bg.0 != c {
+            bg.0 = c;
+        }
+    }
+    for (mut t, mut color) in &mut text {
+        if t.0 != label {
+            t.0 = label.to_string();
+        }
+        color.0 = Color::srgba(0.85, 0.95, 1.0, text_alpha);
+    }
+}
+
+/// Traits de lumière autour du vaisseau, dans l'axe du déplacement, qui défilent vers l'arrière :
+/// courts et lents à l'accélération, longs et rapides à la vitesse lumière, puis ils s'éteignent.
+fn draw_trip_fx(
+    time: Res<Time>,
+    travel: Res<WormholeTravel>,
+    ship_q: Query<&Transform, With<Ship>>,
+    cam_q: Query<&CameraController>,
+    mut gizmos: Gizmos,
+) {
+    let Some(trip) = travel.trip.as_ref() else { return };
+    let Some((phase, p, _)) = phase_at(trip.t) else { return };
+    let Ok(ship) = ship_q.get_single() else { return };
+    let center = ship.translation;
+    let scale = cam_q.get_single().map_or(15_000.0, |c| c.distance.max(1_000.0));
+    let t = time.elapsed_secs();
+    let axis = trip.axis(phase);
+    if axis == Vec3::ZERO {
+        return;
+    }
+    let mut side = axis.cross(Vec3::Y);
+    if side.length_squared() < 1.0e-4 {
+        side = Vec3::X;
+    }
+    let side = side.normalize();
+    let up = side.cross(axis);
+    let ring = |gizmos: &mut Gizmos, at: Vec3, radius: f32, color: Color| {
+        const SEGMENTS: usize = 40;
+        let point = |a: f32| at + (side * a.cos() + up * a.sin()) * radius;
+        for s in 0..SEGMENTS {
+            let a0 = s as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+            let a1 = (s + 1) as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+            gizmos.line(point(a0), point(a1), color);
+        }
+    };
+
+    // Préparation : des anneaux d'énergie se resserrent sur le vaisseau
+    if phase == Phase::Prep {
+        for k in 0..3 {
+            let phase_k = (p * 1.5 + k as f32 / 3.0).fract();
+            ring(&mut gizmos, center, scale * 0.25 * (1.0 - phase_k), Color::srgba(0.6, 0.9, 1.0, 0.3 + 0.6 * phase_k));
+        }
+    }
+
+    // Traits de vitesse
+    let speed = trip.speed(phase, p);
+    if speed > 0.02 {
+        const STREAKS: usize = 90;
+        let length = scale * (0.15 + 1.6 * speed);
+        let span = scale * 3.0;
+        let flow = t * (0.4 + 3.0 * speed);
+        for i in 0..STREAKS {
+            let h = |k: u32| ((i as u32 * 2654435761u32).wrapping_add(k.wrapping_mul(40503)) % 1000) as f32 / 1000.0;
+            let angle = h(1) * std::f32::consts::TAU;
+            let radius = scale * (0.08 + 0.7 * h(2));
+            // Position le long de l'axe : défile vers l'arrière (les traits passent devant la caméra)
+            let z = span * (1.0 - ((flow * (0.6 + 0.8 * h(3)) + h(4)).fract() * 2.0));
+            let base = center + (side * angle.cos() + up * angle.sin()) * radius + axis * z;
+            let alpha = (0.25 + 0.7 * speed) * (0.5 + 0.5 * h(5));
+            gizmos.line(base, base - axis * length, Color::srgba(0.75 + 0.25 * h(6), 0.9, 1.0, alpha));
+        }
+    }
+
+    // Sortie : des ondes s'élargissent depuis le vaisseau
+    if phase == Phase::Exit {
+        for k in 0..3 {
+            let f = (p + k as f32 * 0.25).min(1.0);
+            ring(&mut gizmos, center, scale * (0.05 + 0.9 * f), Color::srgba(0.8, 0.7, 1.0, 0.85 * (1.0 - f)));
+        }
     }
 }
 
@@ -415,6 +735,100 @@ mod tests {
         settings.known_wormholes.push(w.id());
         assert!(wormholes.hud_line(w.a, &settings).unwrap().contains(&settings.systems[w.b].name));
         assert!(wormholes.hud_line(w.b, &settings).unwrap().contains(&settings.systems[w.a].name));
+    }
+
+    fn trip() -> Trip {
+        Trip {
+            t: 0.0,
+            to: 1,
+            wormhole_id: 0,
+            dest_name: "X".into(),
+            first_time: true,
+            start: Vec3::new(1_000.0, 0.0, 0.0),
+            mouth: Vec3::new(20_000.0, 0.0, 500.0),
+            exit_mouth: Vec3::new(3_000_000.0, 400.0, -2_000_000.0),
+            dest: Vec3::new(3_010_000.0, 500.0, -2_000_000.0),
+            arrival_set: false,
+            light_started: false,
+        }
+    }
+
+    #[test]
+    fn the_trip_has_six_phases_in_order_and_then_ends() {
+        let order: Vec<Phase> = PHASES.iter().map(|p| p.0).collect();
+        assert_eq!(order, [Phase::Prep, Phase::Accel, Phase::Leap, Phase::Light, Phase::Decel, Phase::Exit]);
+        let total: f32 = PHASES.iter().map(|p| p.1).sum();
+        // On parcourt bien les phases dans l'ordre en avançant dans le temps
+        let mut seen: Vec<Phase> = Vec::new();
+        let mut t = 0.0;
+        while let Some((phase, p, _)) = phase_at(t) {
+            assert!((0.0..=1.0).contains(&p));
+            if seen.last() != Some(&phase) {
+                seen.push(phase);
+            }
+            t += 0.01;
+        }
+        assert_eq!(seen, order);
+        assert!(t >= total - 0.02 && t < total + 0.05, "{t} pour {total}");
+        assert!(phase_at(total + 0.1).is_none());
+    }
+
+    #[test]
+    fn the_ship_path_is_continuous_between_phases() {
+        let trip = trip();
+        let end = |ph| trip.ship_pos(ph, 1.0);
+        let begin = |ph| trip.ship_pos(ph, 0.0);
+        for (a, b) in [(Phase::Prep, Phase::Accel), (Phase::Accel, Phase::Leap), (Phase::Leap, Phase::Light), (Phase::Light, Phase::Decel), (Phase::Decel, Phase::Exit)] {
+            assert!(end(a).distance(begin(b)) < 1.0, "saut entre {a:?} et {b:?}");
+        }
+        // Part du vaisseau, entre dans l'ouverture, sort à l'autre ouverture, finit à l'étoile
+        assert_eq!(begin(Phase::Prep), trip.start);
+        assert!(end(Phase::Leap).distance(trip.mouth) < 1.0);
+        assert!(end(Phase::Light).distance(trip.exit_mouth) < 1.0);
+        assert!(end(Phase::Exit).distance(trip.dest) < 1.0);
+    }
+
+    #[test]
+    fn the_ship_really_accelerates_then_decelerates() {
+        let trip = trip();
+        // Accélération : à chaque pas régulier on avance plus que le précédent
+        let steps: Vec<f32> = (0..10)
+            .map(|i| trip.ship_pos(Phase::Accel, (i + 1) as f32 / 10.0).distance(trip.ship_pos(Phase::Accel, i as f32 / 10.0)))
+            .collect();
+        assert!(steps.windows(2).all(|w| w[1] > w[0]), "{steps:?}");
+        // Décélération : à chaque pas on avance moins que le précédent
+        let steps: Vec<f32> = (0..10)
+            .map(|i| trip.ship_pos(Phase::Decel, (i + 1) as f32 / 10.0).distance(trip.ship_pos(Phase::Decel, i as f32 / 10.0)))
+            .collect();
+        assert!(steps.windows(2).all(|w| w[1] < w[0]), "{steps:?}");
+        // Le bond est encore plus rapide que l'accélération qui précède
+        // (en unités par seconde : les deux phases n'ont pas la même durée)
+        let last_accel = trip.ship_pos(Phase::Accel, 1.0).distance(trip.ship_pos(Phase::Accel, 0.9)) / (0.1 * PHASES[1].1);
+        let last_leap = trip.ship_pos(Phase::Leap, 1.0).distance(trip.ship_pos(Phase::Leap, 0.9)) / (0.1 * PHASES[2].1);
+        assert!(last_leap > last_accel);
+    }
+
+    #[test]
+    fn speed_lines_and_veil_follow_the_phases() {
+        let trip = trip();
+        assert_eq!(trip.speed(Phase::Prep, 0.5), 0.0);
+        assert_eq!(trip.speed(Phase::Light, 0.5), 1.0);
+        assert_eq!(trip.speed(Phase::Exit, 0.5), 0.0);
+        assert!(trip.speed(Phase::Accel, 1.0) < trip.speed(Phase::Leap, 1.0));
+        assert!(trip.speed(Phase::Decel, 0.0) > trip.speed(Phase::Decel, 1.0));
+        for (phase, _, _) in PHASES {
+            for i in 0..=10 {
+                let v = trip.veil(phase, i as f32 / 10.0);
+                assert!((0.0..=1.0).contains(&v), "{phase:?} {v}");
+            }
+        }
+        // Flash blanc à la fin du bond, écran net au départ et à l'arrivée
+        assert!(trip.veil(Phase::Leap, 1.0) > 0.7);
+        assert_eq!(trip.veil(Phase::Prep, 0.5), 0.0);
+        assert!(trip.veil(Phase::Exit, 1.0) < 0.01);
+        // Les axes : vers l'ouverture, à travers le trou de ver, puis vers l'étoile
+        assert!(trip.axis(Phase::Accel).dot((trip.mouth - trip.start).normalize()) > 0.999);
+        assert!(trip.axis(Phase::Light).dot((trip.exit_mouth - trip.mouth).normalize()) > 0.999);
     }
 
     #[test]

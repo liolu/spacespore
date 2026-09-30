@@ -849,6 +849,7 @@ fn camera_controller(
 
     net_panel: Res<NetPanel>,
     net: Res<Net>,
+    travel: Res<wormhole::WormholeTravel>,
 ) {
     // Saisie de texte en cours (panneau multijoueur) : clavier réservé au champ
     let menu_open = menu_state.open || net_panel.focus.is_some();
@@ -929,7 +930,9 @@ fn camera_controller(
             let hover_pos = target_pos + Vec3::Y * hover_height(&camera_target, &settings) + net.hover_offset(ctrl.distance);
             let to_hover = hover_pos - ship_tf.translation;
             let dist = to_hover.length();
-            if dist > HYPERJUMP_DIST {
+            if travel.active() {
+                // Le voyage en trou de ver pilote le vaisseau
+            } else if dist > HYPERJUMP_DIST {
                 ship_tf.translation = hover_pos;
             } else if dist > 30.0 {
                 let cruise = (dist * 0.8).max(3000.0).min(500_000.0);
@@ -1031,7 +1034,9 @@ fn camera_controller(
         let to_hover = hover_pos - ship_tf.translation;
         let dist = to_hover.length();
 
-        if dist > HYPERJUMP_DIST {
+        if travel.active() {
+            // Le voyage en trou de ver pilote le vaisseau
+        } else if dist > HYPERJUMP_DIST {
             // Autre galaxie : saut direct plutôt que des minutes de croisière
             ship_tf.translation = hover_pos;
         } else if dist > 30.0 {
