@@ -820,6 +820,15 @@ impl ZoomLevel {
 /// Hauteur fixe du vaisseau au-dessus de l'astre ciblé : toujours au-dessus, quelle que soit sa
 /// taille (une géante ne l'engloutit pas), et indépendante du zoom.
 fn hover_height(target: &CameraTarget, settings: &GameSettings) -> f32 {
+    // Trou noir : le vaisseau se place au-dessus de la sphère, pas à l'intérieur
+    let core_radius = match target.0 {
+        TargetKind::GalacticCore => settings.galaxies.first().map(|g| g.core_radius),
+        TargetKind::DistantGalaxyCore(id) => settings.galaxies.get(id as usize).map(|g| g.core_radius),
+        _ => None,
+    };
+    if let Some(r) = core_radius {
+        return r * 1.8;
+    }
     let (min_distance, _) = camera_distance_range(target, settings);
     (min_distance * 0.5).max(80.0)
 }
@@ -929,7 +938,7 @@ fn camera_controller(
                 return;
             }
             *ship_vis = Visibility::Inherited;
-            let hover_pos = target_pos + Vec3::Y * hover_height(&camera_target, &settings) + net.hover_offset(ctrl.distance);
+            let hover_pos = travel.parked(&camera_target.0).unwrap_or(target_pos + Vec3::Y * hover_height(&camera_target, &settings)) + net.hover_offset(ctrl.distance);
             let to_hover = hover_pos - ship_tf.translation;
             let dist = to_hover.length();
             if travel.active() {
@@ -1032,7 +1041,7 @@ fn camera_controller(
         *ship_vis = Visibility::Inherited;
 
         let hover_height = hover_height(&camera_target, &settings);
-        let hover_pos = target_pos + Vec3::Y * hover_height + net.hover_offset(ctrl.distance);
+        let hover_pos = travel.parked(&camera_target.0).unwrap_or(target_pos + Vec3::Y * hover_height) + net.hover_offset(ctrl.distance);
         let to_hover = hover_pos - ship_tf.translation;
         let dist = to_hover.length();
 

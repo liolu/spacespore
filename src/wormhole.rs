@@ -255,11 +255,19 @@ struct Trip {
 #[derive(Resource, Default)]
 pub struct WormholeTravel {
     trip: Option<Trip>,
+    /// Après le voyage : le vaisseau reste centré au-dessus de l'ouverture de sortie tant que
+    /// l'étoile d'arrivée reste la cible.
+    parked: Option<(TargetKind, Vec3)>,
 }
 
 impl WormholeTravel {
     pub fn active(&self) -> bool {
         self.trip.is_some()
+    }
+
+    /// Position d'attente du vaisseau si `target` est l'étoile d'arrivée d'un voyage récent.
+    pub fn parked(&self, target: &TargetKind) -> Option<Vec3> {
+        self.parked.filter(|(kind, _)| kind == target).map(|(_, pos)| pos)
     }
 }
 
@@ -383,7 +391,8 @@ fn wormhole_travel(
         start: ship.translation,
         mouth,
         exit_mouth,
-        dest: dest.center() + Vec3::Y * hover,
+        // Le vaisseau se pose centré au-dessus de l'ouverture de sortie
+        dest: exit_mouth + Vec3::Y * hover,
         arrival_set: false,
         light_started: false,
     });
@@ -407,6 +416,10 @@ fn run_wormhole_trip(
     mut settings: ResMut<GameSettings>,
     mut net: ResMut<Net>,
 ) {
+    // Un autre choix de cible libère le vaisseau de sa position d'attente
+    if travel.parked.is_some_and(|(kind, _)| kind != target.0) {
+        travel.parked = None;
+    }
     let Some(trip) = travel.trip.as_mut() else { return };
     let now = time.elapsed_secs_f64();
     trip.t += time.delta_secs();
@@ -422,6 +435,7 @@ fn run_wormhole_trip(
         }
         let name = trip.dest_name.clone();
         let first = trip.first_time;
+        travel.parked = Some((TargetKind::Star(trip.to), trip.dest));
         travel.trip = None;
         let text = if first {
             format!("Trou de ver decouvert : il relie les deux etoiles. Vous etes pres de {name}.")
