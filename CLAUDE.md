@@ -41,3 +41,19 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
 - Ne plus creer de tags `v*` a la main.
 - Apres une release stable, le bot commit `docs/version.json` sur main :
   faire `git pull` avant de continuer.
+
+## Deploiements = toujours une version
+
+Tout deploiement est une version numerotee, jamais un fichier ou un binaire
+"a part" :
+- Instable (push sur `main`) : pre-release `unstable` = `vX.Y.Z` + numero de
+  **build** (`unstable.json`, champ `build`). Chaque push = un nouveau build.
+- Stable (PR `main` -> `stable`) : release `vX.Y.Z` (ex. v0.1.0, v0.1.1, v0.2.0),
+  avec zips + installeurs, et `docs/version.json` mis a jour.
+- Le numero vient seulement de `[workspace.package] version` dans `Cargo.toml`
+  (la CI augmente le dernier chiffre si la version existe deja). On ne
+  deploie rien a la main : pas d'upload de zip, pas de tag `v*` manuel.
+- Une release stable doit contenir les zips `-windows.zip`, `-linux.zip`,
+  `-macos.zip` : le selecteur de version du launcher les liste par ces noms.
+- Le launcher fait partie de chaque version et doit toujours etre le plus
+  recent : un retour a une ancienne version du jeu ne remplace pas le launcher.

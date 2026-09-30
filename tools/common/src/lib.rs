@@ -183,6 +183,69 @@ pub fn fetch_channel(channel: Channel, timeout_secs: u64) -> Result<VersionInfo,
     serde_json::from_str(&body).map_err(|e| e.to_string())
 }
 
+#[derive(serde::Deserialize)]
+struct GhAsset {
+    name: String,
+    browser_download_url: String,
+}
+
+#[derive(serde::Deserialize)]
+struct GhRelease {
+    tag_name: String,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
+    prerelease: bool,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    assets: Vec<GhAsset>,
+}
+
+/// Toutes les versions stables publiées sur GitHub (la plus récente d'abord),
+/// pour pouvoir en réinstaller une précise. La pré-release « unstable » et les
+/// brouillons sont ignorés ; une version sans zip Windows/Linux/macOS aussi.
+pub fn fetch_releases(timeout_secs: u64) -> Result<Vec<VersionInfo>, String> {
+    let url = format!("https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases?per_page=50");
+    let body = make_agent(timeout_secs)
+        .get(&url)
+        .header("User-Agent", "spacespore-launcher")
+        .header("Accept", "application/vnd.github+json")
+        .call()
+        .map_err(|e| e.to_string())?
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| e.to_string())?;
+    let releases: Vec<GhRelease> = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+    let mut out: Vec<VersionInfo> = releases
+        .into_iter()
+        .filter(|r| !r.prerelease && !r.draft && r.tag_name.starts_with('v'))
+        .filter_map(|r| {
+            let version = r.tag_name.trim_start_matches('v').to_string();
+            let find = |suffix: &str| r.assets.iter().find(|a| a.name.ends_with(suffix)).map(|a| a.browser_download_url.clone());
+            let windows = find("-windows.zip");
+            let linux = find("-linux.zip");
+            let macos = find("-macos.zip");
+            if windows.is_none() && linux.is_none() && macos.is_none() {
+                return None;
+            }
+            Some(VersionInfo {
+                version_code: version_code(&version),
+                version,
+                build: 0,
+                download_url: windows.unwrap_or_default(),
+                download_url_linux: linux,
+                download_url_macos: macos,
+                release_notes: r.body.unwrap_or_default(),
+                min_updater_version: 1,
+            })
+        })
+        .filter(|v| v.platform_download_url().is_some_and(|u| !u.is_empty()))
+        .collect();
+    out.sort_by_key(|v| std::cmp::Reverse(v.version_code));
+    Ok(out)
+}
+
 /// Faut-il installer `remote` (dernière version du canal `wanted`) à la place
 /// de la version actuellement installée ?
 pub fn should_install(wanted: Channel, remote: &VersionInfo) -> bool {
