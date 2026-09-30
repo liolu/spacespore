@@ -311,11 +311,13 @@ struct Border {
 }
 
 impl Border {
+    #[cfg(test)]
     fn point(&self, angle: f32, radius: f32) -> Vec3 {
         self.center + (self.u * angle.cos() + self.v * angle.sin()) * radius
     }
 
     /// Le point est-il à l'intérieur de ce cercle (distance mesurée dans son plan) ?
+    #[cfg(test)]
     fn contains(&self, p: Vec3, radius: f32) -> bool {
         let d = p - self.center;
         let flat = d - self.normal * d.dot(self.normal);
@@ -323,19 +325,120 @@ impl Border {
     }
 }
 
-/// Segments du contour extérieur d'un groupe de cercles : chaque cercle est
-/// découpé en petits segments, et ceux qui tombent dans un autre cercle du
-/// groupe sont retirés. Il ne reste que l'enveloppe commune.
+/// Regroupe les cercles qui se touchent (centres à moins de 2 rayons).
+fn touching_groups(borders: &[Border], radius: f32) -> Vec<Vec<usize>> {
+    let mut group_of: Vec<Option<usize>> = vec![None; borders.len()];
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for start in 0..borders.len() {
+        if group_of[start].is_some() {
+            continue;
+        }
+        let id = groups.len();
+        let mut members = vec![start];
+        group_of[start] = Some(id);
+        let mut next = 0;
+        while next < members.len() {
+            let a = members[next];
+            next += 1;
+            for b in 0..borders.len() {
+                if group_of[b].is_none() && borders[a].center.distance(borders[b].center) < 2.0 * radius {
+                    group_of[b] = Some(id);
+                    members.push(b);
+                }
+            }
+        }
+        groups.push(members);
+    }
+    groups
+}
+
+/// Arcs (angles début, fin) d'un cercle qui ne sont recouverts par aucun autre.
+fn free_arcs(covered: &mut Vec<(f32, f32)>) -> Vec<(f32, f32)> {
+    use std::f32::consts::TAU;
+    // Recouvrements ramenés dans [0, TAU), en coupant ceux qui passent par 0
+    let mut spans: Vec<(f32, f32)> = Vec::new();
+    for &(a, b) in covered.iter() {
+        let a0 = a.rem_euclid(TAU);
+        let b0 = a0 + (b - a);
+        if b0 > TAU {
+            spans.push((a0, TAU));
+            spans.push((0.0, b0 - TAU));
+        } else {
+            spans.push((a0, b0));
+        }
+    }
+    spans.sort_by(|x, y| x.0.total_cmp(&y.0));
+    let mut free = Vec::new();
+    let mut cursor = 0.0;
+    for (a, b) in spans {
+        if a > cursor {
+            free.push((cursor, a));
+        }
+        cursor = cursor.max(b);
+    }
+    if cursor < TAU {
+        free.push((cursor, TAU));
+    }
+    // Un arc libre qui touche 0 des deux côtés ne fait qu'un
+    if free.len() > 1 && free[0].0 == 0.0 && free[free.len() - 1].1 == TAU {
+        let last = free.pop().unwrap();
+        free[0].0 = last.0 - TAU;
+    }
+    free
+}
+
+/// Segments du contour extérieur d'un groupe de cercles de même rayon.
+///
+/// Les cercles qui se touchent sont ramenés dans un plan commun (à la hauteur
+/// moyenne du groupe), puis on calcule pour chacun les arcs recouverts par ses
+/// voisins : ils commencent et finissent exactement aux points d'intersection,
+/// si bien que le contour de l'ensemble est continu.
 fn outline_segments(borders: &[Border], radius: f32) -> Vec<(Vec3, Vec3)> {
-    let step = std::f32::consts::TAU / CIRCLE_SEGMENTS as f32;
+    use std::f32::consts::TAU;
+    let step = TAU / CIRCLE_SEGMENTS as f32;
     let mut out = Vec::new();
-    for (i, b) in borders.iter().enumerate() {
-        for s in 0..CIRCLE_SEGMENTS {
-            let a0 = s as f32 * step;
-            let mid = b.point(a0 + step * 0.5, radius);
-            let hidden = borders.iter().enumerate().any(|(j, o)| j != i && o.contains(mid, radius));
-            if !hidden {
-                out.push((b.point(a0, radius), b.point(a0 + step, radius)));
+    for group in touching_groups(borders, radius) {
+        let first = &borders[group[0]];
+        let (u, v, normal) = (first.u, first.v, first.normal);
+        let height = group.iter().map(|&i| borders[i].center.dot(normal)).sum::<f32>() / group.len() as f32;
+        // Centres ramenés dans le plan commun
+        let centers: Vec<Vec3> = group
+            .iter()
+            .map(|&i| borders[i].center - normal * (borders[i].center.dot(normal) - height))
+            .collect();
+        for (a, &ca) in centers.iter().enumerate() {
+            let mut covered: Vec<(f32, f32)> = Vec::new();
+            let mut hidden = false;
+            for (b, &cb) in centers.iter().enumerate() {
+                if a == b {
+                    continue;
+                }
+                let d = cb - ca;
+                let (dx, dy) = (d.dot(u), d.dot(v));
+                let dist = (dx * dx + dy * dy).sqrt();
+                if dist < 1.0 {
+                    // Même position : un seul des deux est dessiné
+                    hidden |= b < a;
+                    continue;
+                }
+                if dist >= 2.0 * radius {
+                    continue;
+                }
+                let half = (dist / (2.0 * radius)).clamp(-1.0, 1.0).acos();
+                let mid = dy.atan2(dx);
+                covered.push((mid - half, mid + half));
+            }
+            if hidden {
+                continue;
+            }
+            for (start, end) in free_arcs(&mut covered) {
+                let n = (((end - start) / step - 1.0e-3).ceil() as usize).max(1);
+                let point = |t: f32| ca + (u * t.cos() + v * t.sin()) * radius;
+                for s in 0..n {
+                    let t0 = start + (end - start) * s as f32 / n as f32;
+                    let t1 = start + (end - start) * (s + 1) as f32 / n as f32;
+                    out.push((point(t0), point(t1)));
+                }
             }
         }
     }
@@ -421,6 +524,25 @@ mod tests {
             let inside = borders.iter().filter(|o| o.contains(mid, 9.9)).count();
             assert_eq!(inside, 0);
         }
+    }
+
+    #[test]
+    fn merged_outline_is_one_closed_loop_even_at_different_heights() {
+        // Trois étoiles proches à des hauteurs différentes, disposées en chaîne
+        let at = |x: f32, y: f32, z: f32| Border { center: Vec3::new(x, y, z), u: Vec3::X, v: Vec3::Z, normal: Vec3::Y };
+        let borders = [at(0.0, 0.0, 0.0), at(12.0, 3.0, 5.0), at(22.0, -2.0, -4.0)];
+        let segs = outline_segments(&borders, 10.0);
+        let key = |p: Vec3| ((p.x * 100.0).round() as i32, (p.y * 100.0).round() as i32, (p.z * 100.0).round() as i32);
+        let mut degree: std::collections::HashMap<(i32, i32, i32), u32> = std::collections::HashMap::new();
+        for (a, b) in &segs {
+            *degree.entry(key(*a)).or_default() += 1;
+            *degree.entry(key(*b)).or_default() += 1;
+        }
+        // Contour fermé et continu : chaque extrémité est partagée par exactement deux segments
+        assert!(degree.values().all(|&n| n == 2), "{:?}", degree.iter().filter(|(_, n)| **n != 2).collect::<Vec<_>>());
+        // Tout le contour est dans un seul plan
+        let y0 = segs[0].0.y;
+        assert!(segs.iter().all(|(a, b)| (a.y - y0).abs() < 1.0e-3 && (b.y - y0).abs() < 1.0e-3));
     }
 
     #[test]
