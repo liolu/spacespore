@@ -4,6 +4,8 @@ mod combat;
 mod diplomacy;
 mod chat_cmd;
 mod galaxy_fx;
+mod npc_ui;
+mod economy;
 mod galaxy_shape;
 mod graphics;
 mod guild;
@@ -239,7 +241,7 @@ fn main() {
         .add_plugins(UiPlugin)
 
         // ── Multijoueur ─────────────────────────────────────────────────
-        .add_plugins((NetPlugin, NetUiPlugin, claims::ClaimsPlugin, combat::CombatPlugin, guild::GuildPlugin, guild_ui::GuildUiPlugin, wormhole::WormholePlugin, galaxy_fx::GalaxyFxPlugin, chat_cmd::ChatCmdPlugin))
+        .add_plugins((NetPlugin, NetUiPlugin, claims::ClaimsPlugin, combat::CombatPlugin, guild::GuildPlugin, guild_ui::GuildUiPlugin, wormhole::WormholePlugin, galaxy_fx::GalaxyFxPlugin, npc_ui::NpcUiPlugin, economy::EconomyPlugin, chat_cmd::ChatCmdPlugin))
 
         .add_event::<ReloadAstre>()
         .init_resource::<ProfilingLog>()

@@ -126,6 +126,18 @@ pub struct NpcFaction {
     extent: f32,
 }
 
+impl NpcFaction {
+    /// Traits, contour, centre et rayon d'après la liste actuelle des étoiles.
+    fn recompute(&mut self, settings: &GameSettings) {
+        let centers: Vec<Vec3> = self.stars.iter().filter_map(|&m| settings.systems.get(m).map(|s| s.center())).collect();
+        self.center = centers.iter().copied().sum::<Vec3>() / centers.len().max(1) as f32;
+        self.extent = centers.iter().map(|c| c.distance(self.center)).fold(0.0, f32::max);
+        self.links = group_links(settings, &self.stars);
+        let borders: Vec<crate::claims::Border> = self.stars.iter().filter_map(|&m| crate::claims::border_of(settings, m)).collect();
+        self.outline = crate::claims::outline_segments(&borders, crate::claims::CLAIM_RADIUS);
+    }
+}
+
 /// Territoires des factions PNJ : les mêmes pour tous les joueurs (graine du monde).
 #[derive(Resource, Default)]
 pub struct NpcTerritories {
@@ -136,6 +148,20 @@ pub struct NpcTerritories {
 impl NpcTerritories {
     pub fn faction_of(&self, sys: usize) -> Option<&NpcFaction> {
         self.owner.get(&sys).map(|&i| &self.factions[i])
+    }
+
+    pub fn faction_index_of(&self, sys: usize) -> Option<usize> {
+        self.owner.get(&sys).copied()
+    }
+
+    /// Retire une étoile du territoire d'une faction (vendue au joueur) et recalcule son tracé.
+    /// Renvoie `false` si l'étoile n'appartient à aucune faction.
+    pub fn remove_star(&mut self, sys: usize, settings: &GameSettings) -> bool {
+        let Some(idx) = self.owner.remove(&sys) else { return false };
+        let faction = &mut self.factions[idx];
+        faction.stars.retain(|&s| s != sys);
+        faction.recompute(settings);
+        true
     }
 }
 
@@ -227,24 +253,21 @@ pub fn generate_npcs(settings: &GameSettings, spatial: &SystemSpatialIndex) -> N
             }
             let idx = out.factions.len();
             let hue = ((counter as f32 * 0.618_034) % 1.0) * 360.0;
-            let center = members.iter().map(|&m| settings.systems[m].center()).sum::<Vec3>() / members.len() as f32;
-            let extent = members.iter().map(|&m| settings.systems[m].center().distance(center)).fold(0.0, f32::max);
             for &m in &members {
                 out.owner.insert(m, idx);
             }
-            out.factions.push(NpcFaction {
+            let mut faction = NpcFaction {
                 name: faction_name(mix(seed, counter, 99)),
                 color: Color::hsl(hue, 0.85, 0.58),
                 galaxy: gid as u32,
-                links: group_links(settings, &members),
-                outline: {
-                    let borders: Vec<crate::claims::Border> = members.iter().filter_map(|&m| crate::claims::border_of(settings, m)).collect();
-                    crate::claims::outline_segments(&borders, crate::claims::CLAIM_RADIUS)
-                },
                 stars: members,
-                center,
-                extent,
-            });
+                links: Vec::new(),
+                outline: Vec::new(),
+                center: Vec3::ZERO,
+                extent: 0.0,
+            };
+            faction.recompute(settings);
+            out.factions.push(faction);
             counter += 1;
             made += 1;
         }
@@ -252,9 +275,13 @@ pub fn generate_npcs(settings: &GameSettings, spatial: &SystemSpatialIndex) -> N
     out
 }
 
-fn build_npc_territories(settings: Res<GameSettings>, mut npcs: ResMut<NpcTerritories>) {
+fn build_npc_territories(settings: Res<GameSettings>, eco: Res<crate::economy::Economy>, mut npcs: ResMut<NpcTerritories>) {
     let spatial = SystemSpatialIndex::build(&settings);
     *npcs = generate_npcs(&settings, &spatial);
+    // Étoiles déjà vendues au joueur : elles ne font plus partie des territoires
+    for &sys in &eco.sold_stars {
+        npcs.remove_star(sys, &settings);
+    }
 }
 
 fn draw_links(
