@@ -36,7 +36,7 @@ const MIN_DRAW_RADIUS: f32 = 1_500.0;
 /// Distance de la caméra au-delà de laquelle une ouverture n'est plus dessinée.
 const DRAW_RANGE: f32 = 3_000_000.0;
 /// Le trait entre deux ouvertures connues est dessiné de plus loin.
-const LINE_RANGE: f32 = 15_000_000.0;
+const LINE_RANGE: f32 = 30_000_000.0;
 /// Distance de la caméra après l'arrivée (zoom « Système »).
 const ARRIVAL_DISTANCE: f32 = 30_000.0;
 

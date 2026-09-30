@@ -31,8 +31,8 @@ use crate::{CameraController, ZoomLevel};
 
 /// Portée de voisinage : sert seulement à faire grandir un territoire PNJ d'étoile en étoile
 /// (les traits, eux, n'ont aucune limite de distance).
-const LINK_RANGE_MAIN: f32 = 30_000.0;
-const LINK_RANGE_OTHER: f32 = 60_000.0;
+const LINK_RANGE_MAIN: f32 = 60_000.0;
+const LINK_RANGE_OTHER: f32 = 120_000.0;
 /// Factions PNJ de la galaxie principale ; les autres en ont selon leur taille.
 const NPC_MAIN: usize = 14;
 const NPC_MIN_STARS: usize = 10;
@@ -272,7 +272,7 @@ fn draw_links(
     }
     let Ok((cam, ctrl)) = cam_q.get_single() else { return };
     let cam_pos = cam.translation();
-    let window = (ctrl.distance * 1.5).clamp(60_000.0, 3_000_000.0);
+    let window = (ctrl.distance * 1.5).clamp(60_000.0, 6_000_000.0);
 
     // Factions PNJ : seulement celles qui sont près de la caméra (il y en a des milliers dans l'univers)
     for faction in &npcs.factions {
@@ -311,8 +311,8 @@ const CLOUD_TEXTURE: u32 = 128;
 /// Nuages de la galaxie principale ; les autres en ont selon leur taille.
 const CLOUDS_MAIN: usize = 220;
 /// Au-delà de cette distance à sa galaxie, un nuage n'est plus dessiné.
-const CLOUD_FADE_START: f32 = 50_000_000.0;
-const CLOUD_FADE_END: f32 = 60_000_000.0;
+const CLOUD_FADE_START: f32 = 100_000_000.0;
+const CLOUD_FADE_END: f32 = 120_000_000.0;
 
 #[derive(Resource)]
 struct CloudMaterials {
@@ -633,8 +633,8 @@ mod tests {
         assert!(cloud_fade(10_000.0, size, 1.0e6) < 0.05);
         assert!(cloud_fade(400_000.0, size, 1.0e6) > 0.99);
         // Galaxie très lointaine : plus rien
-        assert_eq!(cloud_fade(400_000.0, size, 70_000_000.0), 0.0);
-        assert!(cloud_fade(400_000.0, size, 55_000_000.0) < 1.0);
+        assert_eq!(cloud_fade(400_000.0, size, CLOUD_FADE_END + 1.0), 0.0);
+        assert!(cloud_fade(400_000.0, size, (CLOUD_FADE_START + CLOUD_FADE_END) / 2.0) < 1.0);
     }
 
 }
