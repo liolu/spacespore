@@ -286,6 +286,7 @@ fn main() {
                 draw_light_indicator,
                 draw_orbits,
                 draw_planet_trails,
+                draw_travel_range,
                 close_game_when_primary_window_closes,
                 toggle_profiling,
                 profiling_snapshot,
@@ -405,6 +406,9 @@ fn select_world_target(
     zoom: Res<ZoomLevel>,
     ui_interactions: Query<&Interaction>,
     viewport: Res<graphics::ViewportScale>,
+    ship_q: Query<&GlobalTransform, With<Ship>>,
+    time: Res<Time>,
+    mut net: ResMut<Net>,
 ) {
     if !buttons.just_pressed(MouseButton::Left) {
         return;
@@ -535,7 +539,18 @@ fn select_world_target(
 
     if let Some((_, selected)) = best {
         if zoom.can_navigate_to(&selected) {
-            target.0 = selected;
+            // Portée de déplacement fixe : seuls les trous noirs de galaxie (sauts entre galaxies)
+            // et les cibles du système où l'on est peuvent être hors de portée
+            let too_far = !ZoomLevel::is_core(&selected)
+                && ship_q.get_single().is_ok_and(|ship| {
+                    let pos = resolve_target(&CameraTarget(selected), &queries, &settings);
+                    pos != Vec3::ZERO && pos.distance(ship.translation()) > MAX_TRAVEL_RANGE
+                });
+            if too_far {
+                net.notify(&format!("Trop loin : votre vaisseau ne peut pas se deplacer a plus de {:.0} d'un coup (cercle blanc). Passez par un trou de ver ou avancez etape par etape.", MAX_TRAVEL_RANGE), time.elapsed_secs_f64());
+            } else {
+                target.0 = selected;
+            }
         }
     }
 }
@@ -663,6 +678,10 @@ fn galaxy_view_distance(kind: &TargetKind, settings: &GameSettings) -> f32 {
 /// Au-delà de cette distance (changement de galaxie), le vaisseau saute
 /// directement à destination au lieu de voyager en croisière.
 const HYPERJUMP_DIST: f32 = 10_000_000.0;
+
+/// Portée fixe d'un déplacement du vaisseau (le cercle blanc). Au-delà, il faut avancer par
+/// étapes, passer par un trou de ver, ou sauter entre galaxies via leur trou noir.
+const MAX_TRAVEL_RANGE: f32 = 300_000.0;
 
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZoomLevel {
@@ -1667,6 +1686,26 @@ fn update_system_hud(
 
     for mut text in &mut hud_q {
         **text = label.clone();
+    }
+}
+
+/// Cercle blanc autour du vaisseau : la portée maximale d'un déplacement.
+fn draw_travel_range(
+    zoom: Res<ZoomLevel>,
+    ship_q: Query<&GlobalTransform, With<Ship>>,
+    mut gizmos: Gizmos,
+) {
+    if !matches!(*zoom, ZoomLevel::System | ZoomLevel::Sector | ZoomLevel::Galaxy | ZoomLevel::Cosmos) {
+        return;
+    }
+    let Ok(ship) = ship_q.get_single() else { return };
+    const SEGMENTS: usize = 128;
+    let center = ship.translation();
+    let point = |a: f32| center + Vec3::new(a.cos(), 0.0, a.sin()) * MAX_TRAVEL_RANGE;
+    for s in 0..SEGMENTS {
+        let a0 = s as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+        let a1 = (s + 1) as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+        gizmos.line(point(a0), point(a1), Color::srgba(1.0, 1.0, 1.0, 0.75));
     }
 }
 
