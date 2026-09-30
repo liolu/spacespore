@@ -230,7 +230,8 @@ fn do_install(
                 .join("Start Menu")
                 .join("Programs");
             let lnk = programs.join("SpaceSpore.lnk");
-            if let Ok(sl) = mslnk::ShellLink::new(target_exe.to_str().unwrap_or_default()) {
+            if let Ok(mut sl) = mslnk::ShellLink::new(target_exe.to_str().unwrap_or_default()) {
+                sl.set_working_dir(Some(install_dir.to_string_lossy().into_owned()));
                 let _ = sl.create_lnk(lnk.to_str().unwrap_or_default());
             }
         }
@@ -239,7 +240,8 @@ fn do_install(
     if create_desktop {
         if let Some(desktop) = dirs::desktop_dir() {
             let lnk = desktop.join("SpaceSpore.lnk");
-            if let Ok(sl) = mslnk::ShellLink::new(target_exe.to_str().unwrap_or_default()) {
+            if let Ok(mut sl) = mslnk::ShellLink::new(target_exe.to_str().unwrap_or_default()) {
+                sl.set_working_dir(Some(install_dir.to_string_lossy().into_owned()));
                 let _ = sl.create_lnk(lnk.to_str().unwrap_or_default());
             }
         }
