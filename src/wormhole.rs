@@ -217,6 +217,10 @@ const PHASES: [(Phase, f32, &str); 6] = [
     (Phase::Exit, 0.8, "Sortie du trou de ver"),
 ];
 
+/// Part du tunnel parcourue à vitesse constante : la décélération couvre le reste. Choisie pour que
+/// la vitesse soit continue entre les deux phases (2·(1-f)/durée_decel = f/durée_croisière).
+const CRUISE_SHARE: f32 = 0.746;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Phase {
     Prep,
@@ -278,16 +282,19 @@ fn smooth(p: f32) -> f32 {
 
 impl Trip {
     /// Position du vaisseau : il s'élance vers l'ouverture en accélérant, fonce dedans,
-    /// traverse à la vitesse de la lumière, puis ralentit jusqu'à l'étoile d'arrivée.
+    /// traverse à la vitesse de la lumière, ralentit AVANT d'atteindre l'ouverture de sortie
+    /// (il l'atteint à l'arrêt), puis se pose doucement près de l'étoile d'arrivée.
     fn ship_pos(&self, phase: Phase, p: f32) -> Vec3 {
         let before_leap = self.start + (self.mouth - self.start) * 0.7;
         match phase {
             Phase::Prep => self.start,
             Phase::Accel => self.start + (self.mouth - self.start) * (0.7 * p * p),
             Phase::Leap => before_leap.lerp(self.mouth, p * p * p),
-            Phase::Light => self.mouth.lerp(self.exit_mouth, smooth(p)),
-            Phase::Decel => self.exit_mouth.lerp(self.dest, 1.0 - (1.0 - p) * (1.0 - p)),
-            Phase::Exit => self.dest,
+            Phase::Light => self.mouth.lerp(self.exit_mouth, CRUISE_SHARE * p),
+            Phase::Decel => {
+                self.mouth.lerp(self.exit_mouth, CRUISE_SHARE + (1.0 - CRUISE_SHARE) * (1.0 - (1.0 - p) * (1.0 - p)))
+            }
+            Phase::Exit => self.exit_mouth.lerp(self.dest, smooth(p)),
         }
     }
 
@@ -295,8 +302,8 @@ impl Trip {
     fn axis(&self, phase: Phase) -> Vec3 {
         let (a, b) = match phase {
             Phase::Prep | Phase::Accel | Phase::Leap => (self.start, self.mouth),
-            Phase::Light => (self.mouth, self.exit_mouth),
-            Phase::Decel | Phase::Exit => (self.exit_mouth, self.dest),
+            Phase::Light | Phase::Decel => (self.mouth, self.exit_mouth),
+            Phase::Exit => (self.exit_mouth, self.dest),
         };
         (b - a).normalize_or_zero()
     }
@@ -442,8 +449,21 @@ fn run_wormhole_trip(
             settings.save();
         }
     }
-    // À la décélération : la cible devient l'étoile d'arrivée (la caméra reste en zoom « Système »)
-    if phase == Phase::Decel && !trip.arrival_set {
+    // La caméra se place derrière le vaisseau, dans l'axe du déplacement : elle regarde vers
+    // l'ouverture, puis vers la destination
+    let axis = trip.axis(phase);
+    if axis != Vec3::ZERO {
+        if let Ok(mut ctrl) = cam_q.get_single_mut() {
+            let want_yaw = (-axis.x).atan2(-axis.z);
+            let want_pitch = axis.y.clamp(-1.0, 1.0).asin();
+            let k = 1.0 - (-4.0 * time.delta_secs()).exp();
+            let dyaw = (want_yaw - ctrl.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+            ctrl.yaw += dyaw * k;
+            ctrl.pitch += (want_pitch - ctrl.pitch) * k;
+        }
+    }
+    // À la sortie : la cible devient l'étoile d'arrivée (la caméra reste en zoom « Système »)
+    if phase == Phase::Exit && !trip.arrival_set {
         trip.arrival_set = true;
         target.0 = TargetKind::Star(trip.to);
         *zoom = ZoomLevel::System;
@@ -784,7 +804,9 @@ mod tests {
         // Part du vaisseau, entre dans l'ouverture, sort à l'autre ouverture, finit à l'étoile
         assert_eq!(begin(Phase::Prep), trip.start);
         assert!(end(Phase::Leap).distance(trip.mouth) < 1.0);
-        assert!(end(Phase::Light).distance(trip.exit_mouth) < 1.0);
+        // La décélération s'achève pile sur l'ouverture de sortie : on ralentit avant de la toucher
+        assert!(end(Phase::Decel).distance(trip.exit_mouth) < 1.0);
+        assert!(end(Phase::Light).distance(trip.exit_mouth) > 1.0);
         assert!(end(Phase::Exit).distance(trip.dest) < 1.0);
     }
 
@@ -806,6 +828,18 @@ mod tests {
         let last_accel = trip.ship_pos(Phase::Accel, 1.0).distance(trip.ship_pos(Phase::Accel, 0.9)) / (0.1 * PHASES[1].1);
         let last_leap = trip.ship_pos(Phase::Leap, 1.0).distance(trip.ship_pos(Phase::Leap, 0.9)) / (0.1 * PHASES[2].1);
         assert!(last_leap > last_accel);
+    }
+
+    #[test]
+    fn the_ship_slows_down_before_the_exit_mouth_and_speed_is_continuous() {
+        let trip = trip();
+        // Vitesse (unités/s) à la fin de la croisière et au début de la décélération : quasi égales
+        let v_light = trip.ship_pos(Phase::Light, 1.0).distance(trip.ship_pos(Phase::Light, 0.99)) / (0.01 * PHASES[3].1);
+        let v_decel = trip.ship_pos(Phase::Decel, 0.01).distance(trip.ship_pos(Phase::Decel, 0.0)) / (0.01 * PHASES[4].1);
+        assert!((v_light / v_decel - 1.0).abs() < 0.05, "{v_light} vs {v_decel}");
+        // Juste avant l'ouverture de sortie, le vaisseau est presque à l'arrêt
+        let v_end = trip.ship_pos(Phase::Decel, 1.0).distance(trip.ship_pos(Phase::Decel, 0.99)) / (0.01 * PHASES[4].1);
+        assert!(v_end < v_decel * 0.05, "{v_end}");
     }
 
     #[test]
