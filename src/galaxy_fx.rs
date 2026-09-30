@@ -13,30 +13,39 @@ use bevy::asset::RenderAssetUsages;
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
+use crate::guild::Guilds;
 use crate::net::Net;
 use crate::net_ui::NetPanel;
 use crate::settings::{pseudo_rand, GameSettings, SystemSpatialIndex, CORE_EXCLUSION};
 use crate::ui::MenuState;
 use crate::{CameraController, ZoomLevel};
 
-// ── Liaisons ────────────────────────────────────────────────────────────
+// ── Territoires ─────────────────────────────────────────────────────────
+//
+// Les liaisons ne sont pas un décor : un trait relie deux étoiles voisines
+// d'un même propriétaire, dans sa couleur. Les territoires des joueurs et des
+// guildes (étoiles revendiquées, voir `claims.rs`) et ceux des factions PNJ
+// se lisent donc d'un coup d'œil. Une étoile sans propriétaire n'a pas de trait.
 
 /// Liaisons par étoile au plus.
 const MAX_LINKS_PER_STAR: usize = 3;
-/// Étoiles de départ au plus par image (borne le nombre de traits).
-const MAX_LINK_STARS: usize = 250;
 /// Portée d'une liaison : la galaxie principale est plus dense que les autres.
 const LINK_RANGE_MAIN: f32 = 30_000.0;
 const LINK_RANGE_OTHER: f32 = 60_000.0;
+/// Factions PNJ de la galaxie principale ; les autres en ont selon leur taille.
+const NPC_MAIN: usize = 14;
+const NPC_MIN_STARS: usize = 10;
+const NPC_MAX_STARS: usize = 25;
 
 pub struct GalaxyFxPlugin;
 
 impl Plugin for GalaxyFxPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(ShowLinks(true))
-            .add_systems(Startup, spawn_clouds)
+            .init_resource::<NpcTerritories>()
+            .add_systems(Startup, (spawn_clouds, build_npc_territories))
             .add_systems(Update, (toggle_links, draw_links, update_clouds));
     }
 }
@@ -56,34 +65,190 @@ fn toggle_links(
         return;
     }
     show.0 = !show.0;
-    let text = if show.0 { "Liaisons entre etoiles affichees (L)." } else { "Liaisons entre etoiles masquees (L)." };
+    let text = if show.0 { "Territoires traces entre les etoiles (L)." } else { "Territoires masques (L)." };
     net.notify(text, time.elapsed_secs_f64());
 }
 
-/// Les étoiles voisines de `sys` (les plus proches d'abord), à portée de liaison.
-fn neighbours(settings: &GameSettings, spatial: &SystemSpatialIndex, sys: usize) -> Vec<usize> {
+fn link_range(settings: &GameSettings, sys: usize) -> f32 {
+    if settings.systems[sys].galaxy_id == 0 { LINK_RANGE_MAIN } else { LINK_RANGE_OTHER }
+}
+
+/// Traits d'un groupe d'étoiles d'un même propriétaire : chaque étoile est
+/// reliée à ses voisines les plus proches du groupe (à portée de liaison, ou
+/// `slack` fois plus pour les revendications de joueurs, plus espacées).
+fn group_links(settings: &GameSettings, stars: &[usize], slack: f32) -> Vec<(Vec3, Vec3)> {
+    let mut seen: HashSet<(usize, usize)> = HashSet::new();
+    let mut out = Vec::new();
+    for &a in stars {
+        let Some(sa) = settings.systems.get(a) else { continue };
+        let range = link_range(settings, a) * slack;
+        let mut near: Vec<(usize, f32)> = stars
+            .iter()
+            .filter(|&&b| b != a)
+            .filter_map(|&b| {
+                let sb = settings.systems.get(b)?;
+                let d = sa.center().distance(sb.center());
+                (sb.galaxy_id == sa.galaxy_id && d <= range).then_some((b, d))
+            })
+            .collect();
+        near.sort_by(|x, y| x.1.total_cmp(&y.1));
+        for (b, _) in near.into_iter().take(MAX_LINKS_PER_STAR) {
+            if seen.insert((a.min(b), a.max(b))) {
+                out.push((sa.center(), settings.systems[b].center()));
+            }
+        }
+    }
+    out
+}
+
+// ── Factions PNJ ────────────────────────────────────────────────────────
+
+pub struct NpcFaction {
+    pub name: String,
+    pub color: Color,
+    pub galaxy: u32,
+    pub stars: Vec<usize>,
+    /// Traits du territoire, calculés une fois pour toutes.
+    links: Vec<(Vec3, Vec3)>,
+    center: Vec3,
+    /// Distance du centre à l'étoile la plus éloignée (pour ne dessiner que ce qui est proche).
+    extent: f32,
+}
+
+/// Territoires des factions PNJ : les mêmes pour tous les joueurs (graine du monde).
+#[derive(Resource, Default)]
+pub struct NpcTerritories {
+    pub factions: Vec<NpcFaction>,
+    owner: HashMap<usize, usize>,
+}
+
+impl NpcTerritories {
+    pub fn faction_of(&self, sys: usize) -> Option<&NpcFaction> {
+        self.owner.get(&sys).map(|&i| &self.factions[i])
+    }
+}
+
+fn mix(a: u32, b: u32, c: u32) -> u32 {
+    let mut x = a.wrapping_mul(0x9E37_79B1) ^ b.wrapping_mul(0x85EB_CA6B) ^ c.wrapping_mul(0xC2B2_AE35);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x2C1B_3C6D);
+    x ^= x >> 12;
+    x = x.wrapping_mul(0x297A_2D39);
+    x ^= x >> 15;
+    x
+}
+
+fn faction_name(seed: u32) -> String {
+    const KINDS: [&str; 8] = ["Empire", "Ligue", "Clan", "Union", "Consortium", "Royaume", "Alliance", "Flotte"];
+    const A: [&str; 10] = ["Kal", "Vor", "Zen", "Thar", "Mir", "Ox", "Ryn", "Sol", "Dra", "Nex"];
+    const B: [&str; 8] = ["ion", "ar", "eth", "os", "una", "ix", "ael", "or"];
+    format!(
+        "{} {}{}",
+        KINDS[mix(seed, 1, 0) as usize % KINDS.len()],
+        A[mix(seed, 2, 0) as usize % A.len()],
+        B[mix(seed, 3, 0) as usize % B.len()]
+    )
+}
+
+/// Étoiles voisines de `sys` (dans sa galaxie, à portée de liaison).
+fn near_stars(settings: &GameSettings, spatial: &SystemSpatialIndex, sys: usize) -> Vec<usize> {
     let a = &settings.systems[sys];
-    let range = if a.galaxy_id == 0 { LINK_RANGE_MAIN } else { LINK_RANGE_OTHER };
-    let center = a.center();
-    let mut near: Vec<(usize, f32)> = spatial
-        .systems_in_radius(center, range)
+    let range = link_range(settings, sys);
+    spatial
+        .systems_in_radius(a.center(), range)
         .into_iter()
         .filter(|&i| i != sys)
-        .filter_map(|i| {
-            let b = settings.systems.get(i)?;
-            let d = b.center().distance(center);
-            (b.galaxy_id == a.galaxy_id && d <= range).then_some((i, d))
+        .filter(|&i| {
+            settings.systems.get(i).is_some_and(|b| b.galaxy_id == a.galaxy_id && b.center().distance(a.center()) <= range)
         })
-        .collect();
-    near.sort_by(|x, y| x.1.total_cmp(&y.1));
-    near.into_iter().take(MAX_LINKS_PER_STAR).map(|(i, _)| i).collect()
+        .collect()
+}
+
+/// Tous les territoires PNJ, déterministes d'après la graine du monde.
+pub fn generate_npcs(settings: &GameSettings, spatial: &SystemSpatialIndex) -> NpcTerritories {
+    let seed = (settings.world_seed as u32) ^ ((settings.world_seed >> 32) as u32) ^ 0x4E_50_43;
+    let mut out = NpcTerritories::default();
+    let mut counter = 0u32;
+    for (gid, gal) in settings.galaxies.iter().enumerate() {
+        let candidates: Vec<usize> = settings
+            .systems
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.galaxy_id as usize == gid && s.center().distance(gal.center) >= CORE_EXCLUSION)
+            .map(|(i, _)| i)
+            .collect();
+        if candidates.is_empty() {
+            continue;
+        }
+        let wanted = if gid == 0 { NPC_MAIN } else { 1 + (gal.radius / 1_300_000.0) as usize };
+        let mut made = 0;
+        for attempt in 0..(wanted * 12) as u32 {
+            if made >= wanted {
+                break;
+            }
+            let start = candidates[mix(seed, gid as u32, attempt) as usize % candidates.len()];
+            if out.owner.contains_key(&start) {
+                continue;
+            }
+            let target = NPC_MIN_STARS + mix(seed ^ 0x51, gid as u32, attempt) as usize % (NPC_MAX_STARS - NPC_MIN_STARS + 1);
+            // Le territoire grandit d'étoile voisine en étoile voisine, en restant compact
+            let origin = settings.systems[start].center();
+            let mut members = vec![start];
+            while members.len() < target {
+                let next = members
+                    .iter()
+                    .flat_map(|&m| near_stars(settings, spatial, m))
+                    .filter(|s| !members.contains(s) && !out.owner.contains_key(s))
+                    .filter(|&s| settings.systems[s].center().distance(gal.center) >= CORE_EXCLUSION)
+                    .min_by(|&x, &y| {
+                        let dx = settings.systems[x].center().distance(origin);
+                        let dy = settings.systems[y].center().distance(origin);
+                        dx.total_cmp(&dy)
+                    });
+                match next {
+                    Some(s) => members.push(s),
+                    None => break,
+                }
+            }
+            // Trop petit (coincé contre d'autres territoires) : on essaie ailleurs
+            if members.len() < NPC_MIN_STARS / 2 {
+                continue;
+            }
+            let idx = out.factions.len();
+            let hue = ((counter as f32 * 0.618_034) % 1.0) * 360.0;
+            let center = members.iter().map(|&m| settings.systems[m].center()).sum::<Vec3>() / members.len() as f32;
+            let extent = members.iter().map(|&m| settings.systems[m].center().distance(center)).fold(0.0, f32::max);
+            for &m in &members {
+                out.owner.insert(m, idx);
+            }
+            out.factions.push(NpcFaction {
+                name: faction_name(mix(seed, counter, 99)),
+                color: Color::hsl(hue, 0.85, 0.58),
+                galaxy: gid as u32,
+                links: group_links(settings, &members, 1.0),
+                stars: members,
+                center,
+                extent,
+            });
+            counter += 1;
+            made += 1;
+        }
+    }
+    out
+}
+
+fn build_npc_territories(settings: Res<GameSettings>, mut npcs: ResMut<NpcTerritories>) {
+    let spatial = SystemSpatialIndex::build(&settings);
+    *npcs = generate_npcs(&settings, &spatial);
 }
 
 fn draw_links(
     show: Res<ShowLinks>,
     zoom: Res<ZoomLevel>,
     settings: Res<GameSettings>,
-    spatial: Res<SystemSpatialIndex>,
+    npcs: Res<NpcTerritories>,
+    net: Res<Net>,
+    guilds: Res<Guilds>,
     cam_q: Query<(&GlobalTransform, &CameraController)>,
     mut gizmos: Gizmos,
 ) {
@@ -92,29 +257,24 @@ fn draw_links(
     }
     let Ok((cam, ctrl)) = cam_q.get_single() else { return };
     let cam_pos = cam.translation();
-    let window = (ctrl.distance * 1.5).clamp(60_000.0, 1_500_000.0);
+    let window = (ctrl.distance * 1.5).clamp(60_000.0, 3_000_000.0);
 
-    // Étoiles autour de la caméra, les plus proches d'abord
-    let mut stars: Vec<(usize, f32)> = spatial
-        .systems_in_radius(cam_pos, window)
-        .into_iter()
-        .filter_map(|i| {
-            let s = settings.systems.get(i)?;
-            let d = s.center().distance(cam_pos);
-            (d <= window && s.center().distance(settings.galaxies.get(s.galaxy_id as usize).map_or(Vec3::ZERO, |g| g.center)) >= CORE_EXCLUSION)
-                .then_some((i, d))
-        })
-        .collect();
-    stars.sort_by(|a, b| a.1.total_cmp(&b.1));
-    stars.truncate(MAX_LINK_STARS);
+    // Factions PNJ : seulement celles qui sont près de la caméra
+    for faction in &npcs.factions {
+        if cam_pos.distance(faction.center) > window + faction.extent {
+            continue;
+        }
+        let color = faction.color.with_alpha(0.85);
+        for &(a, b) in &faction.links {
+            gizmos.line(a, b, color);
+        }
+    }
 
-    let mut drawn: HashSet<(usize, usize)> = HashSet::new();
-    let color = Color::srgba(0.55, 0.75, 1.0, 0.35);
-    for (a, _) in stars {
-        for b in neighbours(&settings, &spatial, a) {
-            if drawn.insert((a.min(b), a.max(b))) {
-                gizmos.line(settings.systems[a].center(), settings.systems[b].center(), color);
-            }
+    // Joueurs et guildes : étoiles revendiquées
+    for (color, stars) in crate::claims::owner_groups(&net, &settings, &guilds) {
+        let color = color.with_alpha(0.95);
+        for (a, b) in group_links(&settings, &stars, 1.5) {
+            gizmos.line(a, b, color);
         }
     }
 }
@@ -359,6 +519,76 @@ mod tests {
     }
 
     #[test]
+    fn npc_territories_are_compact_connected_and_stable() {
+        let settings = GameSettings::default();
+        let spatial = SystemSpatialIndex::build(&settings);
+        let npcs = generate_npcs(&settings, &spatial);
+        // Toujours les mêmes, pour tous les joueurs
+        let again = generate_npcs(&settings, &spatial);
+        assert_eq!(npcs.factions.len(), again.factions.len());
+        assert!(npcs.factions.iter().zip(&again.factions).all(|(a, b)| a.name == b.name && a.stars == b.stars));
+        // Des factions dans la galaxie principale, et dans les autres aussi
+        let main = npcs.factions.iter().filter(|f| f.galaxy == 0).count();
+        assert!((NPC_MAIN / 2..=NPC_MAIN).contains(&main), "{main}");
+        assert!(npcs.factions.iter().any(|f| f.galaxy > 0));
+
+        let mut seen = HashSet::new();
+        for f in &npcs.factions {
+            assert!(f.stars.len() >= NPC_MIN_STARS / 2 && f.stars.len() <= NPC_MAX_STARS);
+            for &s in &f.stars {
+                // Une étoile n'appartient qu'à une faction, dans sa galaxie
+                assert!(seen.insert(s));
+                assert_eq!(settings.systems[s].galaxy_id, f.galaxy);
+                assert_eq!(npcs.faction_of(s).map(|x| x.name.as_str()), Some(f.name.as_str()));
+            }
+            // Territoire d'un seul tenant : tous les traits relient les étoiles d'un même bloc
+            let mut reached = HashSet::from([f.stars[0]]);
+            let mut grew = true;
+            while grew {
+                grew = false;
+                for &a in &f.stars {
+                    for &b in &f.stars {
+                        let d = settings.systems[a].center().distance(settings.systems[b].center());
+                        if reached.contains(&a) && !reached.contains(&b) && d <= link_range(&settings, a) {
+                            reached.insert(b);
+                            grew = true;
+                        }
+                    }
+                }
+            }
+            assert_eq!(reached.len(), f.stars.len(), "{} n'est pas d'un seul tenant", f.name);
+            assert!(!f.links.is_empty());
+        }
+        // Les couleurs de deux factions voisines dans la liste diffèrent
+        assert!(npcs.factions.windows(2).all(|w| w[0].color != w[1].color));
+    }
+
+    #[test]
+    fn group_links_stay_inside_the_group_and_its_galaxy() {
+        let settings = GameSettings::default();
+        // Trois étoiles proches de la galaxie principale
+        let stars: Vec<usize> = (0..settings.systems.len())
+            .filter(|&i| settings.systems[i].galaxy_id == 0)
+            .take(40)
+            .collect();
+        let links = group_links(&settings, &stars, 3.0);
+        let centers: HashSet<[i32; 3]> = stars
+            .iter()
+            .map(|&s| settings.systems[s].center().to_array().map(|v| v as i32))
+            .collect();
+        for (a, b) in &links {
+            assert!(centers.contains(&a.to_array().map(|v| v as i32)));
+            assert!(centers.contains(&b.to_array().map(|v| v as i32)));
+        }
+        // Pas de doublon : un seul trait par paire
+        let mut pairs: Vec<_> = links.iter().map(|(a, b)| (a.to_array().map(|v| v as i32), b.to_array().map(|v| v as i32))).collect();
+        pairs.sort();
+        let n = pairs.len();
+        pairs.dedup();
+        assert_eq!(n, pairs.len());
+    }
+
+    #[test]
     fn clouds_fade_when_close_and_when_far() {
         let size = 100_000.0;
         // Au milieu du nuage : presque invisible ; à bonne distance : plein
@@ -369,23 +599,4 @@ mod tests {
         assert!(cloud_fade(400_000.0, size, 55_000_000.0) < 1.0);
     }
 
-    #[test]
-    fn links_join_close_stars_only_within_their_galaxy() {
-        let settings = GameSettings::default();
-        let spatial = SystemSpatialIndex::build(&settings);
-        let mut linked = 0;
-        for sys in (0..settings.systems.len()).step_by(37) {
-            let n = neighbours(&settings, &spatial, sys);
-            assert!(n.len() <= MAX_LINKS_PER_STAR);
-            let a = &settings.systems[sys];
-            let range = if a.galaxy_id == 0 { LINK_RANGE_MAIN } else { LINK_RANGE_OTHER };
-            for b in &n {
-                let b = &settings.systems[*b];
-                assert_eq!(a.galaxy_id, b.galaxy_id);
-                assert!(a.center().distance(b.center()) <= range);
-            }
-            linked += usize::from(!n.is_empty());
-        }
-        assert!(linked > 0);
-    }
 }

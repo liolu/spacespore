@@ -1585,6 +1585,7 @@ fn update_system_hud(
     guilds: Res<guild::Guilds>,
     star_q: Query<&StarId, With<StarRoot>>,
     wormholes: Res<wormhole::Wormholes>,
+    npcs: Res<galaxy_fx::NpcTerritories>,
 ) {
     // Étoile revendiquée : on affiche son propriétaire
     let target_sys = match target_system(&camera_target.0, &star_q) {
@@ -1594,6 +1595,9 @@ fn update_system_hud(
     let mut extra = String::new();
     if let Some(who) = target_sys.and_then(|si| claims::claim_owner_label(si, &net, &settings, &guilds)) {
         extra.push_str(&format!("\nRevendiquee par {who}"));
+    }
+    if let Some(faction) = target_sys.and_then(|si| npcs.faction_of(si)) {
+        extra.push_str(&format!("\nTerritoire de {} (PNJ)", faction.name));
     }
     if let Some(line) = target_sys.and_then(|si| wormholes.hud_line(si, &settings)) {
         extra.push_str(&format!("\n{line}"));
