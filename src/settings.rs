@@ -7,7 +7,7 @@ use std::path::PathBuf;
 //  Dossier de données centralisé
 // ─────────────────────────────────────────────────────────────────────────
 
-pub const SAVE_VERSION: u32 = 8;
+pub const SAVE_VERSION: u32 = 9;
 
 /// Dossier `saves/` à côté de l'exécutable (installation portable).
 /// Si ce dossier n'est pas accessible en écriture (ex. installation système
@@ -214,12 +214,12 @@ pub(crate) fn pseudo_rand(seed: u32) -> f32 {
 pub const SYSTEM_GRID_SIZE: usize = 100;
 pub const SYSTEM_CELL_SIZE: f32 = 100_000.0;
 pub const STREAM_RADIUS: f32 = 3.0;
-pub const GALAXY_RADIUS: f32 = 4_500_000.0;
+pub const GALAXY_RADIUS: f32 = 9_000_000.0;
 
 /// Nombre de galaxies extérieures (ids 1..=NUM_DISTANT_GALAXIES).
 pub const NUM_DISTANT_GALAXIES: usize = 100;
 /// Aucun système n'est généré à moins de cette distance d'un trou noir galactique.
-pub const CORE_EXCLUSION: f32 = 15_000.0;
+pub const CORE_EXCLUSION: f32 = 150_000.0;
 
 /// Forme d'une galaxie. Index 0 = galaxie principale, 1.. = galaxies extérieures.
 #[derive(Clone, Debug)]
@@ -240,9 +240,9 @@ pub struct GalaxyConfig {
 pub fn default_galaxies() -> Vec<GalaxyConfig> {
     use bevy::math::{EulerRot, Quat, Vec3};
     const META_ARMS: usize = 5;
-    const META_RADIUS: f32 = 80_000_000.0;
+    const META_RADIUS: f32 = 160_000_000.0;
     const META_TWIST: f32 = 4.0;
-    const MIN_DIST: f32 = 15_000_000.0;
+    const MIN_DIST: f32 = 30_000_000.0;
     let tau = std::f32::consts::TAU;
 
     let mut galaxies = Vec::with_capacity(NUM_DISTANT_GALAXIES + 1);
@@ -252,7 +252,7 @@ pub fn default_galaxies() -> Vec<GalaxyConfig> {
         radius: GALAXY_RADIUS,
         num_arms: 5,
         twist: 5.0,
-        core_radius: 3000.0,
+        core_radius: 30_000.0,
         seed: 0,
         arm_stars: 0,
         scatter_stars: 0,
@@ -271,7 +271,7 @@ pub fn default_galaxies() -> Vec<GalaxyConfig> {
         let theta = spiral + scatter;
         let center = Vec3::new(
             r * theta.cos(),
-            (pseudo_rand(gs * 13 + 5) - 0.5) * 8_000_000.0,
+            (pseudo_rand(gs * 13 + 5) - 0.5) * 16_000_000.0,
             r * theta.sin(),
         );
 
@@ -283,10 +283,10 @@ pub fn default_galaxies() -> Vec<GalaxyConfig> {
                 pseudo_rand(gs * 13 + 15) * tau,
                 (pseudo_rand(gs * 13 + 17) - 0.5) * 1.0,
             ),
-            radius: 800_000.0 + pseudo_rand(gs * 13 + 7) * 2_500_000.0,
+            radius: 1_600_000.0 + pseudo_rand(gs * 13 + 7) * 5_000_000.0,
             num_arms: 2 + (pseudo_rand(gs * 13 + 9) * 4.0) as usize,
             twist: 3.0 + pseudo_rand(gs * 13 + 11) * 4.0,
-            core_radius: 1000.0 + pseudo_rand(gs * 13 + 23) * 2000.0,
+            core_radius: 10_000.0 + pseudo_rand(gs * 13 + 23) * 20_000.0,
             seed: gs * 1000,
             arm_stars: 200 + (pseudo_rand(gs * 13 + 19) * 300.0) as usize,
             scatter_stars: 50 + (pseudo_rand(gs * 13 + 21) * 100.0) as usize,
@@ -367,6 +367,8 @@ fn default_systems(galaxies: &[GalaxyConfig]) -> Vec<StarSystemConfig> {
 
         let t = pseudo_rand(s * 7 + 3);
         let r = t * t * gr;
+        // Pas d'étoile dans le trou noir central ni son disque
+        if r < CORE_EXCLUSION { continue; }
 
         let spiral = arm_base + (r / gr) * ARM_TWIST;
         let width = 0.9 * (1.0 - r / gr * 0.5);
@@ -375,7 +377,7 @@ fn default_systems(galaxies: &[GalaxyConfig]) -> Vec<StarSystemConfig> {
 
         let x = r * theta.cos();
         let z = r * theta.sin();
-        let thickness = 30000.0 * (1.0 - r / gr * 0.7);
+        let thickness = 60000.0 * (1.0 - r / gr * 0.7);
         let y = (pseudo_rand(s * 7 + 7) - 0.5) * thickness;
 
         let (sr, si, sc) = make_star(s);
@@ -398,10 +400,11 @@ fn default_systems(galaxies: &[GalaxyConfig]) -> Vec<StarSystemConfig> {
         let s = (ARM_STARS + i) as u32 + 100;
         let t = pseudo_rand(s * 7 + 3);
         let r = t * t * gr * 0.85;
+        if r < CORE_EXCLUSION { continue; }
         let theta = pseudo_rand(s * 7 + 5) * tau;
         let x = r * theta.cos();
         let z = r * theta.sin();
-        let y = (pseudo_rand(s * 7 + 7) - 0.5) * 1500.0;
+        let y = (pseudo_rand(s * 7 + 7) - 0.5) * 3000.0;
 
         let (sr, si, sc) = make_star(s);
         systems.push(StarSystemConfig {
@@ -433,14 +436,14 @@ fn default_systems(galaxies: &[GalaxyConfig]) -> Vec<StarSystemConfig> {
                 let sp = ab + (sr / gr) * gal.twist;
                 let w = 0.9 * (1.0 - sr / gr * 0.5);
                 let sc = (pseudo_rand(s * 7 + 5) - 0.5) * w;
-                let thick = 12000.0 * (1.0 - sr / gr * 0.8);
+                let thick = 24000.0 * (1.0 - sr / gr * 0.8);
                 (sr * (sp + sc).cos(), (pseudo_rand(s * 7 + 7) - 0.5) * thick, sr * (sp + sc).sin())
             } else {
                 // Étoiles dispersées entre les bras
                 let st = pseudo_rand(s * 7 + 3);
                 let sr = st * st * gr * 0.85;
                 let stheta = pseudo_rand(s * 7 + 5) * tau;
-                (sr * stheta.cos(), (pseudo_rand(s * 7 + 7) - 0.5) * 8000.0, sr * stheta.sin())
+                (sr * stheta.cos(), (pseudo_rand(s * 7 + 7) - 0.5) * 16000.0, sr * stheta.sin())
             };
             let local = bevy::math::Vec3::new(lx, ly, lz);
             // Pas de système dans le trou noir central

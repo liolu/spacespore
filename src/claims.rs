@@ -27,7 +27,7 @@ use crate::{target_system, CameraTarget};
 
 /// Rayon de la frontière autour d'une étoile revendiquée. Deux étoiles d'un
 /// même propriétaire à moins de 2 rayons ont une frontière commune.
-pub const CLAIM_RADIUS: f32 = 30_000.0;
+pub const CLAIM_RADIUS: f32 = 25_000.0;
 const CIRCLE_SEGMENTS: usize = 96;
 
 pub struct ClaimsPlugin;

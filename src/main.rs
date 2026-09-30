@@ -352,7 +352,7 @@ fn setup_scene(
     commands.spawn((
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
-            far: 100_000_000.0,
+            far: 400_000_000.0,
             ..default()
         }),
 
@@ -732,17 +732,17 @@ fn galaxy_view_distance(kind: &TargetKind, settings: &GameSettings) -> f32 {
         TargetKind::DistantGalaxyCore(id) => id as usize,
         _ => 0,
     };
-    let radius = settings.galaxies.get(gid).map_or(4_500_000.0, |g| g.radius);
-    (radius * 1.5).clamp(1_000_000.0, 2_900_000.0)
+    let radius = settings.galaxies.get(gid).map_or(9_000_000.0, |g| g.radius);
+    (radius * 1.5).clamp(2_000_000.0, 5_900_000.0)
 }
 
 /// Au-delà de cette distance (changement de galaxie), le vaisseau saute
 /// directement à destination au lieu de voyager en croisière.
-const HYPERJUMP_DIST: f32 = 10_000_000.0;
+const HYPERJUMP_DIST: f32 = 20_000_000.0;
 
 /// Portée fixe d'un déplacement du vaisseau (le cercle blanc). Au-delà, il faut avancer par
 /// étapes, passer par un trou de ver, ou sauter entre galaxies via leur trou noir.
-const MAX_TRAVEL_RANGE: f32 = 300_000.0;
+const MAX_TRAVEL_RANGE: f32 = 600_000.0;
 
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZoomLevel {
@@ -762,9 +762,9 @@ impl ZoomLevel {
             ZoomLevel::System
         } else if d < 500_000.0 {
             ZoomLevel::Sector
-        } else if d < 3_000_000.0 {
+        } else if d < 6_000_000.0 {
             ZoomLevel::Galaxy
-        } else if d < 10_000_000.0 {
+        } else if d < 20_000_000.0 {
             ZoomLevel::Cosmos
         } else {
             ZoomLevel::DeepSpace
@@ -981,7 +981,7 @@ fn camera_controller(
     // Galaxie sélectionnée depuis l'espace profond : on plonge dedans
     if camera_target.is_changed()
         && ZoomLevel::is_core(&camera_target.0)
-        && ctrl.distance >= 10_000_000.0
+        && ctrl.distance >= 20_000_000.0
     {
         ctrl.zoom_goal = Some(galaxy_view_distance(&camera_target.0, &settings));
     }
@@ -1276,9 +1276,9 @@ fn camera_distance_range(
         TargetKind::NeutronStar(_) => (22.0 * 4.0, 9_999_999.0),
         TargetKind::Supernova(_) => (500.0, 9_999_999.0),
 
-        TargetKind::GalacticCore => (5000.0, 100_000_000.0),
+        TargetKind::GalacticCore => (50_000.0, 400_000_000.0),
         // Comme le trou noir principal : on peut zoomer dans la galaxie extérieure
-        TargetKind::DistantGalaxyCore(_) => (5000.0, 100_000_000.0),
+        TargetKind::DistantGalaxyCore(_) => (50_000.0, 400_000_000.0),
     }
 }
 
