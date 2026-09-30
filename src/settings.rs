@@ -542,6 +542,9 @@ pub struct GameSettings {
     /// Ma guilde (fiche complète), et fiches gardées après un départ ou une dissolution.
     #[serde(default)]                         pub guild: Option<crate::guild::GuildRecord>,
     #[serde(default)]                         pub guild_archive: Vec<crate::guild::GuildRecord>,
+    /// Ce jeu a pris une identité de secours (un autre jeu utilisait la même sauvegarde) :
+    /// il ne réécrit plus `settings.json`, pour ne pas écraser le compte de l'autre.
+    #[serde(skip)]                            pub temp_identity: bool,
 
     // ── Systèmes stellaires (régénérés au lancement, jamais sauvegardés) ─
     #[serde(skip)] pub systems: Vec<StarSystemConfig>,
@@ -595,6 +598,7 @@ impl Default for GameSettings {
             player_id: 0,
             guild: None,
             guild_archive: Vec::new(),
+            temp_identity: false,
             systems: default_systems(&default_galaxies()),
             galaxies: default_galaxies(),
             planets: default_planets(), stars: default_stars(),
@@ -677,6 +681,10 @@ impl GameSettings {
     }
 
     pub fn save(&self) {
+        // Identité de secours : la sauvegarde appartient à l'autre jeu
+        if self.temp_identity {
+            return;
+        }
         // Les tests ne touchent pas aux fichiers du joueur
         if cfg!(test) {
             return;

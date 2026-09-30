@@ -577,6 +577,16 @@ fn guild_sync(
         }
     }
 
+    // Un autre joueur connecté a le même identifiant que moi : deux jeux qui lisent la
+    // même sauvegarde (même PC, ou dossier copié). Celui dont l'identifiant réseau est
+    // le plus élevé prend une identité neuve ; l'autre garde le compte.
+    let my_net_id = net.my_id();
+    let duplicate = net.peers.iter().any(|(&id, p)| p.status.pid == settings.player_id && settings.player_id != 0 && id < my_net_id);
+    if duplicate {
+        become_new_player(settings, guilds, net, now);
+        return;
+    }
+
     // Le tag affiché vient toujours de la guilde
     let tag = settings.guild.as_ref().map_or("", |g| g.tag.as_str());
     if settings.clan_tag != tag {
@@ -630,6 +640,29 @@ fn guild_sync(
         net.cache_dirty = false;
         save_cache(guilds, net);
     }
+}
+
+/// Repart d'une identité vierge : nouvel identifiant, sans guilde, sans étoiles ni
+/// relations, avec un pseudo distinct. Rien n'est écrit sur disque (voir `temp_identity`).
+fn become_new_player(settings: &mut GameSettings, guilds: &mut Guilds, net: &mut Net, now: f64) {
+    settings.temp_identity = true;
+    settings.player_id = rand::random::<u64>() | 1;
+    settings.guild = None;
+    settings.guild_archive.clear();
+    settings.clan_tag.clear();
+    settings.claims.clear();
+    settings.allies.clear();
+    settings.enemies.clear();
+    let suffix = rand::random::<u32>() % 90 + 10;
+    let base: String = settings.player_name.chars().take(MAX_NAME_LEN - 3).collect();
+    settings.player_name = format!("{base} {suffix}");
+    guilds.request = None;
+    net.local.pid = settings.player_id;
+    net.local.req = 0;
+    net.notify(
+        &format!("Un autre jeu utilise deja ce compte : vous jouez en tant que {} (sans guilde).", settings.player_name),
+        now,
+    );
 }
 
 /// Fiches de guilde et profils de joueurs déjà reçus, gardés entre deux parties.

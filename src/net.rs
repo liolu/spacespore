@@ -2395,6 +2395,26 @@ mod tests {
         pump(&mut host, &mut client, 30);
         assert!(client.world().resource::<Guilds>().active(gid).is_none());
 
+        // Deux jeux sur la même sauvegarde : le client (identifiant réseau plus élevé) prend
+        // une identité neuve, l'hôte garde la sienne
+        let host_pid = host.world().resource::<GameSettings>().player_id;
+        assert!(act(&mut host, |s, g, n| guild::create(s, g, n, 0.0, "Doublon", "dbl", 1, [0.0, 1.0, 0.0])));
+        {
+            let mut s = client.world_mut().resource_mut::<GameSettings>();
+            s.player_id = host_pid;
+            s.player_name = "Hote".into();
+        }
+        pump(&mut host, &mut client, 40);
+        {
+            let hs = host.world().resource::<GameSettings>();
+            let cs = client.world().resource::<GameSettings>();
+            assert_eq!(hs.player_id, host_pid);
+            assert!(!hs.temp_identity && hs.guild.is_some());
+            assert_ne!(cs.player_id, host_pid);
+            assert!(cs.temp_identity && cs.guild.is_none());
+            assert_ne!(cs.player_name, "Hote");
+        }
+
         // L'hôte ferme : le client revient à sa propre partie (ou hors ligne si le port est encore pris)
         host.world_mut().resource_mut::<Net>().leave();
         drop(host);
