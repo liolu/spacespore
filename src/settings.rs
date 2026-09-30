@@ -201,7 +201,7 @@ impl StarSystemConfig {
     }
 }
 
-fn pseudo_rand(seed: u32) -> f32 {
+pub(crate) fn pseudo_rand(seed: u32) -> f32 {
     let mut x = seed;
     x ^= x >> 16;
     x = x.wrapping_mul(0x45d9f3b);
@@ -539,6 +539,8 @@ pub struct GameSettings {
     #[serde(default)]                         pub enemies: Vec<String>,
     /// Identifiant permanent du joueur (tiré au hasard au premier lancement).
     #[serde(default)]                         pub player_id: u64,
+    /// Trous de ver déjà empruntés (système de départ) : leur destination est alors connue.
+    #[serde(default)]                         pub known_wormholes: Vec<u32>,
     /// Ma guilde (fiche complète), et fiches gardées après un départ ou une dissolution.
     #[serde(default)]                         pub guild: Option<crate::guild::GuildRecord>,
     #[serde(default)]                         pub guild_archive: Vec<crate::guild::GuildRecord>,
@@ -596,6 +598,7 @@ impl Default for GameSettings {
             allies: Vec::new(),
             enemies: Vec::new(),
             player_id: 0,
+            known_wormholes: Vec::new(),
             guild: None,
             guild_archive: Vec::new(),
             temp_identity: false,
