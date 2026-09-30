@@ -321,6 +321,8 @@ pub enum TargetKind {
     // ── Centre galactique ────────────────────────────────────────────────
     GalacticCore,
     DistantGalaxyCore(u32),
+    /// Ouverture d'un trou de ver : index du système qu'elle dessert.
+    WormholeMouth(usize),
 }
 
 #[derive(Resource)]

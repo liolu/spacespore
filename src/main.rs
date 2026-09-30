@@ -78,6 +78,8 @@ use astre::Remnant_stellaire::supernova::SupernovaRoot;
 
 #[derive(SystemParam)]
 pub struct TargetQueries<'w, 's> {
+    pub wormholes: Res<'w, wormhole::Wormholes>,
+
     pub planet_q:
         Query<'w, 's, (&'static GlobalTransform, &'static PlanetId), With<PlanetRoot>>,
 
@@ -605,6 +607,17 @@ fn select_world_target(
         consider(pos, 60.0, TargetKind::Star(fs.sys_idx));
     }
 
+    // ── Ouvertures de trous de ver (visibles de près) ──────────────
+    for w in &queries.wormholes.list {
+        for (sys, mouth) in [(w.a, w.mouth_a), (w.b, w.mouth_b)] {
+            let dist = cam_pos.distance(mouth);
+            if dist <= wormhole::DRAW_RANGE {
+                // Même taille que le dessin de l'ouverture
+                consider(mouth, (dist * 0.012).max(wormhole::MIN_DRAW_RADIUS) * 1.5, TargetKind::WormholeMouth(sys));
+            }
+        }
+    }
+
     if let Some((_, selected)) = best {
         if zoom.can_navigate_to(&selected) {
             // Portée de déplacement fixe : seuls les trous noirs de galaxie (sauts entre galaxies)
@@ -633,6 +646,7 @@ fn current_galaxy(kind: &TargetKind, queries: &TargetQueries, settings: &GameSet
         TargetKind::Star(id) => {
             if queries.star_q.iter().any(|(_, sid)| sid.0 == id) { id / 1000 } else { id }
         }
+        TargetKind::WormholeMouth(sys) => sys,
         _ => return 0,
     };
     settings.systems.get(sys_idx).map_or(0, |s| s.galaxy_id)
@@ -816,7 +830,9 @@ impl ZoomLevel {
     fn can_navigate_to(&self, kind: &TargetKind) -> bool {
         match self {
             ZoomLevel::Planet | ZoomLevel::System => true,
-            ZoomLevel::Sector | ZoomLevel::Galaxy => Self::is_star(kind) || Self::is_core(kind),
+            ZoomLevel::Sector | ZoomLevel::Galaxy => {
+                Self::is_star(kind) || Self::is_core(kind) || matches!(kind, TargetKind::WormholeMouth(_))
+            }
             ZoomLevel::Cosmos => Self::is_core(kind),
             ZoomLevel::DeepSpace => matches!(kind, TargetKind::GalacticCore | TargetKind::DistantGalaxyCore(_)),
         }
@@ -944,7 +960,7 @@ fn camera_controller(
                 return;
             }
             *ship_vis = Visibility::Inherited;
-            let hover_pos = travel.parked(&camera_target.0).unwrap_or(target_pos + Vec3::Y * hover_height(&camera_target, &settings)) + net.hover_offset(ctrl.distance);
+            let hover_pos = (target_pos + Vec3::Y * hover_height(&camera_target, &settings)) + net.hover_offset(ctrl.distance);
             let to_hover = hover_pos - ship_tf.translation;
             let dist = to_hover.length();
             if travel.active() {
@@ -1047,7 +1063,7 @@ fn camera_controller(
         *ship_vis = Visibility::Inherited;
 
         let hover_height = hover_height(&camera_target, &settings);
-        let hover_pos = travel.parked(&camera_target.0).unwrap_or(target_pos + Vec3::Y * hover_height) + net.hover_offset(ctrl.distance);
+        let hover_pos = (target_pos + Vec3::Y * hover_height) + net.hover_offset(ctrl.distance);
         let to_hover = hover_pos - ship_tf.translation;
         let dist = to_hover.length();
 
@@ -1102,6 +1118,9 @@ fn resolve_target(
                 .find(|(_, mid)| mid.planet_idx == planet_idx && mid.moon_idx == moon_idx)
                 .map(|(gt, _)| gt.translation())
                 .unwrap_or_default(),
+
+        TargetKind::WormholeMouth(sys) =>
+            q.wormholes.mouth_at(sys).unwrap_or_default(),
 
         TargetKind::Star(i) =>
             q.star_q
@@ -1298,6 +1317,8 @@ fn camera_distance_range(
         TargetKind::NeutronStar(_) => (22.0 * 4.0, 9_999_999.0),
         TargetKind::Supernova(_) => (500.0, 9_999_999.0),
 
+        // Ouverture de trou de ver : le vaisseau se pose juste au-dessus (hover = moitié du minimum)
+        TargetKind::WormholeMouth(_) => (5_000.0, 9_999_999.0),
         TargetKind::GalacticCore => (50_000.0, 400_000_000.0),
         // Comme le trou noir principal : on peut zoomer dans la galaxie extérieure
         TargetKind::DistantGalaxyCore(_) => (50_000.0, 400_000_000.0),
@@ -1709,7 +1730,12 @@ fn update_system_hud(
     if let Some(faction) = target_sys.and_then(|si| npcs.faction_of(si)) {
         extra.push_str(&format!("\nTerritoire de {} (PNJ)", faction.name));
     }
-    if let Some(line) = target_sys.and_then(|si| wormholes.hud_line(si, &settings)) {
+    let wormhole_line = match camera_target.0 {
+        TargetKind::WormholeMouth(si) => wormholes.hud_line(si, &settings),
+        TargetKind::Star(_) => target_sys.and_then(|si| wormholes.star_hint(si)),
+        _ => None,
+    };
+    if let Some(line) = wormhole_line {
         extra.push_str(&format!("\n{line}"));
     }
     let claim_line = (!extra.is_empty()).then_some(extra);
@@ -1732,6 +1758,7 @@ fn update_system_hud(
             });
             (Some(si), label)
         }
+        TargetKind::WormholeMouth(si) => (None, settings.systems.get(si).map(|s| format!("Trou de ver de {}", s.name))),
         TargetKind::GalacticCore => (None, Some("Trou Noir Galactique".to_string())),
         TargetKind::DistantGalaxyCore(id) => (None, Some(match settings.galaxies.get(id as usize) {
             Some(g) => format!("Galaxie {} · {}", id, g.kind.name()),

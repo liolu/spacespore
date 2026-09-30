@@ -21,22 +21,24 @@ use bevy::prelude::*;
 
 use crate::net::Net;
 use crate::net_ui::NetPanel;
-use crate::planet::{StarId, StarRoot};
 use crate::settings::{GameSettings, StarSystemConfig, CORE_EXCLUSION, GALAXY_RADIUS};
 use crate::ship::Ship;
 use crate::ui::{CameraTarget, MenuState, TargetKind};
-use crate::{target_system, CameraController, ZoomLevel};
+use crate::{CameraController, ZoomLevel};
 
 /// Trous de ver dans la galaxie principale.
 const MAIN_GALAXY_WORMHOLES: usize = 10;
 /// Marge autour des orbites où l'on peut encore emprunter le trou de ver.
 const USE_MARGIN: f32 = 30_000.0;
 /// Rayon minimal du dessin (il grandit avec la distance pour rester visible).
-const MIN_DRAW_RADIUS: f32 = 1_500.0;
+pub const MIN_DRAW_RADIUS: f32 = 1_500.0;
 /// Distance de la caméra au-delà de laquelle une ouverture n'est plus dessinée.
-const DRAW_RANGE: f32 = 3_000_000.0;
+pub const DRAW_RANGE: f32 = 3_000_000.0;
 /// Le trait entre deux ouvertures connues est dessiné de plus loin.
 const LINE_RANGE: f32 = 30_000_000.0;
+/// Distance maximale du vaisseau à l'ouverture pour l'emprunter (il se pose au-dessus d'elle).
+const ENTER_RANGE: f32 = 30_000.0;
+
 /// Délai, en secondes, entre la fin d'un voyage et le suivant.
 const COOLDOWN: f64 = 5.0;
 
@@ -83,6 +85,17 @@ impl Wormhole {
         }
     }
 
+    /// Position de l'ouverture qui dessert `sys`.
+    pub fn mouth_of(&self, sys: usize) -> Option<Vec3> {
+        if sys == self.a {
+            Some(self.mouth_a)
+        } else if sys == self.b {
+            Some(self.mouth_b)
+        } else {
+            None
+        }
+    }
+
     pub fn reach_at(&self, sys: usize) -> f32 {
         if sys == self.a { self.reach_a } else { self.reach_b }
     }
@@ -99,7 +112,17 @@ impl Wormholes {
         self.list.iter().find(|w| w.other_end(sys).is_some())
     }
 
-    /// Ligne d'information quand on cible l'étoile d'un trou de ver.
+    /// Position de l'ouverture du trou de ver qui dessert ce système.
+    pub fn mouth_at(&self, sys: usize) -> Option<Vec3> {
+        self.at(sys)?.mouth_of(sys)
+    }
+
+    /// Indice affiché quand on cible l'étoile près de laquelle s'ouvre un trou de ver.
+    pub fn star_hint(&self, sys: usize) -> Option<String> {
+        self.at(sys).map(|_| "Un trou de ver s'ouvre pres de cette etoile : ciblez-le pour l'emprunter.".to_string())
+    }
+
+    /// Ligne d'information quand on cible l'ouverture d'un trou de ver.
     pub fn hud_line(&self, sys: usize, settings: &GameSettings) -> Option<String> {
         let w = self.at(sys)?;
         let known = settings.known_wormholes.contains(&w.id());
@@ -260,9 +283,6 @@ pub struct WormholeTravel {
     trip: Option<Trip>,
     /// Instant (temps de jeu, en secondes) avant lequel un nouveau voyage est impossible.
     cooldown_until: f64,
-    /// Après le voyage : le vaisseau reste centré au-dessus de l'ouverture de sortie tant que
-    /// l'étoile d'arrivée reste la cible.
-    parked: Option<(TargetKind, Vec3)>,
 }
 
 impl WormholeTravel {
@@ -270,10 +290,6 @@ impl WormholeTravel {
         self.trip.is_some()
     }
 
-    /// Position d'attente du vaisseau si `target` est l'étoile d'arrivée d'un voyage récent.
-    pub fn parked(&self, target: &TargetKind) -> Option<Vec3> {
-        self.parked.filter(|(kind, _)| kind == target).map(|(_, pos)| pos)
-    }
 }
 
 /// Phase à l'instant `t`, avancement (0 à 1) dans la phase, et son texte.
@@ -352,7 +368,6 @@ fn wormhole_travel(
     panel: Res<NetPanel>,
     menu: Res<MenuState>,
     wormholes: Res<Wormholes>,
-    star_q: Query<&StarId, With<StarRoot>>,
     ship_q: Query<&Transform, With<Ship>>,
     target: Res<CameraTarget>,
     settings: Res<GameSettings>,
@@ -369,29 +384,29 @@ fn wormhole_travel(
         net.notify(&format!("Trou de ver en recharge : encore {left} s."), now);
         return;
     }
-    let Some(Some(sys)) = target_system(&target.0, &star_q) else {
-        net.notify("Ciblez une etoile pour chercher un trou de ver.", now);
+    // On emprunte un trou de ver depuis son ouverture : il faut la cibler (pas l'étoile voisine)
+    let TargetKind::WormholeMouth(sys) = target.0 else {
+        net.notify("Ciblez l'ouverture d'un trou de ver pour l'emprunter.", now);
         return;
     };
     let Some(wormhole) = wormholes.at(sys).cloned() else {
-        net.notify("Il n'y a pas de trou de ver pres de cette etoile.", now);
+        net.notify("Il n'y a pas de trou de ver ici.", now);
         return;
     };
     let Some(to) = wormhole.other_end(sys) else { return };
-    let Some(here) = settings.systems.get(sys) else { return };
     let Some(dest) = settings.systems.get(to) else { return };
     if net.local.hp == 0 {
         net.notify("Votre vaisseau est detruit.", now);
         return;
     }
     let Ok(ship) = ship_q.get_single() else { return };
-    if ship.translation.distance(here.center()) > wormhole.reach_at(sys) {
-        net.notify("Approchez-vous de l'etoile pour emprunter son trou de ver.", now);
+    let (mouth, exit_mouth) = if sys == wormhole.a { (wormhole.mouth_a, wormhole.mouth_b) } else { (wormhole.mouth_b, wormhole.mouth_a) };
+    if ship.translation.distance(mouth) > ENTER_RANGE {
+        net.notify("Approchez-vous de l'ouverture pour emprunter le trou de ver.", now);
         return;
     }
 
-    let (mouth, exit_mouth) = if sys == wormhole.a { (wormhole.mouth_a, wormhole.mouth_b) } else { (wormhole.mouth_b, wormhole.mouth_a) };
-    let hover = crate::hover_height(&CameraTarget(TargetKind::Star(to)), &settings);
+    let hover = crate::hover_height(&CameraTarget(TargetKind::WormholeMouth(to)), &settings);
     travel.trip = Some(Trip {
         t: 0.0,
         to,
@@ -426,10 +441,6 @@ fn run_wormhole_trip(
     mut settings: ResMut<GameSettings>,
     mut net: ResMut<Net>,
 ) {
-    // Un autre choix de cible libère le vaisseau de sa position d'attente
-    if travel.parked.is_some_and(|(kind, _)| kind != target.0) {
-        travel.parked = None;
-    }
     let Some(trip) = travel.trip.as_mut() else { return };
     let now = time.elapsed_secs_f64();
     trip.t += time.delta_secs();
@@ -445,7 +456,6 @@ fn run_wormhole_trip(
         }
         let name = trip.dest_name.clone();
         let first = trip.first_time;
-        travel.parked = Some((TargetKind::Star(trip.to), trip.dest));
         travel.cooldown_until = now + COOLDOWN;
         travel.trip = None;
         let text = if first {
@@ -490,7 +500,7 @@ fn run_wormhole_trip(
     // À la sortie : la cible devient l'étoile d'arrivée (la caméra reste en zoom « Système »)
     if phase == Phase::Exit && !trip.arrival_set {
         trip.arrival_set = true;
-        target.0 = TargetKind::Star(trip.to);
+        target.0 = TargetKind::WormholeMouth(trip.to);
         *zoom = ZoomLevel::System;
     }
 }
