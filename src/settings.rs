@@ -275,7 +275,7 @@ pub fn default_galaxies(world_seed: u64) -> Vec<GalaxyConfig> {
         let rk = |k: u32| pseudo_rand(gs * 13 + k);
         let rk_k = |n: u32, k: u32| pseudo_rand((gs * 13 + n).wrapping_add(k));
 
-        let radius = 1_600_000.0 + rk(7) * 5_000_000.0;
+        let radius = 1_300_000.0 + (rk(7) * 0.6 + rk(27) * 0.4).powf(1.3) * 6_000_000.0;
 
         // Position de la galaxie sur les bras de la méta-spirale, à l'écart des autres :
         // on retire au sort jusqu'à trouver une place libre (à défaut, la moins serrée)
@@ -317,13 +317,13 @@ pub fn default_galaxies(world_seed: u64) -> Vec<GalaxyConfig> {
                 (rk(17) - 0.5) * 1.0,
             ),
             radius,
-            num_arms: 2 + (rk(9) * 4.0) as usize,
-            twist: 3.0 + rk(11) * 4.0,
+            num_arms: 2 + (rk(9) * 5.0) as usize,
+            twist: 1.5 + rk(11) * 7.5,
             kind: crate::galaxy_shape::GalaxyKind::for_index(gi, world_hash),
             core_radius: 10_000.0 + rk(23) * 20_000.0,
             seed: gs * 1000,
-            arm_stars: 200 + (rk(19) * 300.0) as usize,
-            scatter_stars: 50 + (rk(21) * 100.0) as usize,
+            arm_stars: 170 + (rk(19) * 380.0) as usize,
+            scatter_stars: 40 + (rk(31) * 120.0) as usize,
         });
     }
     galaxies

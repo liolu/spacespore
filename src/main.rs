@@ -619,18 +619,20 @@ fn select_world_target(
     }
 
     if let Some((_, selected)) = best {
-        // Un saut vers une autre galaxie se fait depuis le trou noir de la galaxie où l'on est
-        let selected_galaxy = match selected {
-            TargetKind::GalacticCore => Some(0),
-            TargetKind::DistantGalaxyCore(id) => Some(id),
-            _ => None,
-        };
-        if selected_galaxy.is_some_and(|gid| gid != current_gal) {
+        // Changer de galaxie (trou noir d'une autre galaxie, mais aussi n'importe laquelle de ses
+        // étoiles) demande deux choses : être dézoomé à plus de 10 000 000, et que le vaisseau
+        // soit sur le trou noir de la galaxie où l'on est
+        if current_galaxy(&selected, &queries, &settings) != current_gal {
+            let now = time.elapsed_secs_f64();
+            if !ZoomLevel::is_core(&selected) || ctrl_dist < GALAXY_JUMP_MIN_ZOOM {
+                net.notify("Pour changer de galaxie : dezoomez a plus de 10 000 000 et choisissez son trou noir.", now);
+                return;
+            }
             let at_core = settings.galaxies.get(current_gal as usize).zip(ship_q.get_single().ok()).is_some_and(|(g, ship)| {
                 ship.translation().distance(g.center) <= g.core_radius * 4.0
             });
             if !at_core {
-                net.notify("Rejoignez le trou noir de votre galaxie pour sauter vers une autre galaxie.", time.elapsed_secs_f64());
+                net.notify("Rejoignez le trou noir de votre galaxie pour sauter vers une autre galaxie.", now);
                 return;
             }
         }
@@ -776,6 +778,9 @@ fn galaxy_view_distance(kind: &TargetKind, settings: &GameSettings) -> f32 {
 /// Au-delà de cette distance (changement de galaxie), le vaisseau saute
 /// directement à destination au lieu de voyager en croisière.
 const HYPERJUMP_DIST: f32 = 20_000_000.0;
+
+/// Distance de caméra minimale pour pouvoir sélectionner une autre galaxie (saut entre galaxies).
+const GALAXY_JUMP_MIN_ZOOM: f32 = 10_000_000.0;
 
 /// Portée fixe d'un déplacement du vaisseau (le cercle blanc). Au-delà, il faut avancer par
 /// étapes, passer par un trou de ver, ou sauter entre galaxies via leur trou noir.
