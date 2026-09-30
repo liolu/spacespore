@@ -398,6 +398,8 @@ fn generate_all(
         spawn_arm_capsules(
             &mut commands, &capsule_mesh, &capsule_mat,
             gid as u32, gal.center, gal.tilt, &gal.shape(), gal.radius,
+            // Chaque galaxie extérieure décale sa palette : elles n'ont pas toutes les mêmes couleurs
+            if gid == 0 { 0 } else { (crate::settings::pseudo_rand(gid as u32 * 31 + 7) * ARM_COLORS as f32) as usize % ARM_COLORS },
         );
     }
 
@@ -509,6 +511,7 @@ fn spawn_arm_capsules(
     tilt: Quat,
     shape: &Shape,
     radius: f32,
+    color_shift: usize,
 ) {
     const ARM_BASE: &[f32] = &[0.12, 0.22, 0.32, 0.42, 0.52, 0.62, 0.72, 0.82, 0.92];
     const ARM_DETAIL: &[f32] = &[0.17, 0.27, 0.37, 0.47, 0.57, 0.67, 0.77, 0.87];
@@ -533,7 +536,7 @@ fn spawn_arm_capsules(
 
                 let rot = Quat::from_rotation_arc(Vec3::Y, world_tangent);
                 let base_scale = Vec3::new(cap_radius, cap_half_len, cap_radius);
-                let color_idx = ((t * (ARM_COLORS as f32 - 0.01)) as usize).min(ARM_COLORS - 1);
+                let color_idx = (((t * (ARM_COLORS as f32 - 0.01)) as usize).min(ARM_COLORS - 1) + color_shift) % ARM_COLORS;
 
                 commands.spawn((
                     Mesh3d(capsule_mesh.clone()),

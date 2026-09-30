@@ -74,10 +74,11 @@ impl GalaxyKind {
         }
     }
 
-    /// Type d'une galaxie extérieure à partir de sa graine.
-    pub fn pick(seed: u32) -> Self {
-        let i = (pseudo_rand(seed) * Self::ALL.len() as f32) as usize;
-        Self::ALL[i.min(Self::ALL.len() - 1)]
+    /// Type de la galaxie extérieure n° `gi` : les 20 types reviennent à parts égales, mélangés
+    /// différemment selon le monde (7 est premier avec 20 : deux voisines diffèrent toujours).
+    pub fn for_index(gi: usize, world_hash: u32) -> Self {
+        let offset = (world_hash % 20) as usize;
+        Self::ALL[(gi * 7 + offset) % Self::ALL.len()]
     }
 }
 
@@ -164,6 +165,9 @@ pub struct Shape {
     thickness: f32,
     radius: f32,
     total_weight: f32,
+    /// Étirement du disque (1 = rond) et rotation, appliqués au fond diffus.
+    bg_stretch: f32,
+    bg_yaw: Quat,
 }
 
 // ── Aides de construction ───────────────────────────────────────────────
@@ -581,8 +585,29 @@ impl Shape {
             }
         }
 
+        // Variations propres à chaque galaxie extérieure (la principale reste telle quelle) :
+        // largeur des bras, épaisseur, part d'étoiles sur la structure, disque plus ou moins ovale
+        let (mut bg_stretch, mut bg_yaw) = (1.0, Quat::IDENTITY);
+        if gal.seed != 0 {
+            let width_mul = rng.range(0.6, 1.5);
+            for c in &mut curves {
+                c.width *= width_mul;
+            }
+            thickness *= rng.range(0.6, 2.0);
+            if share > 0.0 {
+                share = (share + rng.range(-0.15, 0.1)).clamp(0.1, 0.95);
+            }
+            bg_stretch = rng.range(0.6, 1.0);
+            bg_yaw = Quat::from_rotation_y(rng.f() * TAU);
+            for c in &mut curves {
+                for p in &mut c.pts {
+                    *p = bg_yaw * Vec3::new(p.x, p.y, p.z * bg_stretch);
+                }
+            }
+        }
+
         let total_weight = curves.iter().map(|c| c.weight).sum();
-        Self { curves, background, structure_share: share, thickness, radius: r, total_weight }
+        Self { curves, background, structure_share: share, thickness, radius: r, total_weight, bg_stretch, bg_yaw }
     }
 
     /// Étoile (ou nuage) posée sur la structure. `p_min` écarte le noyau.
@@ -610,6 +635,11 @@ impl Shape {
 
     /// Étoile du fond diffus.
     pub fn sample_background(&self, rng: &mut Rng) -> Vec3 {
+        let p = self.sample_background_raw(rng);
+        self.bg_yaw * Vec3::new(p.x, p.y, p.z * self.bg_stretch)
+    }
+
+    fn sample_background_raw(&self, rng: &mut Rng) -> Vec3 {
         match &self.background {
             Background::Disk { reach, thick } => {
                 let u = rng.f();
@@ -656,7 +686,7 @@ mod tests {
     use crate::settings::default_galaxies;
 
     fn config(kind: GalaxyKind) -> GalaxyConfig {
-        let mut g = default_galaxies().remove(1);
+        let mut g = default_galaxies(crate::settings::DEFAULT_WORLD_SEED).remove(1);
         g.kind = kind;
         g
     }
@@ -703,20 +733,50 @@ mod tests {
     }
 
     #[test]
-    fn kinds_have_distinct_names_and_picking_is_varied() {
+    fn kinds_have_distinct_names_and_every_kind_is_used_equally() {
         let mut names: Vec<_> = GalaxyKind::ALL.iter().map(|k| k.name()).collect();
         names.sort();
         names.dedup();
         assert_eq!(names.len(), GalaxyKind::ALL.len());
-        let picked: std::collections::HashSet<_> =
-            (0..100u32).map(|i| GalaxyKind::pick(i * 13 + 300_000) as usize).collect();
-        assert!(picked.len() >= 14, "seulement {} types sur 100 galaxies", picked.len());
+        for world in [0u32, 5, 12345] {
+            let mut count = [0usize; 20];
+            for gi in 0..100 {
+                count[GalaxyKind::for_index(gi, world) as usize] += 1;
+            }
+            assert!(count.iter().all(|&n| n == 5), "{count:?}");
+            // Deux galaxies voisines ne sont jamais du même type
+            assert!((0..99).all(|gi| GalaxyKind::for_index(gi, world) != GalaxyKind::for_index(gi + 1, world)));
+        }
+    }
+
+    #[test]
+    fn another_world_seed_gives_other_galaxies() {
+        let a = default_galaxies(42);
+        let b = default_galaxies(43);
+        let differing = a.iter().zip(&b).skip(1).filter(|(x, y)| x.center.distance(y.center) > 1.0).count();
+        assert!(differing > 90, "{differing}");
+        assert!(a.iter().zip(&b).skip(1).any(|(x, y)| x.kind != y.kind));
+    }
+
+    #[test]
+    fn galaxies_of_the_same_kind_differ_from_each_other() {
+        let g = default_galaxies(crate::settings::DEFAULT_WORLD_SEED);
+        let same: Vec<&GalaxyConfig> = g.iter().skip(1).filter(|x| x.kind == g[1].kind).collect();
+        assert!(same.len() >= 2);
+        let s0 = same[0].shape();
+        let s1 = same[1].shape();
+        let (mut r0, mut r1) = (Rng::new(1), Rng::new(1));
+        let p0: Vec<Vec3> = (0..20).map(|_| s0.sample_structure(&mut r0, 0.0) / same[0].radius).collect();
+        let p1: Vec<Vec3> = (0..20).map(|_| s1.sample_structure(&mut r1, 0.0) / same[1].radius).collect();
+        assert!(p0.iter().zip(&p1).any(|(a, b)| a.distance(*b) > 0.05));
     }
 
     #[test]
     fn classic_spiral_keeps_the_historic_arm_formula() {
         let mut g = config(GalaxyKind::Spiral);
         g.num_arms = 3;
+        // Graine 0 = galaxie principale : aucune variation aléatoire
+        g.seed = 0;
         let shape = g.shape();
         assert_eq!(shape.curves.len(), 3);
         let (pos, _) = shape.curves[1].at(0.5);

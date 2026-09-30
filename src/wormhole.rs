@@ -327,14 +327,10 @@ impl Trip {
         }
     }
 
-    /// Direction du déplacement dans cette phase (axe des traits de vitesse).
-    fn axis(&self, phase: Phase) -> Vec3 {
-        let (a, b) = match phase {
-            Phase::Prep | Phase::Accel | Phase::Leap => (self.start, self.mouth),
-            Phase::Light | Phase::Decel => (self.mouth, self.exit_mouth),
-            Phase::Exit => (self.exit_mouth, self.dest),
-        };
-        (b - a).normalize_or_zero()
+    /// Direction dans laquelle le vaisseau regarde (et axe des traits de vitesse) : toujours vers
+    /// l'ouverture de sortie, même quand il descend vers l'ouverture d'entrée ou se pose à l'arrivée.
+    fn axis(&self, _phase: Phase) -> Vec3 {
+        (self.exit_mouth - self.mouth).normalize_or_zero()
     }
 
     /// Intensité de l'effet de vitesse (0 à 1).
@@ -467,13 +463,13 @@ fn run_wormhole_trip(
         return;
     };
 
-    // Le vaisseau se déplace et regarde dans le sens du mouvement
-    let before = ship.translation;
+    // Le vaisseau se déplace ; son avant pointe vers l'ouverture de sortie (jamais à la verticale)
     ship.translation = trip.ship_pos(phase, p);
-    let heading = (ship.translation - before).normalize_or_zero();
-    let heading = if heading == Vec3::ZERO { trip.axis(phase) } else { heading };
-    if heading != Vec3::ZERO {
-        ship.look_to(heading, Vec3::Y);
+    let facing = trip.axis(phase);
+    if facing != Vec3::ZERO {
+        let want = Transform::IDENTITY.looking_to(facing, Vec3::Y).rotation;
+        let k = 1.0 - (-8.0 * time.delta_secs()).exp();
+        ship.rotation = ship.rotation.slerp(want, k);
     }
 
     // La découverte est retenue dès qu'on entre dans le trou de ver
@@ -896,8 +892,10 @@ mod tests {
         assert_eq!(trip.veil(Phase::Prep, 0.5), 0.0);
         assert!(trip.veil(Phase::Exit, 1.0) < 0.01);
         // Les axes : vers l'ouverture, à travers le trou de ver, puis vers l'étoile
-        assert!(trip.axis(Phase::Accel).dot((trip.mouth - trip.start).normalize()) > 0.999);
-        assert!(trip.axis(Phase::Light).dot((trip.exit_mouth - trip.mouth).normalize()) > 0.999);
+        // Dans toutes les phases, l'avant pointe vers l'ouverture de sortie
+        for (phase, _, _) in PHASES {
+            assert!(trip.axis(phase).dot((trip.exit_mouth - trip.mouth).normalize()) > 0.999);
+        }
     }
 
     #[test]

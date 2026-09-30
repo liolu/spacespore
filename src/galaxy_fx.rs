@@ -415,6 +415,9 @@ fn spawn_clouds(
         let seed = 900_000 + gid as u32 * 1_000;
         let rnd = |k: u32| pseudo_rand(seed.wrapping_mul(31).wrapping_add(k));
         let shape = gal.shape();
+        // Une galaxie extérieure a une couleur dominante et une secondaire
+        let main_color = (rnd(900) * CLOUD_COLORS as f32) as usize % CLOUD_COLORS;
+        let second_color = (main_color + 1 + (rnd(901) * (CLOUD_COLORS - 1) as f32) as usize) % CLOUD_COLORS;
         for i in 0..cloud_count(gid, gal.radius) as u32 {
             // Sur la structure de la galaxie (bras, anneaux, filaments…), avec un peu de dispersion
             let mut srng = Rng::new(seed.wrapping_add(i * 7919));
@@ -435,7 +438,13 @@ fn spawn_clouds(
                 GalaxyCloud {
                     galaxy_id: gid as u32,
                     size: gal.radius * (0.04 + 0.07 * rnd(i * 11 + 6)),
-                    color: (rnd(i * 11 + 7) * CLOUD_COLORS as f32) as usize % CLOUD_COLORS,
+                    color: if gid == 0 {
+                        (rnd(i * 11 + 7) * CLOUD_COLORS as f32) as usize % CLOUD_COLORS
+                    } else if rnd(i * 11 + 7) < 0.65 {
+                        main_color
+                    } else {
+                        second_color
+                    },
                     stretch: 1.0 + rnd(i * 11 + 8) * 0.9,
                     roll: rnd(i * 11 + 9) * tau,
                 },
