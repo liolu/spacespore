@@ -15,7 +15,7 @@ use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 use crate::claims::{SiegeState, SIEGE_SECS};
-use crate::diplomacy::{faction_label, relation_with, same_guild, their_declared, my_declared, faction_key, Relation};
+use crate::diplomacy::{relation_with, same_guild, their_declared, my_declared, faction_key, Relation};
 use crate::net::{display_name, Net, MAX_HP};
 use crate::net_ui::NetPanel;
 use crate::settings::GameSettings;

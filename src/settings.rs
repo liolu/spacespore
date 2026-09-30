@@ -214,7 +214,6 @@ pub(crate) fn pseudo_rand(seed: u32) -> f32 {
 pub const SYSTEM_GRID_SIZE: usize = 100;
 pub const SYSTEM_CELL_SIZE: f32 = 100_000.0;
 pub const STREAM_RADIUS: f32 = 3.0;
-pub const CLICKABLE_RADIUS: f32 = 30.0;
 pub const GALAXY_RADIUS: f32 = 4_500_000.0;
 
 /// Nombre de galaxies extérieures (ids 1..=NUM_DISTANT_GALAXIES).

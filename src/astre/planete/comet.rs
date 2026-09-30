@@ -664,7 +664,7 @@ fn orient_tails(
 
         let up    = if anti_sun.y.abs() > 0.9 { Vec3::X } else { Vec3::Y };
         let right = anti_sun.cross(up).normalize();
-        let up_p  = anti_sun.cross(right).normalize();
+        let _up_p  = anti_sun.cross(right).normalize();
 
         let perp_w = ion.perp_offset * cfg.ion_tail_width * 0.5 * ion.t;
         let world_pos = anti_sun * (ion.t * cfg.ion_tail_length)

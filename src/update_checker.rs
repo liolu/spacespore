@@ -1,3 +1,7 @@
+// Contient du code hérité pas (ou plus) branché : sélecteurs d'astres désactivés, ancienne mise à jour
+// intégrée au jeu (remplacée par le launcher)... Gardé, sans avertissements.
+#![allow(dead_code)]
+
 use bevy::prelude::*;
 use spacespore_common::{make_agent, VersionInfo, CHANNEL};
 use std::sync::{Arc, Mutex};

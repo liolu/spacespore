@@ -1,6 +1,5 @@
 use bevy::prelude::*;
 use crate::settings::GameSettings;
-use crate::ui::{CameraTarget, MenuState, TargetKind};
 
 pub struct ShipPlugin;
 

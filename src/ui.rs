@@ -1,3 +1,7 @@
+// Contient du code hérité pas (ou plus) branché : sélecteurs d'astres désactivés, ancienne mise à jour
+// intégrée au jeu (remplacée par le launcher)... Gardé, sans avertissements.
+#![allow(dead_code)]
+
 use bevy::input::mouse::MouseWheel;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;

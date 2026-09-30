@@ -339,7 +339,7 @@ fn build_nebula(
     let mesh_filament = meshes.add(Mesh::from(Cuboid::new(cfg.voxel_size_filament, cfg.voxel_size_filament, cfg.voxel_size_filament)));
 
     let res = cfg.resolution;
-    let step = cfg.radius * 2.0 / res as f32;
+    let _step = cfg.radius * 2.0 / res as f32;
 
     let mut voxel_idx: u32 = 0;
 

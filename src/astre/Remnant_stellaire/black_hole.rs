@@ -590,7 +590,7 @@ fn update_spaghettification(
 ) {
     let dt = time.delta_secs();
 
-    for (entity, mut tf, mut affected) in q.iter_mut() {
+    for (entity, mut tf, affected) in q.iter_mut() {
         let Some(cfg) = res.holes.get(affected.hole_idx) else { continue; };
 
         match affected.phase {
@@ -763,7 +763,7 @@ fn animate_jets(
         };
 
         // Le voxel remonte le long du jet en boucle
-        let cycle = cfg.jet_length / cfg.jet_speed;
+        let _cycle = cfg.jet_length / cfg.jet_speed;
         let local_t = ((t * cfg.jet_speed / cfg.jet_length + jv.t) % 1.0).max(0.0);
 
         // Distance depuis le centre

@@ -1,3 +1,7 @@
+// Modules hérités : leurs plugins sont désactivés dans main.rs ("la galaxie gère tout"), mais le code
+// est gardé pour les réactiver. Sans cet attribut, tout ce qu'ils contiennent est signalé comme inutilisé.
+#![allow(dead_code, non_snake_case)]
+
 pub mod planete;
 
 #[allow(non_snake_case)]
