@@ -280,10 +280,7 @@ fn announce(
         messages.push(match theirs {
             Relation::Enemy => format!("{who} vous declare la guerre !"),
             Relation::Ally if mine == Relation::Ally => format!("Alliance conclue avec {who}."),
-            Relation::Ally => format!(
-                "{who} vous propose une alliance (F2 : passez {} en Allie pour accepter).",
-                faction_label(&peer.tag, &peer.name)
-            ),
+            Relation::Ally => format!("{who} vous propose une alliance : acceptez dans le panneau Guilde (G) ou la liste des joueurs (F2)."),
             Relation::Neutral => format!("{who} redevient neutre envers vous."),
         });
     }

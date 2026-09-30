@@ -286,6 +286,8 @@ fn main() {
                 update_zoom_hud,
                 draw_light_indicator,
                 draw_orbits,
+                draw_planet_trails,
+                draw_travel_range,
                 close_game_when_primary_window_closes,
                 toggle_profiling,
                 profiling_snapshot,
@@ -472,6 +474,9 @@ fn select_world_target(
     zoom: Res<ZoomLevel>,
     ui_interactions: Query<&Interaction>,
     viewport: Res<graphics::ViewportScale>,
+    ship_q: Query<&GlobalTransform, With<Ship>>,
+    time: Res<Time>,
+    mut net: ResMut<Net>,
 ) {
     if !buttons.just_pressed(MouseButton::Left) {
         return;
@@ -614,7 +619,18 @@ fn select_world_target(
 
     if let Some((_, selected)) = best {
         if zoom.can_navigate_to(&selected) {
-            target.0 = selected;
+            // Portée de déplacement fixe : seuls les trous noirs de galaxie (sauts entre galaxies)
+            // et les cibles du système où l'on est peuvent être hors de portée
+            let too_far = !ZoomLevel::is_core(&selected)
+                && ship_q.get_single().is_ok_and(|ship| {
+                    let pos = resolve_target(&CameraTarget(selected), &queries, &settings);
+                    pos != Vec3::ZERO && pos.distance(ship.translation()) > MAX_TRAVEL_RANGE
+                });
+            if too_far {
+                net.notify(&format!("Trop loin : votre vaisseau ne peut pas se deplacer a plus de {:.0} d'un coup (cercle blanc). Passez par un trou de ver ou avancez etape par etape.", MAX_TRAVEL_RANGE), time.elapsed_secs_f64());
+            } else {
+                target.0 = selected;
+            }
         }
     }
 }
@@ -743,6 +759,10 @@ fn galaxy_view_distance(kind: &TargetKind, settings: &GameSettings) -> f32 {
 /// directement à destination au lieu de voyager en croisière.
 const HYPERJUMP_DIST: f32 = 10_000_000.0;
 
+/// Portée fixe d'un déplacement du vaisseau (le cercle blanc). Au-delà, il faut avancer par
+/// étapes, passer par un trou de ver, ou sauter entre galaxies via leur trou noir.
+const MAX_TRAVEL_RANGE: f32 = 300_000.0;
+
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZoomLevel {
     Planet,
@@ -812,6 +832,13 @@ impl ZoomLevel {
             ZoomLevel::DeepSpace => matches!(kind, TargetKind::GalacticCore | TargetKind::DistantGalaxyCore(_)),
         }
     }
+}
+
+/// Hauteur fixe du vaisseau au-dessus de l'astre ciblé : toujours au-dessus, quelle que soit sa
+/// taille (une géante ne l'engloutit pas), et indépendante du zoom.
+fn hover_height(target: &CameraTarget, settings: &GameSettings) -> f32 {
+    let (min_distance, _) = camera_distance_range(target, settings);
+    (min_distance * 0.5).max(80.0)
 }
 
 fn camera_controller(
@@ -918,7 +945,7 @@ fn camera_controller(
                 return;
             }
             *ship_vis = Visibility::Inherited;
-            let hover_pos = target_pos + Vec3::Y * 80.0 + net.hover_offset(ctrl.distance);
+            let hover_pos = target_pos + Vec3::Y * hover_height(&camera_target, &settings) + net.hover_offset(ctrl.distance);
             let to_hover = hover_pos - ship_tf.translation;
             let dist = to_hover.length();
             if dist > HYPERJUMP_DIST {
@@ -1018,7 +1045,7 @@ fn camera_controller(
         }
         *ship_vis = Visibility::Inherited;
 
-        let hover_height = 80.0_f32;
+        let hover_height = hover_height(&camera_target, &settings);
         let hover_pos = target_pos + Vec3::Y * hover_height + net.hover_offset(ctrl.distance);
         let to_hover = hover_pos - ship_tf.translation;
         let dist = to_hover.length();
@@ -1742,11 +1769,84 @@ fn update_system_hud(
     }
 }
 
+/// Cercle blanc autour du vaisseau : la portée maximale d'un déplacement.
+fn draw_travel_range(
+    zoom: Res<ZoomLevel>,
+    ship_q: Query<&GlobalTransform, With<Ship>>,
+    mut gizmos: Gizmos,
+) {
+    if !matches!(*zoom, ZoomLevel::System | ZoomLevel::Sector | ZoomLevel::Galaxy | ZoomLevel::Cosmos) {
+        return;
+    }
+    let Ok(ship) = ship_q.get_single() else { return };
+    const SEGMENTS: usize = 128;
+    let center = ship.translation();
+    let point = |a: f32| center + Vec3::new(a.cos(), 0.0, a.sin()) * MAX_TRAVEL_RANGE;
+    for s in 0..SEGMENTS {
+        let a0 = s as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+        let a1 = (s + 1) as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+        gizmos.line(point(a0), point(a1), Color::srgba(1.0, 1.0, 1.0, 0.75));
+    }
+}
+
+/// Trace derrière chaque planète : les positions récentes forment une queue qui
+/// s'estompe, et montre d'où elle vient et son orbite.
+fn draw_planet_trails(
+    zoom: Res<ZoomLevel>,
+    time: Res<Time>,
+    planets: Query<(&GlobalTransform, &PlanetId)>,
+    mut trails: Local<std::collections::HashMap<usize, std::collections::VecDeque<Vec3>>>,
+    mut gizmos: Gizmos,
+) {
+    const MAX_POINTS: usize = 90;
+    const STEP: f32 = 40.0;
+    // Seulement aux zooms où l'on voit les planètes
+    if !matches!(*zoom, ZoomLevel::Planet | ZoomLevel::System) || time.delta_secs() == 0.0 {
+        trails.clear();
+        return;
+    }
+    let present: Vec<usize> = planets.iter().map(|(_, id)| id.0).collect();
+    trails.retain(|id, _| present.contains(id));
+    for (gt, id) in &planets {
+        let pos = gt.translation();
+        let trail = trails.entry(id.0).or_default();
+        match trail.back() {
+            // Saut (système rechargé) : on repart de zéro
+            Some(last) if last.distance(pos) > 20_000.0 => trail.clear(),
+            Some(last) if last.distance(pos) < STEP => {}
+            _ => {
+                trail.push_back(pos);
+                if trail.len() > MAX_POINTS {
+                    trail.pop_front();
+                }
+            }
+        }
+        let n = trail.len();
+        for (i, pair) in trail.iter().zip(trail.iter().skip(1)).enumerate() {
+            let alpha = 0.7 * (i + 1) as f32 / n as f32;
+            gizmos.line(*pair.0, *pair.1, Color::srgba(0.7, 0.85, 1.0, alpha));
+        }
+        // Dernier point de la queue jusqu'à la planète
+        if let Some(last) = trail.back() {
+            gizmos.line(*last, pos, Color::srgba(0.7, 0.85, 1.0, 0.7));
+        }
+    }
+}
+
 fn update_zoom_hud(
     zoom: Res<ZoomLevel>,
     cam_q: Query<&CameraController>,
+    ship_q: Query<&GlobalTransform, With<Ship>>,
     mut hud_q: Query<&mut Text, With<ZoomHudText>>,
 ) {
+    // Position du vaisseau dans l'univers
+    let xyz = ship_q
+        .get_single()
+        .map(|gt| {
+            let p = gt.translation();
+            format!("\nX {:.0}  Y {:.0}  Z {:.0}", p.x, p.y, p.z)
+        })
+        .unwrap_or_default();
     let dist = cam_q.iter().next().map(|c| c.distance).unwrap_or(0.0);
     let dist_str = if dist >= 1_000_000.0 {
         format!("{:.1}M", dist / 1_000_000.0)
@@ -1755,7 +1855,7 @@ fn update_zoom_hud(
     } else {
         format!("{:.0}", dist)
     };
-    let label = format!("Niv. {} {}  [{}]", zoom.level_number(), zoom.label(), dist_str);
+    let label = format!("Niv. {} {}  [{}]{}", zoom.level_number(), zoom.label(), dist_str, xyz);
     for mut text in &mut hud_q {
         **text = label.clone();
     }

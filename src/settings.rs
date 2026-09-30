@@ -7,7 +7,7 @@ use std::path::PathBuf;
 //  Dossier de données centralisé
 // ─────────────────────────────────────────────────────────────────────────
 
-pub const SAVE_VERSION: u32 = 7;
+pub const SAVE_VERSION: u32 = 8;
 
 /// Dossier `saves/` à côté de l'exécutable (installation portable).
 /// Si ce dossier n'est pas accessible en écriture (ex. installation système
@@ -370,13 +370,13 @@ fn default_systems(galaxies: &[GalaxyConfig]) -> Vec<StarSystemConfig> {
         let r = t * t * gr;
 
         let spiral = arm_base + (r / gr) * ARM_TWIST;
-        let width = 0.35 * (1.0 - r / gr * 0.65);
+        let width = 0.9 * (1.0 - r / gr * 0.5);
         let scatter = (pseudo_rand(s * 7 + 5) - 0.5) * width;
         let theta = spiral + scatter;
 
         let x = r * theta.cos();
         let z = r * theta.sin();
-        let thickness = 24000.0 * (1.0 - r / gr * 0.8);
+        let thickness = 30000.0 * (1.0 - r / gr * 0.7);
         let y = (pseudo_rand(s * 7 + 7) - 0.5) * thickness;
 
         let (sr, si, sc) = make_star(s);
@@ -432,7 +432,7 @@ fn default_systems(galaxies: &[GalaxyConfig]) -> Vec<StarSystemConfig> {
                 let st = pseudo_rand(s * 7 + 3);
                 let sr = st * st * gr;
                 let sp = ab + (sr / gr) * gal.twist;
-                let w = 0.35 * (1.0 - sr / gr * 0.65);
+                let w = 0.9 * (1.0 - sr / gr * 0.5);
                 let sc = (pseudo_rand(s * 7 + 5) - 0.5) * w;
                 let thick = 12000.0 * (1.0 - sr / gr * 0.8);
                 (sr * (sp + sc).cos(), (pseudo_rand(s * 7 + 7) - 0.5) * thick, sr * (sp + sc).sin())

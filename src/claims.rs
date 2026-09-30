@@ -27,7 +27,7 @@ use crate::{target_system, CameraTarget};
 
 /// Rayon de la frontière autour d'une étoile revendiquée. Deux étoiles d'un
 /// même propriétaire à moins de 2 rayons ont une frontière commune.
-pub const CLAIM_RADIUS: f32 = 15_000.0;
+pub const CLAIM_RADIUS: f32 = 30_000.0;
 const CIRCLE_SEGMENTS: usize = 96;
 
 pub struct ClaimsPlugin;
@@ -326,7 +326,7 @@ fn defend_claims(
 }
 
 /// Cercle de frontière dans le plan de sa galaxie.
-struct Border {
+pub(crate) struct Border {
     center: Vec3,
     u: Vec3,
     v: Vec3,
@@ -416,7 +416,7 @@ fn free_arcs(covered: &mut Vec<(f32, f32)>) -> Vec<(f32, f32)> {
 /// moyenne du groupe), puis on calcule pour chacun les arcs recouverts par ses
 /// voisins : ils commencent et finissent exactement aux points d'intersection,
 /// si bien que le contour de l'ensemble est continu.
-fn outline_segments(borders: &[Border], radius: f32) -> Vec<(Vec3, Vec3)> {
+pub(crate) fn outline_segments(borders: &[Border], radius: f32) -> Vec<(Vec3, Vec3)> {
     use std::f32::consts::TAU;
     let step = TAU / CIRCLE_SEGMENTS as f32;
     let mut out = Vec::new();
@@ -468,7 +468,7 @@ fn outline_segments(borders: &[Border], radius: f32) -> Vec<(Vec3, Vec3)> {
     out
 }
 
-fn border_of(settings: &GameSettings, sys: usize) -> Option<Border> {
+pub(crate) fn border_of(settings: &GameSettings, sys: usize) -> Option<Border> {
     let sys = settings.systems.get(sys)?;
     let tilt = settings.galaxies.get(sys.galaxy_id as usize).map_or(Quat::IDENTITY, |g| g.tilt);
     Some(Border { center: sys.center(), u: tilt * Vec3::X, v: tilt * Vec3::Z, normal: tilt * Vec3::Y })

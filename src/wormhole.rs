@@ -273,7 +273,8 @@ fn wormhole_travel(
 fn draw_mouth(gizmos: &mut Gizmos, mouth: Vec3, cam_pos: Vec3, t: f32) {
     let dist = cam_pos.distance(mouth);
     // Taille apparente à peu près constante de loin, taille réelle de près
-    let radius = (dist * 0.012).max(MIN_DRAW_RADIUS);
+    // Le trou de ver « respire »
+    let radius = (dist * 0.012).max(MIN_DRAW_RADIUS) * (1.0 + 0.08 * (t * 3.0).sin());
     // Le dessin fait toujours face à la caméra
     let facing = (cam_pos - mouth).normalize_or_zero();
     let mut right = facing.cross(Vec3::Y);
@@ -293,6 +294,18 @@ fn draw_mouth(gizmos: &mut Gizmos, mouth: Vec3, cam_pos: Vec3, t: f32) {
             let a0 = s as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
             let a1 = (s + 1) as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
             gizmos.line(point(a0, radius * scale), point(a1, radius * scale), color);
+        }
+    }
+    // Ondes qui s'étendent depuis le centre puis s'éteignent
+    for k in 0..3 {
+        let phase = (t * 0.6 + k as f32 / 3.0).fract();
+        let r = radius * (0.2 + 1.1 * phase);
+        let c = Color::srgba(0.75, 0.6, 1.0, 0.8 * (1.0 - phase));
+        const RIPPLE: usize = 32;
+        for s in 0..RIPPLE {
+            let a0 = s as f32 / RIPPLE as f32 * std::f32::consts::TAU;
+            let a1 = (s + 1) as f32 / RIPPLE as f32 * std::f32::consts::TAU;
+            gizmos.line(point(a0, r), point(a1, r), c);
         }
     }
     // Bras en spirale qui tournent vers le centre
@@ -329,6 +342,17 @@ fn draw_wormholes(
             && cam_pos.distance(w.mouth_a).min(cam_pos.distance(w.mouth_b)) <= LINE_RANGE
         {
             gizmos.line(w.mouth_a, w.mouth_b, Color::srgba(0.75, 0.35, 1.0, 0.85));
+            // Points de lumière qui filent dans les deux sens le long du trait
+            let size = (cam_pos.distance(w.mouth_a).min(cam_pos.distance(w.mouth_b)) * 0.006).max(MIN_DRAW_RADIUS * 0.6);
+            for i in 0..6 {
+                let f = (t * 0.18 + i as f32 / 6.0).fract();
+                let f = if i % 2 == 0 { f } else { 1.0 - f };
+                let p = w.mouth_a.lerp(w.mouth_b, f);
+                let c = Color::srgba(0.7, 1.0, 1.0, 0.95);
+                gizmos.line(p - Vec3::X * size, p + Vec3::X * size, c);
+                gizmos.line(p - Vec3::Y * size, p + Vec3::Y * size, c);
+                gizmos.line(p - Vec3::Z * size, p + Vec3::Z * size, c);
+            }
         }
     }
 }
