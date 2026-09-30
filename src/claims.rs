@@ -91,6 +91,23 @@ fn all_claims(net: &Net, settings: &GameSettings, guilds: &Guilds) -> Vec<Claim>
     out
 }
 
+/// Étoiles revendiquées regroupées par propriétaire (une guilde forme un seul
+/// groupe), avec la couleur du territoire. Sert à tracer les liaisons.
+pub fn owner_groups(net: &Net, settings: &GameSettings, guilds: &Guilds) -> Vec<(Color, Vec<usize>)> {
+    let mut groups: Vec<(Owner, Color, Vec<usize>)> = Vec::new();
+    for claim in all_claims(net, settings, guilds) {
+        match groups.iter_mut().find(|g| g.0 == claim.owner) {
+            Some(group) => {
+                if !group.2.contains(&claim.sys) {
+                    group.2.push(claim.sys);
+                }
+            }
+            None => groups.push((claim.owner, claim.color, vec![claim.sys])),
+        }
+    }
+    groups.into_iter().map(|(_, color, stars)| (color, stars)).collect()
+}
+
 /// Qui a revendiqué ce système (pour l'affichage), s'il l'est.
 pub fn claim_owner_label(sys: usize, net: &Net, settings: &GameSettings, guilds: &Guilds) -> Option<String> {
     all_claims(net, settings, guilds).into_iter().find(|c| c.sys == sys).map(|c| match c.owner {
@@ -108,6 +125,7 @@ fn claim_input(
     menu: Res<MenuState>,
     ship_q: Query<&GlobalTransform, With<Ship>>,
     mut siege: ResMut<SiegeState>,
+    npcs: Res<crate::galaxy_fx::NpcTerritories>,
     mut settings: ResMut<GameSettings>,
     mut net: ResMut<Net>,
 ) {
@@ -126,6 +144,11 @@ fn claim_input(
         settings.claims.remove(i);
         settings.save();
         net.notify(&format!("Vous abandonnez {name} ({}/{MAX_CLAIMS}).", settings.claims.len()), now);
+        return;
+    }
+    // Territoire d'une faction PNJ : ni revendication ni siège
+    if let Some(faction) = npcs.faction_of(sys) {
+        net.notify(&format!("{name} fait partie du territoire de {} (PNJ) : impossible de la revendiquer.", faction.name), now);
         return;
     }
     // Étoile d'un autre joueur : C lance (ou annule) un siège pour la lui prendre

@@ -2,6 +2,7 @@ mod astre;
 mod claims;
 mod combat;
 mod diplomacy;
+mod galaxy_fx;
 mod graphics;
 mod guild;
 mod guild_ui;
@@ -15,6 +16,7 @@ mod settings;
 mod ship;
 mod system_gen;
 mod ui;
+mod wormhole;
 mod update_checker;
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
@@ -252,7 +254,7 @@ fn main() {
         .add_plugins(UiPlugin)
 
         // ── Multijoueur ─────────────────────────────────────────────────
-        .add_plugins((NetPlugin, NetUiPlugin, claims::ClaimsPlugin, combat::CombatPlugin, guild::GuildPlugin, guild_ui::GuildUiPlugin))
+        .add_plugins((NetPlugin, NetUiPlugin, claims::ClaimsPlugin, combat::CombatPlugin, guild::GuildPlugin, guild_ui::GuildUiPlugin, wormhole::WormholePlugin, galaxy_fx::GalaxyFxPlugin))
 
         .add_event::<ReloadAstre>()
         .init_resource::<ProfilingLog>()
@@ -1582,13 +1584,25 @@ fn update_system_hud(
     net: Res<Net>,
     guilds: Res<guild::Guilds>,
     star_q: Query<&StarId, With<StarRoot>>,
+    wormholes: Res<wormhole::Wormholes>,
+    npcs: Res<galaxy_fx::NpcTerritories>,
 ) {
     // Étoile revendiquée : on affiche son propriétaire
-    let claim_line = match target_system(&camera_target.0, &star_q) {
-        Some(Some(si)) => claims::claim_owner_label(si, &net, &settings, &guilds)
-            .map(|who| format!("\nRevendiquee par {who}")),
+    let target_sys = match target_system(&camera_target.0, &star_q) {
+        Some(Some(si)) => Some(si),
         _ => None,
     };
+    let mut extra = String::new();
+    if let Some(who) = target_sys.and_then(|si| claims::claim_owner_label(si, &net, &settings, &guilds)) {
+        extra.push_str(&format!("\nRevendiquee par {who}"));
+    }
+    if let Some(faction) = target_sys.and_then(|si| npcs.faction_of(si)) {
+        extra.push_str(&format!("\nTerritoire de {} (PNJ)", faction.name));
+    }
+    if let Some(line) = target_sys.and_then(|si| wormholes.hud_line(si, &settings)) {
+        extra.push_str(&format!("\n{line}"));
+    }
+    let claim_line = (!extra.is_empty()).then_some(extra);
     let (sys_idx, body_label) = match camera_target.0 {
         TargetKind::Star(id) => {
             let si = id / 1000;
