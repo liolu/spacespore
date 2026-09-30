@@ -34,58 +34,37 @@ use net_ui::{NetPanel, NetUiPlugin};
 
 // ── Planètes ──────────────────────────────────────────────────────────────
 use astre::{astre_lod_cull, process_pending_reloads, profiling_snapshot, toggle_profiling, ProfilingLog, ReloadAstre};
-use astre::planete::gas_planet::{GasPlanetPlugin, GasPlanetRoot};
-use astre::planete::comet::{CometPlugin, CometRoot};
-use astre::planete::meteoroid::{MeteoroidPlugin, MeteoroidRoot};
+use astre::planete::gas_planet::GasPlanetRoot;
+use astre::planete::comet::CometRoot;
+use astre::planete::meteoroid::MeteoroidRoot;
 
 // ── Étoiles ───────────────────────────────────────────────────────────────
-use astre::etoile::star::{
-    StarPlugin as VoxelStarPlugin,
-    StarRoot as VoxelStarRoot,
-};
-use astre::etoile::protostar::{ProtostarPlugin, ProtostarRoot};
-use astre::etoile::dwarf_star::{DwarfStarPlugin, DwarfRoot};
-use astre::etoile::main_sequence_star::{MainSequencePlugin, MsRoot};
-use astre::etoile::giant_star::{GiantStarPlugin, GiantRoot};
-use astre::etoile::supergiant_star::{SupergiantPlugin, SgRoot};
-use astre::etoile::hypergiant_star::{HypergiantPlugin, HgRoot};
+use astre::etoile::star::StarRoot as VoxelStarRoot;
+use astre::etoile::protostar::ProtostarRoot;
+use astre::etoile::dwarf_star::DwarfRoot;
+use astre::etoile::main_sequence_star::MsRoot;
+use astre::etoile::giant_star::GiantRoot;
+use astre::etoile::supergiant_star::SgRoot;
+use astre::etoile::hypergiant_star::HgRoot;
 
 // ── Rémanents stellaires ──────────────────────────────────────────────────
 #[allow(non_snake_case)]
-use astre::Remnant_stellaire::black_hole::{
-    BlackHolePlugin,
-    BlackHoleRoot,
-};
+use astre::Remnant_stellaire::black_hole::BlackHoleRoot;
 
 #[allow(non_snake_case)]
-use astre::Remnant_stellaire::nebula::{
-    NebulaPlugin,
-    NebulaRoot,
-};
+use astre::Remnant_stellaire::nebula::NebulaRoot;
 
 #[allow(non_snake_case)]
-use astre::Remnant_stellaire::pulsar::{
-    PulsarPlugin,
-    PulsarRoot,
-};
+use astre::Remnant_stellaire::pulsar::PulsarRoot;
 
 #[allow(non_snake_case)]
-use astre::Remnant_stellaire::magnetar::{
-    MagnetarPlugin,
-    MagnetarRoot,
-};
+use astre::Remnant_stellaire::magnetar::MagnetarRoot;
 
 #[allow(non_snake_case)]
-use astre::Remnant_stellaire::neutron_star::{
-    NeutronStarPlugin,
-    NeutronStarRoot,
-};
+use astre::Remnant_stellaire::neutron_star::NeutronStarRoot;
 
 #[allow(non_snake_case)]
-use astre::Remnant_stellaire::supernova::{
-    SupernovaPlugin,
-    SupernovaRoot,
-};
+use astre::Remnant_stellaire::supernova::SupernovaRoot;
 
 
 // ─────────────────────────────────────────────────────────────────────────

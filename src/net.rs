@@ -624,6 +624,7 @@ fn parse_target(input: &str) -> Option<SocketAddr> {
 enum Upnp {
     Pending,
     Ready { ip: Ipv4Addr, port: u16, gateway: igd_next::Gateway },
+    #[allow(dead_code)] // message d'échec gardé pour le diagnostic
     Failed(String),
 }
 

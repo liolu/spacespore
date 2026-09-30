@@ -680,7 +680,7 @@ fn animate_field_lines(
     for (fv, mut tf, mut vis) in &mut field_q {
         let Some(cfg) = res.magnetars.get(fv.idx) else { continue; };
 
-        let magnetar_pos = root_q
+        let _magnetar_pos = root_q
             .iter()
             .find(|(_, r)| r.idx == fv.idx)
             .map(|(gt, _)| gt.translation())
@@ -734,7 +734,7 @@ fn animate_continuous_burst(
         let pulse  = 1.0 + (t * speed + bv.seed * std::f32::consts::TAU).sin() * 0.22;
         let r_anim = bv.r * pulse;
 
-        let dir = Vec3::new(
+        let _dir = Vec3::new(
             bv.phi.sin() * bv.theta.cos(),
             bv.phi.cos(),
             bv.phi.sin() * bv.theta.sin(),

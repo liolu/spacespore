@@ -110,6 +110,7 @@ pub struct FlareVoxel {
 }
 
 #[derive(Component)]
+#[allow(dead_code)] // décalage gardé avec le système, pas encore relu
 pub struct SystemOffset(pub Vec3);
 
 #[derive(Component)]

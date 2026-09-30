@@ -615,7 +615,7 @@ fn shape_sdf(p: Vec3, cfg: &MeteoroidConfig) -> (bool, f32) {
             let d1      = (p - p1).length();
             let d2      = (p - p2).length();
             // Col : cylindre d'épaisseur r_neck entre p1 et p2
-            let along   = p.y.clamp(-half_l, half_l);
+            let _along   = p.y.clamp(-half_l, half_l);
             let xz_dist = (p.x * p.x + p.z * p.z).sqrt();
             let neck_t  = 1.0 - (p.y / half_l).abs();
             let r_at_y  = r_neck + (r_end - r_neck) * (1.0 - neck_t).powi(2);
@@ -1006,7 +1006,7 @@ fn detect_fragmentation(
         let Some(cfg) = res.meteoroids.get(ev.meteoroid_idx) else { continue; };
 
         // Trouver la root entity
-        let Some((root_e, root_gt, vel, _)) = root_q.iter()
+        let Some((root_e, _root_gt, vel, _)) = root_q.iter()
             .find(|(_, _, _, r)| r.idx == ev.meteoroid_idx)
         else { continue; };
 

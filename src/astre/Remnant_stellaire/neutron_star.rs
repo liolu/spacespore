@@ -975,7 +975,7 @@ fn qpo_displacement(cfg: &NeutronStarConfig, state: &NeutronStarState, idx: usiz
     };
 
     let mut disp = Vec3::ZERO;
-    for (i, &freq) in cfg.qpo_frequencies.iter().enumerate() {
+    for (i, &_freq) in cfg.qpo_frequencies.iter().enumerate() {
         let phase = phases.get(i).copied().unwrap_or(0.0);
         // Chaque mode oscille dans une direction différente
         let axis = Vec3::new(

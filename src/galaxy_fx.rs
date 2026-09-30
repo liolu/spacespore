@@ -110,6 +110,7 @@ fn group_links(settings: &GameSettings, stars: &[usize]) -> Vec<(Vec3, Vec3)> {
 
 // ── Factions PNJ ────────────────────────────────────────────────────────
 
+#[allow(dead_code)] // `galaxy` et `stars` : informations publiques de la faction (utilisées par les tests)
 pub struct NpcFaction {
     pub name: String,
     pub color: Color,

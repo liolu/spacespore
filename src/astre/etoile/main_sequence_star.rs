@@ -332,7 +332,7 @@ fn animate_convection_arcs(time:Res<Time>,res:Res<MainSequenceRes>,mut q:Query<(
         let life=if lt<cycle*0.5{(lt/(cycle*0.5)).powi(2)}else{((cycle-lt)/(cycle*0.5)).powi(2)};
         if life<0.05{*vis=Visibility::Hidden;continue;}
         let frac=av.si as f32/cfg.arc_samples.max(1) as f32;
-        let h1=ph(base,av.si as f32*0.7); let h2=ph(base,av.si as f32*1.4);
+        let _h1=ph(base,av.si as f32*0.7); let _h2=ph(base,av.si as f32*1.4);
         let theta=ph(base,3.0)*std::f32::consts::TAU; let phi=(ph(base,4.0)*2.0-1.0).clamp(-1.0,1.0).acos();
         let foot=Vec3::new(r*phi.sin()*theta.cos(),r*phi.cos(),r*phi.sin()*theta.sin());
         let apex=foot+foot.normalize()*cfg.arc_height*life;
