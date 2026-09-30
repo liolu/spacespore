@@ -277,6 +277,7 @@ fn main() {
             Update,
             (
                 select_world_target,
+                highlight_hovered_galaxy,
                 select_next_moon,
                 camera_controller,
                 update_sun_direction,
@@ -394,6 +395,73 @@ fn setup_scene(
     ));
 }
 
+/// Rayon de clic (en pixels) autour du centre d'une galaxie. À la vue d'ensemble, il suit la
+/// taille de la galaxie à l'écran : on la sélectionne en cliquant n'importe où sur son disque.
+fn galaxy_click_tolerance(
+    camera: &Camera,
+    camera_transform: &GlobalTransform,
+    viewport: &graphics::ViewportScale,
+    settings: &GameSettings,
+    overview: bool,
+    center: Vec3,
+    galaxy_id: usize,
+) -> f32 {
+    const MIN: f32 = 150.0;
+    if !overview {
+        return MIN;
+    }
+    let radius = settings.galaxies.get(galaxy_id).map_or(0.0, |g| g.radius);
+    let edge = center + camera_transform.right() * radius;
+    match (camera.world_to_viewport(camera_transform, center), camera.world_to_viewport(camera_transform, edge)) {
+        (Ok(a), Ok(b)) => viewport.to_window(a).distance(viewport.to_window(b)).clamp(MIN, 600.0),
+        _ => MIN,
+    }
+}
+
+/// À la vue d'ensemble, entoure d'un anneau la galaxie qu'un clic sélectionnerait.
+fn highlight_hovered_galaxy(
+    primary_window: Query<&Window, With<PrimaryWindow>>,
+    camera_q: Query<(&Camera, &GlobalTransform)>,
+    queries: TargetQueries,
+    settings: Res<GameSettings>,
+    zoom: Res<ZoomLevel>,
+    viewport: Res<graphics::ViewportScale>,
+    ui_interactions: Query<&Interaction>,
+    mut gizmos: Gizmos,
+) {
+    if !matches!(*zoom, ZoomLevel::Cosmos | ZoomLevel::DeepSpace) || ui_interactions.iter().any(|i| *i != Interaction::None) {
+        return;
+    }
+    let Ok(window) = primary_window.get_single() else { return };
+    let Some(cursor) = window.cursor_position() else { return };
+    let cursor = viewport.to_viewport(cursor);
+    let Ok((camera, cam_tf)) = camera_q.get_single() else { return };
+
+    let cores = queries
+        .core_q
+        .iter()
+        .map(|gt| (gt.translation(), 0usize))
+        .chain(queries.dist_core_q.iter().map(|(gt, dc)| (gt.translation(), dc.galaxy_id as usize)));
+    let mut best: Option<(f32, Vec3, usize)> = None;
+    for (center, gid) in cores {
+        let Ok(screen) = camera.world_to_viewport(cam_tf, center) else { continue };
+        let d = viewport.to_window(screen).distance(viewport.to_window(cursor));
+        if d <= galaxy_click_tolerance(camera, cam_tf, &viewport, &settings, true, center, gid) && best.map_or(true, |b| d < b.0) {
+            best = Some((d, center, gid));
+        }
+    }
+    let Some((_, center, gid)) = best else { return };
+    let Some(gal) = settings.galaxies.get(gid) else { return };
+    // Anneau dans le plan de la galaxie
+    const SEGMENTS: usize = 64;
+    let point = |a: f32| center + gal.tilt * (Vec3::new(a.cos(), 0.0, a.sin()) * gal.radius);
+    for s in 0..SEGMENTS {
+        let a0 = s as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+        let a1 = (s + 1) as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+        gizmos.line(point(a0), point(a1), Color::srgba(1.0, 1.0, 1.0, 0.7));
+    }
+}
+
 fn select_world_target(
     buttons: Res<ButtonInput<MouseButton>>,
     primary_window: Query<&Window, With<PrimaryWindow>>,
@@ -427,13 +495,17 @@ fn select_world_target(
         if along > 0.0 {
             let closest = ray.origin + *ray.direction * along;
             let ray_distance = closest.distance(position);
-            if ray_distance <= 300.0 && best.map_or(true, |(distance, _)| along < distance) {
+            if ray_distance <= 300.0 && zoom.can_navigate_to(&TargetKind::Moon(id.planet_idx, id.moon_idx)) && best.map_or(true, |(distance, _)| along < distance) {
                 best = Some((along, TargetKind::Moon(id.planet_idx, id.moon_idx)));
             }
         }
     }
 
     let mut consider = |position: Vec3, tolerance: f32, candidate: TargetKind| {
+        // Un objet que ce zoom ne permet pas de cibler ne doit pas voler le clic à une galaxie
+        if !zoom.can_navigate_to(&candidate) {
+            return;
+        }
         let Ok(screen_position) = camera.world_to_viewport(camera_transform, position) else {
             return;
         };
@@ -498,18 +570,26 @@ fn select_world_target(
         consider(transform.translation(), 80.0, TargetKind::Supernova(root.idx));
     }
 
+    // Vue d'ensemble (zoom 5-6) : une galaxie se sélectionne en cliquant n'importe où
+    // sur son disque, pas seulement sur son trou noir (minuscule à cette distance)
+    let overview = matches!(*zoom, ZoomLevel::Cosmos | ZoomLevel::DeepSpace);
+    let galaxy_tolerance = |center: Vec3, galaxy_id: usize| -> f32 {
+        galaxy_click_tolerance(camera, camera_transform, &viewport, &settings, overview, center, galaxy_id)
+    };
+
     // ── GalacticCore : clic sur le trou noir central ──────────────
     for gt in &queries.core_q {
-        consider(gt.translation(), 120.0, TargetKind::GalacticCore);
+        let center = gt.translation();
+        consider(center, galaxy_tolerance(center, 0), TargetKind::GalacticCore);
     }
 
-    // ── DistantGalaxyCore : depuis un trou noir au zoom 6 (saut entre
-    //    galaxies), ou le trou noir de la galaxie où l'on se trouve ────
-    let on_core = *zoom == ZoomLevel::DeepSpace && ZoomLevel::is_core(&target.0);
+    // ── DistantGalaxyCore : depuis la vue d'ensemble (saut entre galaxies),
+    //    ou le trou noir de la galaxie où l'on se trouve ────
     let current_gal = current_galaxy(&target.0, &queries, &settings);
     for (gt, dc) in &queries.dist_core_q {
-        if on_core || dc.galaxy_id == current_gal {
-            consider(gt.translation(), 120.0, TargetKind::DistantGalaxyCore(dc.galaxy_id));
+        if overview || dc.galaxy_id == current_gal {
+            let center = gt.translation();
+            consider(center, galaxy_tolerance(center, dc.galaxy_id as usize), TargetKind::DistantGalaxyCore(dc.galaxy_id));
         }
     }
 
