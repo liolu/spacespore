@@ -7,7 +7,7 @@
 //  Relation effective entre deux joueurs :
 //   - même guilde : toujours alliés ;
 //   - ennemis dès que l'un des deux a déclaré l'autre ennemi ;
-//   - alliés seulement si les deux se sont déclarés alliés ;
+//   - alliés dès que l'un des deux s'est déclaré allié (une guilde décide pour l'autre) ;
 //   - neutres sinon.
 //
 //  On ne peut pas attaquer un allié (ni son vaisseau, ni ses étoiles) ;
@@ -115,11 +115,13 @@ pub fn same_guild(peer: &Peer, settings: &GameSettings) -> bool {
 }
 
 pub(crate) fn combine(same_guild: bool, mine: Relation, theirs: Relation) -> Relation {
+    // Une seule guilde décide pour les deux : la guerre l'emporte sur l'alliance,
+    // et une alliance déclarée par l'un suffit
     if same_guild {
         Relation::Ally
     } else if mine == Relation::Enemy || theirs == Relation::Enemy {
         Relation::Enemy
-    } else if mine == Relation::Ally && theirs == Relation::Ally {
+    } else if mine == Relation::Ally || theirs == Relation::Ally {
         Relation::Ally
     } else {
         Relation::Neutral
@@ -160,7 +162,8 @@ mod tests {
     #[test]
     fn alliance_needs_both_sides_and_war_only_one() {
         assert_eq!(combine(false, Neutral, Neutral), Neutral);
-        assert_eq!(combine(false, Ally, Neutral), Neutral); // alliance seulement proposée
+        assert_eq!(combine(false, Ally, Neutral), Ally); // une seule guilde suffit
+        assert_eq!(combine(false, Neutral, Ally), Ally);
         assert_eq!(combine(false, Ally, Ally), Ally);
         assert_eq!(combine(false, Ally, Enemy), Enemy);
         assert_eq!(combine(false, Neutral, Enemy), Enemy);

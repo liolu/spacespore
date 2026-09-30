@@ -40,7 +40,7 @@ impl Plugin for CombatPlugin {
             .add_systems(Startup, setup_combat_hud)
             .add_systems(
                 Update,
-                (reset_on_new_session, fire, receive_hits, repair, announce, draw_beams, update_combat_hud)
+                (reset_on_new_session, fire, receive_hits, repair, announce, draw_beams, draw_range_circle, update_combat_hud)
                     .chain(),
             )
             // Après le contrôleur de caméra, qui réaffiche le vaisseau à chaque frame
@@ -280,10 +280,7 @@ fn announce(
         messages.push(match theirs {
             Relation::Enemy => format!("{who} vous declare la guerre !"),
             Relation::Ally if mine == Relation::Ally => format!("Alliance conclue avec {who}."),
-            Relation::Ally => format!(
-                "{who} vous propose une alliance (F2 : passez {} en Allie pour accepter).",
-                faction_label(&peer.tag, &peer.name)
-            ),
+            Relation::Ally => format!("{who} se declare allie avec vous : vous ne pouvez plus vous attaquer."),
             Relation::Neutral => format!("{who} redevient neutre envers vous."),
         });
     }
@@ -366,5 +363,21 @@ fn hide_destroyed_ship(net: Res<Net>, mut ship_q: Query<&mut Visibility, With<Sh
     }
     for mut vis in &mut ship_q {
         *vis = Visibility::Hidden;
+    }
+}
+
+/// Cercle blanc autour du vaisseau : portée maximale de tir (dès qu'on n'est pas seul).
+fn draw_range_circle(net: Res<Net>, ship_q: Query<&GlobalTransform, With<Ship>>, mut gizmos: Gizmos) {
+    if !net.is_enabled() || net.player_count() < 2 || net.local.hp == 0 {
+        return;
+    }
+    let Ok(ship) = ship_q.get_single() else { return };
+    const SEGMENTS: usize = 96;
+    let center = ship.translation();
+    let point = |a: f32| center + Vec3::new(a.cos(), 0.0, a.sin()) * SHOT_RANGE;
+    for s in 0..SEGMENTS {
+        let a0 = s as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+        let a1 = (s + 1) as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+        gizmos.line(point(a0), point(a1), Color::srgba(1.0, 1.0, 1.0, 0.6));
     }
 }

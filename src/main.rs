@@ -285,6 +285,7 @@ fn main() {
                 update_zoom_hud,
                 draw_light_indicator,
                 draw_orbits,
+                draw_planet_trails,
                 close_game_when_primary_window_closes,
                 toggle_profiling,
                 profiling_snapshot,
@@ -734,6 +735,13 @@ impl ZoomLevel {
     }
 }
 
+/// Hauteur fixe du vaisseau au-dessus de l'astre ciblé : toujours au-dessus, quelle que soit sa
+/// taille (une géante ne l'engloutit pas), et indépendante du zoom.
+fn hover_height(target: &CameraTarget, settings: &GameSettings) -> f32 {
+    let (min_distance, _) = camera_distance_range(target, settings);
+    (min_distance * 0.5).max(80.0)
+}
+
 fn camera_controller(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -838,7 +846,7 @@ fn camera_controller(
                 return;
             }
             *ship_vis = Visibility::Inherited;
-            let hover_pos = target_pos + Vec3::Y * 80.0 + net.hover_offset(ctrl.distance);
+            let hover_pos = target_pos + Vec3::Y * hover_height(&camera_target, &settings) + net.hover_offset(ctrl.distance);
             let to_hover = hover_pos - ship_tf.translation;
             let dist = to_hover.length();
             if dist > HYPERJUMP_DIST {
@@ -938,7 +946,7 @@ fn camera_controller(
         }
         *ship_vis = Visibility::Inherited;
 
-        let hover_height = 80.0_f32;
+        let hover_height = hover_height(&camera_target, &settings);
         let hover_pos = target_pos + Vec3::Y * hover_height + net.hover_offset(ctrl.distance);
         let to_hover = hover_pos - ship_tf.translation;
         let dist = to_hover.length();
@@ -1662,11 +1670,64 @@ fn update_system_hud(
     }
 }
 
+/// Trace derrière chaque planète : les positions récentes forment une queue qui
+/// s'estompe, et montre d'où elle vient et son orbite.
+fn draw_planet_trails(
+    zoom: Res<ZoomLevel>,
+    time: Res<Time>,
+    planets: Query<(&GlobalTransform, &PlanetId)>,
+    mut trails: Local<std::collections::HashMap<usize, std::collections::VecDeque<Vec3>>>,
+    mut gizmos: Gizmos,
+) {
+    const MAX_POINTS: usize = 90;
+    const STEP: f32 = 40.0;
+    // Seulement aux zooms où l'on voit les planètes
+    if !matches!(*zoom, ZoomLevel::Planet | ZoomLevel::System) || time.delta_secs() == 0.0 {
+        trails.clear();
+        return;
+    }
+    let present: Vec<usize> = planets.iter().map(|(_, id)| id.0).collect();
+    trails.retain(|id, _| present.contains(id));
+    for (gt, id) in &planets {
+        let pos = gt.translation();
+        let trail = trails.entry(id.0).or_default();
+        match trail.back() {
+            // Saut (système rechargé) : on repart de zéro
+            Some(last) if last.distance(pos) > 20_000.0 => trail.clear(),
+            Some(last) if last.distance(pos) < STEP => {}
+            _ => {
+                trail.push_back(pos);
+                if trail.len() > MAX_POINTS {
+                    trail.pop_front();
+                }
+            }
+        }
+        let n = trail.len();
+        for (i, pair) in trail.iter().zip(trail.iter().skip(1)).enumerate() {
+            let alpha = 0.7 * (i + 1) as f32 / n as f32;
+            gizmos.line(*pair.0, *pair.1, Color::srgba(0.7, 0.85, 1.0, alpha));
+        }
+        // Dernier point de la queue jusqu'à la planète
+        if let Some(last) = trail.back() {
+            gizmos.line(*last, pos, Color::srgba(0.7, 0.85, 1.0, 0.7));
+        }
+    }
+}
+
 fn update_zoom_hud(
     zoom: Res<ZoomLevel>,
     cam_q: Query<&CameraController>,
+    ship_q: Query<&GlobalTransform, With<Ship>>,
     mut hud_q: Query<&mut Text, With<ZoomHudText>>,
 ) {
+    // Position du vaisseau dans l'univers
+    let xyz = ship_q
+        .get_single()
+        .map(|gt| {
+            let p = gt.translation();
+            format!("\nX {:.0}  Y {:.0}  Z {:.0}", p.x, p.y, p.z)
+        })
+        .unwrap_or_default();
     let dist = cam_q.iter().next().map(|c| c.distance).unwrap_or(0.0);
     let dist_str = if dist >= 1_000_000.0 {
         format!("{:.1}M", dist / 1_000_000.0)
@@ -1675,7 +1736,7 @@ fn update_zoom_hud(
     } else {
         format!("{:.0}", dist)
     };
-    let label = format!("Niv. {} {}  [{}]", zoom.level_number(), zoom.label(), dist_str);
+    let label = format!("Niv. {} {}  [{}]{}", zoom.level_number(), zoom.label(), dist_str, xyz);
     for mut text in &mut hud_q {
         **text = label.clone();
     }

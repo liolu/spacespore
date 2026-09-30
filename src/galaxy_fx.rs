@@ -137,6 +137,8 @@ pub struct NpcFaction {
     pub stars: Vec<usize>,
     /// Traits du territoire, calculés une fois pour toutes.
     links: Vec<(Vec3, Vec3)>,
+    /// Contour de ses cercles autour des étoiles (fusionnés), calculé une fois pour toutes.
+    outline: Vec<(Vec3, Vec3)>,
     center: Vec3,
     /// Distance du centre à l'étoile la plus éloignée (pour ne dessiner que ce qui est proche).
     extent: f32,
@@ -253,6 +255,10 @@ pub fn generate_npcs(settings: &GameSettings, spatial: &SystemSpatialIndex) -> N
                 color: Color::hsl(hue, 0.85, 0.58),
                 galaxy: gid as u32,
                 links: group_links(settings, &members),
+                outline: {
+                    let borders: Vec<crate::claims::Border> = members.iter().filter_map(|&m| crate::claims::border_of(settings, m)).collect();
+                    crate::claims::outline_segments(&borders, crate::claims::CLAIM_RADIUS)
+                },
                 stars: members,
                 center,
                 extent,
@@ -293,7 +299,7 @@ fn draw_links(
             continue;
         }
         let color = faction.color.with_alpha(0.85);
-        for &(a, b) in &faction.links {
+        for &(a, b) in faction.outline.iter().chain(&faction.links) {
             gizmos.line(a, b, color);
         }
     }

@@ -485,8 +485,8 @@ fn build_member_view(
         let status = commands.spawn(text(effective.label().to_uppercase(), 13.0, effective.color())).id();
         commands.entity(line).add_children(&[name, status]);
         let note = match (mine, theirs) {
-            (Relation::Ally, Some(Relation::Neutral)) | (Relation::Ally, None) => Some("alliance proposee, en attente de leur accord"),
-            (Relation::Neutral, Some(Relation::Ally)) => Some("ils proposent une alliance"),
+            (Relation::Ally, _) => Some("alliance : vous ne pouvez plus vous attaquer"),
+            (Relation::Neutral, Some(Relation::Ally)) => Some("ils se sont declares allies avec vous"),
             (Relation::Neutral | Relation::Ally, Some(Relation::Enemy)) => Some("ils vous ont declare la guerre"),
             _ => None,
         };

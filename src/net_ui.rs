@@ -891,7 +891,7 @@ fn rebuild_players_list(
                 commands.entity(row).add_child(btn);
                 let note = match (mine, effective) {
                     (Relation::Ally, Relation::Ally) => Some("alliance conclue"),
-                    (Relation::Ally, Relation::Neutral) => Some("en attente de son accord"),
+                    (Relation::Ally, Relation::Neutral) => Some("alliance"),
                     (Relation::Ally, Relation::Enemy) | (Relation::Neutral, Relation::Enemy) => {
                         Some("vous a declare la guerre")
                     }

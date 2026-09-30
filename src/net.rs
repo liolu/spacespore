@@ -2342,7 +2342,7 @@ mod tests {
         assert_eq!(peer_tag(&host), "");
         assert_eq!((relation(&host), relation(&client)), (Relation::Neutral, Relation::Neutral));
 
-        // Alliance proposée par la guilde seule : toujours neutres ; acceptée par le joueur : alliés
+        // Alliance déclarée par la guilde seule : alliés des deux côtés ; le joueur peut répondre par la guerre
         let guild_relation = |host: &mut App, r: Relation| {
             assert!(act(host, |s, g, n| guild::edit(s, g, n, 0.0, |rec, me| {
                 rec.set_relation(me, &faction_key(0, "Client"), "Client", r)?;
@@ -2362,9 +2362,7 @@ mod tests {
         };
         guild_relation(&mut host, Relation::Ally);
         pump(&mut host, &mut client, 20);
-        assert_eq!((relation(&host), relation(&client)), (Relation::Neutral, Relation::Neutral));
-        personal(&mut client, Relation::Ally);
-        pump(&mut host, &mut client, 20);
+        // Une seule guilde décide : alliés dès que la guilde le déclare
         assert_eq!((relation(&host), relation(&client)), (Relation::Ally, Relation::Ally));
         // Le client déclare la guerre : ennemis des deux côtés
         personal(&mut client, Relation::Enemy);
