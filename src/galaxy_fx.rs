@@ -13,7 +13,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::guild::Guilds;
 use crate::net::Net;
@@ -29,8 +29,6 @@ use crate::{CameraController, ZoomLevel};
 // guildes (étoiles revendiquées, voir `claims.rs`) et ceux des factions PNJ
 // se lisent donc d'un coup d'œil. Une étoile sans propriétaire n'a pas de trait.
 
-/// Voisines du même territoire auxquelles chaque étoile est reliée.
-const LINKS_PER_STAR: usize = 2;
 /// Portée de voisinage : sert seulement à faire grandir un territoire PNJ d'étoile en étoile
 /// (les traits, eux, n'ont aucune limite de distance).
 const LINK_RANGE_MAIN: f32 = 30_000.0;
@@ -75,57 +73,39 @@ fn link_range(settings: &GameSettings, sys: usize) -> f32 {
 }
 
 /// Traits d'un groupe d'étoiles d'un même propriétaire, sans limite de distance :
-/// chaque étoile est reliée à ses deux plus proches voisines du groupe, puis les
-/// blocs restés séparés sont reliés par leur paire la plus proche. Le territoire
-/// forme ainsi un seul réseau, même si ses étoiles sont très éloignées.
+/// un réseau minimal (arbre couvrant), donc un seul trait entre deux étoiles reliées
+/// et jamais de triangle. Chaque étoile est rattachée à l'étoile déjà reliée la plus
+/// proche, ce qui donne le moins de traits possible (une de moins que d'étoiles).
 fn group_links(settings: &GameSettings, stars: &[usize]) -> Vec<(Vec3, Vec3)> {
-    let pts: Vec<(usize, Vec3)> = stars
+    let pts: Vec<Vec3> = stars
         .iter()
-        .filter_map(|&s| settings.systems.get(s).map(|sys| (s, sys.center())))
+        .filter_map(|&s| settings.systems.get(s).map(|sys| sys.center()))
         .collect();
     let n = pts.len();
-    let mut edges: HashSet<(usize, usize)> = HashSet::new();
-    for i in 0..n {
-        let mut near: Vec<(usize, f32)> = (0..n).filter(|&j| j != i).map(|j| (j, pts[i].1.distance(pts[j].1))).collect();
-        near.sort_by(|x, y| x.1.total_cmp(&y.1));
-        for (j, _) in near.into_iter().take(LINKS_PER_STAR) {
-            edges.insert((i.min(j), i.max(j)));
-        }
+    if n < 2 {
+        return Vec::new();
     }
-    // Composantes connexes, puis on relie la paire la plus proche entre deux blocs
-    let mut group: Vec<usize> = (0..n).collect();
-    fn root(group: &mut [usize], mut i: usize) -> usize {
-        while group[i] != i {
-            group[i] = group[group[i]];
-            i = group[i];
-        }
-        i
-    }
-    for &(i, j) in &edges {
-        let (ri, rj) = (root(&mut group, i), root(&mut group, j));
-        group[ri] = rj;
-    }
-    loop {
-        let mut best: Option<(usize, usize, f32)> = None;
-        for i in 0..n {
-            for j in (i + 1)..n {
-                if root(&mut group, i) == root(&mut group, j) {
-                    continue;
-                }
-                let d = pts[i].1.distance(pts[j].1);
-                if best.map_or(true, |b| d < b.2) {
-                    best = Some((i, j, d));
-                }
+    // Algorithme de Prim : on part de la première étoile et on relie à chaque pas la
+    // plus proche des étoiles restantes à une étoile déjà dans le réseau
+    let mut inside = vec![false; n];
+    inside[0] = true;
+    // Pour chaque étoile hors réseau : (étoile du réseau la plus proche, distance)
+    let mut nearest: Vec<(usize, f32)> = (0..n).map(|i| (0, pts[i].distance(pts[0]))).collect();
+    let mut lines = Vec::with_capacity(n - 1);
+    for _ in 1..n {
+        let Some(next) = (0..n).filter(|&i| !inside[i]).min_by(|&a, &b| nearest[a].1.total_cmp(&nearest[b].1)) else {
+            break;
+        };
+        lines.push((pts[nearest[next].0], pts[next]));
+        inside[next] = true;
+        for i in (0..n).filter(|&i| !inside[i]) {
+            let d = pts[i].distance(pts[next]);
+            if d < nearest[i].1 {
+                nearest[i] = (next, d);
             }
         }
-        let Some((i, j, _)) = best else { break };
-        edges.insert((i, j));
-        let (ri, rj) = (root(&mut group, i), root(&mut group, j));
-        group[ri] = rj;
     }
-    let mut lines: Vec<(usize, usize)> = edges.into_iter().collect();
-    lines.sort();
-    lines.into_iter().map(|(i, j)| (pts[i].1, pts[j].1)).collect()
+    lines
 }
 
 // ── Factions PNJ ────────────────────────────────────────────────────────
@@ -525,6 +505,7 @@ fn update_clouds(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[test]
     fn cloud_texture_is_soft_and_wispy() {
@@ -623,6 +604,8 @@ mod tests {
         for stars in [near, far] {
             let links = group_links(&settings, &stars);
             assert!(reachable(&stars, &links));
+            // Un seul trait par étoile ajoutée : réseau minimal, donc aucun triangle ni doublon
+            assert_eq!(links.len(), stars.len() - 1);
             // Rien en dehors du groupe, pas de doublon, pas de trait sur une seule étoile
             let centers: HashSet<[i32; 3]> = stars.iter().map(|&s| key(settings.systems[s].center())).collect();
             let mut pairs: Vec<_> = links.iter().map(|(a, b)| (key(*a), key(*b))).collect();
