@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 use crate::kepler::{OrbitalElements, DEFAULT_MU};
 use crate::lod::{compute_lod_level, LodChunk, LodLevel};
 use crate::mesher::{build_celestial_chunk_mesh, build_chunk_mesh};
+use crate::galaxy_shape::{CapMode, Shape};
 use crate::settings::{GalaxyConfig, GameSettings, PlanetConfig, SystemSpatialIndex, CORE_EXCLUSION, SYSTEM_CELL_SIZE, STREAM_RADIUS};
 use bevy::render::view::NoFrustumCulling;
 use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, ComputeTaskPool, Task};
@@ -396,8 +397,7 @@ fn generate_all(
         commands.spawn(GalaxyMeta { id: gid as u32, center: gal.center });
         spawn_arm_capsules(
             &mut commands, &capsule_mesh, &capsule_mat,
-            gid as u32, gal.center, gal.tilt,
-            gal.num_arms, gal.twist, gal.radius,
+            gid as u32, gal.center, gal.tilt, &gal.shape(), gal.radius,
         );
     }
 
@@ -507,30 +507,24 @@ fn spawn_arm_capsules(
     galaxy_id: u32,
     center: Vec3,
     tilt: Quat,
-    num_arms: usize,
-    twist: f32,
+    shape: &Shape,
     radius: f32,
 ) {
-    let tau = std::f32::consts::TAU;
-    let base_samples: &[f32] = &[0.12, 0.22, 0.32, 0.42, 0.52, 0.62, 0.72, 0.82, 0.92];
-    let detail_samples: &[f32] = &[0.17, 0.27, 0.37, 0.47, 0.57, 0.67, 0.77, 0.87];
+    const ARM_BASE: &[f32] = &[0.12, 0.22, 0.32, 0.42, 0.52, 0.62, 0.72, 0.82, 0.92];
+    const ARM_DETAIL: &[f32] = &[0.17, 0.27, 0.37, 0.47, 0.57, 0.67, 0.77, 0.87];
+    const LOOP: &[f32] = &[0.02, 0.10, 0.18, 0.26, 0.34, 0.42, 0.50, 0.58, 0.66, 0.74, 0.82, 0.90];
+    const FEW: &[f32] = &[0.5];
 
-    for arm in 0..num_arms {
-        let arm_base = arm as f32 * tau / num_arms as f32;
-
-        for (is_detail, samples) in [(false, base_samples as &[f32]), (true, detail_samples)] {
+    for curve in &shape.curves {
+        let passes: &[(bool, &[f32])] = match curve.caps {
+            CapMode::Arm => &[(false, ARM_BASE), (true, ARM_DETAIL)],
+            CapMode::Loop => &[(false, LOOP)],
+            CapMode::Few => &[(false, FEW)],
+            CapMode::None => &[],
+        };
+        for &(is_detail, samples) in passes {
             for &t in samples {
-                let r = t * t * radius;
-                let theta = arm_base + t * t * twist;
-
-                let local_pos = Vec3::new(r * theta.cos(), 0.0, r * theta.sin());
-
-                let dr = 2.0 * t * radius;
-                let dtheta = 2.0 * t * twist;
-                let dx = dr * theta.cos() - r * dtheta * theta.sin();
-                let dz = dr * theta.sin() + r * dtheta * theta.cos();
-                let tangent = Vec3::new(dx, 0.0, dz).normalize_or_zero();
-
+                let (local_pos, tangent) = curve.at(t);
                 let world_pos = center + tilt * local_pos;
                 let world_tangent = tilt * tangent;
 

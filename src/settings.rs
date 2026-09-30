@@ -229,6 +229,8 @@ pub struct GalaxyConfig {
     pub radius:        f32,
     pub num_arms:      usize,
     pub twist:         f32,
+    /// Type de galaxie (spirale, annulaire, filamentaire…) : voir `galaxy_shape`.
+    pub kind:          crate::galaxy_shape::GalaxyKind,
     pub core_radius:   f32,
     /// Graine des étoiles de la galaxie (galaxies extérieures uniquement).
     pub seed:          u32,
@@ -252,6 +254,7 @@ pub fn default_galaxies() -> Vec<GalaxyConfig> {
         radius: GALAXY_RADIUS,
         num_arms: 5,
         twist: 5.0,
+        kind: crate::galaxy_shape::GalaxyKind::Spiral,
         core_radius: 30_000.0,
         seed: 0,
         arm_stars: 0,
@@ -286,6 +289,7 @@ pub fn default_galaxies() -> Vec<GalaxyConfig> {
             radius: 1_600_000.0 + pseudo_rand(gs * 13 + 7) * 5_000_000.0,
             num_arms: 2 + (pseudo_rand(gs * 13 + 9) * 4.0) as usize,
             twist: 3.0 + pseudo_rand(gs * 13 + 11) * 4.0,
+            kind: crate::galaxy_shape::GalaxyKind::pick(gs * 13 + 25),
             core_radius: 10_000.0 + pseudo_rand(gs * 13 + 23) * 20_000.0,
             seed: gs * 1000,
             arm_stars: 200 + (pseudo_rand(gs * 13 + 19) * 300.0) as usize,
@@ -423,29 +427,18 @@ fn default_systems(galaxies: &[GalaxyConfig]) -> Vec<StarSystemConfig> {
 
     // ── Galaxies extérieures : mêmes systèmes (étoile + planètes) ─────
     for (gid, gal) in galaxies.iter().enumerate().skip(1) {
-        let gr = gal.radius;
-        let arms = gal.num_arms.max(1);
+        let shape = gal.shape();
+        let total = gal.arm_stars + gal.scatter_stars;
+        let on_structure = (total as f32 * shape.structure_share) as usize;
         let mut local_idx = 0usize;
-        for i in 0..(gal.arm_stars + gal.scatter_stars) {
+        for i in 0..total {
             let s = i as u32 + gal.seed;
-            let (lx, ly, lz) = if i < gal.arm_stars {
-                // Étoiles sur les bras
-                let ab = (i % arms) as f32 * tau / arms as f32;
-                let st = pseudo_rand(s * 7 + 3);
-                let sr = st * st * gr;
-                let sp = ab + (sr / gr) * gal.twist;
-                let w = 0.9 * (1.0 - sr / gr * 0.5);
-                let sc = (pseudo_rand(s * 7 + 5) - 0.5) * w;
-                let thick = 24000.0 * (1.0 - sr / gr * 0.8);
-                (sr * (sp + sc).cos(), (pseudo_rand(s * 7 + 7) - 0.5) * thick, sr * (sp + sc).sin())
+            let mut rng = crate::galaxy_shape::Rng::new(s);
+            let local = if i < on_structure {
+                shape.sample_structure(&mut rng, 0.0)
             } else {
-                // Étoiles dispersées entre les bras
-                let st = pseudo_rand(s * 7 + 3);
-                let sr = st * st * gr * 0.85;
-                let stheta = pseudo_rand(s * 7 + 5) * tau;
-                (sr * stheta.cos(), (pseudo_rand(s * 7 + 7) - 0.5) * 16000.0, sr * stheta.sin())
+                shape.sample_background(&mut rng)
             };
-            let local = bevy::math::Vec3::new(lx, ly, lz);
             // Pas de système dans le trou noir central
             if local.length() < CORE_EXCLUSION { continue; }
             let world = gal.center + gal.tilt * local;

@@ -15,6 +15,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use std::collections::HashMap;
 
+use crate::galaxy_shape::Rng;
 use crate::guild::Guilds;
 use crate::net::Net;
 use crate::net_ui::NetPanel;
@@ -413,19 +414,13 @@ fn spawn_clouds(
     for (gid, gal) in settings.galaxies.iter().enumerate() {
         let seed = 900_000 + gid as u32 * 1_000;
         let rnd = |k: u32| pseudo_rand(seed.wrapping_mul(31).wrapping_add(k));
+        let shape = gal.shape();
         for i in 0..cloud_count(gid, gal.radius) as u32 {
-            // Sur un bras (même spirale que les bras), avec un peu de dispersion
-            let arm = (rnd(i * 11 + 1) * gal.num_arms as f32) as usize % gal.num_arms.max(1);
-            let t = 0.12 + 0.83 * rnd(i * 11 + 2).powf(0.8);
-            let r = t * t * gal.radius;
-            let theta = arm as f32 * tau / gal.num_arms.max(1) as f32 + t * t * gal.twist;
-            let scatter = (rnd(i * 11 + 3) - 0.5) * gal.radius * 0.07 * (0.4 + t);
-            let along = (rnd(i * 11 + 4) - 0.5) * gal.radius * 0.05;
-            let local = Vec3::new(
-                r * theta.cos() - theta.sin() * scatter + theta.cos() * along,
-                (rnd(i * 11 + 5) - 0.5) * gal.radius * 0.02,
-                r * theta.sin() + theta.cos() * scatter + theta.sin() * along,
-            );
+            // Sur la structure de la galaxie (bras, anneaux, filaments…), avec un peu de dispersion
+            let mut srng = Rng::new(seed.wrapping_add(i * 7919));
+            let jitter = Vec3::new(rnd(i * 11 + 3) - 0.5, (rnd(i * 11 + 5) - 0.5) * 0.3, rnd(i * 11 + 4) - 0.5)
+                * gal.radius * 0.05;
+            let local = shape.sample_structure(&mut srng, 0.12) + jitter;
             let world = gal.center + gal.tilt * local;
             // Pas de nuage collé au trou noir central
             if local.length() < CORE_EXCLUSION * 3.0 {

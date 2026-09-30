@@ -3,6 +3,7 @@ mod claims;
 mod combat;
 mod diplomacy;
 mod galaxy_fx;
+mod galaxy_shape;
 mod graphics;
 mod guild;
 mod guild_ui;
@@ -1716,7 +1717,10 @@ fn update_system_hud(
             (Some(si), label)
         }
         TargetKind::GalacticCore => (None, Some("Trou Noir Galactique".to_string())),
-        TargetKind::DistantGalaxyCore(id) => (None, Some(format!("Galaxie {}", id))),
+        TargetKind::DistantGalaxyCore(id) => (None, Some(match settings.galaxies.get(id as usize) {
+            Some(g) => format!("Galaxie {} · {}", id, g.kind.name()),
+            None => format!("Galaxie {}", id),
+        })),
         _ => (None, None),
     };
 
