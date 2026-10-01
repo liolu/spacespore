@@ -12,6 +12,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::atmosphere::{self, AirInput};
+use super::climate::Climate;
 use super::genome::SystemGenome;
 use super::seeds::{Layer, LayerRng};
 use super::star::{StarClass, StarPhysics};
@@ -66,13 +68,6 @@ pub fn radius_from_mass(kind: PlanetKind, mass: f64) -> f64 {
 /// Masse d'une lune (M⊕) d'après son rayon (R⊕) : roche et glace (Lune ≈ 0,012 M⊕).
 pub fn moon_mass(radius: f64, icy: bool) -> f64 {
     0.9 * radius.powf(3.4) * if icy { 0.6 } else { 1.0 }
-}
-
-/// Température d'équilibre provisoire (°C) : insolation de l'étoile (albédo terrestre) et effet
-/// de serre forfaitaire. La phase 3 la remplace (composition, albédo, serre calculés).
-pub fn provisional_temperature(luminosity: f64, au: f64, atmosphere: bool) -> f64 {
-    let t_eq = 255.0 * luminosity.max(1e-9).powf(0.25) / au.max(1e-4).sqrt();
-    t_eq + if atmosphere { 33.0 } else { 0.0 } - 273.15
 }
 
 /// Arrondi au multiple de `step` (valeurs affichées, identiques sur toutes les machines).
@@ -177,6 +172,9 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
             PlanetKind::GasGiant => 2 + spin.weighted(&[0.35, 0.35, 0.3]),
         };
         let icy = d.au > snow;
+        // Lunes sans air : température d'équilibre (albédo 0,12), grands écarts jour / nuit
+        let moon_t = atmosphere::equilibrium_temperature(lum, d.au, 0.12) as f32;
+        let moon_climate = Climate { mean_c: moon_t - 273.15, span: moon_t * 0.35, lapse: 0.0, diurnal: moon_t * 0.3, tilt: 0.0 };
         let mut moons = Vec::with_capacity(moon_count);
         for mi in 0..moon_count {
             let mu = mi as u32;
@@ -204,11 +202,10 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
                 radius_earth: r_earth as f32,
                 mass_earth: mass as f32,
                 gravity_g: (mass / (r_earth * r_earth)) as f32,
+                climate: Some(moon_climate),
             });
         }
 
-        let atmosphere = d.kind == PlanetKind::Rocky && d.mass > 0.1 && relief.unit() < 0.5;
-        let temperature = provisional_temperature(lum, d.au, atmosphere);
         // Rotation : bloquée près de l'étoile (une face toujours éclairée), sinon 10 à 40 h
         // (9 à 17 h pour les géantes) ; inclinaison de l'axe surtout faible, parfois couchée
         let period_days = 365.25 * (d.au.powi(3) / star.mass_sun.max(0.01)).sqrt();
@@ -223,6 +220,24 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
         let tilt_roll = spin.unit();
         let axial_tilt = if locked { 0.0 } else if tilt_roll < 0.05 { spin.range(60.0, 180.0) } else { 35.0 * spin.unit().powf(1.5) };
 
+        // Atmosphère et climat (phase 3) : rétention, composition, serre, nuages, vents, ciel
+        let (air, climate) = atmosphere::generate(
+            &AirInput {
+                kind: d.kind,
+                mass: d.mass,
+                radius: d.radius,
+                au: d.au,
+                luminosity: lum,
+                xray: star.xray_flux,
+                star_color: star.color,
+                locked,
+                rotation_h,
+                axial_tilt,
+            },
+            &mut LayerRng::new(seed as u64, Layer::Atmosphere),
+        );
+        let atmosphere = !gaseous && air.present();
+
         planets.push(PlanetConfig {
             orbit_distance: 0.0, // placée plus bas
             radius,
@@ -234,6 +249,8 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
             moons,
             star_radius: scale as f32,
             atmosphere,
+            cloud_density: air.cloud_cover,
+            cloud_speed: 0.02 * (air.wind_ms / 10.0).clamp(0.2, 4.0),
             cloud_altitude: q(80.0 + radius as f64 * 0.05 * (1.0 + relief.unit()), 0.1),
             eccentricity: q(0.3 * orbit.unit().powi(3) * if d.au < 0.1 * hz { 0.2 } else { 1.0 }, 1e-4),
             inclination: q(orbit.range(-0.05, 0.05), 1e-4),
@@ -250,7 +267,9 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
             axial_tilt: axial_tilt as f32,
             tidally_locked: locked,
             gravity_g: (d.mass / (d.radius * d.radius)) as f32,
-            temperature_c: Some(temperature as f32),
+            temperature_c: Some(climate.mean_c),
+            climate: Some(climate),
+            air,
             ..Default::default()
         });
     }
@@ -300,14 +319,6 @@ mod tests {
         let m = moon_mass(0.273, false);
         assert!((m - 0.0123).abs() < 0.003, "{m}");
         assert!((m / (0.273 * 0.273) - 0.165).abs() < 0.03);
-    }
-
-    #[test]
-    fn earth_at_one_au_is_temperate() {
-        let t = provisional_temperature(1.0, 1.0, true);
-        assert!((t - 15.0).abs() < 2.0, "{t}");
-        assert!(provisional_temperature(1.0, 0.4, false) > 100.0);
-        assert!(provisional_temperature(1.0, 5.2, false) < -100.0);
     }
 
     #[test]

@@ -111,6 +111,8 @@ pub struct MoonConfig {
     #[serde(default)] pub radius_earth:   f32,
     #[serde(default)] pub mass_earth:     f32,
     #[serde(default = "default_moon_gravity")] pub gravity_g: f32,
+    /// Climat (phase 3) : lune sans air.
+    #[serde(default)] pub climate:        Option<Climate>,
 }
 fn default_moon_gravity() -> f32 { 0.16 }
 impl Default for MoonConfig {
@@ -118,7 +120,7 @@ impl Default for MoonConfig {
         orbit_distance: 400.0, radius: 60.0, seed: 77,
         eccentricity: 0.0, inclination: 0.0, ascending_node: 0.0,
         arg_periapsis: 0.0, mean_anomaly_0: 0.0,
-        radius_earth: 0.0, mass_earth: 0.0, gravity_g: default_moon_gravity(),
+        radius_earth: 0.0, mass_earth: 0.0, gravity_g: default_moon_gravity(), climate: None,
     } }
 }
 
@@ -163,6 +165,11 @@ pub struct PlanetConfig {
     #[serde(default = "default_gravity")] pub gravity_g: f32,
     /// Température moyenne (°C) ; `None` : ancienne formule (distance en rayons d'étoile).
     #[serde(default)] pub temperature_c:  Option<f32>,
+    /// Climat (phase 3) : température selon la latitude et l'altitude ; `None` : d'après
+    /// `temperature()`.
+    #[serde(default)] pub climate:        Option<Climate>,
+    /// Atmosphère (phase 3) : composition, pression, nuages, vents, couleurs du ciel.
+    #[serde(default)] pub air:            Air,
 }
 fn default_gravity() -> f32 { 1.0 }
 fn default_star_radius()    -> f32 { 250.0 }
@@ -180,7 +187,7 @@ impl Default for PlanetConfig {
             arg_periapsis: 0.0, mean_anomaly_0: 0.0,
             kind: PlanetKind::Rocky, hot: false, mass_earth: 0.0, radius_earth: 0.0,
             semi_major_au: 0.0, period_days: 0.0, rotation_h: 0.0, axial_tilt: 0.0,
-            tidally_locked: false, gravity_g: 1.0, temperature_c: None,
+            tidally_locked: false, gravity_g: 1.0, temperature_c: None, climate: None, air: Air::default(),
         }
     }
 }
@@ -194,6 +201,11 @@ impl PlanetConfig {
     /// Géante gazeuse ou neptunienne : pas de sol.
     pub fn gaseous(&self) -> bool {
         self.kind.gaseous()
+    }
+
+    /// Climat : celui de la génération, sinon déduit de la température moyenne.
+    pub fn climate(&self) -> Climate {
+        self.climate.unwrap_or_else(|| Climate::from_mean(self.temperature(), self.atmosphere))
     }
 }
 
@@ -338,6 +350,8 @@ use std::sync::OnceLock;
 
 use crate::planetgen::genome::SystemGenome;
 use crate::planetgen::star::{StarClass, StarPhysics};
+use crate::planetgen::atmosphere::Air;
+use crate::planetgen::climate::Climate;
 use crate::planetgen::system::PlanetKind;
 use crate::planetgen::live::WorldDeltas;
 

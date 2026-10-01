@@ -5,6 +5,7 @@ use noise::{Fbm, NoiseFn, Perlin};
 
 use crate::lod::LodLevel;
 use crate::planet::{CubeFace, VoxelType};
+use crate::planetgen::climate::{land_material, sea_material, Climate};
 fn max_greedy_for_lod(lod: LodLevel) -> usize {
     match lod {
         LodLevel::Lod0 | LodLevel::Lod1 => 1,
@@ -278,7 +279,8 @@ pub fn build_chunk_mesh(
     noise_scale: f32,
     detail_scale: f32,
     lod: LodLevel,
-    temperature: f32,
+    climate: Climate,
+    atmosphere: bool,
 ) -> Mesh {
     let res = lod.resolution();
     let max_greedy = max_greedy_for_lod(lod);
@@ -293,19 +295,6 @@ pub fn build_chunk_mesh(
     let r_min = radius - sl * th - 2.0;
     let r_max = radius + (1.0 - sl) * th + 2.0;
 
-    let frozen = temperature < -50.0;
-    let snow_lat = if temperature > 200.0 {
-        2.0
-    } else if temperature > 60.0 {
-        0.95
-    } else if temperature > 20.0 {
-        0.78
-    } else if temperature > -20.0 {
-        0.50
-    } else {
-        0.15
-    };
-
     let mut fbm: Fbm<Perlin> = Fbm::new(seed);
     fbm.octaves = 6;
     let mut detail_fbm: Fbm<Perlin> = Fbm::new(seed.wrapping_add(81));
@@ -314,6 +303,8 @@ pub fn build_chunk_mesh(
 
     let mut terrain_heights = vec![vec![0.0f32; res]; res];
     let mut surface_types = vec![vec![VoxelType::Air; res]; res];
+    // Ce qui remplit les bassins : eau, banquise ou rien (mer à sec)
+    let mut seas = vec![vec![None; res]; res];
     let mut cell_dirs = vec![vec![Vec3::ZERO; res]; res];
     let mut cell_color_var = vec![vec![0.0f32; res]; res];
 
@@ -341,27 +332,11 @@ pub fn build_chunk_mesh(
             let height_val = ((continent + det + 1.0) * 0.5).clamp(0.0, 1.0);
             terrain_heights[ix][iy] = radius + (height_val - sl) * th;
 
+            // Même climat que le terrain voxel (`planetgen::climate`) : la vue de l'espace et le sol concordent
             let rh = height_val - sl;
             let lat = dir.y.abs();
-            surface_types[ix][iy] = if temperature > 300.0 {
-                if rh < 0.0 { VoxelType::Stone } else { VoxelType::Sand }
-            } else if temperature > 100.0 {
-                if rh < 0.0 { VoxelType::Sand }
-                else if rh < 0.30 { VoxelType::Sand }
-                else { VoxelType::Stone }
-            } else if rh < 0.0 {
-                VoxelType::Sand
-            } else if rh < 0.02 {
-                VoxelType::Sand
-            } else if rh < 0.12 {
-                if lat > snow_lat { VoxelType::Snow } else { VoxelType::Grass }
-            } else if rh < 0.28 {
-                if lat > (snow_lat - 0.04) { VoxelType::Snow } else { VoxelType::Grass }
-            } else if rh < 0.42 {
-                if lat > snow_lat { VoxelType::Snow } else { VoxelType::Stone }
-            } else {
-                VoxelType::Snow
-            };
+            surface_types[ix][iy] = land_material(&climate, false, atmosphere, rh, lat);
+            seas[ix][iy] = sea_material(&climate, false, atmosphere, lat);
         }
     }
 
@@ -372,10 +347,9 @@ pub fn build_chunk_mesh(
             for iy in 0..res {
                 let terrain_h = terrain_heights[ix][iy];
                 voxels[layer][ix][iy] = if r_mid > terrain_h {
-                    if r_mid <= radius {
-                        if frozen { VoxelType::Snow } else { VoxelType::Water }
-                    } else {
-                        VoxelType::Air
+                    match seas[ix][iy] {
+                        Some(sea) if r_mid <= radius => sea,
+                        _ => VoxelType::Air,
                     }
                 } else {
                     surface_types[ix][iy]

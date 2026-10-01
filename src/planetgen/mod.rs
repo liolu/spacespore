@@ -15,7 +15,9 @@
 // partir des phases suivantes.
 #![allow(dead_code)]
 
+pub mod atmosphere;
 pub mod cache;
+pub mod climate;
 pub mod genome;
 pub mod live;
 pub mod profile;

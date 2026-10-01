@@ -25,7 +25,6 @@ use crate::{CameraController, ZoomLevel};
 
 /// Couleur du ciel dans l'espace (celle de `setup_scene`).
 pub(crate) const SPACE_SKY: Color = Color::srgb(0.005, 0.005, 0.02);
-const DAY_SKY: [f32; 3] = [0.36, 0.58, 0.92];
 
 /// La lumière vient uniquement de l'étoile (lumière ponctuelle réelle : sa position, sa couleur et
 /// sa chute en 1/d²), jamais d'un « soleil » ajouté : une planète lointaine reçoit moins de lumière,
@@ -34,7 +33,6 @@ const AMBIENT_SPACE: f32 = 300.0;
 /// Lumière diffuse du ciel en plein jour sous une atmosphère.
 const AMBIENT_DAY: f32 = 1_500.0;
 /// Teinte de la lumière diffuse du ciel (plus claire que celle de l'espace).
-const AMBIENT_TINT: Color = Color::srgb(0.55, 0.6, 0.75);
 const AMBIENT_SPACE_TINT: Color = Color::srgb(0.25, 0.25, 0.35);
 
 /// Nombre maximum de tuiles construites en même temps en arrière-plan.
@@ -101,9 +99,33 @@ pub fn hover_radius(p: &BodyParams) -> f32 {
     p.radius + p.terrain_height * 0.6 + p.radius * 0.15 + 150.0
 }
 
-/// Épaisseur d'air visible depuis le sol : le ciel bleu s'efface avec l'altitude.
+/// Épaisseur d'air visible depuis le sol : le ciel s'efface avec l'altitude (plus vite sous une
+/// atmosphère ténue).
 fn atmosphere_depth(p: &BodyParams) -> f32 {
-    (p.radius * 0.12).max(300.0)
+    (p.radius * 0.12).max(300.0) * (0.5 + 0.5 * p.pressure.clamp(0.0, 10.0).powf(0.3))
+}
+
+/// Couleur du ciel vue d'un astre. `sun_height` : sinus de la hauteur de l'étoile au-dessus de
+/// l'horizon ; `air` : part de l'atmosphère au-dessus de la caméra (1 au sol, 0 dans l'espace).
+/// Le jour, couleur calculée de l'atmosphère (`planetgen::atmosphere`) ; quand l'étoile est basse,
+/// celle du coucher de soleil ; la nuit, le noir de l'espace.
+pub fn sky_color(p: &BodyParams, sun_height: f32, air: f32, space: [f32; 3]) -> [f32; 3] {
+    if !p.atmosphere || p.pressure < 0.01 {
+        return space;
+    }
+    let day = smoothstep((sun_height + 0.15) / 0.35) * air;
+    // Coucher : l'étoile à moins de ~15° de l'horizon
+    let low = (1.0 - (sun_height.abs() / 0.28)).clamp(0.0, 1.0) * 0.75;
+    let lit = [
+        p.sky[0] + (p.sunset[0] - p.sky[0]) * low,
+        p.sky[1] + (p.sunset[1] - p.sky[1]) * low,
+        p.sky[2] + (p.sunset[2] - p.sky[2]) * low,
+    ];
+    [
+        space[0] + (lit[0] - space[0]) * day,
+        space[1] + (lit[1] - space[1]) * day,
+        space[2] + (lit[2] - space[2]) * day,
+    ]
 }
 
 /// Repousse la caméra hors de l'astre pour qu'elle ne passe jamais sous sa surface.
@@ -419,6 +441,12 @@ impl Surface {
 
     fn params(&self) -> Option<BodyParams> {
         self.terrain.as_ref().map(|t| t.params)
+    }
+
+    /// Brume de l'horizon pendant un séjour sous une atmosphère : (couleur, pression en bar).
+    pub fn haze(&self) -> Option<([f32; 3], f32)> {
+        let p = self.params().filter(|p| self.active() && p.atmosphere && !p.gaseous && p.pressure >= 0.01)?;
+        Some((p.haze, p.pressure))
     }
 
     /// Séjour dans une géante gazeuse.
@@ -905,7 +933,7 @@ fn surface_control(
         Phase::Orbit => {}
     }
 
-    // Ciel : bleu le jour près d'une atmosphère, noir dans l'espace
+    // Ciel : couleur de l'atmosphère le jour (coucher de soleil près de l'horizon), noir dans l'espace
     if surface.active() {
         let cam_local = cam_tf.translation - center;
         let up = cam_local.normalize_or(Vec3::Y);
@@ -916,19 +944,11 @@ fn surface_control(
             .map(|t| t.translation - center)
             .min_by(|a, b| a.length_squared().total_cmp(&b.length_squared()))
             .map(|d| d.normalize_or(Vec3::Y));
-        let blue = if params.atmosphere {
-            let day = sun.map_or(0.0, |s| smoothstep((up.dot(s) + 0.15) / 0.35));
-            let air = (1.0 - altitude / atmosphere_depth(&params)).clamp(0.0, 1.0);
-            day * air
-        } else {
-            0.0
-        };
+        let height = sun.map_or(-1.0, |s| up.dot(s));
+        let air = (1.0 - altitude / atmosphere_depth(&params)).clamp(0.0, 1.0);
         let space = SPACE_SKY.to_srgba();
-        clear.0 = Color::srgb(
-            space.red + (DAY_SKY[0] - space.red) * blue,
-            space.green + (DAY_SKY[1] - space.green) * blue,
-            space.blue + (DAY_SKY[2] - space.blue) * blue,
-        );
+        let c = sky_color(&params, height, air, [space.red, space.green, space.blue]);
+        clear.0 = Color::srgb(c[0], c[1], c[2]);
     }
 }
 
@@ -1031,8 +1051,14 @@ fn surface_light(
     } else {
         0.0
     };
-    ambient.brightness = AMBIENT_SPACE + (AMBIENT_DAY - AMBIENT_SPACE) * day;
-    ambient.color = if day > 0.0 { AMBIENT_TINT } else { AMBIENT_SPACE_TINT };
+    // Une atmosphère épaisse diffuse plus de lumière ; la teinte est celle du ciel
+    ambient.brightness = AMBIENT_SPACE + (AMBIENT_DAY - AMBIENT_SPACE) * day * params.pressure.clamp(0.05, 4.0).powf(0.25);
+    ambient.color = if day > 0.0 {
+        let s = params.sky;
+        Color::srgb(0.4 + 0.3 * s[0], 0.4 + 0.3 * s[1], 0.4 + 0.3 * s[2])
+    } else {
+        AMBIENT_SPACE_TINT
+    };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1325,8 +1351,12 @@ fn update_hud(
             let lon = up.z.atan2(up.x).to_degrees();
             let params = surface.params();
             let radius = params.map_or(0.0, |p| p.radius);
-            let temp = params.map_or(0.0, |p| p.temperature);
             let alt = w.pos.length() - radius;
+            // Température locale : latitude et altitude (le sommet des montagnes est plus froid)
+            let temp = match (&surface.terrain, params) {
+                (Some(t), Some(p)) => t.temperature_at(up, alt / p.terrain_height.max(1.0)),
+                _ => 0.0,
+            };
             format!(
                 "ZQSD/WASD : marcher   Maj : courir   Espace : sauter   V : decoller\nLat {lat:.1}  Lon {lon:.1}  Alt {alt:.0}  Temp. {temp:.0} C{}",
                 if w.in_water { "  (a l'eau)" } else { "" }
@@ -1343,6 +1373,8 @@ fn update_hud(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::planetgen::climate::Climate;
+    use crate::terrain::{EARTH_SKY, EARTH_SUNSET};
 
     fn world() -> Terrain {
         Terrain::new(BodyParams {
@@ -1357,6 +1389,11 @@ mod tests {
             temperature: 15.0,
             gravity: 1.0,
             gaseous: false,
+            climate: Climate::default(),
+            sky: EARTH_SKY,
+            sunset: EARTH_SUNSET,
+            haze: EARTH_SKY,
+            pressure: 1.0,
         })
     }
 

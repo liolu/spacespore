@@ -5,7 +5,8 @@
 //  coque du vaisseau tant qu'il y reste, d'autant plus vite qu'il descend profond et que la
 //  planète est lourde. À 0 PV il est détruit (`combat.rs`) puis réapparaît en orbite, hors de
 //  l'atmosphère. À l'intérieur, brouillard et ciel prennent la couleur des nuages, de plus en
-//  plus sombre avec la profondeur.
+//  plus sombre avec la profondeur. Ce module gère aussi la brume de l'horizon sur les planètes à
+//  atmosphère (phase 3) : un seul brouillard sur la caméra.
 // ─────────────────────────────────────────────────────────────────────────
 
 use bevy::pbr::{DistanceFog, FogFalloff};
@@ -138,14 +139,29 @@ fn gas_atmosphere(
                 ..default()
             });
         }
-        None if has_fog => {
-            commands.entity(cam).remove::<DistanceFog>();
-            // Sorti de l'atmosphère : la navigation repeint le ciel elle-même, sinon c'est l'espace
-            if !surface.active() {
-                clear.0 = crate::surface::SPACE_SKY;
+        None => match surface.haze() {
+            // Brume de l'horizon : couleur du ciel du moment, mêlée à celle de la brume ; plus
+            // l'air est épais, plus l'horizon est proche
+            Some((haze, pressure)) => {
+                let sky = clear.0.to_srgba();
+                let l = (sky.red + sky.green + sky.blue) / 3.0;
+                let c = Color::srgb(
+                    sky.red * 0.5 + haze[0] * l * 0.5,
+                    sky.green * 0.5 + haze[1] * l * 0.5,
+                    sky.blue * 0.5 + haze[2] * l * 0.5,
+                );
+                let visibility = (40_000.0 / pressure.max(0.01).sqrt()).clamp(3_000.0, 120_000.0);
+                commands.entity(cam).insert(DistanceFog { color: c, falloff: FogFalloff::from_visibility(visibility), ..default() });
             }
-        }
-        None => {}
+            None if has_fog => {
+                commands.entity(cam).remove::<DistanceFog>();
+                // Sorti de l'atmosphère : la navigation repeint le ciel elle-même, sinon c'est l'espace
+                if !surface.active() {
+                    clear.0 = crate::surface::SPACE_SKY;
+                }
+            }
+            None => {}
+        },
     }
 }
 

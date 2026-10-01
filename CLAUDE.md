@@ -37,7 +37,11 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   orbites en UA (zone habitable ~ racine(L)), affichees en echelle log (zone habitable a 3,2 echelles), rocheuses,
   mini-Neptunes, geantes de glace et gazeuses (masse -> rayon de Chen-Kipping, gravite reelle a pied) ; lunes
   <= planete/3. Geantes gazeuses : pas de sol, on y vole jusqu'au coeur (`GAS_CORE`), la pression retire des PV
-  (`gas.rs`, `combat.rs`), destruction = retour en orbite. Valeurs affichees arrondies (empreinte reseau). L'etoile a un type (`planetgen/star.rs`, O..M, naine blanche/brune, sous-geante, geante rouge) :
+  (`gas.rs`, `combat.rs`), destruction = retour en orbite. Valeurs affichees arrondies (empreinte reseau).
+  Atmosphere et climat (`planetgen/atmosphere.rs`, `climate.rs`) : retention des gaz (Jeans, rayons X), pression,
+  albedo, serre, nuages, vents, couleurs du ciel ; `PlanetConfig::climate().temperature(lat, alt, moment)` ;
+  matieres de surface (neige, sable, herbe, mer gelee ou a sec) par `climate::land_material/sea_material`,
+  partagees par `terrain.rs` et `mesher.rs`. Brume de l'horizon et brouillard des geantes : `gas.rs`. L'etoile a un type (`planetgen/star.rs`, O..M, naine blanche/brune, sous-geante, geante rouge) :
   une G garde l'echelle, les autres types ont leur taille reelle (1 R_sol ~ 1 050 000 a l'ecran), compressee
   au-dela de 1,5 M (max 6,5 M) ; les planetes d'une geante sont repoussees hors d'elle. Sol (systeme 0) est G. Planetes et lunes
   sont explorables : zoomer sous 1000 du vaisseau = navigation basse altitude (ZQSD, Maj, Espace/Ctrl, clic

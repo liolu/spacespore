@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 
 use super::live::{delta_of, BodyId, Live, WorldDeltas};
 use super::seeds::{layer_seed, Layer};
-use super::{system, units};
+use super::{atmosphere, system, units};
 use crate::settings::{MoonConfig, PlanetConfig, StarConfig, StarSystemConfig};
 
 /// Rigueur d'une donnée (règle 5) : réaliste, spéculative ou fictive.
@@ -171,22 +171,44 @@ pub struct CompositionSection {
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct AtmosphereSection {
     pub present: bool,
+    /// Au sol ; pour une géante, au niveau des nuages.
     pub surface_pressure_bar: Option<f64>,
-    /// Fractions de chaque gaz (N2, O2, CO2…) : phase 3.
-    pub gases: BTreeMap<String, f64>,
+    /// Gaz par ordre d'importance, avec leur rigueur (réel ou fictif).
+    pub gases: Vec<GasShare>,
+    /// Type de nuages (eau, acide sulfurique, méthane…).
+    pub clouds: String,
     pub cloud_density: f64,
     pub cloud_altitude_game: f64,
     pub cloud_speed: f64,
     pub sky_color: Option<[f32; 3]>,
+    pub sunset_color: Option<[f32; 3]>,
+    pub haze_color: Option<[f32; 3]>,
+}
+
+/// Part d'un gaz dans l'atmosphère.
+#[derive(Clone, Debug, Serialize)]
+pub struct GasShare {
+    pub formula: String,
+    pub name: String,
+    pub fraction: f64,
+    pub realism: Realism,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct ClimateSection {
-    /// Température moyenne actuelle du jeu (°C).
+    /// Température moyenne de la surface (°C), effet de serre compris.
     pub mean_temperature_c: f64,
+    /// À l'équateur et aux pôles, au niveau de la mer (°C).
+    pub equator_c: Option<f64>,
+    pub pole_c: Option<f64>,
+    /// Refroidissement du niveau de la mer au sommet du relief (K).
+    pub summit_cooling_k: Option<f64>,
+    /// Écart jour / nuit (K), effectif à partir de la 0.11.
+    pub day_night_k: Option<f64>,
     pub equilibrium_temperature_k: Option<f64>,
     pub greenhouse_k: Option<f64>,
     pub albedo: Option<f64>,
+    pub wind_m_s: Option<f64>,
     pub winds: Option<String>,
 }
 
@@ -304,6 +326,54 @@ fn some(x: f32) -> Option<f64> {
     (x > 0.0).then(|| f(x))
 }
 
+fn atmosphere_section(p: &PlanetConfig) -> AtmosphereSection {
+    let air = &p.air;
+    let known = !air.gases.is_empty();
+    AtmosphereSection {
+        present: p.atmosphere || p.gaseous(),
+        surface_pressure_bar: known.then(|| f(air.pressure_bar)),
+        gases: air
+            .gases
+            .iter()
+            .map(|(formula, x)| {
+                let g = atmosphere::gas_info(formula);
+                GasShare {
+                    formula: formula.clone(),
+                    name: g.map_or(formula.as_str(), |g| g.name).to_string(),
+                    fraction: f(*x),
+                    realism: g.map_or(Realism::Realistic, |g| g.realism),
+                }
+            })
+            .collect(),
+        clouds: air.clouds.name().to_string(),
+        cloud_density: if p.atmosphere { f(p.cloud_density) } else { 0.0 },
+        cloud_altitude_game: f(p.cloud_altitude),
+        cloud_speed: f(p.cloud_speed),
+        sky_color: known.then_some(air.sky),
+        sunset_color: known.then_some(air.sunset),
+        haze_color: known.then_some(air.haze),
+    }
+}
+
+fn climate_section(p: &PlanetConfig) -> ClimateSection {
+    let c = p.climate();
+    let (equator, pole) = c.range();
+    let known = p.climate.is_some();
+    let air = &p.air;
+    ClimateSection {
+        mean_temperature_c: f(c.mean_c),
+        equator_c: known.then(|| f(equator)),
+        pole_c: known.then(|| f(pole)),
+        summit_cooling_k: known.then(|| f(c.lapse)),
+        day_night_k: known.then(|| f(c.diurnal * 2.0)),
+        equilibrium_temperature_k: (air.t_eq_k > 0.0).then(|| f(air.t_eq_k)),
+        greenhouse_k: (air.t_eq_k > 0.0).then(|| f(air.greenhouse_k)),
+        albedo: (air.t_eq_k > 0.0).then(|| f(air.albedo)),
+        wind_m_s: (air.t_eq_k > 0.0).then(|| f(air.wind_ms)),
+        winds: (!air.winds.is_empty()).then(|| air.winds.clone()),
+    }
+}
+
 fn composition(id: BodyId, deltas: &WorldDeltas) -> CompositionSection {
     let delta = delta_of(deltas, id);
     CompositionSection { bulk: delta.composition.iter().map(|(k, v)| (k.clone(), Live::new(0.0, *v))).collect() }
@@ -338,14 +408,8 @@ impl PlanetProfile {
             },
             physics: physics(f(p.radius), f(p.radius_earth), f(p.mass_earth), (p.radius_earth > 0.0).then_some(size), id, deltas),
             composition: composition(id, deltas),
-            atmosphere: AtmosphereSection {
-                present: p.atmosphere,
-                cloud_density: if p.atmosphere { f(p.cloud_density) } else { 0.0 },
-                cloud_altitude_game: f(p.cloud_altitude),
-                cloud_speed: f(p.cloud_speed),
-                ..Default::default()
-            },
-            climate: ClimateSection { mean_temperature_c: f(p.temperature()), ..Default::default() },
+            atmosphere: atmosphere_section(p),
+            climate: climate_section(p),
             hydrology: HydrologySection { sea_level: f(p.sea_level), ..Default::default() },
             geology: GeologySection::default(),
             relief: ReliefSection {
@@ -408,7 +472,17 @@ impl PlanetProfile {
             physics: physics(f(m.radius), f(m.radius_earth), f(m.mass_earth), (m.radius_earth > 0.0).then_some("lune"), id, deltas),
             composition: composition(id, deltas),
             atmosphere: AtmosphereSection::default(),
-            climate: ClimateSection { mean_temperature_c: f(body.temperature), ..Default::default() },
+            climate: {
+                let (equator, pole) = body.climate.range();
+                ClimateSection {
+                    mean_temperature_c: f(body.temperature),
+                    equator_c: Some(f(equator)),
+                    pole_c: Some(f(pole)),
+                    day_night_k: Some(f(body.climate.diurnal * 2.0)),
+                    winds: Some("aucun (pas d'atmosphere)".into()),
+                    ..Default::default()
+                }
+            },
             hydrology: HydrologySection::default(),
             geology: GeologySection::default(),
             relief: ReliefSection {
@@ -450,6 +524,14 @@ mod tests {
                 assert!((prof.physics.surface_gravity_g / f(p.gravity_g) - 1.0).abs() < 1e-3);
                 assert!(prof.physics.size_class.is_some() && prof.orbit.period_days.is_some());
                 assert_eq!(prof.gameplay.walkable, !p.gaseous());
+                // Atmosphère et climat de la phase 3
+                assert_eq!(prof.atmosphere.gases.len(), p.air.gases.len());
+                if prof.atmosphere.present && !p.gaseous() {
+                    assert!(prof.atmosphere.surface_pressure_bar.unwrap() >= 0.01);
+                    assert!(prof.climate.greenhouse_k.unwrap() >= 0.0);
+                }
+                let (eq, pole) = (prof.climate.equator_c.unwrap(), prof.climate.pole_c.unwrap());
+                assert!(eq >= pole && eq >= prof.climate.mean_temperature_c);
                 assert_eq!(prof.climate.mean_temperature_c, f(p.temperature()));
                 for (mi, m) in p.moons.iter().enumerate() {
                     let moon = PlanetProfile::moon(si, pi, mi, sys, p, m, &deltas);
