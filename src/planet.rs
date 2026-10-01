@@ -116,6 +116,7 @@ pub struct Sector {
     last_cam: Vec3,
     last_fwd: Vec3,
     last_epoch: u32,
+    last_keep: f32,
 }
 
 #[derive(Resource, Default)]
@@ -153,6 +154,7 @@ impl StarSectors {
                     last_cam: Vec3::splat(f32::NAN),
                     last_fwd: Vec3::ZERO,
                     last_epoch: u32::MAX,
+                    last_keep: 1.0,
                 });
                 return;
             }
@@ -411,7 +413,7 @@ fn generate_all(
         star_brightness_steps.push(materials.add(StandardMaterial {
             base_color: Color::srgba(1.0, 1.0, 1.0, b),
             base_color_texture: Some(atlas.clone()),
-            emissive: LinearRgba::new(25.0 * b, 20.0 * b, 10.0 * b, 1.0),
+            emissive: LinearRgba::new(12.0 * b, 10.0 * b, 5.0 * b, 1.0),
             emissive_texture: Some(atlas.clone()),
             unlit: true,
             alpha_mode: AlphaMode::Add,
@@ -472,11 +474,11 @@ fn generate_all(
         for step in 0..LOD_STEPS {
             let o = step as f32 / (LOD_STEPS - 1) as f32;
             steps.push(materials.add(StandardMaterial {
-                base_color: Color::srgba(c[0], c[1], c[2], 0.3 * o),
+                base_color: Color::srgba(c[0], c[1], c[2], 0.15 * o),
                 emissive: LinearRgba::new(
-                    2.5 * c[0] * o,
-                    2.5 * c[1] * o,
-                    2.5 * c[2] * o,
+                    1.1 * c[0] * o,
+                    1.1 * c[1] * o,
+                    1.1 * c[2] * o,
                     1.0,
                 ),
                 unlit: true,
@@ -1949,6 +1951,7 @@ fn update_far_star_scale(
     settings: Res<GameSettings>,
     brightness_mats: Res<StarBrightnessMaterials>,
     epoch: Res<crate::origin::OriginEpoch>,
+    dim: Res<crate::surface::GalaxyDim>,
     mut sectors: ResMut<StarSectors>,
     mut far_q: Query<(&FarStar, &mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>), Without<Camera3d>>,
 ) {
@@ -1956,13 +1959,16 @@ fn update_far_star_scale(
     let cam_pos = cam_gt.translation();
     let cam_fwd = cam_tf.forward().as_vec3();
     let system_changed = spawned.is_changed();
+    let keep = dim.0;
 
     // Fondu / luminosité calculés une fois par galaxie (distance caméra → centre galactique)
-    let gal_lod: Vec<(f32, f32, usize)> = settings.galaxies.iter().map(|g| {
+    let gal_lod: Vec<(f32, f32, usize)> = settings.galaxies.iter().enumerate().map(|(gid, g)| {
         let gal_dist = cam_pos.distance(g.center());
         let raw = ((gal_dist - LOD_STARS_END) / (LOD_STARS_GONE - LOD_STARS_END)).clamp(0.0, 1.0);
         let fade = smoothstep(raw);
-        let brightness = (5_000_000.0 * GALAXY_SCALE / gal_dist.max(1.0)).clamp(0.05, 1.0) * (1.0 - fade);
+        // La galaxie principale s'estompe près d'une planète ou d'une lune
+        let near_body = if gid == 0 { keep } else { 1.0 };
+        let brightness = (5_000_000.0 * GALAXY_SCALE / gal_dist.max(1.0)).clamp(0.05, 1.0) * (1.0 - fade) * near_body;
         let step = ((brightness * (STAR_BRIGHTNESS_STEPS - 1) as f32).round() as usize).min(STAR_BRIGHTNESS_STEPS - 1);
         (gal_dist, fade, step)
     }).collect();
@@ -1993,7 +1999,8 @@ fn update_far_star_scale(
             && sector.last_epoch == epoch.0
             && !system_changed
             && cam_pos.distance(sector.last_cam) < reach * 0.003
-            && cam_fwd.dot(sector.last_fwd) > 0.999;
+            && cam_fwd.dot(sector.last_fwd) > 0.999
+            && (keep - sector.last_keep).abs() < 0.03;
         if still {
             continue;
         }
@@ -2001,6 +2008,7 @@ fn update_far_star_scale(
         sector.last_cam = cam_pos;
         sector.last_fwd = cam_fwd;
         sector.last_epoch = epoch.0;
+        sector.last_keep = keep;
 
         for &e in &sector.members {
             let Ok((fs, mut tf, mut vis, mut mat)) = far_q.get_mut(e) else { continue };
@@ -2039,6 +2047,7 @@ fn update_arm_capsule_lod(
     camera_q: Query<&GlobalTransform, With<Camera3d>>,
     galaxy_q: Query<&GalaxyMeta>,
     settings: Res<GameSettings>,
+    dim: Res<crate::surface::GalaxyDim>,
     lod_mats: Res<GalaxyLodMaterials>,
     mut capsule_q: Query<(&ArmCapsule, &mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>)>,
 ) {
@@ -2070,7 +2079,9 @@ fn update_arm_capsule_lod(
         } else {
             tf.scale = cap.base_scale * t;
             if *vis != Visibility::Inherited { *vis = Visibility::Inherited; }
-            let step = ((t * (LOD_STEPS - 1) as f32).round() as usize).min(LOD_STEPS - 1);
+            // La galaxie principale s'estompe près d'une planète ou d'une lune (forme inchangée)
+            let shown = if cap.galaxy_id == 0 { t * dim.0 } else { t };
+            let step = ((shown * (LOD_STEPS - 1) as f32).round() as usize).min(LOD_STEPS - 1);
             let ci = cap.color_idx.min(ARM_COLORS - 1);
             let target = &lod_mats.capsule_steps[ci][step];
             if mat.0 != *target { mat.0 = target.clone(); }

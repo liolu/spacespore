@@ -334,8 +334,18 @@ pub const STREAM_RADIUS: f32 = 3.0;
 pub const DEFAULT_WORLD_SEED: u64 = 42;
 pub const GALAXY_RADIUS: f32 = 9_000_000.0 * GALAXY_SCALE;
 
-/// Nombre de galaxies extérieures (ids 1..=NUM_DISTANT_GALAXIES).
-pub const NUM_DISTANT_GALAXIES: usize = 100;
+/// Nombre de galaxies extérieures (ids 1..=NUM_DISTANT_GALAXIES). Chaque galaxie a 5 000 à
+/// 10 000 étoiles : à 100 galaxies, cela ferait plus de 700 000 systèmes (plusieurs Go de mémoire
+/// et des centaines de milliers d'entités à afficher). 20 galaxies : une de chaque type (voir
+/// `GalaxyKind`), soit ~160 000 systèmes.
+pub const NUM_DISTANT_GALAXIES: usize = 20;
+
+/// Nombre d'étoiles d'une galaxie, le même intervalle pour toutes : (étoiles de bras, dispersées).
+pub fn star_budget(seed: u32) -> (usize, usize) {
+    let total = 5_000 + (pseudo_rand(seed.wrapping_mul(0x9E37_79B1) ^ 0x57A2) * 5_000.0) as usize;
+    let arm = total * 8 / 10;
+    (arm, total - arm)
+}
 /// Aucun système n'est généré à moins de cette distance d'un trou noir galactique.
 pub const CORE_EXCLUSION: f32 = 150_000.0 * GALAXY_SCALE;
 
@@ -445,8 +455,8 @@ pub fn default_galaxies(world_seed: u64) -> Vec<GalaxyConfig> {
             kind: crate::galaxy_shape::GalaxyKind::for_index(gi, world_hash),
             core_radius: (10_000.0 + rk(23) * 20_000.0) * GALAXY_SCALE,
             seed: gs * 1000,
-            arm_stars: 170 + (rk(19) * 380.0) as usize,
-            scatter_stars: 40 + (rk(31) * 120.0) as usize,
+            arm_stars: star_budget(gs).0,
+            scatter_stars: star_budget(gs).1,
         });
     }
     galaxies
@@ -463,8 +473,8 @@ fn star_color(seed: u32) -> [f32; 3] {
 
 fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystemConfig> {
     const NUM_ARMS: usize = 5;
-    const ARM_STARS: usize = 2_500;
-    const SCATTER_STARS: usize = 625;
+    // Galaxie principale : 5 000 à 10 000 étoiles d'après la graine du monde
+    let (arm_stars, scatter_stars) = star_budget(((world_seed as u32) ^ ((world_seed >> 32) as u32)).wrapping_mul(0x9E37_79B1) ^ 0x4D41_494E);
     const ARM_TWIST: f32 = 5.0;
     let tau = std::f32::consts::TAU;
     let gr = GALAXY_RADIUS;
@@ -561,10 +571,10 @@ fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystem
     };
 
     let distant_count: usize = galaxies.iter().skip(1).map(|g| g.arm_stars + g.scatter_stars).sum();
-    let mut systems = Vec::with_capacity(ARM_STARS + SCATTER_STARS + distant_count);
+    let mut systems = Vec::with_capacity(arm_stars + scatter_stars + distant_count);
 
     // ── Bras spiraux ──────────────────────────────────────────────────
-    for i in 0..ARM_STARS {
+    for i in 0..arm_stars {
         let s = i as u32 + 100;
         let arm = i % NUM_ARMS;
         let arm_base = arm as f32 * tau / NUM_ARMS as f32;
@@ -601,8 +611,8 @@ fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystem
     }
 
     // ── Étoiles dispersées entre les bras ─────────────────────────────
-    for i in 0..SCATTER_STARS {
-        let s = (ARM_STARS + i) as u32 + 100;
+    for i in 0..scatter_stars {
+        let s = (arm_stars + i) as u32 + 100;
         let t = pseudo_rand(s * 7 + 3);
         let r = t * t * gr * 0.85;
         if r < CORE_EXCLUSION { continue; }
@@ -613,7 +623,7 @@ fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystem
 
         let (sr, si, sc) = make_star(s);
         systems.push(StarSystemConfig {
-            name: gen_name(ARM_STARS + i),
+            name: gen_name(arm_stars + i),
             position: [x, y, z],
             galaxy_id: 0,
             stars: vec![StarConfig {

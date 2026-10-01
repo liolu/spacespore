@@ -833,12 +833,13 @@ mod tests {
         assert_eq!(names.len(), GalaxyKind::ALL.len());
         for world in [0u32, 5, 12345] {
             let mut count = [0usize; 20];
-            for gi in 0..100 {
+            let n = crate::settings::NUM_DISTANT_GALAXIES;
+            for gi in 0..n * 5 {
                 count[GalaxyKind::for_index(gi, world) as usize] += 1;
             }
-            assert!(count.iter().all(|&n| n == 5), "{count:?}");
+            assert!(count.iter().all(|&c| c == n * 5 / 20), "{count:?}");
             // Deux galaxies voisines ne sont jamais du même type
-            assert!((0..99).all(|gi| GalaxyKind::for_index(gi, world) != GalaxyKind::for_index(gi + 1, world)));
+            assert!((0..n * 5 - 1).all(|gi| GalaxyKind::for_index(gi, world) != GalaxyKind::for_index(gi + 1, world)));
         }
     }
 
@@ -847,21 +848,20 @@ mod tests {
         let a = default_galaxies(42);
         let b = default_galaxies(43);
         let differing = a.iter().zip(&b).skip(1).filter(|(x, y)| x.abs_center.distance(y.abs_center) > 1.0).count();
-        assert!(differing > 90, "{differing}");
+        assert!(differing * 10 > crate::settings::NUM_DISTANT_GALAXIES * 9, "{differing}");
         assert!(a.iter().zip(&b).skip(1).any(|(x, y)| x.kind != y.kind));
     }
 
     #[test]
     fn galaxies_of_the_same_kind_differ_from_each_other() {
-        let g = default_galaxies(crate::settings::DEFAULT_WORLD_SEED);
-        let same: Vec<&GalaxyConfig> = g.iter().skip(1).filter(|x| x.kind == g[1].kind).collect();
-        assert!(same.len() >= 2);
-        let s0 = same[0].shape();
-        let s1 = same[1].shape();
+        let (mut a, mut b) = (config(GalaxyKind::Spiral), config(GalaxyKind::Spiral));
+        a.seed = 7;
+        b.seed = 8;
+        let (s0, s1) = (a.shape(), b.shape());
         let (mut r0, mut r1) = (Rng::new(1), Rng::new(1));
-        let p0: Vec<Vec3> = (0..20).map(|_| s0.sample_structure(&mut r0, 0.0) / same[0].radius).collect();
-        let p1: Vec<Vec3> = (0..20).map(|_| s1.sample_structure(&mut r1, 0.0) / same[1].radius).collect();
-        assert!(p0.iter().zip(&p1).any(|(a, b)| a.distance(*b) > 0.05));
+        let p0: Vec<Vec3> = (0..20).map(|_| s0.sample_structure(&mut r0, 0.0) / a.radius).collect();
+        let p1: Vec<Vec3> = (0..20).map(|_| s1.sample_structure(&mut r1, 0.0) / b.radius).collect();
+        assert!(p0.iter().zip(&p1).any(|(x, y)| x.distance(*y) > 0.05));
     }
 
     #[test]
