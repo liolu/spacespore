@@ -214,8 +214,12 @@ pub struct ClimateSection {
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct HydrologySection {
-    /// Niveau de la mer du terrain (0..1 de la hauteur du relief).
+    /// Niveau de la mer du terrain (0..1 de la hauteur du relief), fixé par la couverture océanique.
     pub sea_level: f64,
+    /// État de l'eau en surface : liquide, glace, vapeur, supercritique, absente.
+    pub water_state: Option<String>,
+    /// Réserve d'eau (0 : sèche, 1 : monde-océan).
+    pub water_inventory: Option<f64>,
     pub ocean_fraction: Option<f64>,
     /// Liquide des océans (eau, méthane, ammoniac, lave…) : phase 4.
     pub ocean_liquid: Option<String>,
@@ -410,7 +414,19 @@ impl PlanetProfile {
             composition: composition(id, deltas),
             atmosphere: atmosphere_section(p),
             climate: climate_section(p),
-            hydrology: HydrologySection { sea_level: f(p.sea_level), ..Default::default() },
+            hydrology: {
+                let h = &p.hydrology;
+                let known = p.climate.is_some();
+                HydrologySection {
+                    sea_level: f(p.sea_level),
+                    water_state: known.then(|| h.water_state.name().to_string()),
+                    ocean_fraction: known.then(|| f(h.ocean_fraction)),
+                    ocean_liquid: known.then(|| h.hydro.liquid.name().to_string()),
+                    ice_caps: known.then(|| f(h.ice_caps)),
+                    water_inventory: known.then(|| f(h.inventory)),
+                    groundwater: known.then(|| f(h.groundwater_m)),
+                }
+            },
             geology: GeologySection::default(),
             relief: ReliefSection {
                 terrain_height_game: f(p.terrain_height),

@@ -19,6 +19,7 @@ pub mod atmosphere;
 pub mod cache;
 pub mod climate;
 pub mod genome;
+pub mod hydrology;
 pub mod live;
 pub mod profile;
 pub mod seed_code;

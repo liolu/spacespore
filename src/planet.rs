@@ -258,6 +258,12 @@ pub enum VoxelType {
     Grass,
     Stone,
     Snow,
+    /// Banquise, glace de mer (phase 4).
+    Ice,
+    /// Mers de méthane (Titan), d'ammoniac, de lave (phase 4).
+    Methane,
+    Ammonia,
+    Lava,
 }
 
 impl VoxelType {
@@ -269,7 +275,16 @@ impl VoxelType {
             VoxelType::Grass => [0.22, 0.58, 0.14, 1.0],
             VoxelType::Stone => [0.48, 0.46, 0.50, 1.0],
             VoxelType::Snow => [0.93, 0.94, 0.98, 1.0],
+            VoxelType::Ice => [0.72, 0.85, 0.95, 1.0],
+            VoxelType::Methane => [0.22, 0.15, 0.09, 1.0],
+            VoxelType::Ammonia => [0.45, 0.62, 0.6, 1.0],
+            VoxelType::Lava => [1.0, 0.38, 0.06, 1.0],
         }
+    }
+
+    /// Un liquide : on y nage, il s'assombrit avec la profondeur.
+    pub fn is_liquid(self) -> bool {
+        matches!(self, VoxelType::Water | VoxelType::Methane | VoxelType::Ammonia | VoxelType::Lava)
     }
 
     pub fn is_solid(self) -> bool {
@@ -1034,7 +1049,7 @@ fn build_planet_chunks(
     divs: usize,
     cam_local: Vec3,
 ) -> Vec<(CubeFace, usize, usize, LodLevel, Mesh)> {
-    let (climate, atmosphere) = (pcfg.climate(), pcfg.atmosphere);
+    let (climate, hydro, atmosphere) = (pcfg.climate(), pcfg.hydrology.hydro, pcfg.atmosphere);
     let mut jobs = Vec::with_capacity(6 * divs * divs);
     for face in CubeFace::all() {
         for gx in 0..divs {
@@ -1052,7 +1067,7 @@ fn build_planet_chunks(
                 let mesh = build_chunk_mesh(
                     face, gx, gy, divs,
                     pcfg.radius, pcfg.sea_level, pcfg.terrain_height,
-                    pcfg.seed, pcfg.noise_scale, pcfg.detail_scale, lod, climate, atmosphere,
+                    pcfg.seed, pcfg.noise_scale, pcfg.detail_scale, lod, climate, hydro, atmosphere,
                 );
                 (face, gx, gy, lod, mesh)
             });
@@ -1726,9 +1741,9 @@ fn update_lod(
                 pcfg.radius, pcfg.sea_level, pcfg.terrain_height,
                 pcfg.seed, pcfg.noise_scale, pcfg.detail_scale,
             );
-            let (climate, atmosphere) = (pcfg.climate(), pcfg.atmosphere);
+            let (climate, hydro, atmosphere) = (pcfg.climate(), pcfg.hydrology.hydro, pcfg.atmosphere);
             let task = pool.spawn(async move {
-                build_chunk_mesh(face, gx, gy, divs, radius, sea, height, seed, noise, detail, new_lod, climate, atmosphere)
+                build_chunk_mesh(face, gx, gy, divs, radius, sea, height, seed, noise, detail, new_lod, climate, hydro, atmosphere)
             });
             commands.entity(entity).insert(LodTask { task, lod: new_lod });
             in_flight += 1;

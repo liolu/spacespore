@@ -7,6 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::hydrology::{Hydro, Liquid};
 use crate::planet::VoxelType;
 
 /// Instant de la journée et de l'année (0.11) : 0 = minuit / début d'année, 0,5 = midi.
@@ -77,21 +78,23 @@ pub fn relative_altitude(rh: f32) -> f32 {
 }
 
 /// Matière du sol émergé. `rh` : hauteur au-dessus de la mer (0..~0,6) ; `sin_lat` : |sinus| de
-/// la latitude (0 à l'équateur, 1 au pôle).
-pub fn land_material(climate: &Climate, airless: bool, atmosphere: bool, rh: f32, sin_lat: f32) -> VoxelType {
+/// la latitude (0 à l'équateur, 1 au pôle). La neige et les glaciers demandent de l'eau
+/// (`hydro.snow`) ou du givre de CO2 très froid ; l'herbe demande de l'eau liquide et de l'air.
+pub fn land_material(climate: &Climate, hydro: &Hydro, airless: bool, atmosphere: bool, rh: f32, sin_lat: f32) -> VoxelType {
     if airless {
         return VoxelType::Stone;
     }
     let t = climate.temperature(sin_lat.clamp(0.0, 1.0).asin(), relative_altitude(rh), None);
+    let dry = || if rh < 0.12 { VoxelType::Sand } else { VoxelType::Stone };
     if t > SCORCH_C {
         return if rh < 0.30 { VoxelType::Sand } else { VoxelType::Stone };
     }
     if t < FREEZE_C {
-        return VoxelType::Snow;
+        return if hydro.snow || (hydro.co2_frost && t < CO2_FROST_C) { VoxelType::Snow } else { dry() };
     }
-    if !atmosphere {
-        // Sans air : régolithe et roche, pas d'herbe
-        return if rh < 0.12 { VoxelType::Sand } else { VoxelType::Stone };
+    if !atmosphere || hydro.liquid != Liquid::Water {
+        // Sans air ou sans eau liquide : régolithe et roche, pas d'herbe
+        return dry();
     }
     if rh < 0.02 {
         VoxelType::Sand
@@ -104,19 +107,31 @@ pub fn land_material(climate: &Climate, airless: bool, atmosphere: bool, rh: f32
     }
 }
 
-/// Ce qui remplit les bassins sous le niveau de la mer : eau, banquise (`Snow`), ou rien (mer à
-/// sec : trop chaud, ou pas d'air pour garder l'eau liquide).
-pub fn sea_material(climate: &Climate, airless: bool, atmosphere: bool, sin_lat: f32) -> Option<VoxelType> {
-    if airless || !atmosphere {
+/// Givre de CO2 : sous −78 °C (calottes de Mars).
+pub const CO2_FROST_C: f32 = -78.0;
+
+/// Ce qui remplit les bassins sous le niveau de la mer : le liquide de la planète (eau, méthane,
+/// ammoniac, lave), sa glace s'il gèle à cette latitude, ou rien (mer à sec : il bout, ou il n'y en
+/// a pas).
+pub fn sea_material(climate: &Climate, hydro: &Hydro, airless: bool, sin_lat: f32) -> Option<VoxelType> {
+    if airless {
         return None;
     }
+    let liquid = match hydro.liquid {
+        Liquid::None => return None,
+        Liquid::Water => VoxelType::Water,
+        Liquid::Methane => VoxelType::Methane,
+        Liquid::Ammonia => VoxelType::Ammonia,
+        Liquid::Lava => VoxelType::Lava,
+    };
     let t = climate.temperature(sin_lat.clamp(0.0, 1.0).asin(), 0.0, None);
-    if t > SCORCH_C {
+    if t > hydro.boil_c {
         None
-    } else if t < FREEZE_C {
-        Some(VoxelType::Snow)
+    } else if t < hydro.freeze_c {
+        // Lave figée : basalte ; les autres : banquise
+        Some(if hydro.liquid == Liquid::Lava { VoxelType::Stone } else { VoxelType::Ice })
     } else {
-        Some(VoxelType::Water)
+        Some(liquid)
     }
 }
 
@@ -154,6 +169,7 @@ mod tests {
     #[test]
     fn no_grass_or_water_where_it_freezes_or_boils() {
         // Invariant de la feuille de route : pas de forêt tropicale à -150 °C
+        let water = Hydro { freeze_c: FREEZE_C, boil_c: SCORCH_C, ..Hydro::default() };
         for mean in [-150.0, -60.0, -20.0, 0.0, 15.0, 40.0, 80.0, 200.0, 450.0] {
             let c = Climate { mean_c: mean, ..earth() };
             for i in 0..=20 {
@@ -161,21 +177,47 @@ mod tests {
                 for k in 0..=12 {
                     let rh = k as f32 * 0.05;
                     let t = c.temperature(sin_lat.asin(), relative_altitude(rh), None);
-                    let m = land_material(&c, false, true, rh, sin_lat);
+                    let m = land_material(&c, &Hydro::default(), false, true, rh, sin_lat);
                     if m == VoxelType::Grass {
                         assert!((FREEZE_C..=DESERT_C).contains(&t), "herbe a {t} C");
                     }
+                    // Pas de neige sur un monde sans eau
+                    assert_ne!(land_material(&c, &Hydro::DRY, false, true, rh, sin_lat), VoxelType::Snow);
                 }
                 let t0 = c.temperature(sin_lat.asin(), 0.0, None);
-                if sea_material(&c, false, true, sin_lat) == Some(VoxelType::Water) {
+                if sea_material(&c, &water, false, sin_lat) == Some(VoxelType::Water) {
                     assert!((FREEZE_C..=SCORCH_C).contains(&t0), "eau liquide a {t0} C");
                 }
             }
         }
-        // Sans air : ni herbe ni mer
+        // Sans air ni eau : ni herbe, ni mer, ni neige ; sans air du tout : rien que de la roche
         let c = earth();
-        assert_eq!(sea_material(&c, false, false, 0.0), None);
-        assert_ne!(land_material(&c, false, false, 0.1, 0.0), VoxelType::Grass);
-        assert_eq!(land_material(&c, true, false, 0.1, 0.0), VoxelType::Stone);
+        assert_eq!(sea_material(&c, &Hydro::DRY, false, 0.0), None);
+        assert_ne!(land_material(&c, &Hydro::default(), false, false, 0.1, 0.0), VoxelType::Grass);
+        assert_eq!(land_material(&c, &Hydro::default(), true, false, 0.1, 0.0), VoxelType::Stone);
+        let frozen = Climate { mean_c: -60.0, ..earth() };
+        assert_ne!(land_material(&frozen, &Hydro::DRY, false, true, 0.1, 0.9), VoxelType::Snow);
+        assert_eq!(land_material(&frozen, &Hydro::default(), false, true, 0.1, 0.9), VoxelType::Snow);
+    }
+}
+
+#[cfg(test)]
+mod exotic_tests {
+    use super::*;
+
+    #[test]
+    fn exotic_seas_use_their_own_material_and_freeze_point() {
+        let titan = Climate { mean_c: -179.0, span: 3.0, lapse: 0.0, diurnal: 1.0, tilt: 0.0 };
+        let methane = Hydro { liquid: Liquid::Methane, freeze_c: -182.0, boil_c: -155.0, snow: true, co2_frost: false };
+        assert_eq!(sea_material(&titan, &methane, false, 0.0), Some(VoxelType::Methane));
+        let lava = Hydro { liquid: Liquid::Lava, freeze_c: 1_000.0, boil_c: 3_000.0, snow: false, co2_frost: false };
+        let hell = Climate { mean_c: 1_400.0, span: 200.0, ..titan };
+        assert_eq!(sea_material(&hell, &lava, false, 0.0), Some(VoxelType::Lava));
+        // Aux pôles d'un monde de lave plus tiède, le magma fige
+        let warm = Climate { mean_c: 1_050.0, span: 300.0, ..titan };
+        assert_eq!(sea_material(&warm, &lava, false, 1.0), Some(VoxelType::Stone));
+        // Banquise d'eau aux pôles d'une Terre froide
+        let cold = Climate { mean_c: -5.0, span: 50.0, ..titan };
+        assert_eq!(sea_material(&cold, &Hydro::default(), false, 1.0), Some(VoxelType::Ice));
     }
 }

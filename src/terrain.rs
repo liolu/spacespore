@@ -15,6 +15,7 @@ use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
 
 use crate::planet::VoxelType;
 use crate::planetgen::climate::{land_material, relative_altitude, sea_material, Climate};
+use crate::planetgen::hydrology::Hydro;
 use crate::settings::{MoonConfig, PlanetConfig};
 
 /// Colonnes par côté d'une tuile.
@@ -58,6 +59,8 @@ pub struct BodyParams {
     pub sunset: [f32; 3],
     pub haze: [f32; 3],
     pub pressure: f32,
+    /// Liquide des mers et glaces possibles (phase 4).
+    pub hydro: Hydro,
 }
 
 /// Ciel d'une planète faite à la main (sans atmosphère calculée) : celui de la Terre.
@@ -86,6 +89,7 @@ impl BodyParams {
             sunset: if p.air.present() { p.air.sunset } else { EARTH_SUNSET },
             haze: if p.air.present() { p.air.haze } else { EARTH_SKY },
             pressure: if p.air.present() { p.air.pressure_bar } else if p.atmosphere { 1.0 } else { 0.0 },
+            hydro: if p.gaseous() { Hydro::DRY } else { p.hydrology.hydro },
         }
     }
 
@@ -107,6 +111,7 @@ impl BodyParams {
             sunset: [0.0; 3],
             haze: [0.0; 3],
             pressure: 0.0,
+            hydro: Hydro::DRY,
         }
     }
 
@@ -313,7 +318,7 @@ impl Terrain {
     /// Matière du sol : d'après la température locale (latitude, altitude), voir `planetgen::climate`.
     fn surface_type(&self, rh: f32, sin_lat: f32) -> VoxelType {
         let p = &self.params;
-        land_material(&p.climate, p.airless, p.atmosphere, rh, sin_lat)
+        land_material(&p.climate, &p.hydro, p.airless, p.atmosphere, rh, sin_lat)
     }
 
     /// Température (°C) dans la direction `dir`, à la hauteur relative `rh`.
@@ -331,7 +336,7 @@ impl Terrain {
         let (h, hv) = self.raw_height(dir);
         let rel = ((h - p.radius) / quantum).round();
         // Sous le niveau de la mer : eau, banquise, ou bassin à sec (trop chaud, ou sans air)
-        let sea = if rel < 0.0 { sea_material(&p.climate, p.airless, p.atmosphere, dir.y.abs()) } else { None };
+        let sea = if rel < 0.0 { sea_material(&p.climate, &p.hydro, p.airless, dir.y.abs()) } else { None };
         let water = sea.is_some();
 
         let var = self.color.get([dir.x as f64 * 12.0, dir.y as f64 * 12.0, dir.z as f64 * 12.0]) as f32 * 0.10;
@@ -544,6 +549,7 @@ mod tests {
             sunset: EARTH_SUNSET,
             haze: EARTH_SKY,
             pressure: 1.0,
+            hydro: Hydro::default(),
         }
     }
 
@@ -695,6 +701,44 @@ mod tests {
             let c = t.ground(Vec3::new(a.cos(), (a * 0.7).sin(), a.sin()).normalize());
             assert_ne!(c.kind, VoxelType::Water);
             assert!((c.color[0] - c.color[2]).abs() < 0.2, "pas gris : {:?}", c.color);
+        }
+    }
+}
+
+#[cfg(test)]
+mod sea_level_tests {
+    use super::*;
+    use crate::planetgen::hydrology::sea_level_for;
+
+    /// Le relief suit N(0,5 ; 0,09) : le niveau de la mer de `hydrology` donne bien la couverture
+    /// océanique voulue, quelle que soit la graine ou l'échelle du bruit.
+    #[test]
+    fn the_sea_level_gives_the_wanted_ocean_fraction() {
+        for (k, ns) in [1.5f32, 2.5, 3.5].into_iter().enumerate() {
+            let mut heights = Vec::new();
+            for seed in 0..6u32 {
+                let t = Terrain::new(BodyParams { seed: seed * 7919 + k as u32, noise_scale: ns, ..params() });
+                for i in 0..1500 {
+                    let z = 1.0 - 2.0 * (i as f32 + 0.5) / 1500.0;
+                    let a = i as f32 * 2.399_963;
+                    let r = (1.0 - z * z).sqrt();
+                    heights.push(t.raw_height(Vec3::new(r * a.cos(), z, r * a.sin())).1);
+                }
+            }
+            for f in [0.1f32, 0.3, 0.5, 0.71, 0.9] {
+                let level = sea_level_for(f as f64);
+                let under = heights.iter().filter(|&&h| h < level).count() as f32 / heights.len() as f32;
+                assert!((under - f).abs() < 0.05, "echelle {ns} : {f} voulu, {under} obtenu");
+            }
+        }
+    }
+
+    fn params() -> BodyParams {
+        BodyParams {
+            airless: false, atmosphere: true, radius: 9000.0, sea_level: 0.4, terrain_height: 360.0, seed: 1,
+            noise_scale: 2.0, detail_scale: 4.0, temperature: 15.0, gravity: 1.0, gaseous: false,
+            climate: crate::planetgen::climate::Climate::default(), sky: EARTH_SKY, sunset: EARTH_SUNSET, haze: EARTH_SKY, pressure: 1.0,
+            hydro: Hydro::default(),
         }
     }
 }

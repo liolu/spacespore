@@ -157,6 +157,8 @@ pub struct Walker {
     pub pitch: f32,
     pub on_ground: bool,
     pub in_water: bool,
+    /// Liquide où l'on nage (eau, méthane, ammoniac, lave).
+    pub liquid: crate::planet::VoxelType,
     /// Rayon de l'œil, lissé pour adoucir les marches.
     pub eye_r: f32,
 }
@@ -171,6 +173,7 @@ impl Default for Walker {
             pitch: 0.0,
             on_ground: false,
             in_water: false,
+            liquid: crate::planet::VoxelType::Air,
             eye_r: 1.0,
         }
     }
@@ -266,7 +269,8 @@ impl Walker {
         let up = self.up();
         let mut r = self.pos.length();
         let ground = t.ground(up);
-        self.in_water = ground.kind == crate::planet::VoxelType::Water;
+        self.in_water = ground.kind.is_liquid();
+        self.liquid = ground.kind;
         // Vraie gravité de l'astre : sur une lune à 0,16 g, on saute six fois plus haut
         let gravity = GRAVITY * t.params.gravity.clamp(MIN_GRAVITY, 4.0) * v;
         if self.on_ground && inp.jump {
@@ -1359,7 +1363,13 @@ fn update_hud(
             };
             format!(
                 "ZQSD/WASD : marcher   Maj : courir   Espace : sauter   V : decoller\nLat {lat:.1}  Lon {lon:.1}  Alt {alt:.0}  Temp. {temp:.0} C{}",
-                if w.in_water { "  (a l'eau)" } else { "" }
+                match (w.in_water, w.liquid) {
+                    (false, _) => "",
+                    (_, crate::planet::VoxelType::Methane) => "  (dans le methane)",
+                    (_, crate::planet::VoxelType::Ammonia) => "  (dans l'ammoniac)",
+                    (_, crate::planet::VoxelType::Lava) => "  (dans la lave !)",
+                    _ => "  (a l'eau)",
+                }
             )
         }
     };
@@ -1394,6 +1404,7 @@ mod tests {
             sunset: EARTH_SUNSET,
             haze: EARTH_SKY,
             pressure: 1.0,
+            hydro: crate::planetgen::hydrology::Hydro::default(),
         })
     }
 

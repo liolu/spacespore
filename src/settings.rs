@@ -170,6 +170,8 @@ pub struct PlanetConfig {
     #[serde(default)] pub climate:        Option<Climate>,
     /// Atmosphère (phase 3) : composition, pression, nuages, vents, couleurs du ciel.
     #[serde(default)] pub air:            Air,
+    /// Eau et glace (phase 4) : liquide des mers, couverture, calottes, eau souterraine.
+    #[serde(default)] pub hydrology:      Hydrology,
 }
 fn default_gravity() -> f32 { 1.0 }
 fn default_star_radius()    -> f32 { 250.0 }
@@ -187,7 +189,7 @@ impl Default for PlanetConfig {
             arg_periapsis: 0.0, mean_anomaly_0: 0.0,
             kind: PlanetKind::Rocky, hot: false, mass_earth: 0.0, radius_earth: 0.0,
             semi_major_au: 0.0, period_days: 0.0, rotation_h: 0.0, axial_tilt: 0.0,
-            tidally_locked: false, gravity_g: 1.0, temperature_c: None, climate: None, air: Air::default(),
+            tidally_locked: false, gravity_g: 1.0, temperature_c: None, climate: None, air: Air::default(), hydrology: Hydrology::default(),
         }
     }
 }
@@ -352,6 +354,7 @@ use crate::planetgen::genome::SystemGenome;
 use crate::planetgen::star::{StarClass, StarPhysics};
 use crate::planetgen::atmosphere::Air;
 use crate::planetgen::climate::Climate;
+use crate::planetgen::hydrology::Hydrology;
 use crate::planetgen::system::PlanetKind;
 use crate::planetgen::live::WorldDeltas;
 

@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use super::atmosphere::{self, AirInput};
 use super::climate::Climate;
 use super::genome::SystemGenome;
+use super::hydrology::{self, HydroInput};
 use super::seeds::{Layer, LayerRng};
 use super::star::{StarClass, StarPhysics};
 use crate::settings::{MoonConfig, PlanetConfig};
@@ -237,11 +238,16 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
             &mut LayerRng::new(seed as u64, Layer::Atmosphere),
         );
         let atmosphere = !gaseous && air.present();
+        // Eau et glace (phase 4) : liquide des mers, couverture océanique, calottes
+        let (hydrology, sea_level) = hydrology::generate(
+            &HydroInput { kind: d.kind, snow_ratio: d.au / snow, mass: d.mass, air: &air, climate: &climate },
+            &mut LayerRng::new(seed as u64, Layer::Hydrology),
+        );
 
         planets.push(PlanetConfig {
             orbit_distance: 0.0, // placée plus bas
             radius,
-            sea_level: if gaseous { 0.0 } else if atmosphere { q(0.2 + relief.unit() * 0.4, 1e-4) } else { q(relief.unit() * 0.1, 1e-4) },
+            sea_level: q(sea_level as f64, 1e-4),
             terrain_height: if gaseous { 0.0 } else { q(radius as f64 * (0.025 + relief.unit() * 0.025), 0.1) },
             seed,
             noise_scale: q(1.5 + relief.unit() * 2.0, 1e-4),
@@ -270,6 +276,7 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
             temperature_c: Some(climate.mean_c),
             climate: Some(climate),
             air,
+            hydrology,
             ..Default::default()
         });
     }
