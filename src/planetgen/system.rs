@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use super::atmosphere::{self, AirInput};
 use super::climate::Climate;
 use super::genome::SystemGenome;
+use super::biome::{self, BiomeInput, BiomeParams};
 use super::geology::{self, GeoInput, Geology};
 use super::hydrology::{self, HydroInput, Liquid, WaterState};
 use super::seeds::{Layer, LayerRng};
@@ -245,7 +246,7 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
             &HydroInput { kind: d.kind, snow_ratio: d.au / snow, mass: d.mass, air: &air, climate: &climate },
             &mut LayerRng::new(seed as u64, Layer::Hydrology),
         );
-        // Géologie et relief (phase 5) : tectonique, volcans, cratères, érosion
+        // Géologie et relief (phase 5) : tectonique, volcans, cratères, érosion (voir plus bas)
         let geology = if gaseous {
             Geology::default()
         } else {
@@ -264,6 +265,29 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
                 seed,
                 &mut LayerRng::new(seed as u64, Layer::Geology),
             )
+        };
+        // Sols et biomes (phase 6)
+        let liquid_water = hydrology.hydro.liquid == Liquid::Water && hydrology.water_state == WaterState::Liquid;
+        let biomes = if gaseous {
+            BiomeParams::default()
+        } else {
+            biome::generate(&BiomeInput {
+                seed,
+                ocean_fraction: hydrology.ocean_fraction as f64,
+                liquid_water,
+                cloud_cover: air.cloud_cover as f64,
+                pressure: air.pressure_bar as f64,
+                oxygen: air.fraction("O2") as f64,
+                sulfur: air.fraction("SO2") as f64,
+                volcanism: geology.volcanism as f64,
+                density: super::units::density(d.mass, d.radius),
+                surface_age: geology.surface_age_gyr as f64,
+                magnetic_field: geology.magnetic_field as f64,
+                // UV de l'étoile donnés pour sa zone habitable (√L) : ramenés à cette orbite
+                uv: star.uv_flux * lum / (d.au * d.au),
+                xray: star.xray_flux / (d.au * d.au),
+                dried_water: hydrology.inventory > 0.1 && !liquid_water,
+            })
         };
 
         planets.push(PlanetConfig {
@@ -300,6 +324,7 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
             air,
             hydrology,
             geology,
+            biomes,
             ..Default::default()
         });
     }

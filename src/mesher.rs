@@ -5,7 +5,8 @@ use noise::{Fbm, NoiseFn, Perlin};
 
 use crate::lod::LodLevel;
 use crate::planet::{CubeFace, VoxelType};
-use crate::planetgen::climate::{land_material, sea_material, Climate};
+use crate::planetgen::biome::{BiomeField, BiomeParams};
+use crate::planetgen::climate::{sea_material, Climate};
 use crate::planetgen::geology::{Relief, ReliefField};
 use crate::planetgen::hydrology::Hydro;
 fn max_greedy_for_lod(lod: LodLevel) -> usize {
@@ -285,6 +286,7 @@ pub fn build_chunk_mesh(
     hydro: Hydro,
     atmosphere: bool,
     relief: Relief,
+    biomes: BiomeParams,
 ) -> Mesh {
     let res = lod.resolution();
     let max_greedy = max_greedy_for_lod(lod);
@@ -306,6 +308,8 @@ pub fn build_chunk_mesh(
     let color_perlin = Perlin::new(seed.wrapping_add(200));
     // Même relief géologique que le terrain voxel
     let relief = ReliefField::new(relief);
+    // Mêmes biomes que le terrain voxel : la couleur vue de l'espace est celle du sol
+    let biomes = BiomeField::new(biomes);
 
     let mut terrain_heights = vec![vec![0.0f32; res]; res];
     let mut surface_types = vec![vec![VoxelType::Air; res]; res];
@@ -342,7 +346,7 @@ pub fn build_chunk_mesh(
             // Même climat que le terrain voxel (`planetgen::climate`) : la vue de l'espace et le sol concordent
             let rh = height_val - sl;
             let lat = dir.y.abs();
-            surface_types[ix][iy] = land_material(&climate, &hydro, false, atmosphere, rh, lat);
+            surface_types[ix][iy] = biomes.material(&climate, &hydro, false, atmosphere, rh, dir.normalize());
             seas[ix][iy] = sea_material(&climate, &hydro, false, lat);
         }
     }

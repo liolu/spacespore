@@ -264,6 +264,22 @@ pub enum VoxelType {
     Methane,
     Ammonia,
     Lava,
+    /// Une matière par biome (phase 6).
+    Tundra,
+    Taiga,
+    Forest,
+    Steppe,
+    Savanna,
+    Jungle,
+    Swamp,
+    Basalt,
+    Salt,
+    Rust,
+    Crystal,
+    Spore,
+    Fungus,
+    Glass,
+    Sulfur,
 }
 
 impl VoxelType {
@@ -279,6 +295,21 @@ impl VoxelType {
             VoxelType::Methane => [0.22, 0.15, 0.09, 1.0],
             VoxelType::Ammonia => [0.45, 0.62, 0.6, 1.0],
             VoxelType::Lava => [1.0, 0.38, 0.06, 1.0],
+            VoxelType::Tundra => [0.48, 0.5, 0.36, 1.0],
+            VoxelType::Taiga => [0.12, 0.33, 0.22, 1.0],
+            VoxelType::Forest => [0.12, 0.42, 0.12, 1.0],
+            VoxelType::Steppe => [0.62, 0.62, 0.32, 1.0],
+            VoxelType::Savanna => [0.7, 0.62, 0.28, 1.0],
+            VoxelType::Jungle => [0.07, 0.4, 0.1, 1.0],
+            VoxelType::Swamp => [0.25, 0.32, 0.16, 1.0],
+            VoxelType::Basalt => [0.2, 0.19, 0.2, 1.0],
+            VoxelType::Salt => [0.94, 0.9, 0.88, 1.0],
+            VoxelType::Rust => [0.62, 0.28, 0.14, 1.0],
+            VoxelType::Crystal => [0.55, 0.8, 0.95, 1.0],
+            VoxelType::Spore => [0.62, 0.32, 0.6, 1.0],
+            VoxelType::Fungus => [0.85, 0.45, 0.3, 1.0],
+            VoxelType::Glass => [0.16, 0.24, 0.2, 1.0],
+            VoxelType::Sulfur => [0.9, 0.82, 0.25, 1.0],
         }
     }
 
@@ -1049,7 +1080,7 @@ fn build_planet_chunks(
     divs: usize,
     cam_local: Vec3,
 ) -> Vec<(CubeFace, usize, usize, LodLevel, Mesh)> {
-    let (climate, hydro, atmosphere, relief) = (pcfg.climate(), pcfg.hydrology.hydro, pcfg.atmosphere, pcfg.geology.relief);
+    let (climate, hydro, atmosphere, relief, biomes) = (pcfg.climate(), pcfg.hydrology.hydro, pcfg.atmosphere, pcfg.geology.relief, pcfg.biomes);
     let mut jobs = Vec::with_capacity(6 * divs * divs);
     for face in CubeFace::all() {
         for gx in 0..divs {
@@ -1067,7 +1098,7 @@ fn build_planet_chunks(
                 let mesh = build_chunk_mesh(
                     face, gx, gy, divs,
                     pcfg.radius, pcfg.sea_level, pcfg.terrain_height,
-                    pcfg.seed, pcfg.noise_scale, pcfg.detail_scale, lod, climate, hydro, atmosphere, relief,
+                    pcfg.seed, pcfg.noise_scale, pcfg.detail_scale, lod, climate, hydro, atmosphere, relief, biomes,
                 );
                 (face, gx, gy, lod, mesh)
             });
@@ -1741,9 +1772,9 @@ fn update_lod(
                 pcfg.radius, pcfg.sea_level, pcfg.terrain_height,
                 pcfg.seed, pcfg.noise_scale, pcfg.detail_scale,
             );
-            let (climate, hydro, atmosphere, relief) = (pcfg.climate(), pcfg.hydrology.hydro, pcfg.atmosphere, pcfg.geology.relief);
+            let (climate, hydro, atmosphere, relief, biomes) = (pcfg.climate(), pcfg.hydrology.hydro, pcfg.atmosphere, pcfg.geology.relief, pcfg.biomes);
             let task = pool.spawn(async move {
-                build_chunk_mesh(face, gx, gy, divs, radius, sea, height, seed, noise, detail, new_lod, climate, hydro, atmosphere, relief)
+                build_chunk_mesh(face, gx, gy, divs, radius, sea, height, seed, noise, detail, new_lod, climate, hydro, atmosphere, relief, biomes)
             });
             commands.entity(entity).insert(LodTask { task, lod: new_lod });
             in_flight += 1;
