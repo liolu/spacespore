@@ -79,12 +79,24 @@ impl Channel {
     }
 }
 
-/// Texte affiché pour la version installée, ex. "v0.6.4" ou "v0.6.4 instable (build 12)".
+/// Date de compilation (UTC), AA.MM.JJ (voir `build.rs`).
+pub const BUILD_DATE: &str = env!("SPACESPORE_BUILD_DATE");
+/// Quatrième nombre de la numérotation : révision à l'intérieur d'une version X.Y.Z.
+pub const REVISION: u32 = 1;
+
+/// Nouvelle numérotation : « AA.MM.JJ_vX.Y.Z.R », ex. « 26.10.01_v0.9.1.1 » (date de compilation,
+/// puis version et révision). Cargo n'accepte que X.Y.Z : la révision est ajoutée ici.
+pub fn display_version() -> String {
+    format!("{}_v{}.{}", BUILD_DATE, VERSION, REVISION)
+}
+
+/// Texte affiché pour la version installée, ex. "26.10.01_v0.9.1.1" ou
+/// "26.10.01_v0.9.1.1 instable (build 12)".
 pub fn installed_label() -> String {
     match CHANNEL {
-        Channel::Stable => format!("v{}", VERSION),
-        Channel::Unstable => format!("v{} instable (build {})", VERSION, BUILD),
-        Channel::Dev => format!("v{} (compilation locale)", VERSION),
+        Channel::Stable => display_version(),
+        Channel::Unstable => format!("{} instable (build {})", display_version(), BUILD),
+        Channel::Dev => format!("{} (compilation locale)", display_version()),
     }
 }
 
@@ -556,5 +568,16 @@ mod tests {
         assert_eq!(parse_u64("42"), 42);
         assert_eq!(Channel::from_name("unstable"), Channel::Unstable);
         assert_eq!(Channel::from_name("n'importe quoi"), Channel::Dev);
+    }
+
+    #[test]
+    fn version_label_uses_the_date_and_four_numbers() {
+        // Ex. 26.10.01_v0.9.1.1
+        let label = display_version();
+        let (date, version) = label.split_once("_v").expect("AA.MM.JJ_vX.Y.Z.R");
+        let numbers = |s: &str, n: usize| s.split('.').count() == n && s.split('.').all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+        assert!(numbers(date, 3) && date.len() == 8, "date {date}");
+        assert!(numbers(version, 4), "version {version}");
+        assert!(installed_label().starts_with(&label));
     }
 }
