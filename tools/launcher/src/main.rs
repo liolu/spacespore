@@ -384,7 +384,7 @@ impl eframe::App for LauncherApp {
                             if ui.button(action).clicked() {
                                 self.start_update(info.clone());
                             }
-                            if ui.button("Jouer sans changer").clicked() {
+                            if ui.button("Jouer").clicked() {
                                 self.launch_game(&ctx);
                             }
                         });
@@ -428,7 +428,7 @@ impl eframe::App for LauncherApp {
                         ui.colored_label(egui::Color32::LIGHT_RED, format!("Erreur : {}", err));
                         ui.add_space(10.0);
                         ui.horizontal(|ui| {
-                            if ui.button("Jouer quand meme").clicked() {
+                            if ui.button("Jouer").clicked() {
                                 self.launch_game(&ctx);
                             }
                             if ui.button("Quitter").clicked() {
