@@ -463,8 +463,7 @@ impl StarSystemConfig {
     pub fn star_physics(&self) -> Option<StarPhysics> {
         let seed = self.genome?.seed;
         let rank = pseudo_rand(seed.wrapping_mul(5).wrapping_add(31));
-        // Le type enregistré prime sur le tirage (système de départ toujours G)
-        Some(StarPhysics::generate(seed as u64, rank as f64, self.stars.first().map(|s| s.class)))
+        Some(StarPhysics::generate(seed as u64, rank as f64, None))
     }
 
     /// Graine du système (sert aux sous-graines de l'étoile).
@@ -674,14 +673,13 @@ pub(crate) fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec
     // L'étoile elle-même a un type tiré au sort (naine rouge, G, géante… voir `planetgen::star`) :
     // une G garde ce rayon, les autres ont les proportions réelles. Son rang dans son type (masse)
     // reprend le même tirage.
-    let make_star_as = |seed: u32, forced: Option<StarClass>| -> StarConfig {
+    // Aucun type imposé : le système de départ est tiré comme les autres
+    let make_star = |seed: u32| -> StarConfig {
         let seed = mixed(seed);
         let r_f = pseudo_rand(seed.wrapping_mul(5).wrapping_add(31));
         let g_radius = 600_000.0 + r_f * 900_000.0;
-        StarConfig::from_physics(&StarPhysics::generate(seed as u64, r_f as f64, forced), g_radius)
+        StarConfig::from_physics(&StarPhysics::generate(seed as u64, r_f as f64, None), g_radius)
     };
-    // Le système de départ (Sol) a toujours une étoile G, comme le Soleil
-    let make_star = |seed: u32, first: bool| make_star_as(seed, first.then_some(StarClass::G));
 
     // Planètes et lunes : seulement leur génome, elles sont recalculées à la demande
     // (`planetgen::genome`). `sb` : base des graines de planètes (doit rester loin de u32::MAX).
@@ -711,7 +709,7 @@ pub(crate) fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec
         let thickness = 60000.0 * GALAXY_SCALE * (1.0 - r / gr * 0.7);
         let y = (pseudo_rand(s * 7 + 7) - 0.5) * thickness;
 
-        systems.push(StarSystemConfig::generated(gen_name(i), [x, y, z], 0, make_star(s, systems.is_empty()), genome(s, (s + 1) * 100)));
+        systems.push(StarSystemConfig::generated(gen_name(i), [x, y, z], 0, make_star(s), genome(s, (s + 1) * 100)));
     }
 
     // ── Étoiles dispersées entre les bras ─────────────────────────────
@@ -726,7 +724,7 @@ pub(crate) fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec
         let y = (pseudo_rand(s * 7 + 7) - 0.5) * 3000.0 * GALAXY_SCALE;
 
         systems.push(StarSystemConfig::generated(
-            gen_name(arm_stars + i), [x, y, z], 0, make_star(s, systems.is_empty()), genome(s, (s + 1) * 100),
+            gen_name(arm_stars + i), [x, y, z], 0, make_star(s), genome(s, (s + 1) * 100),
         ));
     }
 
@@ -754,7 +752,7 @@ pub(crate) fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec
                 format!("G{}-{}-{}", gid, prefixes[pi], local_idx * 7 + 1031),
                 [world.x, world.y, world.z],
                 gid as u32,
-                make_star(s, systems.is_empty()),
+                make_star(s),
                 genome(s, (global_idx + 1) * 100),
             ));
             local_idx += 1;
