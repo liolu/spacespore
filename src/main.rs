@@ -17,6 +17,7 @@ mod net;
 mod net_ui;
 mod origin;
 mod planet;
+mod planetgen;
 mod settings;
 mod ship;
 mod surface;
@@ -202,6 +203,7 @@ fn main() {
 
         // ── Planètes & corps ────────────────────────────────────────────
         .add_plugins(PlanetPlugin)
+        .add_plugins(planetgen::PlanetGenPlugin)
 
         // ── Legacy astre plugins désactivés — la galaxie gère tout ──
         // Ressources + events vides pour l'UI (pas de Startup spawn)
@@ -352,7 +354,7 @@ fn setup_scene(
     let sys0 = settings.systems.first();
     let sys0_center = sys0.map(|s| s.center()).unwrap_or(Vec3::ZERO);
     let orbit_dist = sys0
-        .and_then(|s| s.planets.first())
+        .and_then(|s| s.planets().first())
         .map(|p| p.orbit_distance)
         .unwrap_or(450.0);
 
@@ -771,7 +773,7 @@ fn select_next_planet(
         return;
     }
     let Some(&sys_i) = spawned.0.iter().next() else { return };
-    let Some(count) = settings.systems.get(sys_i).map(|s| s.planets.len()).filter(|&n| n > 0) else { return };
+    let Some(count) = settings.systems.get(sys_i).map(|s| s.planets().len()).filter(|&n| n > 0) else { return };
     let next = match target.0 {
         TargetKind::Planet(id) | TargetKind::Moon(id, _) if id / 1000 == sys_i => (id % 1000 + 1) % count,
         _ => 0,
@@ -835,7 +837,7 @@ fn select_next_moon(
     };
     let sys_i = planet_idx / 1000;
     let local_i = planet_idx % 1000;
-    let Some(moons) = settings.systems.get(sys_i).and_then(|s| s.planets.get(local_i)).map(|p| &p.moons) else {
+    let Some(moons) = settings.systems.get(sys_i).and_then(|s| s.planets().get(local_i)).map(|p| &p.moons) else {
         return;
     };
     if moons.is_empty() {
@@ -1613,6 +1615,7 @@ struct ZoomHudText;
 
 fn setup_fps_display(
     mut commands: Commands,
+    settings: Res<GameSettings>,
 ) {
     commands
         .spawn((
@@ -1645,6 +1648,12 @@ fn setup_fps_display(
             // Version et build du jeu en cours
             p.spawn((
                 Text::new(format!("SpaceSpore {}", spacespore_common::installed_label())),
+                TextFont { font_size: 13.0, ..default() },
+                TextColor(Color::srgb(0.7, 0.7, 0.75)),
+            ));
+            // Graine du monde en code court, à partager (/graine la copie)
+            p.spawn((
+                Text::new(format!("Graine du monde : {}", planetgen::seed_code::encode(settings.world_seed))),
                 TextFont { font_size: 13.0, ..default() },
                 TextColor(Color::srgb(0.7, 0.7, 0.75)),
             ));
@@ -1778,7 +1787,7 @@ fn update_fps_display(
                 let si = id / 1000;
                 let li = id % 1000;
                 settings.systems.get(si)
-                    .and_then(|s| s.planets.get(li))
+                    .and_then(|s| s.planets().get(li))
                     .map(|p| p.temperature())
                     .unwrap_or(15.0)
             }
@@ -1786,7 +1795,7 @@ fn update_fps_display(
             // Une lune reçoit autant de chaleur que sa planète
             TargetKind::Moon(planet_id, _) => {
                 settings.systems.get(planet_id / 1000)
-                    .and_then(|s| s.planets.get(planet_id % 1000))
+                    .and_then(|s| s.planets().get(planet_id % 1000))
                     .map(|p| p.temperature())
                     .unwrap_or(-270.0)
             }
@@ -1981,7 +1990,7 @@ fn update_system_hud(
             full.push('\n');
             full.push_str(&sys.name);
             let mut planets_line = String::new();
-            for (i, _) in sys.planets.iter().enumerate() {
+            for (i, _) in sys.planets().iter().enumerate() {
                 if !planets_line.is_empty() { planets_line.push_str("   "); }
                 planets_line.push_str(&format!("{} {}", sys.name, i + 1));
             }
@@ -2439,7 +2448,7 @@ fn draw_orbits(
     if let Some((si, sys)) = current_sys.and_then(|si| settings.systems.get(si).map(|s| (si, s))) {
         let sc = sys.center();
 
-        for (pi, pcfg) in sys.planets.iter().enumerate() {
+        for (pi, pcfg) in sys.planets().iter().enumerate() {
             if pcfg.orbit_distance >= 1.0 {
                 let elems = OrbitalElements {
                     a: pcfg.orbit_distance,

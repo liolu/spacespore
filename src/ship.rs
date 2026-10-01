@@ -130,8 +130,8 @@ fn spawn_ship(
 ) {
     let sys0 = settings.systems.first();
     let sys0_center = sys0.map(|s| s.center()).unwrap_or(Vec3::ZERO);
-    let orbit_dist = sys0.and_then(|s| s.planets.first()).map(|p| p.orbit_distance).unwrap_or(450.0);
-    let radius = sys0.and_then(|s| s.planets.first()).map(|p| p.radius).unwrap_or(50.0);
+    let orbit_dist = sys0.and_then(|s| s.planets().first()).map(|p| p.orbit_distance).unwrap_or(450.0);
+    let radius = sys0.and_then(|s| s.planets().first()).map(|p| p.radius).unwrap_or(50.0);
     let start = sys0_center + Vec3::new(orbit_dist + radius * 1.6, radius * 0.2, 0.0);
 
     let assets = ShipAssets::new(&mut meshes, &mut materials);

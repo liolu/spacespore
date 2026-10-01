@@ -83,9 +83,9 @@ struct SurfaceHud;
 /// Paramètres de terrain de l'astre ciblé (planète ou lune), `None` pour tout autre astre.
 pub fn body_params(settings: &GameSettings, kind: &TargetKind) -> Option<BodyParams> {
     match *kind {
-        TargetKind::Planet(id) => settings.systems.get(id / 1000)?.planets.get(id % 1000).map(BodyParams::planet),
+        TargetKind::Planet(id) => settings.systems.get(id / 1000)?.planets().get(id % 1000).map(BodyParams::planet),
         TargetKind::Moon(planet_id, moon) => {
-            let planet = settings.systems.get(planet_id / 1000)?.planets.get(planet_id % 1000)?;
+            let planet = settings.systems.get(planet_id / 1000)?.planets().get(planet_id % 1000)?;
             Some(BodyParams::moon(planet.moons.get(moon)?, planet))
         }
         _ => None,
@@ -1453,7 +1453,7 @@ mod tests {
         let settings = GameSettings::default();
         let mut bodies = Vec::new();
         for sys in settings.systems.iter().take(150) {
-            for p in &sys.planets {
+            for p in sys.planets() {
                 bodies.push(BodyParams::planet(p));
                 for m in &p.moons {
                     bodies.push(BodyParams::moon(m, p));

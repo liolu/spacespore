@@ -522,8 +522,10 @@ pub fn world_fingerprint(settings: &GameSettings) -> u64 {
             eat(&st.radius.to_bits().to_le_bytes());
             eat(&st.orbit_distance.to_bits().to_le_bytes());
         }
-        eat(&(sys.planets.len() as u64).to_le_bytes());
-        for p in &sys.planets {
+        // Sans remplir le cache des planètes : on parcourt tous les systèmes
+        let planets = sys.planets_uncached();
+        eat(&(planets.len() as u64).to_le_bytes());
+        for p in planets.iter() {
             eat(&p.seed.to_le_bytes());
             eat(&p.radius.to_bits().to_le_bytes());
             eat(&p.orbit_distance.to_bits().to_le_bytes());

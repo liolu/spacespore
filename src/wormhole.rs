@@ -155,7 +155,7 @@ fn mix(a: u32, b: u32, c: u32) -> u32 {
 
 /// Distance du centre du système à sa dernière orbite.
 fn system_extent(sys: &StarSystemConfig) -> f32 {
-    let planets = sys.planets.iter().map(|p| p.orbit_distance);
+    let planets = sys.planets().iter().map(|p| p.orbit_distance);
     let stars = sys.stars.iter().map(|s| s.orbit_distance);
     planets.chain(stars).fold(0.0_f32, f32::max)
 }
