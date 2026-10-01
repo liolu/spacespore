@@ -15,6 +15,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use std::collections::HashMap;
 
+use crate::galaxy_shape::Rng;
 use crate::guild::Guilds;
 use crate::net::Net;
 use crate::net_ui::NetPanel;
@@ -125,6 +126,18 @@ pub struct NpcFaction {
     extent: f32,
 }
 
+impl NpcFaction {
+    /// Traits, contour, centre et rayon d'après la liste actuelle des étoiles.
+    fn recompute(&mut self, settings: &GameSettings) {
+        let centers: Vec<Vec3> = self.stars.iter().filter_map(|&m| settings.systems.get(m).map(|s| s.center())).collect();
+        self.center = centers.iter().copied().sum::<Vec3>() / centers.len().max(1) as f32;
+        self.extent = centers.iter().map(|c| c.distance(self.center)).fold(0.0, f32::max);
+        self.links = group_links(settings, &self.stars);
+        let borders: Vec<crate::claims::Border> = self.stars.iter().filter_map(|&m| crate::claims::border_of(settings, m)).collect();
+        self.outline = crate::claims::outline_segments(&borders, crate::claims::CLAIM_RADIUS);
+    }
+}
+
 /// Territoires des factions PNJ : les mêmes pour tous les joueurs (graine du monde).
 #[derive(Resource, Default)]
 pub struct NpcTerritories {
@@ -135,6 +148,20 @@ pub struct NpcTerritories {
 impl NpcTerritories {
     pub fn faction_of(&self, sys: usize) -> Option<&NpcFaction> {
         self.owner.get(&sys).map(|&i| &self.factions[i])
+    }
+
+    pub fn faction_index_of(&self, sys: usize) -> Option<usize> {
+        self.owner.get(&sys).copied()
+    }
+
+    /// Retire une étoile du territoire d'une faction (vendue au joueur) et recalcule son tracé.
+    /// Renvoie `false` si l'étoile n'appartient à aucune faction.
+    pub fn remove_star(&mut self, sys: usize, settings: &GameSettings) -> bool {
+        let Some(idx) = self.owner.remove(&sys) else { return false };
+        let faction = &mut self.factions[idx];
+        faction.stars.retain(|&s| s != sys);
+        faction.recompute(settings);
+        true
     }
 }
 
@@ -226,24 +253,21 @@ pub fn generate_npcs(settings: &GameSettings, spatial: &SystemSpatialIndex) -> N
             }
             let idx = out.factions.len();
             let hue = ((counter as f32 * 0.618_034) % 1.0) * 360.0;
-            let center = members.iter().map(|&m| settings.systems[m].center()).sum::<Vec3>() / members.len() as f32;
-            let extent = members.iter().map(|&m| settings.systems[m].center().distance(center)).fold(0.0, f32::max);
             for &m in &members {
                 out.owner.insert(m, idx);
             }
-            out.factions.push(NpcFaction {
+            let mut faction = NpcFaction {
                 name: faction_name(mix(seed, counter, 99)),
                 color: Color::hsl(hue, 0.85, 0.58),
                 galaxy: gid as u32,
-                links: group_links(settings, &members),
-                outline: {
-                    let borders: Vec<crate::claims::Border> = members.iter().filter_map(|&m| crate::claims::border_of(settings, m)).collect();
-                    crate::claims::outline_segments(&borders, crate::claims::CLAIM_RADIUS)
-                },
                 stars: members,
-                center,
-                extent,
-            });
+                links: Vec::new(),
+                outline: Vec::new(),
+                center: Vec3::ZERO,
+                extent: 0.0,
+            };
+            faction.recompute(settings);
+            out.factions.push(faction);
             counter += 1;
             made += 1;
         }
@@ -251,9 +275,13 @@ pub fn generate_npcs(settings: &GameSettings, spatial: &SystemSpatialIndex) -> N
     out
 }
 
-fn build_npc_territories(settings: Res<GameSettings>, mut npcs: ResMut<NpcTerritories>) {
+fn build_npc_territories(settings: Res<GameSettings>, eco: Res<crate::economy::Economy>, mut npcs: ResMut<NpcTerritories>) {
     let spatial = SystemSpatialIndex::build(&settings);
     *npcs = generate_npcs(&settings, &spatial);
+    // Étoiles déjà vendues au joueur : elles ne font plus partie des territoires
+    for &sys in &eco.sold_stars {
+        npcs.remove_star(sys, &settings);
+    }
 }
 
 fn draw_links(
@@ -413,19 +441,16 @@ fn spawn_clouds(
     for (gid, gal) in settings.galaxies.iter().enumerate() {
         let seed = 900_000 + gid as u32 * 1_000;
         let rnd = |k: u32| pseudo_rand(seed.wrapping_mul(31).wrapping_add(k));
+        let shape = gal.shape();
+        // Une galaxie extérieure a une couleur dominante et une secondaire
+        let main_color = (rnd(900) * CLOUD_COLORS as f32) as usize % CLOUD_COLORS;
+        let second_color = (main_color + 1 + (rnd(901) * (CLOUD_COLORS - 1) as f32) as usize) % CLOUD_COLORS;
         for i in 0..cloud_count(gid, gal.radius) as u32 {
-            // Sur un bras (même spirale que les bras), avec un peu de dispersion
-            let arm = (rnd(i * 11 + 1) * gal.num_arms as f32) as usize % gal.num_arms.max(1);
-            let t = 0.12 + 0.83 * rnd(i * 11 + 2).powf(0.8);
-            let r = t * t * gal.radius;
-            let theta = arm as f32 * tau / gal.num_arms.max(1) as f32 + t * t * gal.twist;
-            let scatter = (rnd(i * 11 + 3) - 0.5) * gal.radius * 0.07 * (0.4 + t);
-            let along = (rnd(i * 11 + 4) - 0.5) * gal.radius * 0.05;
-            let local = Vec3::new(
-                r * theta.cos() - theta.sin() * scatter + theta.cos() * along,
-                (rnd(i * 11 + 5) - 0.5) * gal.radius * 0.02,
-                r * theta.sin() + theta.cos() * scatter + theta.sin() * along,
-            );
+            // Sur la structure de la galaxie (bras, anneaux, filaments…), avec un peu de dispersion
+            let mut srng = Rng::new(seed.wrapping_add(i * 7919));
+            let jitter = Vec3::new(rnd(i * 11 + 3) - 0.5, (rnd(i * 11 + 5) - 0.5) * 0.3, rnd(i * 11 + 4) - 0.5)
+                * gal.radius * 0.05;
+            let local = shape.sample_structure(&mut srng, 0.12) + jitter;
             let world = gal.center + gal.tilt * local;
             // Pas de nuage collé au trou noir central
             if local.length() < CORE_EXCLUSION * 3.0 {
@@ -440,7 +465,13 @@ fn spawn_clouds(
                 GalaxyCloud {
                     galaxy_id: gid as u32,
                     size: gal.radius * (0.04 + 0.07 * rnd(i * 11 + 6)),
-                    color: (rnd(i * 11 + 7) * CLOUD_COLORS as f32) as usize % CLOUD_COLORS,
+                    color: if gid == 0 {
+                        (rnd(i * 11 + 7) * CLOUD_COLORS as f32) as usize % CLOUD_COLORS
+                    } else if rnd(i * 11 + 7) < 0.65 {
+                        main_color
+                    } else {
+                        second_color
+                    },
                     stretch: 1.0 + rnd(i * 11 + 8) * 0.9,
                     roll: rnd(i * 11 + 9) * tau,
                 },

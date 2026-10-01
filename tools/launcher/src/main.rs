@@ -16,7 +16,7 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("SpaceSpore Launcher")
-            .with_inner_size([460.0, 290.0])
+            .with_inner_size([460.0, 400.0])
             .with_resizable(false),
         centered: true,
         ..Default::default()
@@ -35,6 +35,9 @@ fn main() -> eframe::Result {
 #[derive(serde::Serialize, serde::Deserialize)]
 struct LauncherConfig {
     channel: String,
+    /// Version stable choisie à la main : pas de mise à jour automatique tant qu'elle est installée.
+    #[serde(default)]
+    pinned: Option<String>,
 }
 
 fn config_path() -> PathBuf {
@@ -54,8 +57,12 @@ fn load_channel() -> Channel {
     }
 }
 
-fn save_channel(channel: Channel) {
-    let cfg = LauncherConfig { channel: channel.name().into() };
+fn load_pinned() -> Option<String> {
+    fs::read_to_string(config_path()).ok().and_then(|s| serde_json::from_str::<LauncherConfig>(&s).ok()).and_then(|c| c.pinned)
+}
+
+fn save_config(channel: Channel, pinned: Option<String>) {
+    let cfg = LauncherConfig { channel: channel.name().into(), pinned };
     if let Ok(json) = serde_json::to_string_pretty(&cfg) {
         let _ = fs::write(config_path(), json);
     }
@@ -86,6 +93,15 @@ struct Shared {
     /// Incrémenté à chaque vérification : une vérification périmée
     /// (changement de canal entre-temps) est ignorée.
     check_id: AtomicU64,
+    /// Liste des versions publiées (chargée à la première ouverture du sélecteur).
+    releases: Mutex<ReleaseList>,
+}
+
+enum ReleaseList {
+    NotLoaded,
+    Loading,
+    Loaded(Vec<VersionInfo>),
+    Failed(String),
 }
 
 impl Shared {
@@ -104,6 +120,10 @@ struct LauncherApp {
     /// La mise à jour automatique a déjà été tentée (pas de boucle en cas d'échec).
     auto_update_tried: bool,
     launch_error: Option<String>,
+    /// Version choisie dans le sélecteur (tag sans le « v »).
+    picked: Option<String>,
+    /// Version verrouillée (voir `LauncherConfig::pinned`).
+    pinned: Option<String>,
 }
 
 impl LauncherApp {
@@ -117,6 +137,7 @@ impl LauncherApp {
             downloaded: AtomicU64::new(0),
             total: AtomicU64::new(0),
             check_id: AtomicU64::new(0),
+            releases: Mutex::new(ReleaseList::NotLoaded),
         });
         let app = Self {
             shared,
@@ -127,6 +148,8 @@ impl LauncherApp {
             launched: false,
             auto_update_tried: false,
             launch_error: None,
+            picked: None,
+            pinned: load_pinned(),
         };
         app.start_check();
         app
@@ -136,17 +159,39 @@ impl LauncherApp {
         let shared = self.shared.clone();
         let ctx = self.ctx.clone();
         let channel = self.channel;
+        let pinned = self.pinned.clone();
         let id = shared.check_id.fetch_add(1, Ordering::SeqCst) + 1;
         shared.set(Stage::Checking);
         std::thread::spawn(move || {
-            let stage = match spacespore_common::fetch_channel(channel, 5) {
+            let is_pinned = channel == Channel::Stable
+                && CHANNEL == Channel::Stable
+                && pinned.as_deref() == Some(spacespore_common::VERSION);
+            let stage = if is_pinned {
+                Stage::ReadyToPlay(format!("Version v{} verrouillee (choisie manuellement)", spacespore_common::VERSION))
+            } else {
+                match spacespore_common::fetch_channel(channel, 5) {
                 Ok(info) if spacespore_common::should_install(channel, &info) => Stage::Available(info),
                 Ok(_) => Stage::ReadyToPlay("Le jeu est a jour".into()),
                 Err(e) => Stage::ReadyToPlay(format!("Hors-ligne ou aucune version disponible ({})", e)),
+                }
             };
             if shared.check_id.load(Ordering::SeqCst) == id {
                 shared.set(stage);
             }
+            ctx.request_repaint();
+        });
+    }
+
+    fn load_releases(&self) {
+        let shared = self.shared.clone();
+        let ctx = self.ctx.clone();
+        *shared.releases.lock().unwrap() = ReleaseList::Loading;
+        std::thread::spawn(move || {
+            let result = match spacespore_common::fetch_releases(10) {
+                Ok(list) => ReleaseList::Loaded(list),
+                Err(e) => ReleaseList::Failed(e),
+            };
+            *shared.releases.lock().unwrap() = result;
             ctx.request_repaint();
         });
     }
@@ -210,10 +255,83 @@ impl eframe::App for LauncherApp {
                         ui.radio_value(&mut self.channel, Channel::Unstable, "Instable")
                             .on_hover_text("Derniere version en cours de developpement (peut contenir des bugs)");
                         if self.channel != before {
-                            save_channel(self.channel);
+                            self.pinned = None;
+                            save_config(self.channel, None);
                             self.start_check();
                         }
                     });
+                });
+
+                // ── Choix d'une version précise (retour à une ancienne version possible) ──
+                ui.add_enabled_ui(!busy, |ui| {
+                    let header = egui::CollapsingHeader::new("Choisir une version precise").show(ui, |ui| {
+                        let state = std::mem::replace(&mut *self.shared.releases.lock().unwrap(), ReleaseList::Loading);
+                        match state {
+                            ReleaseList::NotLoaded => {
+                                // Le chargement démarre après cette image
+                                *self.shared.releases.lock().unwrap() = ReleaseList::NotLoaded;
+                                self.load_releases();
+                            }
+                            ReleaseList::Loading => {
+                                ui.horizontal(|ui| {
+                                    ui.spinner();
+                                    ui.label("Chargement des versions...");
+                                });
+                            }
+                            ReleaseList::Failed(e) => {
+                                ui.colored_label(egui::Color32::LIGHT_RED, format!("Liste indisponible : {e}"));
+                                let retry = ui.small_button("Reessayer").clicked();
+                                *self.shared.releases.lock().unwrap() = ReleaseList::Failed(e);
+                                if retry {
+                                    self.load_releases();
+                                }
+                            }
+                            ReleaseList::Loaded(list) => {
+                                let current = format!("v{}", spacespore_common::VERSION);
+                                let label_of = |v: &VersionInfo| {
+                                    let tag = format!("v{}", v.version);
+                                    if CHANNEL == Channel::Stable && tag == current { format!("{tag} (installee)") } else { tag }
+                                };
+                                let chosen = self.picked.clone().or_else(|| list.first().map(|v| v.version.clone()));
+                                let shown = list
+                                    .iter()
+                                    .find(|v| Some(&v.version) == chosen.as_ref())
+                                    .map(|v| label_of(v))
+                                    .unwrap_or_else(|| "-".into());
+                                egui::ComboBox::from_id_salt("version_picker").selected_text(shown).show_ui(ui, |ui| {
+                                    for v in &list {
+                                        let selected = Some(&v.version) == chosen.as_ref();
+                                        if ui.selectable_label(selected, label_of(v)).clicked() {
+                                            self.picked = Some(v.version.clone());
+                                        }
+                                    }
+                                });
+                                if let Some(v) = list.iter().find(|v| Some(&v.version) == chosen.as_ref()) {
+                                    if !v.release_notes.trim().is_empty() {
+                                        let notes: String = v.release_notes.chars().take(300).collect();
+                                        ui.small(notes);
+                                    }
+                                    if ui.button(format!("Installer v{}", v.version)).clicked() {
+                                        // Une version plus ancienne que la dernière est verrouillée,
+                                        // sinon la mise à jour automatique la remplacerait au lancement suivant
+                                        let is_latest = list.first().is_some_and(|l| l.version == v.version);
+                                        self.channel = Channel::Stable;
+                                        self.pinned = (!is_latest).then(|| v.version.clone());
+                                        save_config(Channel::Stable, self.pinned.clone());
+                                        self.start_update(v.clone());
+                                    }
+                                }
+                                *self.shared.releases.lock().unwrap() = ReleaseList::Loaded(list);
+                            }
+                        }
+                        if self.pinned.is_some() && ui.small_button("Reprendre les mises a jour automatiques").clicked() {
+                            self.pinned = None;
+                            save_config(self.channel, None);
+                            self.auto_update_tried = false;
+                            self.start_check();
+                        }
+                    });
+                    let _ = header;
                 });
                 ui.separator();
                 ui.add_space(4.0);
@@ -367,6 +485,7 @@ fn download_and_apply(
     let zip_file = fs::File::open(&zip_path)?;
     let mut archive = zip::ZipArchive::new(zip_file)?;
     let launcher_name = exe_name(LAUNCHER_BIN);
+    let downgrade = info.build == 0 && info.version_code < spacespore_common::VERSION_CODE;
 
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
@@ -374,6 +493,12 @@ fn download_and_apply(
 
         let relative = raw_name.split('/').skip(1).collect::<Vec<_>>().join("/");
         if relative.is_empty() {
+            continue;
+        }
+
+        // Retour à une version plus ancienne : on garde le launcher actuel, qui doit toujours
+        // être le plus récent (un vieux launcher ne saurait pas verrouiller la version choisie)
+        if relative == launcher_name && downgrade {
             continue;
         }
 

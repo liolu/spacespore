@@ -128,11 +128,17 @@ fn claim_input(
     npcs: Res<crate::galaxy_fx::NpcTerritories>,
     mut settings: ResMut<GameSettings>,
     mut net: ResMut<Net>,
+    travel: Res<crate::wormhole::WormholeTravel>,
 ) {
     if !keys.just_pressed(KeyCode::KeyC) || panel.focus.is_some() || menu.open {
         return;
     }
     let now = time.elapsed_secs_f64();
+    // Pendant un voyage en trou de ver : ni revendication, ni abandon, ni siège
+    if travel.active() {
+        net.notify("Impossible de revendiquer pendant un voyage en trou de ver.", now);
+        return;
+    }
     let Some(Some(sys)) = target_system(&target.0, &star_q) else {
         net.notify("Ciblez une etoile pour la revendiquer.", now);
         return;

@@ -21,22 +21,27 @@ use bevy::prelude::*;
 
 use crate::net::Net;
 use crate::net_ui::NetPanel;
-use crate::planet::{StarId, StarRoot};
 use crate::settings::{GameSettings, StarSystemConfig, CORE_EXCLUSION, GALAXY_RADIUS};
 use crate::ship::Ship;
 use crate::ui::{CameraTarget, MenuState, TargetKind};
-use crate::{target_system, CameraController, ZoomLevel};
+use crate::{CameraController, ZoomLevel};
 
 /// Trous de ver dans la galaxie principale.
 const MAIN_GALAXY_WORMHOLES: usize = 10;
 /// Marge autour des orbites où l'on peut encore emprunter le trou de ver.
 const USE_MARGIN: f32 = 30_000.0;
 /// Rayon minimal du dessin (il grandit avec la distance pour rester visible).
-const MIN_DRAW_RADIUS: f32 = 1_500.0;
+pub const MIN_DRAW_RADIUS: f32 = 1_500.0;
 /// Distance de la caméra au-delà de laquelle une ouverture n'est plus dessinée.
-const DRAW_RANGE: f32 = 3_000_000.0;
+pub const DRAW_RANGE: f32 = 3_000_000.0;
 /// Le trait entre deux ouvertures connues est dessiné de plus loin.
 const LINE_RANGE: f32 = 30_000_000.0;
+/// Distance maximale du vaisseau à l'ouverture pour l'emprunter (il se pose au-dessus d'elle).
+const ENTER_RANGE: f32 = 30_000.0;
+
+/// Délai, en secondes, entre la fin d'un voyage et le suivant.
+const COOLDOWN: f64 = 5.0;
+
 /// Distance de la caméra après l'arrivée (zoom « Système »).
 const ARRIVAL_DISTANCE: f32 = 30_000.0;
 
@@ -80,6 +85,17 @@ impl Wormhole {
         }
     }
 
+    /// Position de l'ouverture qui dessert `sys`.
+    pub fn mouth_of(&self, sys: usize) -> Option<Vec3> {
+        if sys == self.a {
+            Some(self.mouth_a)
+        } else if sys == self.b {
+            Some(self.mouth_b)
+        } else {
+            None
+        }
+    }
+
     pub fn reach_at(&self, sys: usize) -> f32 {
         if sys == self.a { self.reach_a } else { self.reach_b }
     }
@@ -96,7 +112,17 @@ impl Wormholes {
         self.list.iter().find(|w| w.other_end(sys).is_some())
     }
 
-    /// Ligne d'information quand on cible l'étoile d'un trou de ver.
+    /// Position de l'ouverture du trou de ver qui dessert ce système.
+    pub fn mouth_at(&self, sys: usize) -> Option<Vec3> {
+        self.at(sys)?.mouth_of(sys)
+    }
+
+    /// Indice affiché quand on cible l'étoile près de laquelle s'ouvre un trou de ver.
+    pub fn star_hint(&self, sys: usize) -> Option<String> {
+        self.at(sys).map(|_| "Un trou de ver s'ouvre pres de cette etoile : ciblez-le pour l'emprunter.".to_string())
+    }
+
+    /// Ligne d'information quand on cible l'ouverture d'un trou de ver.
     pub fn hud_line(&self, sys: usize, settings: &GameSettings) -> Option<String> {
         let w = self.at(sys)?;
         let known = settings.known_wormholes.contains(&w.id());
@@ -217,6 +243,10 @@ const PHASES: [(Phase, f32, &str); 6] = [
     (Phase::Exit, 0.8, "Sortie du trou de ver"),
 ];
 
+/// Part du tunnel parcourue à vitesse constante : la décélération couvre le reste. Choisie pour que
+/// la vitesse soit continue entre les deux phases (2·(1-f)/durée_decel = f/durée_croisière).
+const CRUISE_SHARE: f32 = 0.746;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Phase {
     Prep,
@@ -251,12 +281,15 @@ struct Trip {
 #[derive(Resource, Default)]
 pub struct WormholeTravel {
     trip: Option<Trip>,
+    /// Instant (temps de jeu, en secondes) avant lequel un nouveau voyage est impossible.
+    cooldown_until: f64,
 }
 
 impl WormholeTravel {
     pub fn active(&self) -> bool {
         self.trip.is_some()
     }
+
 }
 
 /// Phase à l'instant `t`, avancement (0 à 1) dans la phase, et son texte.
@@ -278,27 +311,26 @@ fn smooth(p: f32) -> f32 {
 
 impl Trip {
     /// Position du vaisseau : il s'élance vers l'ouverture en accélérant, fonce dedans,
-    /// traverse à la vitesse de la lumière, puis ralentit jusqu'à l'étoile d'arrivée.
+    /// traverse à la vitesse de la lumière, ralentit AVANT d'atteindre l'ouverture de sortie
+    /// (il l'atteint à l'arrêt), puis se pose doucement près de l'étoile d'arrivée.
     fn ship_pos(&self, phase: Phase, p: f32) -> Vec3 {
         let before_leap = self.start + (self.mouth - self.start) * 0.7;
         match phase {
             Phase::Prep => self.start,
             Phase::Accel => self.start + (self.mouth - self.start) * (0.7 * p * p),
             Phase::Leap => before_leap.lerp(self.mouth, p * p * p),
-            Phase::Light => self.mouth.lerp(self.exit_mouth, smooth(p)),
-            Phase::Decel => self.exit_mouth.lerp(self.dest, 1.0 - (1.0 - p) * (1.0 - p)),
-            Phase::Exit => self.dest,
+            Phase::Light => self.mouth.lerp(self.exit_mouth, CRUISE_SHARE * p),
+            Phase::Decel => {
+                self.mouth.lerp(self.exit_mouth, CRUISE_SHARE + (1.0 - CRUISE_SHARE) * (1.0 - (1.0 - p) * (1.0 - p)))
+            }
+            Phase::Exit => self.exit_mouth.lerp(self.dest, smooth(p)),
         }
     }
 
-    /// Direction du déplacement dans cette phase (axe des traits de vitesse).
-    fn axis(&self, phase: Phase) -> Vec3 {
-        let (a, b) = match phase {
-            Phase::Prep | Phase::Accel | Phase::Leap => (self.start, self.mouth),
-            Phase::Light => (self.mouth, self.exit_mouth),
-            Phase::Decel | Phase::Exit => (self.exit_mouth, self.dest),
-        };
-        (b - a).normalize_or_zero()
+    /// Direction dans laquelle le vaisseau regarde (et axe des traits de vitesse) : toujours vers
+    /// l'ouverture de sortie, même quand il descend vers l'ouverture d'entrée ou se pose à l'arrivée.
+    fn axis(&self, _phase: Phase) -> Vec3 {
+        (self.exit_mouth - self.mouth).normalize_or_zero()
     }
 
     /// Intensité de l'effet de vitesse (0 à 1).
@@ -332,7 +364,6 @@ fn wormhole_travel(
     panel: Res<NetPanel>,
     menu: Res<MenuState>,
     wormholes: Res<Wormholes>,
-    star_q: Query<&StarId, With<StarRoot>>,
     ship_q: Query<&Transform, With<Ship>>,
     target: Res<CameraTarget>,
     settings: Res<GameSettings>,
@@ -344,29 +375,34 @@ fn wormhole_travel(
         return;
     }
     let now = time.elapsed_secs_f64();
-    let Some(Some(sys)) = target_system(&target.0, &star_q) else {
-        net.notify("Ciblez une etoile pour chercher un trou de ver.", now);
+    if now < travel.cooldown_until {
+        let left = (travel.cooldown_until - now).ceil() as u32;
+        net.notify(&format!("Trou de ver en recharge : encore {left} s."), now);
+        return;
+    }
+    // On emprunte un trou de ver depuis son ouverture : il faut la cibler (pas l'étoile voisine)
+    let TargetKind::WormholeMouth(sys) = target.0 else {
+        net.notify("Ciblez l'ouverture d'un trou de ver pour l'emprunter.", now);
         return;
     };
     let Some(wormhole) = wormholes.at(sys).cloned() else {
-        net.notify("Il n'y a pas de trou de ver pres de cette etoile.", now);
+        net.notify("Il n'y a pas de trou de ver ici.", now);
         return;
     };
     let Some(to) = wormhole.other_end(sys) else { return };
-    let Some(here) = settings.systems.get(sys) else { return };
     let Some(dest) = settings.systems.get(to) else { return };
     if net.local.hp == 0 {
         net.notify("Votre vaisseau est detruit.", now);
         return;
     }
     let Ok(ship) = ship_q.get_single() else { return };
-    if ship.translation.distance(here.center()) > wormhole.reach_at(sys) {
-        net.notify("Approchez-vous de l'etoile pour emprunter son trou de ver.", now);
+    let (mouth, exit_mouth) = if sys == wormhole.a { (wormhole.mouth_a, wormhole.mouth_b) } else { (wormhole.mouth_b, wormhole.mouth_a) };
+    if ship.translation.distance(mouth) > ENTER_RANGE {
+        net.notify("Approchez-vous de l'ouverture pour emprunter le trou de ver.", now);
         return;
     }
 
-    let (mouth, exit_mouth) = if sys == wormhole.a { (wormhole.mouth_a, wormhole.mouth_b) } else { (wormhole.mouth_b, wormhole.mouth_a) };
-    let hover = crate::hover_height(&CameraTarget(TargetKind::Star(to)), &settings);
+    let hover = crate::hover_height(&CameraTarget(TargetKind::WormholeMouth(to)), &settings);
     travel.trip = Some(Trip {
         t: 0.0,
         to,
@@ -376,7 +412,8 @@ fn wormhole_travel(
         start: ship.translation,
         mouth,
         exit_mouth,
-        dest: dest.center() + Vec3::Y * hover,
+        // Le vaisseau se pose centré au-dessus de l'ouverture de sortie
+        dest: exit_mouth + Vec3::Y * hover,
         arrival_set: false,
         light_started: false,
     });
@@ -415,6 +452,7 @@ fn run_wormhole_trip(
         }
         let name = trip.dest_name.clone();
         let first = trip.first_time;
+        travel.cooldown_until = now + COOLDOWN;
         travel.trip = None;
         let text = if first {
             format!("Trou de ver decouvert : il relie les deux etoiles. Vous etes pres de {name}.")
@@ -425,13 +463,13 @@ fn run_wormhole_trip(
         return;
     };
 
-    // Le vaisseau se déplace et regarde dans le sens du mouvement
-    let before = ship.translation;
+    // Le vaisseau se déplace ; son avant pointe vers l'ouverture de sortie (jamais à la verticale)
     ship.translation = trip.ship_pos(phase, p);
-    let heading = (ship.translation - before).normalize_or_zero();
-    let heading = if heading == Vec3::ZERO { trip.axis(phase) } else { heading };
-    if heading != Vec3::ZERO {
-        ship.look_to(heading, Vec3::Y);
+    let facing = trip.axis(phase);
+    if facing != Vec3::ZERO {
+        let want = Transform::IDENTITY.looking_to(facing, Vec3::Y).rotation;
+        let k = 1.0 - (-8.0 * time.delta_secs()).exp();
+        ship.rotation = ship.rotation.slerp(want, k);
     }
 
     // La découverte est retenue dès qu'on entre dans le trou de ver
@@ -442,10 +480,23 @@ fn run_wormhole_trip(
             settings.save();
         }
     }
-    // À la décélération : la cible devient l'étoile d'arrivée (la caméra reste en zoom « Système »)
-    if phase == Phase::Decel && !trip.arrival_set {
+    // La caméra se place derrière le vaisseau, dans l'axe du déplacement : elle regarde vers
+    // l'ouverture, puis vers la destination
+    let axis = trip.axis(phase);
+    if axis != Vec3::ZERO {
+        if let Ok(mut ctrl) = cam_q.get_single_mut() {
+            let want_yaw = (-axis.x).atan2(-axis.z);
+            let want_pitch = axis.y.clamp(-1.0, 1.0).asin();
+            let k = 1.0 - (-4.0 * time.delta_secs()).exp();
+            let dyaw = (want_yaw - ctrl.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+            ctrl.yaw += dyaw * k;
+            ctrl.pitch += (want_pitch - ctrl.pitch) * k;
+        }
+    }
+    // À la sortie : la cible devient l'étoile d'arrivée (la caméra reste en zoom « Système »)
+    if phase == Phase::Exit && !trip.arrival_set {
         trip.arrival_set = true;
-        target.0 = TargetKind::Star(trip.to);
+        target.0 = TargetKind::WormholeMouth(trip.to);
         *zoom = ZoomLevel::System;
     }
 }
@@ -784,7 +835,9 @@ mod tests {
         // Part du vaisseau, entre dans l'ouverture, sort à l'autre ouverture, finit à l'étoile
         assert_eq!(begin(Phase::Prep), trip.start);
         assert!(end(Phase::Leap).distance(trip.mouth) < 1.0);
-        assert!(end(Phase::Light).distance(trip.exit_mouth) < 1.0);
+        // La décélération s'achève pile sur l'ouverture de sortie : on ralentit avant de la toucher
+        assert!(end(Phase::Decel).distance(trip.exit_mouth) < 1.0);
+        assert!(end(Phase::Light).distance(trip.exit_mouth) > 1.0);
         assert!(end(Phase::Exit).distance(trip.dest) < 1.0);
     }
 
@@ -809,6 +862,18 @@ mod tests {
     }
 
     #[test]
+    fn the_ship_slows_down_before_the_exit_mouth_and_speed_is_continuous() {
+        let trip = trip();
+        // Vitesse (unités/s) à la fin de la croisière et au début de la décélération : quasi égales
+        let v_light = trip.ship_pos(Phase::Light, 1.0).distance(trip.ship_pos(Phase::Light, 0.99)) / (0.01 * PHASES[3].1);
+        let v_decel = trip.ship_pos(Phase::Decel, 0.01).distance(trip.ship_pos(Phase::Decel, 0.0)) / (0.01 * PHASES[4].1);
+        assert!((v_light / v_decel - 1.0).abs() < 0.05, "{v_light} vs {v_decel}");
+        // Juste avant l'ouverture de sortie, le vaisseau est presque à l'arrêt
+        let v_end = trip.ship_pos(Phase::Decel, 1.0).distance(trip.ship_pos(Phase::Decel, 0.99)) / (0.01 * PHASES[4].1);
+        assert!(v_end < v_decel * 0.05, "{v_end}");
+    }
+
+    #[test]
     fn speed_lines_and_veil_follow_the_phases() {
         let trip = trip();
         assert_eq!(trip.speed(Phase::Prep, 0.5), 0.0);
@@ -827,8 +892,10 @@ mod tests {
         assert_eq!(trip.veil(Phase::Prep, 0.5), 0.0);
         assert!(trip.veil(Phase::Exit, 1.0) < 0.01);
         // Les axes : vers l'ouverture, à travers le trou de ver, puis vers l'étoile
-        assert!(trip.axis(Phase::Accel).dot((trip.mouth - trip.start).normalize()) > 0.999);
-        assert!(trip.axis(Phase::Light).dot((trip.exit_mouth - trip.mouth).normalize()) > 0.999);
+        // Dans toutes les phases, l'avant pointe vers l'ouverture de sortie
+        for (phase, _, _) in PHASES {
+            assert!(trip.axis(phase).dot((trip.exit_mouth - trip.mouth).normalize()) > 0.999);
+        }
     }
 
     #[test]

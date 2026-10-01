@@ -9,10 +9,14 @@ use std::path::PathBuf;
 
 pub const SAVE_VERSION: u32 = 9;
 
-/// Dossier `saves/` à côté de l'exécutable (installation portable).
-/// Si ce dossier n'est pas accessible en écriture (ex. installation système
-/// sous Linux, ou bundle `.app` en lecture seule sous macOS), on se rabat sur
-/// le dossier de données de l'utilisateur :
+/// Dossier des sauvegardes de CETTE version : `saves/v0.8.0/` (un dossier par version installée).
+/// Il contient `settings.json` (réglages et progression), `world.json` (la sauvegarde du monde :
+/// graine, territoires, trous de ver connus, guilde...) et `info.json` (résumé lisible : version,
+/// graine, joueur, dernière partie).
+///
+/// `saves/` se trouve à côté de l'exécutable (installation portable). Si ce dossier n'est pas
+/// accessible en écriture (installation système sous Linux, bundle `.app` en lecture seule sous
+/// macOS), on se rabat sur le dossier de données de l'utilisateur :
 ///   Windows : %APPDATA%\SpaceSpore\saves
 ///   Linux   : ~/.local/share/SpaceSpore/saves
 ///   macOS   : ~/Library/Application Support/SpaceSpore/saves
@@ -22,18 +26,61 @@ pub fn data_dir() -> PathBuf {
         let beside_exe = std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(|d| d.join("saves")));
-        if let Some(path) = beside_exe {
-            if is_writable_dir(&path) {
-                return path;
+        let base = match beside_exe {
+            Some(path) if is_writable_dir(&path) => path,
+            _ => {
+                let fallback = dirs::data_dir()
+                    .map(|d| d.join("SpaceSpore").join("saves"))
+                    .unwrap_or_else(|| PathBuf::from("saves"));
+                fs::create_dir_all(&fallback).ok();
+                fallback
             }
+        };
+        let dir = base.join(version_folder_name());
+        let fresh = !dir.exists();
+        fs::create_dir_all(&dir).ok();
+        if fresh {
+            migrate_saves(&base, &dir);
         }
-        let fallback = dirs::data_dir()
-            .map(|d| d.join("SpaceSpore").join("saves"))
-            .unwrap_or_else(|| PathBuf::from("saves"));
-        fs::create_dir_all(&fallback).ok();
-        fallback
+        dir
     })
     .clone()
+}
+
+/// `v0.8.0`, `v0.8.0-instable` ou `v0.8.0-dev` (une compilation locale ne touche pas aux vraies sauvegardes).
+pub fn version_folder_name() -> String {
+    let suffix = match spacespore_common::CHANNEL {
+        spacespore_common::Channel::Stable => "",
+        spacespore_common::Channel::Unstable => "-instable",
+        spacespore_common::Channel::Dev => "-dev",
+    };
+    format!("v{}{}", spacespore_common::VERSION, suffix)
+}
+
+/// Fichiers repris à la première ouverture d'une nouvelle version : ceux de l'ancien dossier
+/// commun `saves/`, sinon ceux du dossier de la version la plus récemment utilisée.
+const CARRIED_FILES: [&str; 3] = ["settings.json", "economy.json", "net_cache.json"];
+
+fn migrate_saves(base: &std::path::Path, dir: &std::path::Path) {
+    let legacy = CARRIED_FILES.iter().any(|f| base.join(f).exists());
+    let source = if legacy {
+        Some(base.to_path_buf())
+    } else {
+        fs::read_dir(base)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.path() != dir && e.path().join("settings.json").exists())
+            .max_by_key(|e| e.path().join("settings.json").metadata().and_then(|m| m.modified()).ok())
+            .map(|e| e.path())
+    };
+    let Some(source) = source else { return };
+    for name in CARRIED_FILES {
+        let from = source.join(name);
+        if from.exists() {
+            let _ = fs::copy(&from, dir.join(name));
+        }
+    }
 }
 
 fn is_writable_dir(path: &std::path::Path) -> bool {
@@ -79,6 +126,8 @@ pub struct PlanetConfig {
     pub noise_scale:     f32,
     pub detail_scale:    f32,
     #[serde(default)] pub moons:        Vec<MoonConfig>,
+    /// Rayon de l'étoile qui l'éclaire (sert à la température).
+    #[serde(default = "default_star_radius")] pub star_radius: f32,
     #[serde(default)] pub atmosphere:   bool,
     #[serde(default = "default_cloud_density")]  pub cloud_density:  f32,
     #[serde(default = "default_cloud_altitude")] pub cloud_altitude: f32,
@@ -89,6 +138,7 @@ pub struct PlanetConfig {
     #[serde(default)] pub arg_periapsis:  f32,
     #[serde(default)] pub mean_anomaly_0: f32,
 }
+fn default_star_radius()    -> f32 { 250.0 }
 fn default_cloud_density()  -> f32 { 0.5 }
 fn default_cloud_altitude() -> f32 { 20.0 }
 fn default_cloud_speed()    -> f32 { 0.02 }
@@ -97,7 +147,7 @@ impl Default for PlanetConfig {
         Self {
             orbit_distance: 2250.0, radius: 250.0, sea_level: 0.4,
             terrain_height: 110.0, seed: 42, noise_scale: 2.0, detail_scale: 4.0,
-            moons: Vec::new(), atmosphere: false,
+            moons: Vec::new(), star_radius: 250.0, atmosphere: false,
             cloud_density: 0.5, cloud_altitude: 100.0, cloud_speed: 0.02,
             eccentricity: 0.0, inclination: 0.0, ascending_node: 0.0,
             arg_periapsis: 0.0, mean_anomaly_0: 0.0,
@@ -105,10 +155,16 @@ impl Default for PlanetConfig {
     }
 }
 impl PlanetConfig {
+    /// -270 + PLANET_HEAT_RATIO / (distance en rayons d'étoile) : la chaleur dépend de la taille
+    /// de l'étoile, pas de l'unité de distance.
     pub fn temperature(&self) -> f32 {
-        -270.0 + 50_000_000.0 / self.orbit_distance.max(10.0)
+        -270.0 + PLANET_HEAT_RATIO * self.star_radius.max(1.0) / self.orbit_distance.max(10.0)
     }
 }
+
+/// Chaleur reçue par une planète, pour une distance exprimée en rayons de son étoile : brûlante
+/// vers 2,4 rayons (≈ 190 °C), tempérée vers 4, glacée au-delà de 5.
+const PLANET_HEAT_RATIO: f32 = 1100.0;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct StarConfig {
@@ -136,6 +192,17 @@ fn default_flare_speed()        -> f32 { 1.0 }
 fn default_flare_size()         -> f32 { 6.0 }
 fn default_flare_distance()     -> f32 { 15.0 }
 impl StarConfig {
+    /// Portée de la lumière d'une étoile de ce rayon : couvre les orbites les plus lointaines.
+    pub fn light_range_for(radius: f32) -> f32 {
+        radius * 16.0
+    }
+
+    /// Flux lumineux (lumens) : environ 3 000 lux à 3 rayons de l'étoile pour une intensité de 20.
+    pub fn lumens(&self) -> f32 {
+        let d = self.radius * 3.0;
+        3_000.0 * (self.intensity / 20.0) * 4.0 * std::f32::consts::PI * d * d
+    }
+
     pub fn temperature(&self) -> f32 {
         let r = self.light_color_r;
         let b = self.light_color_b;
@@ -214,6 +281,8 @@ pub(crate) fn pseudo_rand(seed: u32) -> f32 {
 pub const SYSTEM_GRID_SIZE: usize = 100;
 pub const SYSTEM_CELL_SIZE: f32 = 100_000.0;
 pub const STREAM_RADIUS: f32 = 3.0;
+/// Graine du monde par défaut (partagée par tous les joueurs).
+pub const DEFAULT_WORLD_SEED: u64 = 42;
 pub const GALAXY_RADIUS: f32 = 9_000_000.0;
 
 /// Nombre de galaxies extérieures (ids 1..=NUM_DISTANT_GALAXIES).
@@ -229,6 +298,8 @@ pub struct GalaxyConfig {
     pub radius:        f32,
     pub num_arms:      usize,
     pub twist:         f32,
+    /// Type de galaxie (spirale, annulaire, filamentaire…) : voir `galaxy_shape`.
+    pub kind:          crate::galaxy_shape::GalaxyKind,
     pub core_radius:   f32,
     /// Graine des étoiles de la galaxie (galaxies extérieures uniquement).
     pub seed:          u32,
@@ -237,14 +308,20 @@ pub struct GalaxyConfig {
 }
 
 /// Galaxie principale + galaxies extérieures disposées sur une méta-spirale.
-pub fn default_galaxies() -> Vec<GalaxyConfig> {
+pub fn default_galaxies(world_seed: u64) -> Vec<GalaxyConfig> {
     use bevy::math::{EulerRot, Quat, Vec3};
     const META_ARMS: usize = 5;
-    const META_RADIUS: f32 = 160_000_000.0;
+    const META_RADIUS: f32 = 200_000_000.0;
     const META_TWIST: f32 = 4.0;
-    const MIN_DIST: f32 = 30_000_000.0;
+    const MIN_DIST: f32 = 40_000_000.0;
+    /// Deux galaxies restent séparées d'au moins ce multiple de la somme de leurs rayons.
+    const SPACING: f32 = 2.0;
     let tau = std::f32::consts::TAU;
 
+    let world_hash = {
+        let x = (world_seed as u32) ^ ((world_seed >> 32) as u32);
+        (pseudo_rand(x ^ 0x6A09_E667) * 65_535.0) as u32 * 2 + (x & 1)
+    };
     let mut galaxies = Vec::with_capacity(NUM_DISTANT_GALAXIES + 1);
     galaxies.push(GalaxyConfig {
         center: Vec3::ZERO,
@@ -252,6 +329,7 @@ pub fn default_galaxies() -> Vec<GalaxyConfig> {
         radius: GALAXY_RADIUS,
         num_arms: 5,
         twist: 5.0,
+        kind: crate::galaxy_shape::GalaxyKind::Spiral,
         core_radius: 30_000.0,
         seed: 0,
         arm_stars: 0,
@@ -259,37 +337,60 @@ pub fn default_galaxies() -> Vec<GalaxyConfig> {
     });
 
     for gi in 0..NUM_DISTANT_GALAXIES {
-        let gs = gi as u32 + 300_000;
+        // La graine du monde décale tout : un autre monde, d'autres galaxies
+        let gs = gi as u32 + 300_000 + world_hash % 90_000;
+        let rk = |k: u32| pseudo_rand(gs * 13 + k);
+        let rk_k = |n: u32, k: u32| pseudo_rand((gs * 13 + n).wrapping_add(k));
 
-        // Position de la galaxie sur les bras de la méta-spirale
+        let radius = 1_300_000.0 + (rk(7) * 0.6 + rk(27) * 0.4).powf(1.3) * 6_000_000.0;
+
+        // Position de la galaxie sur les bras de la méta-spirale, à l'écart des autres :
+        // on retire au sort jusqu'à trouver une place libre (à défaut, la moins serrée)
         let arm = gi % META_ARMS;
         let arm_base = arm as f32 * tau / META_ARMS as f32;
-        let t = pseudo_rand(gs * 13 + 1);
-        let r = MIN_DIST + t * t * (META_RADIUS - MIN_DIST);
-        let spiral = arm_base + (r / META_RADIUS) * META_TWIST;
-        let scatter = (pseudo_rand(gs * 13 + 3) - 0.5) * 0.4;
-        let theta = spiral + scatter;
-        let center = Vec3::new(
-            r * theta.cos(),
-            (pseudo_rand(gs * 13 + 5) - 0.5) * 16_000_000.0,
-            r * theta.sin(),
-        );
+        let mut best: Option<(Vec3, f32)> = None;
+        for attempt in 0..80u32 {
+            let k = attempt.wrapping_mul(100_003);
+            let t = rk_k(1, k);
+            let r = MIN_DIST + t * t * (META_RADIUS - MIN_DIST);
+            let spiral = arm_base + (r / META_RADIUS) * META_TWIST;
+            let scatter = (rk_k(3, k) - 0.5) * 0.4;
+            let theta = spiral + scatter;
+            let c = Vec3::new(
+                r * theta.cos(),
+                (rk_k(5, k) - 0.5) * 16_000_000.0,
+                r * theta.sin(),
+            );
+            // Marge restante par rapport au voisin le plus proche (>= 0 : place libre)
+            let slack = galaxies
+                .iter()
+                .map(|g| c.distance(g.center) - SPACING * (g.radius + radius))
+                .fold(f32::MAX, f32::min);
+            if best.map_or(true, |(_, s)| slack > s) {
+                best = Some((c, slack));
+            }
+            if slack >= 0.0 {
+                break;
+            }
+        }
+        let center = best.map_or(Vec3::ZERO, |(c, _)| c);
 
         galaxies.push(GalaxyConfig {
             center,
             tilt: Quat::from_euler(
                 EulerRot::XYZ,
-                (pseudo_rand(gs * 13 + 13) - 0.5) * 1.5,
-                pseudo_rand(gs * 13 + 15) * tau,
-                (pseudo_rand(gs * 13 + 17) - 0.5) * 1.0,
+                (rk(13) - 0.5) * 1.5,
+                rk(15) * tau,
+                (rk(17) - 0.5) * 1.0,
             ),
-            radius: 1_600_000.0 + pseudo_rand(gs * 13 + 7) * 5_000_000.0,
-            num_arms: 2 + (pseudo_rand(gs * 13 + 9) * 4.0) as usize,
-            twist: 3.0 + pseudo_rand(gs * 13 + 11) * 4.0,
-            core_radius: 10_000.0 + pseudo_rand(gs * 13 + 23) * 20_000.0,
+            radius,
+            num_arms: 2 + (rk(9) * 5.0) as usize,
+            twist: 1.5 + rk(11) * 7.5,
+            kind: crate::galaxy_shape::GalaxyKind::for_index(gi, world_hash),
+            core_radius: 10_000.0 + rk(23) * 20_000.0,
             seed: gs * 1000,
-            arm_stars: 200 + (pseudo_rand(gs * 13 + 19) * 300.0) as usize,
-            scatter_stars: 50 + (pseudo_rand(gs * 13 + 21) * 100.0) as usize,
+            arm_stars: 170 + (rk(19) * 380.0) as usize,
+            scatter_stars: 40 + (rk(31) * 120.0) as usize,
         });
     }
     galaxies
@@ -304,7 +405,7 @@ fn star_color(seed: u32) -> [f32; 3] {
     else { [0.6, 0.7, 1.0] }
 }
 
-fn default_systems(galaxies: &[GalaxyConfig]) -> Vec<StarSystemConfig> {
+fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystemConfig> {
     const NUM_ARMS: usize = 5;
     const ARM_STARS: usize = 10_000;
     const SCATTER_STARS: usize = 2_500;
@@ -333,27 +434,73 @@ fn default_systems(galaxies: &[GalaxyConfig]) -> Vec<StarSystemConfig> {
         }
     };
 
+    // Tout ce qui vit dans un système (étoile, planètes, lunes) dépend de la graine du monde
+    // (les positions suivent la forme des galaxies). Rien d'autre que + - * / ici : le résultat
+    // doit être identique sur toutes les machines (empreinte du monde en multijoueur).
+    let sd = ((world_seed as u32) ^ ((world_seed >> 32) as u32)).wrapping_mul(0x9E37_79B1);
+    let mixed = |x: u32| x.wrapping_add(sd);
+
+    // Une étoile fait 90 000 à 160 000 de rayon : au moins 100 fois ses planètes
     let make_star = |seed: u32| -> (f32, f32, [f32; 3]) {
-        let r_f = pseudo_rand(seed * 5 + 31);
-        let radius = 75.0 + r_f * 175.0;
+        let seed = mixed(seed);
+        let r_f = pseudo_rand(seed.wrapping_mul(5).wrapping_add(31));
+        let radius = 90_000.0 + r_f * 70_000.0;
         let intensity = 8.0 + r_f * 27.0;
-        let sc = star_color(seed * 5 + 37);
+        let sc = star_color(seed.wrapping_mul(5).wrapping_add(37));
         (radius, intensity, sc)
     };
 
-    // `sb` : base des graines de planètes (doit rester loin de u32::MAX)
-    let make_planets = |seed: u32, sb: u32| -> Vec<PlanetConfig> {
-        let n = (pseudo_rand(seed * 3 + 41) * 2.5) as usize;
-        (0..n).map(|pi| {
+    // Proportions (R = rayon de l'étoile) : planète ≤ R/100, lune ≤ planète/3 ; première orbite
+    // à 2,4 R, puis 1 à 1,6 R d'écart ; 1 à 3 planètes, 1 à 2 lunes chacune. Les planètes sont
+    // assez petites pour tenir loin de l'étoile et rester explorables à pied (voir `surface.rs`).
+    // `sb` : base des graines de planètes (doit rester loin de u32::MAX).
+    let make_planets = |seed: u32, sb: u32, star_radius: f32| -> Vec<PlanetConfig> {
+        let (seed, sb) = (mixed(seed), mixed(sb));
+        let n = 1 + (pseudo_rand(seed.wrapping_mul(3).wrapping_add(41)) * 2.999) as usize;
+        let mut orbit = 0.0_f32;
+        let mut planets = Vec::with_capacity(n);
+        for pi in 0..n {
             let pu = pi as u32;
-            PlanetConfig {
-                orbit_distance: 1750.0 + pi as f32 * 1500.0 + pseudo_rand(sb + pu + 60) * 800.0,
-                radius: 100.0 + pi as f32 * 60.0 + pseudo_rand(sb + pu + 50) * 100.0,
-                seed: sb + pu,
-                atmosphere: pseudo_rand(seed * 11 + pu + 71) < 0.35,
+            let r = |k: u32| pseudo_rand(sb.wrapping_add(pu).wrapping_add(k));
+            orbit = if pi == 0 {
+                star_radius * (2.4 + 1.2 * r(60))
+            } else {
+                orbit + star_radius * (1.0 + 0.6 * r(60))
+            };
+            let radius = star_radius / 100.0 * (0.5 + 0.45 * r(50));
+            let atmosphere = pseudo_rand(seed.wrapping_mul(11).wrapping_add(pu).wrapping_add(71)) < 0.35;
+
+            let moons = (0..1 + (r(90) * 1.999) as usize)
+                .map(|mi| {
+                    let mu = mi as u32;
+                    let m = |k: u32| pseudo_rand(sb.wrapping_add(200 + pu * 16 + mu * 4 + k));
+                    let moon_radius = radius / 3.0 * (0.7 + 0.3 * m(0));
+                    MoonConfig {
+                        orbit_distance: radius * 2.4 + moon_radius * 3.0 + mi as f32 * radius * 1.7 + m(1) * radius * 0.5,
+                        radius: moon_radius,
+                        seed: sb.wrapping_add(500 + pu * 8 + mu),
+                        mean_anomaly_0: m(2) * std::f32::consts::TAU,
+                        ..Default::default()
+                    }
+                })
+                .collect();
+
+            planets.push(PlanetConfig {
+                orbit_distance: orbit,
+                radius,
+                sea_level: if atmosphere { 0.2 + r(83) * 0.4 } else { r(83) * 0.1 },
+                terrain_height: radius * (0.025 + r(80) * 0.025),
+                seed: sb.wrapping_add(pu),
+                noise_scale: 1.5 + r(81) * 2.0,
+                detail_scale: 3.0 + r(82) * 3.0,
+                atmosphere,
+                cloud_altitude: 80.0 + radius * 0.05 * (1.0 + r(84)),
+                star_radius,
+                moons,
                 ..Default::default()
-            }
-        }).collect()
+            });
+        }
+        planets
     };
 
     let distant_count: usize = galaxies.iter().skip(1).map(|g| g.arm_stars + g.scatter_stars).sum();
@@ -388,9 +535,10 @@ fn default_systems(galaxies: &[GalaxyConfig]) -> Vec<StarSystemConfig> {
             stars: vec![StarConfig {
                 radius: sr, intensity: si,
                 light_color_r: sc[0], light_color_g: sc[1], light_color_b: sc[2],
+                light_range: StarConfig::light_range_for(sr),
                 ..Default::default()
             }],
-            planets: make_planets(s, (s + 1) * 100),
+            planets: make_planets(s, (s + 1) * 100, sr),
             asteroid_belts: Vec::new(),
         });
     }
@@ -414,38 +562,28 @@ fn default_systems(galaxies: &[GalaxyConfig]) -> Vec<StarSystemConfig> {
             stars: vec![StarConfig {
                 radius: sr, intensity: si,
                 light_color_r: sc[0], light_color_g: sc[1], light_color_b: sc[2],
+                light_range: StarConfig::light_range_for(sr),
                 ..Default::default()
             }],
-            planets: make_planets(s, (s + 1) * 100),
+            planets: make_planets(s, (s + 1) * 100, sr),
             asteroid_belts: Vec::new(),
         });
     }
 
     // ── Galaxies extérieures : mêmes systèmes (étoile + planètes) ─────
     for (gid, gal) in galaxies.iter().enumerate().skip(1) {
-        let gr = gal.radius;
-        let arms = gal.num_arms.max(1);
+        let shape = gal.shape();
+        let total = gal.arm_stars + gal.scatter_stars;
+        let on_structure = (total as f32 * shape.structure_share) as usize;
         let mut local_idx = 0usize;
-        for i in 0..(gal.arm_stars + gal.scatter_stars) {
+        for i in 0..total {
             let s = i as u32 + gal.seed;
-            let (lx, ly, lz) = if i < gal.arm_stars {
-                // Étoiles sur les bras
-                let ab = (i % arms) as f32 * tau / arms as f32;
-                let st = pseudo_rand(s * 7 + 3);
-                let sr = st * st * gr;
-                let sp = ab + (sr / gr) * gal.twist;
-                let w = 0.9 * (1.0 - sr / gr * 0.5);
-                let sc = (pseudo_rand(s * 7 + 5) - 0.5) * w;
-                let thick = 24000.0 * (1.0 - sr / gr * 0.8);
-                (sr * (sp + sc).cos(), (pseudo_rand(s * 7 + 7) - 0.5) * thick, sr * (sp + sc).sin())
+            let mut rng = crate::galaxy_shape::Rng::new(s);
+            let local = if i < on_structure {
+                shape.sample_structure(&mut rng, 0.0)
             } else {
-                // Étoiles dispersées entre les bras
-                let st = pseudo_rand(s * 7 + 3);
-                let sr = st * st * gr * 0.85;
-                let stheta = pseudo_rand(s * 7 + 5) * tau;
-                (sr * stheta.cos(), (pseudo_rand(s * 7 + 7) - 0.5) * 16000.0, sr * stheta.sin())
+                shape.sample_background(&mut rng)
             };
-            let local = bevy::math::Vec3::new(lx, ly, lz);
             // Pas de système dans le trou noir central
             if local.length() < CORE_EXCLUSION { continue; }
             let world = gal.center + gal.tilt * local;
@@ -460,9 +598,10 @@ fn default_systems(galaxies: &[GalaxyConfig]) -> Vec<StarSystemConfig> {
                 stars: vec![StarConfig {
                     radius: sr, intensity: si,
                     light_color_r: sc[0], light_color_g: sc[1], light_color_b: sc[2],
+                    light_range: StarConfig::light_range_for(sr),
                     ..Default::default()
                 }],
-                planets: make_planets(s, (global_idx + 1) * 100),
+                planets: make_planets(s, (global_idx + 1) * 100, sr),
                 asteroid_belts: Vec::new(),
             });
             local_idx += 1;
@@ -591,7 +730,7 @@ impl Default for GameSettings {
             planet_chunk_divisions: 6,
             vsync: true, fps_limit: 0, msaa_samples: 4, shadows: true,
             lod_quality: 1.0, show_clouds: true, show_flares: true, render_scale: 1.0,
-            world_seed: 42,
+            world_seed: DEFAULT_WORLD_SEED,
             player_name: default_player_name(),
             aura_color: default_aura_color(),
             last_join_address: String::new(),
@@ -604,8 +743,8 @@ impl Default for GameSettings {
             guild: None,
             guild_archive: Vec::new(),
             temp_identity: false,
-            systems: default_systems(&default_galaxies()),
-            galaxies: default_galaxies(),
+            systems: default_systems(&default_galaxies(DEFAULT_WORLD_SEED), DEFAULT_WORLD_SEED),
+            galaxies: default_galaxies(DEFAULT_WORLD_SEED),
             planets: default_planets(), stars: default_stars(),
             asteroid_belts: Vec::new(),
             comets: Vec::new(), meteoroids: Vec::new(),
@@ -666,8 +805,9 @@ impl GameSettings {
             settings.save();
             settings
         };
-        s.galaxies = default_galaxies();
-        s.systems = default_systems(&s.galaxies);
+        s.apply_world_save();
+        s.galaxies = default_galaxies(s.world_seed);
+        s.systems = default_systems(&s.galaxies, s.world_seed);
         s.comets.clear();
         s.meteoroids.clear();
         s.voxel_stars.clear();
@@ -682,6 +822,10 @@ impl GameSettings {
         s.magnetars.clear();
         s.neutron_stars.clear();
         s.supernovae.clear();
+        // Nouvelle version (ou ancienne sauvegarde) : on écrit tout de suite world.json et info.json
+        if !data_dir().join("world.json").exists() {
+            s.save();
+        }
         s
     }
 
@@ -697,6 +841,94 @@ impl GameSettings {
         let path = Self::config_path();
         if let Ok(json) = serde_json::to_string(self) {
             fs::write(path, json).ok();
+        }
+        let world = WorldSave::from(self);
+        if let Ok(json) = serde_json::to_string_pretty(&world) {
+            fs::write(data_dir().join("world.json"), json).ok();
+        }
+        let info = SaveInfo::from(self);
+        if let Ok(json) = serde_json::to_string_pretty(&info) {
+            fs::write(data_dir().join("info.json"), json).ok();
+        }
+    }
+
+    /// La sauvegarde du monde prime sur `settings.json` pour tout ce qui la compose.
+    fn apply_world_save(&mut self) {
+        let Ok(text) = fs::read_to_string(data_dir().join("world.json")) else { return };
+        let Ok(world) = serde_json::from_str::<WorldSave>(&text) else { return };
+        self.world_seed = world.world_seed;
+        self.claims = world.claims;
+        self.allies = world.allies;
+        self.enemies = world.enemies;
+        self.known_wormholes = world.known_wormholes;
+        self.clan_tag = world.clan_tag;
+        self.guild = world.guild;
+        self.guild_archive = world.guild_archive;
+    }
+}
+
+/// Sauvegarde du monde : sa graine et ce que le joueur y a fait (`world.json`).
+#[derive(Serialize, Deserialize)]
+struct WorldSave {
+    version: String,
+    world_seed: u64,
+    #[serde(default)] claims: Vec<u32>,
+    #[serde(default)] allies: Vec<String>,
+    #[serde(default)] enemies: Vec<String>,
+    #[serde(default)] known_wormholes: Vec<u32>,
+    #[serde(default)] clan_tag: String,
+    #[serde(default)] guild: Option<crate::guild::GuildRecord>,
+    #[serde(default)] guild_archive: Vec<crate::guild::GuildRecord>,
+}
+
+impl From<&GameSettings> for WorldSave {
+    fn from(s: &GameSettings) -> Self {
+        Self {
+            version: spacespore_common::VERSION.to_string(),
+            world_seed: s.world_seed,
+            claims: s.claims.clone(),
+            allies: s.allies.clone(),
+            enemies: s.enemies.clone(),
+            known_wormholes: s.known_wormholes.clone(),
+            clan_tag: s.clan_tag.clone(),
+            guild: s.guild.clone(),
+            guild_archive: s.guild_archive.clone(),
+        }
+    }
+}
+
+/// Résumé lisible de la partie (`info.json`) : jamais relu par le jeu.
+#[derive(Serialize)]
+struct SaveInfo {
+    game_version: String,
+    save_version: u32,
+    world_seed: u64,
+    galaxies: usize,
+    systems: usize,
+    player_name: String,
+    player_id: u64,
+    clan_tag: String,
+    claimed_systems: usize,
+    known_wormholes: usize,
+    last_saved_unix: u64,
+}
+
+impl From<&GameSettings> for SaveInfo {
+    fn from(s: &GameSettings) -> Self {
+        Self {
+            game_version: spacespore_common::VERSION.to_string(),
+            save_version: s.save_version,
+            world_seed: s.world_seed,
+            galaxies: s.galaxies.len(),
+            systems: s.systems.len(),
+            player_name: s.player_name.clone(),
+            player_id: s.player_id,
+            clan_tag: s.clan_tag.clone(),
+            claimed_systems: s.claims.len(),
+            known_wormholes: s.known_wormholes.len(),
+            last_saved_unix: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs()),
         }
     }
 }
@@ -765,5 +997,119 @@ impl SystemSpatialIndex {
             }
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn galaxies_do_not_touch_each_other() {
+        let g = default_galaxies(DEFAULT_WORLD_SEED);
+        let mut worst = f32::MAX;
+        for i in 0..g.len() {
+            for j in (i + 1)..g.len() {
+                let gap = g[i].center.distance(g[j].center) / (g[i].radius + g[j].radius);
+                worst = worst.min(gap);
+            }
+        }
+        // Jamais collées : au moins 1,5 fois la somme des rayons entre deux centres
+        assert!(worst >= 1.5, "deux galaxies trop proches : {worst}");
+    }
+
+    #[test]
+    fn stars_dwarf_planets_and_planets_dwarf_moons() {
+        let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
+        let systems = default_systems(&galaxies, DEFAULT_WORLD_SEED);
+        let (mut hot, mut temperate, mut cold) = (0, 0, 0);
+        for sys in systems.iter().take(3000) {
+            let star = &sys.stars[0];
+            assert!((90_000.0..=160_000.0).contains(&star.radius), "etoile de rayon {}", star.radius);
+            assert!((1..=3).contains(&sys.planets.len()), "{} planetes", sys.planets.len());
+            let mut previous_edge = star.radius;
+            for p in &sys.planets {
+                // Étoile au moins 100 fois plus grande que la planète, lune au moins 3 fois plus petite
+                assert!(p.radius * 100.0 <= star.radius, "planete {} pour une etoile de {}", p.radius, star.radius);
+                assert!(p.radius >= star.radius / 100.0 * 0.5 - 1.0);
+                assert!(p.orbit_distance - p.radius > previous_edge, "planete dans l'etoile ou dans la precedente");
+                previous_edge = p.orbit_distance + p.radius;
+                assert!(p.orbit_distance + p.radius < star.radius * 8.0, "systeme trop etendu");
+                assert!(p.terrain_height > 0.0 && p.terrain_height < p.radius * 0.06);
+                assert_eq!(p.star_radius, star.radius);
+                assert!((1..=2).contains(&p.moons.len()), "{} lunes", p.moons.len());
+                let mut moon_edge = p.radius + p.terrain_height;
+                for m in &p.moons {
+                    assert!(m.radius * 3.0 <= p.radius * 1.0001, "lune {} pour une planete de {}", m.radius, p.radius);
+                    assert!(m.orbit_distance - m.radius > moon_edge, "lune dans la planete ou dans la lune precedente");
+                    moon_edge = m.orbit_distance + m.radius;
+                }
+                match p.temperature() {
+                    t if t > 100.0 => hot += 1,
+                    t if t > -20.0 => temperate += 1,
+                    _ => cold += 1,
+                }
+            }
+        }
+        // Des mondes brulants, temperes et glaces : de quoi varier les paysages
+        assert!(hot > 100 && temperate > 100 && cold > 100, "chaud {hot}, tempere {temperate}, froid {cold}");
+    }
+
+    #[test]
+    fn the_world_seed_changes_stars_and_planets() {
+        let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
+        let a = default_systems(&galaxies, 42);
+        let b = default_systems(&galaxies, 43);
+        let different = a.iter().zip(&b).take(300).filter(|(x, y)| {
+            x.stars[0].radius.to_bits() != y.stars[0].radius.to_bits()
+                || x.planets.len() != y.planets.len()
+                || x.planets[0].radius.to_bits() != y.planets[0].radius.to_bits()
+        });
+        assert!(different.count() > 250);
+    }
+
+    #[test]
+    fn a_new_version_folder_inherits_the_latest_saves() {
+        let base = std::env::temp_dir().join(format!("spacespore-saves-test-{}", std::process::id()));
+        let old = base.join("v0.7.0");
+        let new = base.join("v0.8.0");
+        fs::create_dir_all(&old).unwrap();
+        fs::create_dir_all(&new).unwrap();
+        fs::write(old.join("settings.json"), "{\"player_id\":7}").unwrap();
+        fs::write(old.join("economy.json"), "{}").unwrap();
+        migrate_saves(&base, &new);
+        assert_eq!(fs::read_to_string(new.join("settings.json")).unwrap(), "{\"player_id\":7}");
+        assert!(new.join("economy.json").exists());
+        // Le dossier de l'ancienne version n'est pas touché
+        assert!(old.join("settings.json").exists());
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn world_save_keeps_the_seed_and_the_player_progress() {
+        let mut s = GameSettings::default();
+        s.world_seed = 1234;
+        s.claims = vec![3, 9];
+        s.known_wormholes = vec![5];
+        let json = serde_json::to_string(&WorldSave::from(&s)).unwrap();
+        let back: WorldSave = serde_json::from_str(&json).unwrap();
+        assert_eq!((back.world_seed, back.claims, back.known_wormholes), (1234, vec![3, 9], vec![5]));
+        assert!(version_folder_name().starts_with('v'));
+    }
+
+    #[test]
+    fn the_generated_world_is_reproducible() {
+        let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
+        let a = default_systems(&galaxies, DEFAULT_WORLD_SEED);
+        let b = default_systems(&galaxies, DEFAULT_WORLD_SEED);
+        assert_eq!(a.len(), b.len());
+        for (x, y) in a.iter().zip(&b).take(500) {
+            assert_eq!(x.planets.len(), y.planets.len());
+            for (p, q) in x.planets.iter().zip(&y.planets) {
+                assert_eq!(p.radius.to_bits(), q.radius.to_bits());
+                assert_eq!(p.orbit_distance.to_bits(), q.orbit_distance.to_bits());
+                assert_eq!(p.moons.len(), q.moons.len());
+            }
+        }
     }
 }

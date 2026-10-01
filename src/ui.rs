@@ -321,6 +321,8 @@ pub enum TargetKind {
     // ── Centre galactique ────────────────────────────────────────────────
     GalacticCore,
     DistantGalaxyCore(u32),
+    /// Ouverture d'un trou de ver : index du système qu'elle dessert.
+    WormholeMouth(usize),
 }
 
 #[derive(Resource)]
@@ -1697,7 +1699,11 @@ fn handle_apply_button(
 fn handle_center_buttons(
     interactions: Query<(&Interaction, &CenterButton), Changed<Interaction>>,
     mut target: ResMut<CameraTarget>,
+    travel: Res<crate::wormhole::WormholeTravel>,
 ) {
+    if travel.active() {
+        return;
+    }
     for (interaction, btn) in &interactions {
         if *interaction == Interaction::Pressed {
             target.0 = btn.0;
