@@ -253,7 +253,7 @@ impl eframe::App for LauncherApp {
                     ui.label(egui::RichText::new(badge).strong().color(color));
                     ui.label(spacespore_common::installed_label());
                 });
-                ui.small("Nouvelle numerotation : AA.MM.JJ_vVERSION.REVISION");
+                ui.small("Nouvelle numerotation : AA.MM.JJ_HH:MM_vVERSION.REVISION (heure UTC)");
                 ui.add_space(8.0);
 
                 // ── Choix du canal ──

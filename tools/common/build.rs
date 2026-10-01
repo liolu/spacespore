@@ -1,5 +1,5 @@
-//! Date de compilation (UTC) au format AA.MM.JJ, pour le numéro de version affiché
-//! (ex. « 26.10.01_v0.9.1.1 »). `SPACESPORE_DATE` (CI) la remplace si elle est définie.
+//! Date et heure de compilation (UTC) au format AA.MM.JJ_HH:MM, pour le numéro de version affiché
+//! (ex. « 26.10.01_16:10_v0.9.1.1 »). `SPACESPORE_DATE` (CI) la remplace si elle est définie.
 
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
     // Algorithme de H. Hinnant : jours depuis 1970-01-01 -> (année, mois, jour)
@@ -22,7 +22,8 @@ fn main() {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs() as i64);
         let (y, m, d) = civil_from_days(secs.div_euclid(86_400));
-        format!("{:02}.{:02}.{:02}", y.rem_euclid(100), m, d)
+        let minutes = secs.rem_euclid(86_400) / 60;
+        format!("{:02}.{:02}.{:02}_{:02}:{:02}", y.rem_euclid(100), m, d, minutes / 60, minutes % 60)
     });
     println!("cargo:rustc-env=SPACESPORE_BUILD_DATE={date}");
 }
