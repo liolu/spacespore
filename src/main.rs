@@ -885,8 +885,8 @@ const GALAXY_JUMP_MIN_ZOOM: f32 = 10_000_000.0 * settings::GALAXY_SCALE;
 
 /// Portée fixe d'un déplacement du vaisseau (le cercle blanc). Au-delà, il faut avancer par
 /// étapes, passer par un trou de ver, ou sauter entre galaxies via leur trou noir.
-/// Un déplacement va d'une étoile à sa voisine (≈ 14 millions) : 10 fois l'écart moyen entre étoiles.
-const MAX_TRAVEL_RANGE: f32 = 1_500_000.0 * settings::GALAXY_SCALE;
+/// Un déplacement va d'une étoile à sa voisine (≈ 15 millions) : quelques fois l'écart entre étoiles.
+const MAX_TRAVEL_RANGE: f32 = 750_000.0 * settings::GALAXY_SCALE;
 /// Zoom maximal de la caméra.
 const MAX_ZOOM: f32 = 40_000_000_000.0;
 
@@ -1639,6 +1639,13 @@ fn setup_fps_display(
             },
         ))
         .with_children(|p| {
+            // Version et build du jeu en cours
+            p.spawn((
+                Text::new(format!("SpaceSpore {}", spacespore_common::installed_label())),
+                TextFont { font_size: 13.0, ..default() },
+                TextColor(Color::srgb(0.7, 0.7, 0.75)),
+            ));
+
             p.spawn((
                 Text::new("FPS: --"),
 

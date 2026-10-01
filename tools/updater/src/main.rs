@@ -8,6 +8,7 @@ use std::process::Command;
 struct UpdateConfig {
     zip_path: String,
     install_dir: String,
+    #[allow(dead_code)] // lu dans le fichier de config, plus utilisé : le launcher lance le jeu
     game_exe: String,
     game_pid: u32,
 }
@@ -56,9 +57,13 @@ fn main() {
         eprintln!("Warning: could not remove update zip: {}", e);
     }
 
-    println!("Update complete! Launching SpaceSpore...");
-    let game_path = Path::new(&config.install_dir).join(&config.game_exe);
-    let _ = Command::new(&game_path).current_dir(&config.install_dir).spawn();
+    // Le jeu ne démarre jamais tout seul : on rouvre le launcher, où il faut cliquer sur « Jouer »
+    println!("Update complete! Opening the launcher...");
+    let install_dir = Path::new(&config.install_dir);
+    let launcher = install_dir.join(spacespore_common::exe_name(spacespore_common::LAUNCHER_BIN));
+    if launcher.exists() {
+        let _ = Command::new(&launcher).current_dir(install_dir).spawn();
+    }
 }
 
 fn wait_for_process(pid: u32) {
