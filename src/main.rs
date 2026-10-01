@@ -364,7 +364,7 @@ fn setup_scene(
     commands.spawn((
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
-            far: 400_000_000.0,
+            far: 400_000_000_000.0,
             ..default()
         }),
 
@@ -660,7 +660,7 @@ fn select_world_target(
         if current_galaxy(&selected, &queries, &settings) != current_gal {
             let now = time.elapsed_secs_f64();
             if !ZoomLevel::is_core(&selected) || ctrl_dist < GALAXY_JUMP_MIN_ZOOM {
-                net.notify("Pour changer de galaxie : dezoomez a plus de 10 000 000 et choisissez son trou noir.", now);
+                net.notify(&format!("Pour changer de galaxie : dezoomez a plus de {:.0} et choisissez son trou noir.", GALAXY_JUMP_MIN_ZOOM), now);
                 return;
             }
             let at_core = settings.galaxies.get(current_gal as usize).zip(ship_q.get_single().ok()).is_some_and(|(g, ship)| {
@@ -870,20 +870,23 @@ fn galaxy_view_distance(kind: &TargetKind, settings: &GameSettings) -> f32 {
         TargetKind::DistantGalaxyCore(id) => id as usize,
         _ => 0,
     };
-    let radius = settings.galaxies.get(gid).map_or(9_000_000.0, |g| g.radius);
-    (radius * 1.5).clamp(2_000_000.0, 5_900_000.0)
+    let radius = settings.galaxies.get(gid).map_or(settings::GALAXY_RADIUS, |g| g.radius);
+    (radius * 1.5).clamp(2_000_000.0 * settings::GALAXY_SCALE, 5_900_000.0 * settings::GALAXY_SCALE)
 }
 
 /// Au-delà de cette distance (changement de galaxie), le vaisseau saute
 /// directement à destination au lieu de voyager en croisière.
-const HYPERJUMP_DIST: f32 = 20_000_000.0;
+const HYPERJUMP_DIST: f32 = 20_000_000.0 * settings::GALAXY_SCALE;
 
 /// Distance de caméra minimale pour pouvoir sélectionner une autre galaxie (saut entre galaxies).
-const GALAXY_JUMP_MIN_ZOOM: f32 = 10_000_000.0;
+const GALAXY_JUMP_MIN_ZOOM: f32 = 10_000_000.0 * settings::GALAXY_SCALE;
 
 /// Portée fixe d'un déplacement du vaisseau (le cercle blanc). Au-delà, il faut avancer par
 /// étapes, passer par un trou de ver, ou sauter entre galaxies via leur trou noir.
-const MAX_TRAVEL_RANGE: f32 = 1_500_000.0;
+/// Un déplacement va d'une étoile à sa voisine (≈ 14 millions) : 10 fois l'écart moyen entre étoiles.
+const MAX_TRAVEL_RANGE: f32 = 1_500_000.0 * settings::GALAXY_SCALE;
+/// Zoom maximal de la caméra.
+const MAX_ZOOM: f32 = 40_000_000_000.0;
 
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZoomLevel {
@@ -901,11 +904,11 @@ impl ZoomLevel {
             ZoomLevel::Planet
         } else if d < 1_600_000.0 {
             ZoomLevel::System
-        } else if d < 2_000_000.0 {
+        } else if d < 60_000_000.0 {
             ZoomLevel::Sector
-        } else if d < 6_000_000.0 {
+        } else if d < 6_000_000.0 * settings::GALAXY_SCALE {
             ZoomLevel::Galaxy
-        } else if d < 20_000_000.0 {
+        } else if d < 20_000_000.0 * settings::GALAXY_SCALE {
             ZoomLevel::Cosmos
         } else {
             ZoomLevel::DeepSpace
@@ -1027,7 +1030,7 @@ fn steer_ship(ship_tf: &mut Transform, hover_pos: Vec3, snap: bool, dt: f32) {
     if snap || dist > HYPERJUMP_DIST || dist <= (1500.0 * dt).max(30.0) {
         ship_tf.translation = hover_pos;
     } else {
-        let cruise = (dist * 0.8).max(3000.0).min(500_000.0);
+        let cruise = (dist * 0.8).max(3000.0).min(50_000_000.0);
         let step = (cruise * dt).min(dist);
         ship_tf.translation += to_hover.normalize() * step;
         ship_tf.look_to(to_hover.normalize(), Vec3::Y);
@@ -1199,7 +1202,7 @@ fn camera_controller(
     // Galaxie sélectionnée depuis l'espace profond : on plonge dedans
     if camera_target.is_changed()
         && ZoomLevel::is_core(&camera_target.0)
-        && ctrl.distance >= 20_000_000.0
+        && ctrl.distance >= 20_000_000.0 * settings::GALAXY_SCALE
     {
         ctrl.zoom_goal = Some(galaxy_view_distance(&camera_target.0, &settings));
     }
@@ -1449,45 +1452,45 @@ fn camera_distance_range(
     match target.0 {
         TargetKind::Planet(_) | TargetKind::Moon(_, _) => {
             // On peut s'approcher jusqu'à 40 du vaisseau : sous 1000, navigation autour de l'astre
-            (40.0, 9_999_999.0)
+            (40.0, MAX_ZOOM)
         }
 
         TargetKind::Star(i) => {
             let r = star_r.or_else(|| settings.stars.get(i).map(|s| s.radius)).unwrap_or(200.0);
 
-            (r * 0.6, 9_999_999.0)
+            (r * 0.6, MAX_ZOOM)
         }
 
         // ── Planètes / corps ──────────────────────────────────────────
 
-        TargetKind::GasPlanet(_) => (220.0 * 1.3, 9_999_999.0),
-        TargetKind::Comet(_) => (80.0, 9_999_999.0),
-        TargetKind::Meteoroid(_) => (30.0, 9_999_999.0),
+        TargetKind::GasPlanet(_) => (220.0 * 1.3, MAX_ZOOM),
+        TargetKind::Comet(_) => (80.0, MAX_ZOOM),
+        TargetKind::Meteoroid(_) => (30.0, MAX_ZOOM),
 
         // ── Étoiles ───────────────────────────────────────────────────
 
-        TargetKind::VoxelStar(_) => (120.0 * 0.5, 9_999_999.0),
-        TargetKind::Protostar(_) => (60.0 * 1.2, 9_999_999.0),
-        TargetKind::DwarfStar(_) => (45.0 * 1.5, 9_999_999.0),
-        TargetKind::MainSequence(_) => (100.0 * 1.2, 9_999_999.0),
-        TargetKind::GiantStar(_) => (350.0 * 0.6, 9_999_999.0),
-        TargetKind::Supergiant(_) => (700.0 * 0.4, 9_999_999.0),
-        TargetKind::Hypergiant(_) => (1400.0 * 0.3, 9_999_999.0),
+        TargetKind::VoxelStar(_) => (120.0 * 0.5, MAX_ZOOM),
+        TargetKind::Protostar(_) => (60.0 * 1.2, MAX_ZOOM),
+        TargetKind::DwarfStar(_) => (45.0 * 1.5, MAX_ZOOM),
+        TargetKind::MainSequence(_) => (100.0 * 1.2, MAX_ZOOM),
+        TargetKind::GiantStar(_) => (350.0 * 0.6, MAX_ZOOM),
+        TargetKind::Supergiant(_) => (700.0 * 0.4, MAX_ZOOM),
+        TargetKind::Hypergiant(_) => (1400.0 * 0.3, MAX_ZOOM),
 
         // ── Rémanents ─────────────────────────────────────────────────
 
-        TargetKind::Nebula => (600.0 * 0.5, 9_999_999.0),
-        TargetKind::BlackHole(_) => (40.0 * 3.0, 100_000_000.0),
-        TargetKind::Pulsar(_) => (28.0 * 4.0, 9_999_999.0),
-        TargetKind::Magnetar(_) => (35.0 * 3.0, 9_999_999.0),
-        TargetKind::NeutronStar(_) => (22.0 * 4.0, 9_999_999.0),
-        TargetKind::Supernova(_) => (500.0, 9_999_999.0),
+        TargetKind::Nebula => (600.0 * 0.5, MAX_ZOOM),
+        TargetKind::BlackHole(_) => (40.0 * 3.0, MAX_ZOOM),
+        TargetKind::Pulsar(_) => (28.0 * 4.0, MAX_ZOOM),
+        TargetKind::Magnetar(_) => (35.0 * 3.0, MAX_ZOOM),
+        TargetKind::NeutronStar(_) => (22.0 * 4.0, MAX_ZOOM),
+        TargetKind::Supernova(_) => (500.0, MAX_ZOOM),
 
         // Ouverture de trou de ver : le vaisseau se pose juste au-dessus (hover = moitié du minimum)
-        TargetKind::WormholeMouth(_) => (5_000.0, 9_999_999.0),
-        TargetKind::GalacticCore => (50_000.0, 400_000_000.0),
+        TargetKind::WormholeMouth(_) => (5_000.0, MAX_ZOOM),
+        TargetKind::GalacticCore => (50_000.0 * settings::GALAXY_SCALE, MAX_ZOOM * 10.0),
         // Comme le trou noir principal : on peut zoomer dans la galaxie extérieure
-        TargetKind::DistantGalaxyCore(_) => (50_000.0, 400_000_000.0),
+        TargetKind::DistantGalaxyCore(_) => (50_000.0 * settings::GALAXY_SCALE, MAX_ZOOM * 10.0),
     }
 }
 

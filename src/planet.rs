@@ -10,7 +10,7 @@ use crate::kepler::{OrbitalElements, DEFAULT_MU};
 use crate::lod::{compute_lod_level, LodChunk, LodLevel};
 use crate::mesher::{build_celestial_chunk_mesh, build_chunk_mesh};
 use crate::galaxy_shape::{CapMode, Shape};
-use crate::settings::{GalaxyConfig, GameSettings, PlanetConfig, SystemSpatialIndex, CORE_EXCLUSION, SYSTEM_CELL_SIZE, STREAM_RADIUS};
+use crate::settings::{GalaxyConfig, GameSettings, PlanetConfig, SystemSpatialIndex, CORE_EXCLUSION, GALAXY_SCALE, SYSTEM_CELL_SIZE, STREAM_RADIUS};
 use crate::surface::{FarMesh, Surface};
 use bevy::render::view::NoFrustumCulling;
 use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, ComputeTaskPool, Task};
@@ -22,10 +22,10 @@ const PLANET_MU_SCALE: f32 = 30.0;
 const STAR_DIVISIONS: usize = 4;
 const MOON_DIVISIONS: usize = 3;
 
-const LOD_STARS_END: f32 = 100_000_000.0;
-const LOD_STARS_GONE: f32 = 120_000_000.0;
-const LOD_CAPS_START: f32 = 70_000_000.0;
-const LOD_CAPS_FULL: f32 = 110_000_000.0;
+const LOD_STARS_END: f32 = 100_000_000.0 * GALAXY_SCALE;
+const LOD_STARS_GONE: f32 = 120_000_000.0 * GALAXY_SCALE;
+const LOD_CAPS_START: f32 = 70_000_000.0 * GALAXY_SCALE;
+const LOD_CAPS_FULL: f32 = 110_000_000.0 * GALAXY_SCALE;
 const LOD_STEPS: usize = 10;
 const STAR_BRIGHTNESS_STEPS: usize = 10;
 const ARM_COLORS: usize = 5;
@@ -415,7 +415,7 @@ fn spawn_galactic_core(
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
 ) {
-    let core_radius = 30_000.0_f32; // trou noir central : 10 fois plus grand
+    let core_radius = 30_000.0_f32 * GALAXY_SCALE; // trou noir central : 10 fois plus grand
 
     let core_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.01, 0.0, 0.02),
@@ -1887,7 +1887,7 @@ fn update_far_star_scale(
         let gal_dist = cam_pos.distance(g.center);
         let raw = ((gal_dist - LOD_STARS_END) / (LOD_STARS_GONE - LOD_STARS_END)).clamp(0.0, 1.0);
         let fade = smoothstep(raw);
-        let brightness = (5_000_000.0 / gal_dist.max(1.0)).clamp(0.05, 1.0) * (1.0 - fade);
+        let brightness = (5_000_000.0 * GALAXY_SCALE / gal_dist.max(1.0)).clamp(0.05, 1.0) * (1.0 - fade);
         let step = ((brightness * (STAR_BRIGHTNESS_STEPS - 1) as f32).round() as usize).min(STAR_BRIGHTNESS_STEPS - 1);
         (gal_dist, fade, step)
     }).collect();
@@ -1915,7 +1915,7 @@ fn update_far_star_scale(
         if *vis != Visibility::Inherited { *vis = Visibility::Inherited; }
         let min_scale = fs.radius * 0.5;
         let angular_scale = dist * 0.005;
-        let dist_shrink = (20_000_000.0 / gal_dist.max(1.0)).clamp(0.05, 1.0);
+        let dist_shrink = (20_000_000.0 * GALAXY_SCALE / gal_dist.max(1.0)).clamp(0.05, 1.0);
         let mut scale = angular_scale.max(min_scale) * dist_shrink;
         if lod_fade > 0.0 { scale *= 1.0 - lod_fade; }
         tf.scale = Vec3::splat(scale);
@@ -1943,7 +1943,7 @@ fn update_arm_capsule_lod(
     }
     gal_dists.insert(0, cam_pos.length());
 
-    const DETAIL_CUTOFF: f32 = 200_000_000.0;
+    const DETAIL_CUTOFF: f32 = 200_000_000.0 * GALAXY_SCALE;
     for (cap, mut tf, mut vis, mut mat) in &mut capsule_q {
         let dist = gal_dists.get(&cap.galaxy_id).copied().unwrap_or(f32::MAX);
 

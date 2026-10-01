@@ -32,8 +32,8 @@ use crate::{CameraController, ZoomLevel};
 
 /// Portée de voisinage : sert seulement à faire grandir un territoire PNJ d'étoile en étoile
 /// (les traits, eux, n'ont aucune limite de distance).
-const LINK_RANGE_MAIN: f32 = 60_000.0;
-const LINK_RANGE_OTHER: f32 = 120_000.0;
+const LINK_RANGE_MAIN: f32 = 60_000.0 * crate::settings::GALAXY_SCALE;
+const LINK_RANGE_OTHER: f32 = 120_000.0 * crate::settings::GALAXY_SCALE;
 /// Factions PNJ de la galaxie principale ; les autres en ont selon leur taille.
 const NPC_MAIN: usize = 14;
 const NPC_MIN_STARS: usize = 10;
@@ -217,7 +217,7 @@ pub fn generate_npcs(settings: &GameSettings, spatial: &SystemSpatialIndex) -> N
         if candidates.is_empty() {
             continue;
         }
-        let wanted = if gid == 0 { NPC_MAIN } else { 1 + (gal.radius / 1_300_000.0) as usize };
+        let wanted = if gid == 0 { NPC_MAIN } else { 1 + (gal.radius / (1_300_000.0 * crate::settings::GALAXY_SCALE)) as usize };
         let mut made = 0;
         for attempt in 0..(wanted * 12) as u32 {
             if made >= wanted {
@@ -339,8 +339,8 @@ const CLOUD_TEXTURE: u32 = 128;
 /// Nuages de la galaxie principale ; les autres en ont selon leur taille.
 const CLOUDS_MAIN: usize = 220;
 /// Au-delà de cette distance à sa galaxie, un nuage n'est plus dessiné.
-const CLOUD_FADE_START: f32 = 100_000_000.0;
-const CLOUD_FADE_END: f32 = 120_000_000.0;
+const CLOUD_FADE_START: f32 = 100_000_000.0 * crate::settings::GALAXY_SCALE;
+const CLOUD_FADE_END: f32 = 120_000_000.0 * crate::settings::GALAXY_SCALE;
 
 #[derive(Resource)]
 struct CloudMaterials {
