@@ -141,7 +141,7 @@ pub fn populate_from_seed(
     let mut orbit = rng.range_f32(1500.0, 2500.0);
 
     let sys = settings.systems.first_mut().expect("at least one system");
-    sys.planets.clear();
+    sys.planets_mut().clear();
     sys.stars.clear();
     sys.asteroid_belts.clear();
 
@@ -177,7 +177,7 @@ pub fn populate_from_seed(
     info!(
         "System generated from seed {} — {} rocky, {} gas, {} comets, {} belts",
         seed,
-        sys.planets.len(),
+        sys.planets().len(),
         res.gas_res.planets.len(),
         res.comet_res.comets.len(),
         sys.asteroid_belts.len(),
@@ -217,7 +217,7 @@ fn generate_rocky_planet(
         moon_orbit += rng.range_f32(150.0, 400.0);
     }
 
-    sys.planets.push(PlanetConfig {
+    sys.planets_mut().push(PlanetConfig {
         orbit_distance: orbit,
         radius,
         sea_level: sea,

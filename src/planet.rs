@@ -1105,7 +1105,7 @@ fn spawn_system_bodies(
     });
     let divs = settings.planet_chunk_divisions;
 
-    for (i, pcfg) in sys.planets.iter().enumerate() {
+    for (i, pcfg) in sys.planets().iter().enumerate() {
         let planet_world_pos = center + Vec3::new(pcfg.orbit_distance, 0.0, 0.0);
         let cam_local = cam_pos - planet_world_pos;
 
@@ -1239,7 +1239,7 @@ pub(crate) fn orbit_planets(
     for (mut tf, pid, si) in &mut planet_q {
         let Some(sys) = settings.systems.get(si.0) else { continue };
         let local_idx = pid.0 - si.0 * 1000;
-        let Some(cfg) = sys.planets.get(local_idx) else { continue };
+        let Some(cfg) = sys.planets().get(local_idx) else { continue };
         let sc = sys.center();
         let elems = OrbitalElements {
             a: cfg.orbit_distance,
@@ -1296,7 +1296,7 @@ pub(crate) fn orbit_moons(
 
         let local_planet = mid.planet_idx - si.0 * 1000;
         let mcfg = settings.systems.get(si.0)
-            .and_then(|sys| sys.planets.get(local_planet))
+            .and_then(|sys| sys.planets().get(local_planet))
             .and_then(|p| p.moons.get(mid.moon_idx));
 
         if let Some(mcfg) = mcfg {
@@ -1518,7 +1518,7 @@ fn rotate_clouds(
         if *vis == Visibility::Hidden { *vis = Visibility::Inherited; }
         let sys_i = cloud.planet_idx / 1000;
         let local_i = cloud.planet_idx % 1000;
-        let Some(pcfg) = settings.systems.get(sys_i).and_then(|s| s.planets.get(local_i)) else {
+        let Some(pcfg) = settings.systems.get(sys_i).and_then(|s| s.planets().get(local_i)) else {
             continue;
         };
         let Some(&planet_pos) = planet_positions.get(&cloud.planet_idx) else { continue };
@@ -1642,7 +1642,7 @@ fn update_lod(
 
         let sys_i = chunk.planet_id / 1000;
         let local_i = chunk.planet_id % 1000;
-        let Some(pcfg) = settings.systems.get(sys_i).and_then(|s| s.planets.get(local_i)) else {
+        let Some(pcfg) = settings.systems.get(sys_i).and_then(|s| s.planets().get(local_i)) else {
             continue;
         };
         let planet_pos = planet_positions.get(&chunk.planet_id).copied().unwrap_or_default();
@@ -1817,7 +1817,7 @@ fn reload_planets(
         let Ok((entity, pid, si, gt)) = roots.get(ev.0) else { continue };
         let local_i = pid.0 % 1000;
         let Some(sys) = settings.systems.get(si.0) else { continue };
-        let Some(pcfg) = sys.planets.get(local_i) else { continue };
+        let Some(pcfg) = sys.planets().get(local_i) else { continue };
 
         let planet_material = materials.add(StandardMaterial {
             base_color: Color::WHITE,
@@ -1865,7 +1865,7 @@ fn reload_moons(
         let Ok((entity, mid, si)) = roots.get(ev.0) else { continue };
         let local_planet = mid.planet_idx % 1000;
         let Some(sys) = settings.systems.get(si.0) else { continue };
-        let Some(pcfg) = sys.planets.get(local_planet) else { continue };
+        let Some(pcfg) = sys.planets().get(local_planet) else { continue };
         let Some(mcfg) = pcfg.moons.get(mid.moon_idx) else { continue };
 
         let planet_material = materials.add(StandardMaterial {
@@ -2101,10 +2101,10 @@ fn rotate_accretion_disk(
 /// Distance du centre d'un système au-delà de laquelle on l'a quitté : dernière orbite, avec ses
 /// lunes et le rayon de la planète, plus une marge.
 /// Rayon de recherche (au plus) d'un système qui contient le vaisseau.
-const MAX_SYSTEM_REACH: f32 = 14_000_000.0;
+pub(crate) const MAX_SYSTEM_REACH: f32 = 14_000_000.0;
 
 fn system_reach(sys: &crate::settings::StarSystemConfig) -> f32 {
-    let planets = sys.planets.iter().map(|p| {
+    let planets = sys.planets().iter().map(|p| {
         let moons = p.moons.iter().map(|m| m.orbit_distance + m.radius).fold(0.0_f32, f32::max);
         p.orbit_distance + p.radius.max(moons)
     });

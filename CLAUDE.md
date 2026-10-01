@@ -37,6 +37,13 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   droit, molette), `V` = atterrir (sortir du vaisseau) puis marcher, `V` = redecoller. Le dessous du vaisseau reste
   parallele a la surface. `src/terrain.rs` = terrain voxel (champ de hauteur, quadtree de tuiles),
   `src/surface.rs` = vol, atterrissage, marche, lumiere. Saves : `saves/vX.Y.Z/` (settings, world, info).
+- Generation 0.10 (`ROADMAP-0.10.md`) : module `src/planetgen/`. Les planetes et lunes ne sont plus stockees :
+  `sys.planets()` les recalcule depuis le genome du systeme (cache libere loin du vaisseau), `planets_mut()`
+  pour l'editeur, `planets_uncached()` pour parcourir tous les systemes. Profils `StarProfile`/`PlanetProfile`,
+  sous-graines par couche (`seeds.rs`, numeros figes), conversions dans `units.rs` uniquement, valeurs
+  vivantes = depart + delta (`live.rs`, `body_deltas` de `world.json`). Test de non-regression du monde :
+  `planetgen::tests::planets_on_demand_give_exactly_the_old_world` (changer la generation = nouvelles
+  empreintes + `PROTOCOL`). Chat : `/profil` exporte l'astre cible en JSON, `/graine` = code court.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

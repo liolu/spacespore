@@ -487,7 +487,7 @@ fn buy_star(dialog: &mut NpcDialog, eco: &mut Economy, npcs: &mut NpcTerritories
         return ("Ciblez une etoile de ce territoire avant d'ouvrir la discussion.".into(), false);
     };
     let Some(info) = settings.systems.get(sys) else { return ("Etoile inconnue.".into(), false) };
-    let (name, planets) = (info.name.clone(), info.planets.len());
+    let (name, planets) = (info.name.clone(), info.planets().len());
     if npcs.factions[fi].stars.len() <= economy::MIN_FACTION_STARS {
         return ("\"Je ne vendrai pas une etoile de plus : c'est tout ce qui nous reste.\"".into(), false);
     }
@@ -611,9 +611,9 @@ fn rebuild_dialog(
             kids.push(commands.spawn(text("Territoire", 12.0, TEXT_DIM)).id());
             match dialog.sys.filter(|&s| npcs.faction_index_of(s) == Some(fi)).and_then(|s| settings.systems.get(s)) {
                 Some(info) => {
-                    let price = economy::star_price(&eco, fi, info.planets.len());
+                    let price = economy::star_price(&eco, fi, info.planets().len());
                     let b = opt(&mut commands, &format!("Acheter ({price} cr)"), NpcAction::BuyStar);
-                    kids.push(row(&mut commands, format!("{}  -  {} planetes", info.name, info.planets.len()), TEXT_COLOR, &[b]));
+                    kids.push(row(&mut commands, format!("{}  -  {} planetes", info.name, info.planets().len()), TEXT_COLOR, &[b]));
                 }
                 None => kids.push(commands.spawn(text("Ciblez une de leurs etoiles, puis E, pour l'acheter.", 11.0, TEXT_DIM)).id()),
             }
