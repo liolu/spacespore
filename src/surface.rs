@@ -1225,7 +1225,8 @@ fn update_hud(
 ) {
     let label = match surface.phase {
         Phase::Orbit => match body_params(&settings, &target.0) {
-            Some(_) => "Zoomez sous 1000 pour naviguer autour de l'astre   Entree : atterrir (visez un point de sa surface)".to_string(),
+            Some(_) => "Zoomez sous 1000 pour naviguer autour de l'astre   Entree : atterrir   P : planete suivante   M : lune".to_string(),
+            None if matches!(target.0, TargetKind::Star(_)) => "P : aller a la planete suivante du systeme".to_string(),
             None => String::new(),
         },
         Phase::Flying => "ZQSD/WASD : voler   A/D : tourner   Maj : accelerer   Espace/Ctrl : monter/descendre\nClic droit : orbiter   Molette : zoom (>1000 : orbite)   Entree : atterrir".to_string(),

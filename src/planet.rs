@@ -1600,7 +1600,8 @@ fn update_star_visibility(
             if let Ok((mut vis, mut tf)) = beacon_q.get_mut(child) {
                 *vis = if far { Visibility::Inherited } else { Visibility::Hidden };
                 if far {
-                    let scale_factor = (dist / detail_dist).clamp(1.0, 10.0);
+                    // De loin la boule ne rétrécit pas sous ~0,25 % de la distance : l'étoile reste un point visible
+                    let scale_factor = (dist * 0.0025 / (lod.radius * 0.8).max(1.0)).max(1.0);
                     tf.scale = Vec3::splat(scale_factor);
                 } else {
                     tf.scale = Vec3::ONE;
