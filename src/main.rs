@@ -793,8 +793,9 @@ pub struct CameraController {
 }
 
 /// Limite du zoom 1 : en dessous, on reste verrouillé dans le système courant.
-/// Les systèmes s'étendent sur ~200 000 unités (planètes géantes) : toute l'échelle de zoom suit.
-pub const ZOOM_PLANET_MAX: f32 = 200_000.0;
+/// Un système s'étend sur ~1 million d'unités (étoile de 100 000 de rayon, planètes à 2,4 à 7 rayons) :
+/// le niveau « Planète » les contient en entier.
+pub const ZOOM_PLANET_MAX: f32 = 1_200_000.0;
 
 /// Distance de caméra pour voir une galaxie entière (reste au zoom 4 pour
 /// pouvoir cliquer ses étoiles).
@@ -816,7 +817,7 @@ const GALAXY_JUMP_MIN_ZOOM: f32 = 10_000_000.0;
 
 /// Portée fixe d'un déplacement du vaisseau (le cercle blanc). Au-delà, il faut avancer par
 /// étapes, passer par un trou de ver, ou sauter entre galaxies via leur trou noir.
-const MAX_TRAVEL_RANGE: f32 = 600_000.0;
+const MAX_TRAVEL_RANGE: f32 = 1_500_000.0;
 
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZoomLevel {
@@ -832,7 +833,7 @@ impl ZoomLevel {
     fn from_distance(d: f32) -> Self {
         if d < ZOOM_PLANET_MAX {
             ZoomLevel::Planet
-        } else if d < 600_000.0 {
+        } else if d < 1_600_000.0 {
             ZoomLevel::System
         } else if d < 2_000_000.0 {
             ZoomLevel::Sector
@@ -894,6 +895,22 @@ impl ZoomLevel {
 /// Hauteur fixe du vaisseau au-dessus de l'astre ciblé : toujours au-dessus, quelle que soit sa
 /// taille (une géante ne l'engloutit pas), et indépendante du zoom.
 fn hover_height(target: &CameraTarget, settings: &GameSettings) -> f32 {
+    hover_height_for(target, settings, None)
+}
+
+/// Rayon de l'étoile ciblée (chargée : `système * 1000 + n` ; lointaine : indice du système).
+fn star_radius(kind: &TargetKind, queries: &TargetQueries, settings: &GameSettings) -> Option<f32> {
+    let TargetKind::Star(id) = *kind else { return None };
+    let loaded = queries.star_q.iter().any(|(_, s)| s.0 == id);
+    let (system, index) = if loaded { (id / 1000, id % 1000) } else { (id, 0) };
+    settings.systems.get(system)?.stars.get(index).map(|s| s.radius)
+}
+
+fn hover_height_for(target: &CameraTarget, settings: &GameSettings, star_r: Option<f32>) -> f32 {
+    // Étoile : au-dessus de sa surface (elles font 100 000 de rayon et plus)
+    if let Some(r) = star_r {
+        return r * 1.3;
+    }
     // Trou noir : le vaisseau se place au-dessus de la sphère, pas à l'intérieur
     let core_radius = match target.0 {
         TargetKind::GalacticCore => settings.galaxies.first().map(|g| g.core_radius),
@@ -907,7 +924,7 @@ fn hover_height(target: &CameraTarget, settings: &GameSettings) -> f32 {
     if let Some(params) = surface::body_params(settings, &target.0) {
         return surface::hover_radius(&params);
     }
-    let (min_distance, _) = camera_distance_range(target, settings);
+    let (min_distance, _) = camera_distance_range(target, settings, None);
     (min_distance * 0.5).max(80.0)
 }
 
@@ -920,9 +937,10 @@ fn hover_position(
     surface: &surface::Surface,
     net: &Net,
     zoom_distance: f32,
+    star_r: Option<f32>,
 ) -> Vec3 {
     let up = surface.hover_dir(&target.0).unwrap_or(Vec3::Y);
-    target_pos + up * hover_height(target, settings) + hover_offset(&target.0, net, zoom_distance)
+    target_pos + up * hover_height_for(target, settings, star_r) + hover_offset(&target.0, net, zoom_distance)
 }
 
 /// Décalage du point de stationnement : aucun sur un trou noir ou un trou de ver (le vaisseau s'y
@@ -939,7 +957,8 @@ fn hover_offset(kind: &TargetKind, net: &Net, zoom_distance: f32) -> Vec3 {
 fn steer_ship(ship_tf: &mut Transform, hover_pos: Vec3, snap: bool, dt: f32) {
     let to_hover = hover_pos - ship_tf.translation;
     let dist = to_hover.length();
-    if snap || dist > HYPERJUMP_DIST || dist <= 30.0 {
+    // Un astre en orbite se déplace de plusieurs unités par image : on le suit sans « croisière »
+    if snap || dist > HYPERJUMP_DIST || dist <= (1500.0 * dt).max(30.0) {
         ship_tf.translation = hover_pos;
     } else {
         let cruise = (dist * 0.8).max(3000.0).min(500_000.0);
@@ -1038,6 +1057,7 @@ fn camera_controller(
     }
 
     // ── Mode vaisseau (defaut) : vaisseau orbite l'astre ─────────────
+    let star_r = star_radius(&camera_target.0, &queries, &settings);
     let raw_target = resolve_target(&camera_target, &queries, &settings);
     let target_pos = if raw_target == Vec3::ZERO && ctrl.last_target_pos.length_squared() > 100.0 {
         ctrl.last_target_pos
@@ -1054,12 +1074,14 @@ fn camera_controller(
 
         let sp = if let Ok((mut ship_tf, mut ship_vis)) = ship_q.get_single_mut() {
             let hide_ship = matches!(*zoom_level, ZoomLevel::Galaxy | ZoomLevel::Cosmos | ZoomLevel::DeepSpace);
-            let hover_pos = hover_position(target_pos, &camera_target, &settings, &queries.surface, &net, ctrl.distance);
+            let hover_pos = hover_position(target_pos, &camera_target, &settings, &queries.surface, &net, ctrl.distance, star_r);
             if !travel.active() {
                 // Caché (vue galaxie) : le vaisseau se place quand même sur son astre, sans croisière
+                let (before, forward) = (ship_tf.translation, *ship_tf.forward());
                 steer_ship(&mut ship_tf, hover_pos, hide_ship, time.delta_secs());
                 if surface::body_params(&settings, &camera_target.0).is_some() {
-                    surface::level_ship(&mut ship_tf, target_pos);
+                    let cruising = ship_tf.translation.distance(before) > 150.0;
+                    surface::level_ship(&mut ship_tf, target_pos, forward, cruising);
                 }
             }
             if hide_ship {
@@ -1138,7 +1160,7 @@ fn camera_controller(
 
     ctrl.pitch = ctrl.pitch.clamp(-1.5, 1.5);
 
-    let (min_dist, max_dist) = camera_distance_range(&camera_target, &settings);
+    let (min_dist, max_dist) = camera_distance_range(&camera_target, &settings, star_r);
     ctrl.distance = ctrl.distance.clamp(min_dist, max_dist);
 
     *zoom_level = ZoomLevel::from_distance(ctrl.distance);
@@ -1148,12 +1170,14 @@ fn camera_controller(
     // ── Vaisseau : croisière puis posé au-dessus de l'astre ────────
     let ship_pos = if let Ok((mut ship_tf, mut ship_vis)) = ship_q.get_single_mut() {
         let hide_ship = matches!(*zoom_level, ZoomLevel::Galaxy | ZoomLevel::Cosmos | ZoomLevel::DeepSpace);
-        let hover_pos = hover_position(target_pos, &camera_target, &settings, &queries.surface, &net, ctrl.distance);
+        let hover_pos = hover_position(target_pos, &camera_target, &settings, &queries.surface, &net, ctrl.distance, star_r);
         if !travel.active() {
             // Caché (vue galaxie) : le vaisseau se place quand même sur son astre, sans croisière
+            let (before, forward) = (ship_tf.translation, *ship_tf.forward());
             steer_ship(&mut ship_tf, hover_pos, hide_ship, time.delta_secs());
             if surface::body_params(&settings, &camera_target.0).is_some() {
-                surface::level_ship(&mut ship_tf, target_pos);
+                let cruising = ship_tf.translation.distance(before) > 150.0;
+                surface::level_ship(&mut ship_tf, target_pos, forward, cruising);
             }
         }
         if hide_ship {
@@ -1354,6 +1378,7 @@ fn resolve_target(
 fn camera_distance_range(
     target: &CameraTarget,
     settings: &GameSettings,
+    star_r: Option<f32>,
 ) -> (f32, f32) {
     match target.0 {
         TargetKind::Planet(_) | TargetKind::Moon(_, _) => {
@@ -1362,13 +1387,9 @@ fn camera_distance_range(
         }
 
         TargetKind::Star(i) => {
-            let r = settings
-                .stars
-                .get(i)
-                .map(|s| s.radius)
-                .unwrap_or(200.0);
+            let r = star_r.or_else(|| settings.stars.get(i).map(|s| s.radius)).unwrap_or(200.0);
 
-            (r * 0.5, 9_999_999.0)
+            (r * 0.6, 9_999_999.0)
         }
 
         // ── Planètes / corps ──────────────────────────────────────────
@@ -1918,8 +1939,8 @@ fn draw_planet_trails(
     mut trails: Local<std::collections::HashMap<usize, std::collections::VecDeque<Vec3>>>,
     mut gizmos: Gizmos,
 ) {
-    const MAX_POINTS: usize = 90;
-    const STEP: f32 = 40.0;
+    const MAX_POINTS: usize = 120;
+    const STEP: f32 = 3_000.0;
     // Seulement aux zooms où l'on voit les planètes
     if !matches!(*zoom, ZoomLevel::Planet | ZoomLevel::System) || time.delta_secs() == 0.0 {
         trails.clear();
@@ -1932,7 +1953,7 @@ fn draw_planet_trails(
         let trail = trails.entry(id.0).or_default();
         match trail.back() {
             // Saut (système rechargé) : on repart de zéro
-            Some(last) if last.distance(pos) > 20_000.0 => trail.clear(),
+            Some(last) if last.distance(pos) > 400_000.0 => trail.clear(),
             Some(last) if last.distance(pos) < STEP => {}
             _ => {
                 trail.push_back(pos);

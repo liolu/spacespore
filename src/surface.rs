@@ -90,12 +90,12 @@ pub fn body_params(settings: &GameSettings, kind: &TargetKind) -> Option<BodyPar
 
 /// Rayon (depuis le centre) auquel le vaisseau stationne au-dessus d'un astre.
 pub fn hover_radius(p: &BodyParams) -> f32 {
-    p.radius + p.terrain_height * 0.6 + p.radius * 0.12
+    p.radius + p.terrain_height * 0.6 + p.radius * 0.15 + 150.0
 }
 
-/// Distance minimale de la caméra au vaisseau autour d'un astre.
-pub fn min_camera_distance(p: &BodyParams) -> f32 {
-    p.radius * 0.3
+/// Épaisseur d'air visible depuis le sol : le ciel bleu s'efface avec l'altitude.
+fn atmosphere_depth(p: &BodyParams) -> f32 {
+    (p.radius * 0.12).max(300.0)
 }
 
 /// Repousse la caméra hors de l'astre pour qu'elle ne passe jamais sous sa surface.
@@ -336,6 +336,10 @@ pub struct Surface {
     fdist: f32,
     fyaw: f32,
     fpitch: f32,
+    /// Le vaisseau descend à l'altitude de croisière en entrant en navigation.
+    fdescend: bool,
+    /// Instant jusqu'auquel un zoom avant récent compte comme « je veux approcher ».
+    zoom_in_until: f64,
 }
 
 impl Default for Surface {
@@ -367,6 +371,8 @@ impl Default for Surface {
             fdist: FLIGHT_ZOOM * 0.5,
             fyaw: 0.0,
             fpitch: 0.35,
+            fdescend: false,
+            zoom_in_until: 0.0,
         }
     }
 }
@@ -438,9 +444,12 @@ fn begin_descent(
 
 /// Le dessous du vaisseau reste parallèle à la surface de l'astre : son « haut » est la verticale
 /// locale, et son nez suit l'horizontale.
-pub fn level_ship(ship: &mut Transform, center: Vec3) {
+///
+/// `prev_forward` est le nez au tour précédent : il n'est abandonné que si le vaisseau fait un vrai
+/// trajet (`cruising`), sinon le petit déplacement qui suit l'astre en orbite ferait trembler le nez.
+pub fn level_ship(ship: &mut Transform, center: Vec3, prev_forward: Vec3, cruising: bool) {
     let up = (ship.translation - center).normalize_or(Vec3::Y);
-    let forward = tangent(*ship.forward(), up);
+    let forward = tangent(if cruising { *ship.forward() } else { prev_forward }, up);
     ship.rotation = look(Vec3::ZERO, forward, up).rotation;
 }
 
@@ -586,11 +595,15 @@ fn surface_control(
             return;
         }
         let kind = ctx.target.0;
-        // Zoom sous 1000 sur une planète ou une lune : navigation autour de l'astre
-        if ctrl.distance < FLIGHT_ZOOM {
+        // Zoom sous 1000 sur une planète ou une lune : navigation autour de l'astre (seulement si on
+        // vient de zoomer : au lancement ou après un changement de cible, la vue reste orbitale)
+        if wheel > 0.0 {
+            surface.zoom_in_until = now + 0.7;
+        }
+        if ctrl.distance < FLIGHT_ZOOM && now < surface.zoom_in_until {
             if let (Some(params), Some(center)) = (body_params(&ctx.settings, &kind), ctx.center(&kind)) {
                 let local = ship_tf.translation - center;
-                if (local.length() - hover_radius(&params)).abs() < 400.0 {
+                if (local.length() - hover_radius(&params)).abs() < params.radius * 0.1 + 250.0 {
                     let up = local.normalize_or(Vec3::Y);
                     surface.terrain = Some(Terrain::new(params));
                     surface.body = Some(kind);
@@ -601,6 +614,7 @@ fn surface_control(
                     surface.fdist = ctrl.distance.clamp(60.0, FLIGHT_ZOOM * 0.95);
                     surface.fyaw = 0.0;
                     surface.fpitch = 0.35;
+                    surface.fdescend = true;
                     surface.phase = Phase::Flying;
                     *ship_vis = Visibility::Inherited;
                     net.notify("Navigation : ZQSD/WASD voler, Maj accelerer, Espace/Ctrl monter/descendre, Entree atterrir, molette pour revenir.", now);
@@ -687,8 +701,8 @@ fn surface_control(
                 } else {
                     // De retour en orbite : le vaisseau stationne au-dessus du point de décollage
                     surface.hover = Some((kind, dir));
-                    ctrl.distance = min_camera_distance(&params);
-                    ctrl.zoom_goal = Some(params.radius * 0.9);
+                    ctrl.distance = FLIGHT_ZOOM * 1.2;
+                    ctrl.zoom_goal = Some((params.radius * 2.5).max(2_500.0));
                     ctrl.last_target_pos = center;
                     surface.abort();
                     clear.0 = SPACE_SKY;
@@ -742,7 +756,7 @@ fn surface_control(
                 surface.r0 = surface.ship_local.length();
                 surface.r1 = hover_radius(&params);
                 surface.scale0 = surface.ship_scale;
-                surface.scale1 = min_camera_distance(&params) * 0.008;
+                surface.scale1 = FLIGHT_ZOOM * 1.2 * 0.008;
                 surface.heading = tangent(surface.ship_rot * Vec3::NEG_Z, dir);
                 surface.t = 0.0;
                 surface.dur = (2.5 + (surface.r1 - surface.r0) / 8000.0).clamp(2.5, 6.0);
@@ -776,19 +790,32 @@ fn surface_control(
                     surface.fpitch = (surface.fpitch + look_delta.y * sens).clamp(-0.2, 1.4);
                 }
                 if wheel != 0.0 {
-                    surface.fdist *= (-wheel * 0.12).exp();
+                    surface.fdist = (surface.fdist * (-wheel * 0.12).exp()).max(20.0);
+                }
+                if vertical != 0.0 {
+                    surface.fdescend = false;
                 }
             }
 
             // Cap, vitesse et altitude
             heading = (Quat::from_axis_angle(up, turn * 1.3 * dt) * heading).normalize();
-            let top_speed = (terrain.params.radius * 0.1).clamp(300.0, 1500.0) * if boost { 4.0 } else { 1.0 };
+            let top_speed = (terrain.params.radius * 0.15).clamp(120.0, 1500.0) * if boost { 4.0 } else { 1.0 };
             surface.fspeed += (forward * top_speed - surface.fspeed) * (1.0 - (-2.0 * dt).exp());
             surface.fvert += (vertical * 400.0 - surface.fvert) * (1.0 - (-4.0 * dt).exp());
             let next = (surface.fpos + heading * surface.fspeed * dt).normalize();
             let ground = terrain.ground(next).top;
             let ceiling = hover_radius(&params);
-            let r = (r + surface.fvert * dt).clamp(ground + 25.0, ceiling.max(ground + 100.0));
+            // Entrée en navigation : on descend d'abord à 150 au-dessus du relief
+            let mut r = r + surface.fvert * dt;
+            if surface.fdescend {
+                let above = r - ground - 150.0;
+                if above > 1.0 {
+                    r -= ((above * 2.0).clamp(30.0, 2000.0) * dt).min(above);
+                } else {
+                    surface.fdescend = false;
+                }
+            }
+            let r = r.clamp(ground + 25.0, ceiling.max(ground + 100.0));
             surface.fpos = next * r;
             surface.heading = tangent(heading, next);
 
@@ -808,6 +835,7 @@ fn surface_control(
             let cam_pos = center + cam_local;
             *cam_tf = look(cam_pos, ship_pos + next * (0.4 * scale) - cam_pos, next);
             surface.terrain = Some(terrain);
+            ctrl.distance = surface.fdist;
 
             // Dézoom au-delà de 1000 : retour à la vue orbitale, au-dessus de l'endroit survolé
             if surface.fdist >= FLIGHT_ZOOM {
@@ -843,7 +871,7 @@ fn surface_control(
             .map(|d| d.normalize_or(Vec3::Y));
         let blue = if params.atmosphere {
             let day = sun.map_or(0.0, |s| smoothstep((up.dot(s) + 0.15) / 0.35));
-            let air = (1.0 - altitude / (params.radius * 0.12)).clamp(0.0, 1.0);
+            let air = (1.0 - altitude / atmosphere_depth(&params)).clamp(0.0, 1.0);
             day * air
         } else {
             0.0
@@ -916,7 +944,7 @@ fn surface_light(
     let up = cam_local.normalize_or(Vec3::Y);
     let altitude = cam_local.length() - params.radius;
     ambient.brightness = if params.atmosphere {
-        let day = smoothstep((up.dot(to_star) + 0.15) / 0.35) * (1.0 - altitude / (params.radius * 0.12)).clamp(0.0, 1.0);
+        let day = smoothstep((up.dot(to_star) + 0.15) / 0.35) * (1.0 - altitude / atmosphere_depth(&params)).clamp(0.0, 1.0);
         AMBIENT_NIGHT + (AMBIENT_DAY - AMBIENT_NIGHT) * day
     } else {
         AMBIENT_AIRLESS

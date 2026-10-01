@@ -24,11 +24,12 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
 ## Structure
 
 - Cargo workspace : root = jeu, `tools/` = common/installer/updater/launcher
-- Planetes et lunes tres grandes (rayon 6 000 a 13 000, lunes 1 500 a 3 500), explorables :
-  `Entree` atterrit sur l'astre cible (a l'endroit pointe par la souris), `Entree` redecolle.
-  `src/terrain.rs` = terrain voxel (champ de hauteur, quadtree de tuiles, maillage), `src/surface.rs` =
-  atterrissage, marche (ZQSD/WASD, Maj, Espace), lumiere et tuiles. Pendant un sejour le maillage lointain
-  de la planete (`FarMesh`) est remplace par les tuiles.
+- Proportions d'un systeme (generees depuis la graine du monde, `settings.rs`) : etoile 90 000 a 160 000 de
+  rayon, planete <= etoile/100, lune <= planete/3, premiere orbite a 2,4 rayons d'etoile. Planetes et lunes
+  sont explorables : zoomer sous 1000 du vaisseau = navigation basse altitude (ZQSD, Maj, Espace/Ctrl, clic
+  droit, molette), `Entree` = atterrir puis marcher, `Entree` = redecoller. Le dessous du vaisseau reste
+  parallele a la surface. `src/terrain.rs` = terrain voxel (champ de hauteur, quadtree de tuiles),
+  `src/surface.rs` = vol, atterrissage, marche, lumiere. Saves : `saves/vX.Y.Z/` (settings, world, info).
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

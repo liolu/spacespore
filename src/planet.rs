@@ -10,15 +10,18 @@ use crate::kepler::{OrbitalElements, DEFAULT_MU};
 use crate::lod::{compute_lod_level, LodChunk, LodLevel};
 use crate::mesher::{build_celestial_chunk_mesh, build_chunk_mesh};
 use crate::galaxy_shape::{CapMode, Shape};
-use crate::settings::{GalaxyConfig, GameSettings, PlanetConfig, SystemSpatialIndex, CORE_EXCLUSION, LIGHT_DISTANCE_SCALE, SYSTEM_CELL_SIZE, STREAM_RADIUS};
+use crate::settings::{GalaxyConfig, GameSettings, PlanetConfig, SystemSpatialIndex, CORE_EXCLUSION, SYSTEM_CELL_SIZE, STREAM_RADIUS};
 use crate::surface::{FarMesh, Surface};
 use bevy::render::view::NoFrustumCulling;
 use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, ComputeTaskPool, Task};
 use crate::astre::{AstreLodRoot, ReloadAstre};
 use crate::ship::Ship;
-/// Les planètes géantes sont loin de leur étoile : sans ce surplus (en plus du carré de l'échelle
-/// des orbites), elles restent presque noires vues de l'espace.
-const STAR_LIGHT_BOOST: f32 = 40.0;
+/// Taille d'affichage maximale d'une étoile lointaine (billboard) : les vraies étoiles sont
+/// énormes, mais de loin ce n'est qu'un point.
+const FAR_STAR_RADIUS: f32 = 250.0;
+/// Les planètes tournent plus vite que ne le voudrait la gravité d'orbites aussi larges : sans
+/// cela, un tour durerait des heures et le soleil ne bougerait jamais dans le ciel.
+const PLANET_MU_SCALE: f32 = 30.0;
 const STAR_DIVISIONS: usize = 4;
 const MOON_DIVISIONS: usize = 3;
 
@@ -351,9 +354,9 @@ fn generate_all(
             commands.spawn((
                 Mesh3d(quad_meshes[group].clone()),
                 MeshMaterial3d(atlas_mat.clone()),
-                Transform::from_translation(center).with_scale(Vec3::splat(star_cfg.radius * 0.5)),
+                Transform::from_translation(center).with_scale(Vec3::splat(star_cfg.radius.min(FAR_STAR_RADIUS) * 0.5)),
                 NotShadowCaster,
-                FarStar { sys_idx: si, radius: star_cfg.radius, galaxy_id: sys.galaxy_id },
+                FarStar { sys_idx: si, radius: star_cfg.radius.min(FAR_STAR_RADIUS), galaxy_id: sys.galaxy_id },
             ));
         }
     }
@@ -951,7 +954,7 @@ fn spawn_system_bodies(
                 for gy in 0..STAR_DIVISIONS {
                     let mesh = build_celestial_chunk_mesh(
                         face, gx, gy, STAR_DIVISIONS,
-                        star_cfg.radius, 5.0,
+                        star_cfg.radius, (star_cfg.radius * 0.004).max(5.0),
                         99 + i as u32, 2.0,
                         star_color_low, star_color_high, star_lod,
                     );
@@ -985,7 +988,7 @@ fn spawn_system_bodies(
         let r = star_cfg.light_color_r;
         let g = star_cfg.light_color_g;
         let b = star_cfg.light_color_b;
-        let intensity = star_cfg.intensity * 2_000_000.0 * 100.0 * LIGHT_DISTANCE_SCALE * LIGHT_DISTANCE_SCALE * STAR_LIGHT_BOOST;
+        let intensity = star_cfg.lumens();
         let light = commands
             .spawn((
                 PointLight {
@@ -1154,7 +1157,7 @@ pub(crate) fn orbit_planets(
             omega: cfg.arg_periapsis,
             m0: cfg.mean_anomaly_0,
         };
-        let pos = elems.position(t, DEFAULT_MU);
+        let pos = elems.position(t, DEFAULT_MU * PLANET_MU_SCALE);
         tf.translation = sc + pos;
     }
 }
@@ -1308,7 +1311,9 @@ fn update_flare_voxels(
         };
 
         let t = time.elapsed_secs() * scfg.flare_speed;
-        let voxel_size = scfg.flare_size;
+        // Les réglages d'éruption sont donnés pour une étoile de rayon 250
+        let k = (scfg.radius / 250.0).max(1.0);
+        let voxel_size = scfg.flare_size * k;
         let half = voxel_size * 0.5;
 
         let mut positions: Vec<[f32; 3]> = Vec::new();
@@ -1361,8 +1366,8 @@ fn update_flare_voxels(
                 dir.cross(Vec3::Y).normalize()
             };
 
-            let height = scfg.flare_height * life;
-            let half_spread = scfg.flare_distance.max(5.0) * 0.5;
+            let height = scfg.flare_height * k * life;
+            let half_spread = scfg.flare_distance.max(5.0) * k * 0.5;
 
             // Positions relatives à l'étoile (le maillage suit l'étoile)
             let start = (dir + perp * half_spread / scfg.radius).normalize() * scfg.radius;
@@ -1572,19 +1577,21 @@ fn update_lod(
     }
 }
 
-const STAR_DETAIL_DIST: f32 = 16000.0;
+/// L'étoile est dessinée en détail tant que la caméra est à moins de 6 rayons, sinon une sphère lisse.
+const STAR_DETAIL_RADII: f32 = 6.0;
 
 fn update_star_visibility(
     camera_q: Query<&GlobalTransform, With<Camera3d>>,
-    star_q: Query<(&GlobalTransform, &Children), With<StarRoot>>,
+    star_q: Query<(&GlobalTransform, &Children, &AstreLodRoot), With<StarRoot>>,
     mut chunk_vis_q: Query<&mut Visibility, (With<StarChunk>, Without<StarBeacon>)>,
     mut beacon_q: Query<(&mut Visibility, &mut Transform), (With<StarBeacon>, Without<StarChunk>)>,
 ) {
     let cam_pos = camera_q.single().translation();
 
-    for (star_gt, children) in &star_q {
+    for (star_gt, children, lod) in &star_q {
         let dist = cam_pos.distance(star_gt.translation());
-        let far = dist > STAR_DETAIL_DIST;
+        let detail_dist = (lod.radius * STAR_DETAIL_RADII).max(1000.0);
+        let far = dist > detail_dist;
 
         for &child in children.iter() {
             if let Ok(mut vis) = chunk_vis_q.get_mut(child) {
@@ -1593,7 +1600,7 @@ fn update_star_visibility(
             if let Ok((mut vis, mut tf)) = beacon_q.get_mut(child) {
                 *vis = if far { Visibility::Inherited } else { Visibility::Hidden };
                 if far {
-                    let scale_factor = (dist / STAR_DETAIL_DIST).clamp(1.0, 10.0);
+                    let scale_factor = (dist / detail_dist).clamp(1.0, 10.0);
                     tf.scale = Vec3::splat(scale_factor);
                 } else {
                     tf.scale = Vec3::ONE;
@@ -1658,7 +1665,7 @@ fn reload_stars(
                 for gy in 0..STAR_DIVISIONS {
                     let mesh = build_celestial_chunk_mesh(
                         face, gx, gy, STAR_DIVISIONS,
-                        star_cfg.radius, 5.0,
+                        star_cfg.radius, (star_cfg.radius * 0.004).max(5.0),
                         99 + local_i as u32, 2.0,
                         star_color_low, star_color_high, star_lod,
                     );
@@ -1685,7 +1692,7 @@ fn reload_stars(
         )).id();
         commands.entity(entity).add_child(beacon);
 
-        let intensity = star_cfg.intensity * 2_000_000.0 * 100.0 * LIGHT_DISTANCE_SCALE * LIGHT_DISTANCE_SCALE * STAR_LIGHT_BOOST;
+        let intensity = star_cfg.lumens();
         let light = commands.spawn((
             PointLight {
                 intensity,
@@ -1976,6 +1983,9 @@ fn rotate_accretion_disk(
 
 /// Distance du centre d'un système au-delà de laquelle on l'a quitté : dernière orbite, avec ses
 /// lunes et le rayon de la planète, plus une marge.
+/// Rayon de recherche (au plus) d'un système qui contient le vaisseau.
+const MAX_SYSTEM_REACH: f32 = 1_800_000.0;
+
 fn system_reach(sys: &crate::settings::StarSystemConfig) -> f32 {
     let planets = sys.planets.iter().map(|p| {
         let moons = p.moons.iter().map(|m| m.orbit_distance + m.radius).fold(0.0_f32, f32::max);
@@ -1994,6 +2004,7 @@ fn stream_system_bodies(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut spawned: ResMut<SpawnedSystems>,
+    mut wide: Local<(u32, Option<usize>)>,
     star_q: Query<(Entity, &SystemIdx), With<StarRoot>>,
     planet_q: Query<(Entity, &SystemIdx), With<PlanetRoot>>,
     moon_q: Query<(Entity, &SystemIdx), With<MoonRoot>>,
@@ -2027,7 +2038,24 @@ fn stream_system_bodies(
         .next()
         .copied()
         .filter(|&si| settings.systems.get(si).is_some_and(|sys| ship_pos.distance(sys.center()) < system_reach(sys)));
-    let want = staying.or(closest.map(|(si, _)| si));
+    let mut want = staying.or(closest.map(|(si, _)| si));
+    // Zone d'un grand système loin de son centre (arrivée par un trou de ver) : recherche large,
+    // peu fréquente, dont le résultat est gardé tant que le vaisseau est dans la zone.
+    if want.is_none() {
+        wide.0 += 1;
+        if wide.0 % 20 == 1 {
+            wide.1 = spatial
+                .systems_in_radius(ship_pos, MAX_SYSTEM_REACH)
+                .into_iter()
+                .filter_map(|si| settings.systems.get(si).map(|sys| (si, ship_pos.distance(sys.center()), system_reach(sys))))
+                .filter(|(_, d, reach)| d < reach)
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(si, _, _)| si);
+        }
+        want = wide
+            .1
+            .filter(|&si| settings.systems.get(si).is_some_and(|sys| ship_pos.distance(sys.center()) < system_reach(sys)));
+    }
 
     let mut to_despawn: Vec<usize> = Vec::new();
     for &si in spawned.0.iter() {

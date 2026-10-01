@@ -126,6 +126,8 @@ pub struct PlanetConfig {
     pub noise_scale:     f32,
     pub detail_scale:    f32,
     #[serde(default)] pub moons:        Vec<MoonConfig>,
+    /// Rayon de l'étoile qui l'éclaire (sert à la température).
+    #[serde(default = "default_star_radius")] pub star_radius: f32,
     #[serde(default)] pub atmosphere:   bool,
     #[serde(default = "default_cloud_density")]  pub cloud_density:  f32,
     #[serde(default = "default_cloud_altitude")] pub cloud_altitude: f32,
@@ -136,6 +138,7 @@ pub struct PlanetConfig {
     #[serde(default)] pub arg_periapsis:  f32,
     #[serde(default)] pub mean_anomaly_0: f32,
 }
+fn default_star_radius()    -> f32 { 250.0 }
 fn default_cloud_density()  -> f32 { 0.5 }
 fn default_cloud_altitude() -> f32 { 20.0 }
 fn default_cloud_speed()    -> f32 { 0.02 }
@@ -144,7 +147,7 @@ impl Default for PlanetConfig {
         Self {
             orbit_distance: 2250.0, radius: 250.0, sea_level: 0.4,
             terrain_height: 110.0, seed: 42, noise_scale: 2.0, detail_scale: 4.0,
-            moons: Vec::new(), atmosphere: false,
+            moons: Vec::new(), star_radius: 250.0, atmosphere: false,
             cloud_density: 0.5, cloud_altitude: 100.0, cloud_speed: 0.02,
             eccentricity: 0.0, inclination: 0.0, ascending_node: 0.0,
             arg_periapsis: 0.0, mean_anomaly_0: 0.0,
@@ -152,19 +155,16 @@ impl Default for PlanetConfig {
     }
 }
 impl PlanetConfig {
+    /// -270 + PLANET_HEAT_RATIO / (distance en rayons d'étoile) : la chaleur dépend de la taille
+    /// de l'étoile, pas de l'unité de distance.
     pub fn temperature(&self) -> f32 {
-        -270.0 + PLANET_HEAT / self.orbit_distance.max(10.0)
+        -270.0 + PLANET_HEAT_RATIO * self.star_radius.max(1.0) / self.orbit_distance.max(10.0)
     }
 }
 
-/// Chaleur reçue par une planète : température = -270 + PLANET_HEAT / distance à l'étoile.
-/// Calibrée sur les orbites de `make_planets` : brûlante au plus près (≈ 280 °C), tempérée
-/// vers 70 000, glacée au-delà de 110 000.
-const PLANET_HEAT: f32 = 22_000_000.0;
-
-/// Les orbites sont ~25 fois plus larges que dans les anciennes versions : la lumière des
-/// étoiles (portée, et intensité en proportion du carré) suit cette échelle.
-pub const LIGHT_DISTANCE_SCALE: f32 = 25.0;
+/// Chaleur reçue par une planète, pour une distance exprimée en rayons de son étoile : brûlante
+/// vers 2,4 rayons (≈ 190 °C), tempérée vers 4, glacée au-delà de 5.
+const PLANET_HEAT_RATIO: f32 = 1100.0;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct StarConfig {
@@ -192,6 +192,17 @@ fn default_flare_speed()        -> f32 { 1.0 }
 fn default_flare_size()         -> f32 { 6.0 }
 fn default_flare_distance()     -> f32 { 15.0 }
 impl StarConfig {
+    /// Portée de la lumière d'une étoile de ce rayon : couvre les orbites les plus lointaines.
+    pub fn light_range_for(radius: f32) -> f32 {
+        radius * 16.0
+    }
+
+    /// Flux lumineux (lumens) : environ 3 000 lux à 3 rayons de l'étoile pour une intensité de 20.
+    pub fn lumens(&self) -> f32 {
+        let d = self.radius * 3.0;
+        3_000.0 * (self.intensity / 20.0) * 4.0 * std::f32::consts::PI * d * d
+    }
+
     pub fn temperature(&self) -> f32 {
         let r = self.light_color_r;
         let b = self.light_color_b;
@@ -394,7 +405,7 @@ fn star_color(seed: u32) -> [f32; 3] {
     else { [0.6, 0.7, 1.0] }
 }
 
-fn default_systems(galaxies: &[GalaxyConfig]) -> Vec<StarSystemConfig> {
+fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystemConfig> {
     const NUM_ARMS: usize = 5;
     const ARM_STARS: usize = 10_000;
     const SCATTER_STARS: usize = 2_500;
@@ -423,38 +434,51 @@ fn default_systems(galaxies: &[GalaxyConfig]) -> Vec<StarSystemConfig> {
         }
     };
 
+    // Tout ce qui vit dans un système (étoile, planètes, lunes) dépend de la graine du monde
+    // (les positions suivent la forme des galaxies). Rien d'autre que + - * / ici : le résultat
+    // doit être identique sur toutes les machines (empreinte du monde en multijoueur).
+    let sd = ((world_seed as u32) ^ ((world_seed >> 32) as u32)).wrapping_mul(0x9E37_79B1);
+    let mixed = |x: u32| x.wrapping_add(sd);
+
+    // Une étoile fait 90 000 à 160 000 de rayon : au moins 100 fois ses planètes
     let make_star = |seed: u32| -> (f32, f32, [f32; 3]) {
-        let r_f = pseudo_rand(seed * 5 + 31);
-        let radius = 75.0 + r_f * 175.0;
+        let seed = mixed(seed);
+        let r_f = pseudo_rand(seed.wrapping_mul(5).wrapping_add(31));
+        let radius = 90_000.0 + r_f * 70_000.0;
         let intensity = 8.0 + r_f * 27.0;
-        let sc = star_color(seed * 5 + 37);
+        let sc = star_color(seed.wrapping_mul(5).wrapping_add(37));
         (radius, intensity, sc)
     };
 
+    // Proportions (R = rayon de l'étoile) : planète ≤ R/100, lune ≤ planète/3 ; première orbite
+    // à 2,4 R, puis 1 à 1,6 R d'écart ; 1 à 3 planètes, 1 à 2 lunes chacune. Les planètes sont
+    // assez petites pour tenir loin de l'étoile et rester explorables à pied (voir `surface.rs`).
     // `sb` : base des graines de planètes (doit rester loin de u32::MAX).
-    // 1 à 3 planètes, 1 à 2 lunes chacune, toutes très grandes : on peut s'y poser et y marcher
-    // (voir `surface.rs`). Rien d'autre que + - * / ici : le résultat doit être identique sur
-    // toutes les machines (empreinte du monde en multijoueur).
-    let make_planets = |seed: u32, sb: u32| -> Vec<PlanetConfig> {
-        let n = 1 + (pseudo_rand(seed * 3 + 41) * 2.999) as usize;
+    let make_planets = |seed: u32, sb: u32, star_radius: f32| -> Vec<PlanetConfig> {
+        let (seed, sb) = (mixed(seed), mixed(sb));
+        let n = 1 + (pseudo_rand(seed.wrapping_mul(3).wrapping_add(41)) * 2.999) as usize;
         let mut orbit = 0.0_f32;
         let mut planets = Vec::with_capacity(n);
         for pi in 0..n {
             let pu = pi as u32;
-            let r = |k: u32| pseudo_rand(sb + pu + k);
-            orbit = if pi == 0 { 40_000.0 + r(60) * 30_000.0 } else { orbit + 28_000.0 + r(60) * 20_000.0 };
-            let radius = 6_000.0 + pi as f32 * 1_500.0 + r(50) * 4_000.0;
-            let atmosphere = pseudo_rand(seed * 11 + pu + 71) < 0.35;
+            let r = |k: u32| pseudo_rand(sb.wrapping_add(pu).wrapping_add(k));
+            orbit = if pi == 0 {
+                star_radius * (2.4 + 1.2 * r(60))
+            } else {
+                orbit + star_radius * (1.0 + 0.6 * r(60))
+            };
+            let radius = star_radius / 100.0 * (0.5 + 0.45 * r(50));
+            let atmosphere = pseudo_rand(seed.wrapping_mul(11).wrapping_add(pu).wrapping_add(71)) < 0.35;
 
             let moons = (0..1 + (r(90) * 1.999) as usize)
                 .map(|mi| {
                     let mu = mi as u32;
-                    let m = |k: u32| pseudo_rand(sb + 200 + pu * 16 + mu * 4 + k);
-                    let moon_radius = (1_500.0 + m(0) * 2_000.0).min(radius * 0.45);
+                    let m = |k: u32| pseudo_rand(sb.wrapping_add(200 + pu * 16 + mu * 4 + k));
+                    let moon_radius = radius / 3.0 * (0.7 + 0.3 * m(0));
                     MoonConfig {
-                        orbit_distance: radius * 2.5 + 6_000.0 + mi as f32 * 16_000.0 + m(1) * 3_000.0,
+                        orbit_distance: radius * 2.4 + moon_radius * 3.0 + mi as f32 * radius * 1.7 + m(1) * radius * 0.5,
                         radius: moon_radius,
-                        seed: sb + 500 + pu * 8 + mu,
+                        seed: sb.wrapping_add(500 + pu * 8 + mu),
                         mean_anomaly_0: m(2) * std::f32::consts::TAU,
                         ..Default::default()
                     }
@@ -466,11 +490,12 @@ fn default_systems(galaxies: &[GalaxyConfig]) -> Vec<StarSystemConfig> {
                 radius,
                 sea_level: if atmosphere { 0.2 + r(83) * 0.4 } else { r(83) * 0.1 },
                 terrain_height: radius * (0.025 + r(80) * 0.025),
-                seed: sb + pu,
+                seed: sb.wrapping_add(pu),
                 noise_scale: 1.5 + r(81) * 2.0,
                 detail_scale: 3.0 + r(82) * 3.0,
                 atmosphere,
-                cloud_altitude: 250.0 + r(84) * 200.0,
+                cloud_altitude: 80.0 + radius * 0.05 * (1.0 + r(84)),
+                star_radius,
                 moons,
                 ..Default::default()
             });
@@ -510,10 +535,10 @@ fn default_systems(galaxies: &[GalaxyConfig]) -> Vec<StarSystemConfig> {
             stars: vec![StarConfig {
                 radius: sr, intensity: si,
                 light_color_r: sc[0], light_color_g: sc[1], light_color_b: sc[2],
-                light_range: 10_000.0 * LIGHT_DISTANCE_SCALE,
+                light_range: StarConfig::light_range_for(sr),
                 ..Default::default()
             }],
-            planets: make_planets(s, (s + 1) * 100),
+            planets: make_planets(s, (s + 1) * 100, sr),
             asteroid_belts: Vec::new(),
         });
     }
@@ -537,10 +562,10 @@ fn default_systems(galaxies: &[GalaxyConfig]) -> Vec<StarSystemConfig> {
             stars: vec![StarConfig {
                 radius: sr, intensity: si,
                 light_color_r: sc[0], light_color_g: sc[1], light_color_b: sc[2],
-                light_range: 10_000.0 * LIGHT_DISTANCE_SCALE,
+                light_range: StarConfig::light_range_for(sr),
                 ..Default::default()
             }],
-            planets: make_planets(s, (s + 1) * 100),
+            planets: make_planets(s, (s + 1) * 100, sr),
             asteroid_belts: Vec::new(),
         });
     }
@@ -573,10 +598,10 @@ fn default_systems(galaxies: &[GalaxyConfig]) -> Vec<StarSystemConfig> {
                 stars: vec![StarConfig {
                     radius: sr, intensity: si,
                     light_color_r: sc[0], light_color_g: sc[1], light_color_b: sc[2],
-                    light_range: 10_000.0 * LIGHT_DISTANCE_SCALE,
+                    light_range: StarConfig::light_range_for(sr),
                     ..Default::default()
                 }],
-                planets: make_planets(s, (global_idx + 1) * 100),
+                planets: make_planets(s, (global_idx + 1) * 100, sr),
                 asteroid_belts: Vec::new(),
             });
             local_idx += 1;
@@ -718,7 +743,7 @@ impl Default for GameSettings {
             guild: None,
             guild_archive: Vec::new(),
             temp_identity: false,
-            systems: default_systems(&default_galaxies(DEFAULT_WORLD_SEED)),
+            systems: default_systems(&default_galaxies(DEFAULT_WORLD_SEED), DEFAULT_WORLD_SEED),
             galaxies: default_galaxies(DEFAULT_WORLD_SEED),
             planets: default_planets(), stars: default_stars(),
             asteroid_belts: Vec::new(),
@@ -782,7 +807,7 @@ impl GameSettings {
         };
         s.apply_world_save();
         s.galaxies = default_galaxies(s.world_seed);
-        s.systems = default_systems(&s.galaxies);
+        s.systems = default_systems(&s.galaxies, s.world_seed);
         s.comets.clear();
         s.meteoroids.clear();
         s.voxel_stars.clear();
@@ -994,24 +1019,28 @@ mod tests {
     }
 
     #[test]
-    fn planets_and_moons_are_huge_and_do_not_overlap() {
+    fn stars_dwarf_planets_and_planets_dwarf_moons() {
         let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
-        let systems = default_systems(&galaxies);
-        let mut hot = 0;
-        let mut cold = 0;
-        let mut temperate = 0;
+        let systems = default_systems(&galaxies, DEFAULT_WORLD_SEED);
+        let (mut hot, mut temperate, mut cold) = (0, 0, 0);
         for sys in systems.iter().take(3000) {
+            let star = &sys.stars[0];
+            assert!((90_000.0..=160_000.0).contains(&star.radius), "etoile de rayon {}", star.radius);
             assert!((1..=3).contains(&sys.planets.len()), "{} planetes", sys.planets.len());
-            let mut previous_edge = 0.0;
+            let mut previous_edge = star.radius;
             for p in &sys.planets {
-                assert!((6_000.0..=13_000.0).contains(&p.radius), "planete de rayon {}", p.radius);
-                assert!(p.orbit_distance - p.radius > previous_edge, "planetes qui se chevauchent");
+                // Étoile au moins 100 fois plus grande que la planète, lune au moins 3 fois plus petite
+                assert!(p.radius * 100.0 <= star.radius, "planete {} pour une etoile de {}", p.radius, star.radius);
+                assert!(p.radius >= star.radius / 100.0 * 0.5 - 1.0);
+                assert!(p.orbit_distance - p.radius > previous_edge, "planete dans l'etoile ou dans la precedente");
                 previous_edge = p.orbit_distance + p.radius;
+                assert!(p.orbit_distance + p.radius < star.radius * 8.0, "systeme trop etendu");
                 assert!(p.terrain_height > 0.0 && p.terrain_height < p.radius * 0.06);
+                assert_eq!(p.star_radius, star.radius);
                 assert!((1..=2).contains(&p.moons.len()), "{} lunes", p.moons.len());
                 let mut moon_edge = p.radius + p.terrain_height;
                 for m in &p.moons {
-                    assert!(m.radius >= 1_500.0 && m.radius <= p.radius * 0.45, "lune de rayon {}", m.radius);
+                    assert!(m.radius * 3.0 <= p.radius * 1.0001, "lune {} pour une planete de {}", m.radius, p.radius);
                     assert!(m.orbit_distance - m.radius > moon_edge, "lune dans la planete ou dans la lune precedente");
                     moon_edge = m.orbit_distance + m.radius;
                 }
@@ -1024,6 +1053,19 @@ mod tests {
         }
         // Des mondes brulants, temperes et glaces : de quoi varier les paysages
         assert!(hot > 100 && temperate > 100 && cold > 100, "chaud {hot}, tempere {temperate}, froid {cold}");
+    }
+
+    #[test]
+    fn the_world_seed_changes_stars_and_planets() {
+        let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
+        let a = default_systems(&galaxies, 42);
+        let b = default_systems(&galaxies, 43);
+        let different = a.iter().zip(&b).take(300).filter(|(x, y)| {
+            x.stars[0].radius.to_bits() != y.stars[0].radius.to_bits()
+                || x.planets.len() != y.planets.len()
+                || x.planets[0].radius.to_bits() != y.planets[0].radius.to_bits()
+        });
+        assert!(different.count() > 250);
     }
 
     #[test]
@@ -1058,8 +1100,8 @@ mod tests {
     #[test]
     fn the_generated_world_is_reproducible() {
         let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
-        let a = default_systems(&galaxies);
-        let b = default_systems(&galaxies);
+        let a = default_systems(&galaxies, DEFAULT_WORLD_SEED);
+        let b = default_systems(&galaxies, DEFAULT_WORLD_SEED);
         assert_eq!(a.len(), b.len());
         for (x, y) in a.iter().zip(&b).take(500) {
             assert_eq!(x.planets.len(), y.planets.len());
