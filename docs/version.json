@@ -1,10 +1,10 @@
 {
-  "version": "0.8.0",
-  "version_code": 800,
+  "version": "0.8.1",
+  "version_code": 801,
   "release_date": "2026-10-01",
-  "download_url": "https://github.com/liolu/spacespore/releases/download/v0.8.0/spacespore-v0.8.0-windows.zip",
-  "download_url_linux": "https://github.com/liolu/spacespore/releases/download/v0.8.0/spacespore-v0.8.0-linux.zip",
-  "download_url_macos": "https://github.com/liolu/spacespore/releases/download/v0.8.0/spacespore-v0.8.0-macos.zip",
-  "release_notes": "Fix flight entry/descent and ship tremble; star >= 100x planet >= 3x moon, seeded generation, LOD and light rescaled",
+  "download_url": "https://github.com/liolu/spacespore/releases/download/v0.8.1/spacespore-v0.8.1-windows.zip",
+  "download_url_linux": "https://github.com/liolu/spacespore/releases/download/v0.8.1/spacespore-v0.8.1-linux.zip",
+  "download_url_macos": "https://github.com/liolu/spacespore/releases/download/v0.8.1/spacespore-v0.8.1-macos.zip",
+  "release_notes": "Make planets reachable at system scale: P key, body rings, clickable star/planet discs, bounded star beacon",
   "min_updater_version": 1
 }

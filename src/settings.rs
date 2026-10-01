@@ -235,6 +235,44 @@ impl Default for AsteroidBeltConfig {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+//  Origine flottante
+//
+//  Les positions du monde sont des `f32`, qui n'ont que ~7 chiffres : à 100 millions d'unités du
+//  centre, une unité de précision en vaut 8. La galaxie fait des centaines de millions d'unités,
+//  mais on ne regarde de près que ce qui est autour du joueur. Les positions « monde » (celles
+//  des entités Bevy) sont donc relatives à une ORIGINE mobile, en `f64`, que `origin.rs`
+//  rapproche du vaisseau dès qu'il s'en éloigne : coordonnée absolue = origine + position monde.
+//  Les positions absolues (systèmes, galaxies, trous de ver) restent, elles, immuables.
+// ─────────────────────────────────────────────────────────────────────────
+
+use bevy::math::{DVec3, Vec3};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static ORIGIN: [AtomicU64; 3] = [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)];
+
+/// Origine du repère monde, en coordonnées absolues.
+pub fn origin() -> DVec3 {
+    let f = |i: usize| f64::from_bits(ORIGIN[i].load(Ordering::Relaxed));
+    DVec3::new(f(0), f(1), f(2))
+}
+
+pub fn set_origin(o: DVec3) {
+    for (i, v) in [o.x, o.y, o.z].into_iter().enumerate() {
+        ORIGIN[i].store(v.to_bits(), Ordering::Relaxed);
+    }
+}
+
+/// Position absolue → position monde (relative à l'origine).
+pub fn to_local(abs: Vec3) -> Vec3 {
+    (abs.as_dvec3() - origin()).as_vec3()
+}
+
+/// Position monde → position absolue.
+pub fn to_abs(local: Vec3) -> DVec3 {
+    local.as_dvec3() + origin()
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 //  Système stellaire
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -263,8 +301,14 @@ impl Default for StarSystemConfig {
 }
 
 impl StarSystemConfig {
-    pub fn center(&self) -> bevy::math::Vec3 {
-        bevy::math::Vec3::new(self.position[0], self.position[1], self.position[2])
+    /// Position absolue (immuable) du centre du système.
+    pub fn abs_center(&self) -> Vec3 {
+        Vec3::new(self.position[0], self.position[1], self.position[2])
+    }
+
+    /// Position du centre dans le repère monde (relatif à l'origine flottante).
+    pub fn center(&self) -> Vec3 {
+        to_local(self.abs_center())
     }
 }
 
@@ -279,21 +323,27 @@ pub(crate) fn pseudo_rand(seed: u32) -> f32 {
 }
 
 pub const SYSTEM_GRID_SIZE: usize = 100;
-pub const SYSTEM_CELL_SIZE: f32 = 100_000.0;
+/// Échelle de la galaxie : toutes les distances entre étoiles (et entre galaxies) sont multipliées
+/// par ce facteur, les systèmes eux-mêmes (étoile, planètes, lunes) gardent leur taille. Sans
+/// limite de précision grâce à l'origine flottante (voir plus haut et `origin.rs`) : la galaxie
+/// principale fait 900 millions de rayon, ses étoiles sont à ~28 millions l'une de l'autre.
+pub const GALAXY_SCALE: f32 = 100.0;
+pub const SYSTEM_CELL_SIZE: f32 = 100_000.0 * GALAXY_SCALE;
 pub const STREAM_RADIUS: f32 = 3.0;
 /// Graine du monde par défaut (partagée par tous les joueurs).
 pub const DEFAULT_WORLD_SEED: u64 = 42;
-pub const GALAXY_RADIUS: f32 = 9_000_000.0;
+pub const GALAXY_RADIUS: f32 = 9_000_000.0 * GALAXY_SCALE;
 
 /// Nombre de galaxies extérieures (ids 1..=NUM_DISTANT_GALAXIES).
 pub const NUM_DISTANT_GALAXIES: usize = 100;
 /// Aucun système n'est généré à moins de cette distance d'un trou noir galactique.
-pub const CORE_EXCLUSION: f32 = 150_000.0;
+pub const CORE_EXCLUSION: f32 = 150_000.0 * GALAXY_SCALE;
 
 /// Forme d'une galaxie. Index 0 = galaxie principale, 1.. = galaxies extérieures.
 #[derive(Clone, Debug)]
 pub struct GalaxyConfig {
-    pub center:        bevy::math::Vec3,
+    /// Position absolue (immuable) du centre ; `center()` la donne dans le repère monde.
+    pub abs_center:    bevy::math::Vec3,
     pub tilt:          bevy::math::Quat,
     pub radius:        f32,
     pub num_arms:      usize,
@@ -307,13 +357,19 @@ pub struct GalaxyConfig {
     pub scatter_stars: usize,
 }
 
+impl GalaxyConfig {
+    pub fn center(&self) -> Vec3 {
+        to_local(self.abs_center)
+    }
+}
+
 /// Galaxie principale + galaxies extérieures disposées sur une méta-spirale.
 pub fn default_galaxies(world_seed: u64) -> Vec<GalaxyConfig> {
     use bevy::math::{EulerRot, Quat, Vec3};
     const META_ARMS: usize = 5;
-    const META_RADIUS: f32 = 200_000_000.0;
+    const META_RADIUS: f32 = 200_000_000.0 * GALAXY_SCALE;
     const META_TWIST: f32 = 4.0;
-    const MIN_DIST: f32 = 40_000_000.0;
+    const MIN_DIST: f32 = 40_000_000.0 * GALAXY_SCALE;
     /// Deux galaxies restent séparées d'au moins ce multiple de la somme de leurs rayons.
     const SPACING: f32 = 2.0;
     let tau = std::f32::consts::TAU;
@@ -324,13 +380,13 @@ pub fn default_galaxies(world_seed: u64) -> Vec<GalaxyConfig> {
     };
     let mut galaxies = Vec::with_capacity(NUM_DISTANT_GALAXIES + 1);
     galaxies.push(GalaxyConfig {
-        center: Vec3::ZERO,
+        abs_center: Vec3::ZERO,
         tilt: Quat::IDENTITY,
         radius: GALAXY_RADIUS,
         num_arms: 5,
         twist: 5.0,
         kind: crate::galaxy_shape::GalaxyKind::Spiral,
-        core_radius: 30_000.0,
+        core_radius: 30_000.0 * GALAXY_SCALE,
         seed: 0,
         arm_stars: 0,
         scatter_stars: 0,
@@ -342,7 +398,7 @@ pub fn default_galaxies(world_seed: u64) -> Vec<GalaxyConfig> {
         let rk = |k: u32| pseudo_rand(gs * 13 + k);
         let rk_k = |n: u32, k: u32| pseudo_rand((gs * 13 + n).wrapping_add(k));
 
-        let radius = 1_300_000.0 + (rk(7) * 0.6 + rk(27) * 0.4).powf(1.3) * 6_000_000.0;
+        let radius = (1_300_000.0 + (rk(7) * 0.6 + rk(27) * 0.4).powf(1.3) * 6_000_000.0) * GALAXY_SCALE;
 
         // Position de la galaxie sur les bras de la méta-spirale, à l'écart des autres :
         // on retire au sort jusqu'à trouver une place libre (à défaut, la moins serrée)
@@ -358,13 +414,13 @@ pub fn default_galaxies(world_seed: u64) -> Vec<GalaxyConfig> {
             let theta = spiral + scatter;
             let c = Vec3::new(
                 r * theta.cos(),
-                (rk_k(5, k) - 0.5) * 16_000_000.0,
+                (rk_k(5, k) - 0.5) * 16_000_000.0 * GALAXY_SCALE,
                 r * theta.sin(),
             );
             // Marge restante par rapport au voisin le plus proche (>= 0 : place libre)
             let slack = galaxies
                 .iter()
-                .map(|g| c.distance(g.center) - SPACING * (g.radius + radius))
+                .map(|g| c.distance(g.abs_center) - SPACING * (g.radius + radius))
                 .fold(f32::MAX, f32::min);
             if best.map_or(true, |(_, s)| slack > s) {
                 best = Some((c, slack));
@@ -376,7 +432,7 @@ pub fn default_galaxies(world_seed: u64) -> Vec<GalaxyConfig> {
         let center = best.map_or(Vec3::ZERO, |(c, _)| c);
 
         galaxies.push(GalaxyConfig {
-            center,
+            abs_center: center,
             tilt: Quat::from_euler(
                 EulerRot::XYZ,
                 (rk(13) - 0.5) * 1.5,
@@ -387,7 +443,7 @@ pub fn default_galaxies(world_seed: u64) -> Vec<GalaxyConfig> {
             num_arms: 2 + (rk(9) * 5.0) as usize,
             twist: 1.5 + rk(11) * 7.5,
             kind: crate::galaxy_shape::GalaxyKind::for_index(gi, world_hash),
-            core_radius: 10_000.0 + rk(23) * 20_000.0,
+            core_radius: (10_000.0 + rk(23) * 20_000.0) * GALAXY_SCALE,
             seed: gs * 1000,
             arm_stars: 170 + (rk(19) * 380.0) as usize,
             scatter_stars: 40 + (rk(31) * 120.0) as usize,
@@ -407,8 +463,8 @@ fn star_color(seed: u32) -> [f32; 3] {
 
 fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystemConfig> {
     const NUM_ARMS: usize = 5;
-    const ARM_STARS: usize = 10_000;
-    const SCATTER_STARS: usize = 2_500;
+    const ARM_STARS: usize = 2_500;
+    const SCATTER_STARS: usize = 625;
     const ARM_TWIST: f32 = 5.0;
     let tau = std::f32::consts::TAU;
     let gr = GALAXY_RADIUS;
@@ -440,11 +496,12 @@ fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystem
     let sd = ((world_seed as u32) ^ ((world_seed >> 32) as u32)).wrapping_mul(0x9E37_79B1);
     let mixed = |x: u32| x.wrapping_add(sd);
 
-    // Une étoile fait 90 000 à 160 000 de rayon : au moins 100 fois ses planètes
+    // Une étoile fait 600 000 à 1 500 000 de rayon : au moins 100 fois ses planètes (4 200 à 14 000),
+    // et reste un point à l'échelle de la galaxie (les étoiles voisines sont à ~28 000 000)
     let make_star = |seed: u32| -> (f32, f32, [f32; 3]) {
         let seed = mixed(seed);
         let r_f = pseudo_rand(seed.wrapping_mul(5).wrapping_add(31));
-        let radius = 90_000.0 + r_f * 70_000.0;
+        let radius = 600_000.0 + r_f * 900_000.0;
         let intensity = 8.0 + r_f * 27.0;
         let sc = star_color(seed.wrapping_mul(5).wrapping_add(37));
         (radius, intensity, sc)
@@ -467,7 +524,7 @@ fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystem
             } else {
                 orbit + star_radius * (1.0 + 0.6 * r(60))
             };
-            let radius = star_radius / 100.0 * (0.5 + 0.45 * r(50));
+            let radius = star_radius / 100.0 * (0.7 + 0.25 * r(50));
             let atmosphere = pseudo_rand(seed.wrapping_mul(11).wrapping_add(pu).wrapping_add(71)) < 0.35;
 
             let moons = (0..1 + (r(90) * 1.999) as usize)
@@ -524,7 +581,7 @@ fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystem
 
         let x = r * theta.cos();
         let z = r * theta.sin();
-        let thickness = 60000.0 * (1.0 - r / gr * 0.7);
+        let thickness = 60000.0 * GALAXY_SCALE * (1.0 - r / gr * 0.7);
         let y = (pseudo_rand(s * 7 + 7) - 0.5) * thickness;
 
         let (sr, si, sc) = make_star(s);
@@ -552,7 +609,7 @@ fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystem
         let theta = pseudo_rand(s * 7 + 5) * tau;
         let x = r * theta.cos();
         let z = r * theta.sin();
-        let y = (pseudo_rand(s * 7 + 7) - 0.5) * 3000.0;
+        let y = (pseudo_rand(s * 7 + 7) - 0.5) * 3000.0 * GALAXY_SCALE;
 
         let (sr, si, sc) = make_star(s);
         systems.push(StarSystemConfig {
@@ -586,7 +643,7 @@ fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystem
             };
             // Pas de système dans le trou noir central
             if local.length() < CORE_EXCLUSION { continue; }
-            let world = gal.center + gal.tilt * local;
+            let world = gal.abs_center + gal.tilt * local;
 
             let (sr, si, sc) = make_star(s);
             let global_idx = systems.len() as u32;
@@ -808,6 +865,8 @@ impl GameSettings {
         s.apply_world_save();
         s.galaxies = default_galaxies(s.world_seed);
         s.systems = default_systems(&s.galaxies, s.world_seed);
+        // Le monde démarre centré sur le système de départ : tout ce qui apparaît est précis
+        set_origin(s.systems.first().map_or(DVec3::ZERO, |sys| sys.abs_center().as_dvec3()));
         s.comets.clear();
         s.meteoroids.clear();
         s.voxel_stars.clear();
@@ -941,30 +1000,33 @@ pub struct SystemSpatialIndex {
 }
 
 impl SystemSpatialIndex {
+    /// Cellule (colonne, ligne) d'une position ABSOLUE.
+    fn cell_of(abs: DVec3) -> (i32, i32) {
+        let cell = SYSTEM_CELL_SIZE as f64;
+        let half = SYSTEM_GRID_SIZE as f64 * cell / 2.0;
+        (((abs.x + half) / cell).floor() as i32, ((abs.z + half) / cell).floor() as i32)
+    }
+
+    /// L'index est construit en coordonnées absolues ; les requêtes prennent des positions monde
+    /// (relatives à l'origine flottante) et les convertissent.
     pub fn build(settings: &GameSettings) -> Self {
-        let cell = SYSTEM_CELL_SIZE;
-        let half = SYSTEM_GRID_SIZE as f32 * cell / 2.0;
         let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
         for (si, sys) in settings.systems.iter().enumerate() {
-            let c = sys.center();
-            let col = ((c.x + half) / cell) as i32;
-            let row = ((c.z + half) / cell) as i32;
-            cells.entry((col, row)).or_default().push(si);
+            cells.entry(Self::cell_of(sys.abs_center().as_dvec3())).or_default().push(si);
         }
         Self { cells }
     }
 
     /// Système le plus proche de `pos`, en explorant la grille par anneaux croissants.
-    pub fn nearest(&self, pos: bevy::math::Vec3, settings: &GameSettings) -> Option<usize> {
-        let cell = SYSTEM_CELL_SIZE;
-        let half = SYSTEM_GRID_SIZE as f32 * cell / 2.0;
-        let cx = ((pos.x + half) / cell) as i32;
-        let cz = ((pos.z + half) / cell) as i32;
-        let mut best: Option<(usize, f32)> = None;
+    pub fn nearest(&self, pos: Vec3, settings: &GameSettings) -> Option<usize> {
+        let cell = SYSTEM_CELL_SIZE as f64;
+        let abs = to_abs(pos);
+        let (cx, cz) = Self::cell_of(abs);
+        let mut best: Option<(usize, f64)> = None;
         for r in 0..=(SYSTEM_GRID_SIZE as i32 * 2) {
             // Tout système hors de l'anneau r est à plus de (r - 1) cellules
             if let Some((_, d2)) = best {
-                let min_d = (r - 1).max(0) as f32 * cell;
+                let min_d = (r - 1).max(0) as f64 * cell;
                 if min_d * min_d > d2 { break; }
             }
             for col in (cx - r)..=(cx + r) {
@@ -973,7 +1035,7 @@ impl SystemSpatialIndex {
                     let Some(indices) = self.cells.get(&(col, row)) else { continue };
                     for &si in indices {
                         let Some(sys) = settings.systems.get(si) else { continue };
-                        let d2 = pos.distance_squared(sys.center());
+                        let d2 = abs.distance_squared(sys.abs_center().as_dvec3());
                         if best.map_or(true, |(_, b)| d2 < b) { best = Some((si, d2)); }
                     }
                 }
@@ -982,12 +1044,9 @@ impl SystemSpatialIndex {
         best.map(|(si, _)| si)
     }
 
-    pub fn systems_in_radius(&self, pos: bevy::math::Vec3, radius: f32) -> Vec<usize> {
-        let cell = SYSTEM_CELL_SIZE;
-        let half = SYSTEM_GRID_SIZE as f32 * cell / 2.0;
-        let r_cells = (radius / cell).ceil() as i32 + 1;
-        let cx = ((pos.x + half) / cell) as i32;
-        let cz = ((pos.z + half) / cell) as i32;
+    pub fn systems_in_radius(&self, pos: Vec3, radius: f32) -> Vec<usize> {
+        let r_cells = (radius / SYSTEM_CELL_SIZE).ceil() as i32 + 1;
+        let (cx, cz) = Self::cell_of(to_abs(pos));
         let mut result = Vec::new();
         for col in (cx - r_cells)..=(cx + r_cells) {
             for row in (cz - r_cells)..=(cz + r_cells) {
@@ -1010,7 +1069,7 @@ mod tests {
         let mut worst = f32::MAX;
         for i in 0..g.len() {
             for j in (i + 1)..g.len() {
-                let gap = g[i].center.distance(g[j].center) / (g[i].radius + g[j].radius);
+                let gap = g[i].abs_center.distance(g[j].abs_center) / (g[i].radius + g[j].radius);
                 worst = worst.min(gap);
             }
         }
@@ -1025,13 +1084,13 @@ mod tests {
         let (mut hot, mut temperate, mut cold) = (0, 0, 0);
         for sys in systems.iter().take(3000) {
             let star = &sys.stars[0];
-            assert!((90_000.0..=160_000.0).contains(&star.radius), "etoile de rayon {}", star.radius);
+            assert!((600_000.0..=1_500_000.0).contains(&star.radius), "etoile de rayon {}", star.radius);
             assert!((1..=3).contains(&sys.planets.len()), "{} planetes", sys.planets.len());
             let mut previous_edge = star.radius;
             for p in &sys.planets {
                 // Étoile au moins 100 fois plus grande que la planète, lune au moins 3 fois plus petite
                 assert!(p.radius * 100.0 <= star.radius, "planete {} pour une etoile de {}", p.radius, star.radius);
-                assert!(p.radius >= star.radius / 100.0 * 0.5 - 1.0);
+                assert!(p.radius >= star.radius / 100.0 * 0.7 - 1.0 && p.radius >= 4_000.0);
                 assert!(p.orbit_distance - p.radius > previous_edge, "planete dans l'etoile ou dans la precedente");
                 previous_edge = p.orbit_distance + p.radius;
                 assert!(p.orbit_distance + p.radius < star.radius * 8.0, "systeme trop etendu");

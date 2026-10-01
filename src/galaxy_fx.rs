@@ -19,7 +19,7 @@ use crate::galaxy_shape::Rng;
 use crate::guild::Guilds;
 use crate::net::Net;
 use crate::net_ui::NetPanel;
-use crate::settings::{pseudo_rand, GameSettings, SystemSpatialIndex, CORE_EXCLUSION};
+use crate::settings::{pseudo_rand, to_local, GameSettings, StarSystemConfig, SystemSpatialIndex, CORE_EXCLUSION};
 use crate::ui::MenuState;
 use crate::{CameraController, ZoomLevel};
 
@@ -32,8 +32,8 @@ use crate::{CameraController, ZoomLevel};
 
 /// Portée de voisinage : sert seulement à faire grandir un territoire PNJ d'étoile en étoile
 /// (les traits, eux, n'ont aucune limite de distance).
-const LINK_RANGE_MAIN: f32 = 60_000.0;
-const LINK_RANGE_OTHER: f32 = 120_000.0;
+const LINK_RANGE_MAIN: f32 = 300_000.0 * crate::settings::GALAXY_SCALE;
+const LINK_RANGE_OTHER: f32 = 600_000.0 * crate::settings::GALAXY_SCALE;
 /// Factions PNJ de la galaxie principale ; les autres en ont selon leur taille.
 const NPC_MAIN: usize = 14;
 const NPC_MIN_STARS: usize = 10;
@@ -78,9 +78,15 @@ fn link_range(settings: &GameSettings, sys: usize) -> f32 {
 /// et jamais de triangle. Chaque étoile est rattachée à l'étoile déjà reliée la plus
 /// proche, ce qui donne le moins de traits possible (une de moins que d'étoiles).
 fn group_links(settings: &GameSettings, stars: &[usize]) -> Vec<(Vec3, Vec3)> {
+    group_links_with(settings, stars, StarSystemConfig::center)
+}
+
+/// Comme `group_links`, avec la position choisie pour chaque étoile : monde (`center`) pour ce qui
+/// est dessiné à chaque image, absolue (`abs_center`) pour ce qui est calculé une fois pour toutes.
+fn group_links_with(settings: &GameSettings, stars: &[usize], at: fn(&StarSystemConfig) -> Vec3) -> Vec<(Vec3, Vec3)> {
     let pts: Vec<Vec3> = stars
         .iter()
-        .filter_map(|&s| settings.systems.get(s).map(|sys| sys.center()))
+        .filter_map(|&s| settings.systems.get(s).map(at))
         .collect();
     let n = pts.len();
     if n < 2 {
@@ -117,10 +123,11 @@ pub struct NpcFaction {
     pub color: Color,
     pub galaxy: u32,
     pub stars: Vec<usize>,
-    /// Traits du territoire, calculés une fois pour toutes.
+    /// Traits du territoire, calculés une fois pour toutes (en coordonnées ABSOLUES).
     links: Vec<(Vec3, Vec3)>,
-    /// Contour de ses cercles autour des étoiles (fusionnés), calculé une fois pour toutes.
+    /// Contour de ses cercles autour des étoiles (fusionnés), calculé une fois pour toutes (absolu).
     outline: Vec<(Vec3, Vec3)>,
+    /// Centre (absolu).
     center: Vec3,
     /// Distance du centre à l'étoile la plus éloignée (pour ne dessiner que ce qui est proche).
     extent: f32,
@@ -129,11 +136,11 @@ pub struct NpcFaction {
 impl NpcFaction {
     /// Traits, contour, centre et rayon d'après la liste actuelle des étoiles.
     fn recompute(&mut self, settings: &GameSettings) {
-        let centers: Vec<Vec3> = self.stars.iter().filter_map(|&m| settings.systems.get(m).map(|s| s.center())).collect();
+        let centers: Vec<Vec3> = self.stars.iter().filter_map(|&m| settings.systems.get(m).map(|s| s.abs_center())).collect();
         self.center = centers.iter().copied().sum::<Vec3>() / centers.len().max(1) as f32;
         self.extent = centers.iter().map(|c| c.distance(self.center)).fold(0.0, f32::max);
-        self.links = group_links(settings, &self.stars);
-        let borders: Vec<crate::claims::Border> = self.stars.iter().filter_map(|&m| crate::claims::border_of(settings, m)).collect();
+        self.links = group_links_with(settings, &self.stars, StarSystemConfig::abs_center);
+        let borders: Vec<crate::claims::Border> = self.stars.iter().filter_map(|&m| crate::claims::border_of_abs(settings, m)).collect();
         self.outline = crate::claims::outline_segments(&borders, crate::claims::CLAIM_RADIUS);
     }
 }
@@ -211,13 +218,13 @@ pub fn generate_npcs(settings: &GameSettings, spatial: &SystemSpatialIndex) -> N
             .systems
             .iter()
             .enumerate()
-            .filter(|(_, s)| s.galaxy_id as usize == gid && s.center().distance(gal.center) >= CORE_EXCLUSION)
+            .filter(|(_, s)| s.galaxy_id as usize == gid && s.center().distance(gal.center()) >= CORE_EXCLUSION)
             .map(|(i, _)| i)
             .collect();
         if candidates.is_empty() {
             continue;
         }
-        let wanted = if gid == 0 { NPC_MAIN } else { 1 + (gal.radius / 1_300_000.0) as usize };
+        let wanted = if gid == 0 { NPC_MAIN } else { 1 + (gal.radius / (1_300_000.0 * crate::settings::GALAXY_SCALE)) as usize };
         let mut made = 0;
         for attempt in 0..(wanted * 12) as u32 {
             if made >= wanted {
@@ -236,7 +243,7 @@ pub fn generate_npcs(settings: &GameSettings, spatial: &SystemSpatialIndex) -> N
                     .iter()
                     .flat_map(|&m| near_stars(settings, spatial, m))
                     .filter(|s| !members.contains(s) && !out.owner.contains_key(s))
-                    .filter(|&s| settings.systems[s].center().distance(gal.center) >= CORE_EXCLUSION)
+                    .filter(|&s| settings.systems[s].center().distance(gal.center()) >= CORE_EXCLUSION)
                     .min_by(|&x, &y| {
                         let dx = settings.systems[x].center().distance(origin);
                         let dy = settings.systems[y].center().distance(origin);
@@ -304,12 +311,12 @@ fn draw_links(
 
     // Factions PNJ : seulement celles qui sont près de la caméra (il y en a des milliers dans l'univers)
     for faction in &npcs.factions {
-        if cam_pos.distance(faction.center) > window + faction.extent {
+        if cam_pos.distance(to_local(faction.center)) > window + faction.extent {
             continue;
         }
         let color = faction.color.with_alpha(0.85);
         for &(a, b) in faction.outline.iter().chain(&faction.links) {
-            gizmos.line(a, b, color);
+            gizmos.line(to_local(a), to_local(b), color);
         }
     }
 
@@ -339,8 +346,8 @@ const CLOUD_TEXTURE: u32 = 128;
 /// Nuages de la galaxie principale ; les autres en ont selon leur taille.
 const CLOUDS_MAIN: usize = 220;
 /// Au-delà de cette distance à sa galaxie, un nuage n'est plus dessiné.
-const CLOUD_FADE_START: f32 = 100_000_000.0;
-const CLOUD_FADE_END: f32 = 120_000_000.0;
+const CLOUD_FADE_START: f32 = 100_000_000.0 * crate::settings::GALAXY_SCALE;
+const CLOUD_FADE_END: f32 = 120_000_000.0 * crate::settings::GALAXY_SCALE;
 
 #[derive(Resource)]
 struct CloudMaterials {
@@ -451,7 +458,7 @@ fn spawn_clouds(
             let jitter = Vec3::new(rnd(i * 11 + 3) - 0.5, (rnd(i * 11 + 5) - 0.5) * 0.3, rnd(i * 11 + 4) - 0.5)
                 * gal.radius * 0.05;
             let local = shape.sample_structure(&mut srng, 0.12) + jitter;
-            let world = gal.center + gal.tilt * local;
+            let world = gal.center() + gal.tilt * local;
             // Pas de nuage collé au trou noir central
             if local.length() < CORE_EXCLUSION * 3.0 {
                 continue;
@@ -512,7 +519,7 @@ fn update_clouds(
     }
     *last = Some((cam_pos, fwd));
 
-    let galaxy_dist: Vec<f32> = settings.galaxies.iter().map(|g| cam_pos.distance(g.center)).collect();
+    let galaxy_dist: Vec<f32> = settings.galaxies.iter().map(|g| cam_pos.distance(g.center())).collect();
     for (cloud, mut tf, mut vis, mut mat) in &mut clouds {
         let gdist = galaxy_dist.get(cloud.galaxy_id as usize).copied().unwrap_or(f32::MAX);
         let to_cloud = tf.translation - cam_pos;

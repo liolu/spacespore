@@ -33,9 +33,9 @@ const USE_MARGIN: f32 = 30_000.0;
 /// Rayon minimal du dessin (il grandit avec la distance pour rester visible).
 pub const MIN_DRAW_RADIUS: f32 = 1_500.0;
 /// Distance de la caméra au-delà de laquelle une ouverture n'est plus dessinée.
-pub const DRAW_RANGE: f32 = 3_000_000.0;
+pub const DRAW_RANGE: f32 = 3_000_000.0 * crate::settings::GALAXY_SCALE;
 /// Le trait entre deux ouvertures connues est dessiné de plus loin.
-const LINE_RANGE: f32 = 30_000_000.0;
+const LINE_RANGE: f32 = 30_000_000.0 * crate::settings::GALAXY_SCALE;
 /// Distance maximale du vaisseau à l'ouverture pour l'emprunter (il se pose au-dessus d'elle).
 const ENTER_RANGE: f32 = 30_000.0;
 
@@ -61,14 +61,24 @@ impl Plugin for WormholePlugin {
 pub struct Wormhole {
     pub a: usize,
     pub b: usize,
-    pub mouth_a: Vec3,
-    pub mouth_b: Vec3,
+    /// Positions ABSOLUES des ouvertures (immuables) ; `mouth_a()` et `mouth_b()` les donnent dans
+    /// le repère monde (relatif à l'origine flottante).
+    pub abs_a: Vec3,
+    pub abs_b: Vec3,
     /// Distance maximale au centre du système pour pouvoir l'emprunter, par ouverture.
     pub reach_a: f32,
     pub reach_b: f32,
 }
 
 impl Wormhole {
+    pub fn mouth_a(&self) -> Vec3 {
+        crate::settings::to_local(self.abs_a)
+    }
+
+    pub fn mouth_b(&self) -> Vec3 {
+        crate::settings::to_local(self.abs_b)
+    }
+
     /// Identifiant du trou de ver (retenu dans les réglages une fois découvert).
     pub fn id(&self) -> u32 {
         self.a.min(self.b) as u32
@@ -88,9 +98,9 @@ impl Wormhole {
     /// Position de l'ouverture qui dessert `sys`.
     pub fn mouth_of(&self, sys: usize) -> Option<Vec3> {
         if sys == self.a {
-            Some(self.mouth_a)
+            Some(self.mouth_a())
         } else if sys == self.b {
-            Some(self.mouth_b)
+            Some(self.mouth_b())
         } else {
             None
         }
@@ -164,7 +174,7 @@ fn count_for(galaxy_id: usize, radius: f32) -> usize {
 fn mouth(seed: u32, sys_idx: usize, sys: &StarSystemConfig) -> (Vec3, f32) {
     let angle = mix(seed ^ 0xA41, sys_idx as u32, 7) as f32 / u32::MAX as f32 * std::f32::consts::TAU;
     let offset = system_extent(sys) * 1.25 + 4_000.0;
-    (sys.center() + Vec3::new(angle.cos(), 0.0, angle.sin()) * offset, offset + USE_MARGIN)
+    (sys.abs_center() + Vec3::new(angle.cos(), 0.0, angle.sin()) * offset, offset + USE_MARGIN)
 }
 
 /// Tous les trous de ver du monde, déterministes d'après sa graine.
@@ -177,7 +187,7 @@ pub fn generate(settings: &GameSettings) -> Vec<Wormhole> {
             .systems
             .iter()
             .enumerate()
-            .filter(|(_, s)| s.galaxy_id as usize == gid && s.center().distance(gal.center) >= CORE_EXCLUSION)
+            .filter(|(_, s)| s.galaxy_id as usize == gid && s.center().distance(gal.center()) >= CORE_EXCLUSION)
             .map(|(i, _)| i)
             .collect();
         let pairs = count_for(gid, gal.radius).min(candidates.len() / 2);
@@ -219,7 +229,7 @@ pub fn generate(settings: &GameSettings) -> Vec<Wormhole> {
             used.push(b);
             let (mouth_a, reach_a) = mouth(seed, a, &settings.systems[a]);
             let (mouth_b, reach_b) = mouth(seed, b, &settings.systems[b]);
-            out.push(Wormhole { a, b, mouth_a, mouth_b, reach_a, reach_b });
+            out.push(Wormhole { a, b, abs_a: mouth_a, abs_b: mouth_b, reach_a, reach_b });
         }
     }
     out
@@ -396,7 +406,7 @@ fn wormhole_travel(
         return;
     }
     let Ok(ship) = ship_q.get_single() else { return };
-    let (mouth, exit_mouth) = if sys == wormhole.a { (wormhole.mouth_a, wormhole.mouth_b) } else { (wormhole.mouth_b, wormhole.mouth_a) };
+    let (mouth, exit_mouth) = if sys == wormhole.a { (wormhole.mouth_a(), wormhole.mouth_b()) } else { (wormhole.mouth_b(), wormhole.mouth_a()) };
     if ship.translation.distance(mouth) > ENTER_RANGE {
         net.notify("Approchez-vous de l'ouverture pour emprunter le trou de ver.", now);
         return;
@@ -703,22 +713,22 @@ fn draw_wormholes(
     let cam_pos = cam.translation();
     let t = time.elapsed_secs();
     for w in &wormholes.list {
-        for mouth in [w.mouth_a, w.mouth_b] {
+        for mouth in [w.mouth_a(), w.mouth_b()] {
             if cam_pos.distance(mouth) <= DRAW_RANGE {
                 draw_mouth(&mut gizmos, mouth, cam_pos, t);
             }
         }
         // Un trou de ver découvert : un seul trait relie ses deux ouvertures
         if settings.known_wormholes.contains(&w.id())
-            && cam_pos.distance(w.mouth_a).min(cam_pos.distance(w.mouth_b)) <= LINE_RANGE
+            && cam_pos.distance(w.mouth_a()).min(cam_pos.distance(w.mouth_b())) <= LINE_RANGE
         {
-            gizmos.line(w.mouth_a, w.mouth_b, Color::srgba(0.75, 0.35, 1.0, 0.85));
+            gizmos.line(w.mouth_a(), w.mouth_b(), Color::srgba(0.75, 0.35, 1.0, 0.85));
             // Points de lumière qui filent dans les deux sens le long du trait
-            let size = (cam_pos.distance(w.mouth_a).min(cam_pos.distance(w.mouth_b)) * 0.006).max(MIN_DRAW_RADIUS * 0.6);
+            let size = (cam_pos.distance(w.mouth_a()).min(cam_pos.distance(w.mouth_b())) * 0.006).max(MIN_DRAW_RADIUS * 0.6);
             for i in 0..6 {
                 let f = (t * 0.18 + i as f32 / 6.0).fract();
                 let f = if i % 2 == 0 { f } else { 1.0 - f };
-                let p = w.mouth_a.lerp(w.mouth_b, f);
+                let p = w.mouth_a().lerp(w.mouth_b(), f);
                 let c = Color::srgba(0.7, 1.0, 1.0, 0.95);
                 gizmos.line(p - Vec3::X * size, p + Vec3::X * size, c);
                 gizmos.line(p - Vec3::Y * size, p + Vec3::Y * size, c);
@@ -759,7 +769,7 @@ mod tests {
             assert_eq!(w.other_end(w.b), Some(w.a));
             assert_eq!(w.other_end(usize::MAX), None);
             // Ouvertures hors des orbites, mais à portée d'un vaisseau au centre
-            for (sys, mouth, reach) in [(w.a, w.mouth_a, w.reach_a), (w.b, w.mouth_b, w.reach_b)] {
+            for (sys, mouth, reach) in [(w.a, w.mouth_a(), w.reach_a), (w.b, w.mouth_b(), w.reach_b)] {
                 let c = settings.systems[sys].center();
                 assert!(mouth.distance(c) > system_extent(&settings.systems[sys]));
                 assert!(reach > mouth.distance(c));

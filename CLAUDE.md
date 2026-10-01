@@ -24,7 +24,14 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
 ## Structure
 
 - Cargo workspace : root = jeu, `tools/` = common/installer/updater/launcher
-- Proportions d'un systeme (generees depuis la graine du monde, `settings.rs`) : etoile 90 000 a 160 000 de
+- Origine flottante (`src/origin.rs`, `settings::origin/to_local/to_abs`) : les positions des entites sont des f32
+  relatives a une origine absolue en f64 qui suit le vaisseau (recentrage au-dela de 100 000). Ne jamais garder une
+  position « monde » en memoire : stocker l'absolu (`abs_center()`, `Wormhole.abs_a`, `Peer.abs`) et convertir.
+  `StarSystemConfig::center()` / `GalaxyConfig::center()` = monde ; `abs_center` = absolu (generation, caches).
+- Echelle : `GALAXY_SCALE` (settings.rs, x100) multiplie les distances entre etoiles/galaxies (rayon 900 M, ~3 100
+  etoiles a ~28 M l'une de l'autre) ; les systemes gardent leur taille. Les etoiles lointaines sont groupees en
+  secteurs de ~100 etoiles (`StarSectors`) affiches/mis a jour ensemble.
+- Proportions d'un systeme (generees depuis la graine du monde, `settings.rs`) : etoile 600 000 a 1 500 000 de
   rayon, planete <= etoile/100, lune <= planete/3, premiere orbite a 2,4 rayons d'etoile. Planetes et lunes
   sont explorables : zoomer sous 1000 du vaisseau = navigation basse altitude (ZQSD, Maj, Espace/Ctrl, clic
   droit, molette), `Entree` = atterrir puis marcher, `Entree` = redecoller. Le dessous du vaisseau reste
