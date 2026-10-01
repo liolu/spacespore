@@ -1639,6 +1639,13 @@ fn setup_fps_display(
             },
         ))
         .with_children(|p| {
+            // Version et build du jeu en cours
+            p.spawn((
+                Text::new(format!("SpaceSpore {}", spacespore_common::installed_label())),
+                TextFont { font_size: 13.0, ..default() },
+                TextColor(Color::srgb(0.7, 0.7, 0.75)),
+            ));
+
             p.spawn((
                 Text::new("FPS: --"),
 

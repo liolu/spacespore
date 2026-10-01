@@ -242,7 +242,17 @@ impl eframe::App for LauncherApp {
             ui.vertical_centered(|ui| {
                 ui.add_space(8.0);
                 ui.heading("SpaceSpore");
-                ui.label(format!("Installe : {}", spacespore_common::installed_label()));
+                // Sur quelle version on se trouve : canal, numéro et, pour l'instable, le build
+                let (badge, color) = match CHANNEL {
+                    Channel::Stable => ("STABLE", egui::Color32::from_rgb(90, 200, 120)),
+                    Channel::Unstable => ("INSTABLE", egui::Color32::from_rgb(240, 170, 60)),
+                    Channel::Dev => ("LOCAL", egui::Color32::GRAY),
+                };
+                ui.horizontal(|ui| {
+                    ui.label("Installe :");
+                    ui.label(egui::RichText::new(badge).strong().color(color));
+                    ui.label(spacespore_common::installed_label());
+                });
                 ui.add_space(8.0);
 
                 // ── Choix du canal ──
@@ -406,10 +416,13 @@ impl eframe::App for LauncherApp {
                             ui.label("Installation...");
                         });
                     }
+                    // Le jeu ne se lance jamais tout seul : il faut cliquer sur « Jouer »
                     Stage::Installed(msg) => {
                         ui.label(msg);
-                        ui.label("Lancement de SpaceSpore...");
-                        self.launch_game(&ctx);
+                        ui.add_space(10.0);
+                        if ui.add_sized([140.0, 34.0], egui::Button::new("Jouer")).clicked() {
+                            self.launch_game(&ctx);
+                        }
                     }
                     Stage::Failed(err) => {
                         ui.colored_label(egui::Color32::LIGHT_RED, format!("Erreur : {}", err));

@@ -27,15 +27,13 @@ use crate::{CameraController, ZoomLevel};
 const SPACE_SKY: Color = Color::srgb(0.005, 0.005, 0.02);
 const DAY_SKY: [f32; 3] = [0.36, 0.58, 0.92];
 
-/// Éclairement du soleil pendant un séjour (lux) : la lumière ponctuelle de l'étoile est bien trop
-/// faible, à cette distance, pour lire le relief à hauteur d'homme.
-const SUN_LUX: f32 = 4_500.0;
-/// Lumière ambiante : celle de l'espace, et celle de jour sous une atmosphère.
+/// La lumière vient uniquement de l'étoile (lumière ponctuelle réelle : sa position, sa couleur et
+/// sa chute en 1/d²), jamais d'un « soleil » ajouté : une planète lointaine reçoit moins de lumière,
+/// la nuit tombe d'elle-même. Seule la lumière diffuse du ciel est ajoutée, sous une atmosphère.
 const AMBIENT_SPACE: f32 = 300.0;
-const AMBIENT_NIGHT: f32 = 600.0;
-const AMBIENT_DAY: f32 = 2_500.0;
-const AMBIENT_AIRLESS: f32 = 1_300.0;
-/// Teinte de la lumière diffuse pendant un séjour (plus claire que celle de l'espace).
+/// Lumière diffuse du ciel en plein jour sous une atmosphère.
+const AMBIENT_DAY: f32 = 1_500.0;
+/// Teinte de la lumière diffuse du ciel (plus claire que celle de l'espace).
 const AMBIENT_TINT: Color = Color::srgb(0.55, 0.6, 0.75);
 const AMBIENT_SPACE_TINT: Color = Color::srgb(0.25, 0.25, 0.35);
 
@@ -894,28 +892,22 @@ fn surface_control(
 //  Lumière
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Pendant un séjour, le soleil (lumière directionnelle) éclaire l'astre depuis son étoile : la
-/// face éclairée, la nuit et le crépuscule viennent de l'ombrage, comme dans la réalité.
-#[allow(clippy::too_many_arguments)]
+/// Lumière diffuse du ciel pendant un séjour : de jour sous une atmosphère seulement (la nuit, et
+/// sans air, il n'y a que la lumière directe de l'étoile).
 fn surface_light(
     surface: Res<Surface>,
     mut ambient: ResMut<AmbientLight>,
-    mut sun: Query<(&mut DirectionalLight, &mut Transform), (With<crate::SunLight>, Without<PlanetRoot>, Without<MoonRoot>, Without<StarRoot>)>,
     planets: Query<(&Transform, &PlanetId), With<PlanetRoot>>,
     moons: Query<(&Transform, &MoonId), With<MoonRoot>>,
     stars: Query<&Transform, With<StarRoot>>,
-    cam_q: Query<&Transform, (With<Camera3d>, Without<PlanetRoot>, Without<MoonRoot>, Without<StarRoot>, Without<crate::SunLight>)>,
+    cam_q: Query<&Transform, (With<Camera3d>, Without<PlanetRoot>, Without<MoonRoot>, Without<StarRoot>)>,
     mut was_active: Local<bool>,
 ) {
-    let active = surface.active();
-    if !active {
+    if !surface.active() {
         if *was_active {
             *was_active = false;
             ambient.brightness = AMBIENT_SPACE;
             ambient.color = AMBIENT_SPACE_TINT;
-            for (mut light, _) in &mut sun {
-                light.illuminance = 0.0;
-            }
         }
         return;
     }
@@ -938,23 +930,16 @@ fn surface_light(
     else {
         return;
     };
-    for (mut light, mut tf) in &mut sun {
-        light.illuminance = SUN_LUX;
-        light.shadows_enabled = false;
-        *tf = Transform::IDENTITY.looking_to(Dir3::new(-to_star).unwrap_or(Dir3::NEG_Y), Dir3::Y);
-    }
-
-    // Lumière diffuse : l'atmosphère la renforce de jour (et la nuit tombe), sans air elle reste faible
     let cam_local = cam.translation - center;
     let up = cam_local.normalize_or(Vec3::Y);
     let altitude = cam_local.length() - params.radius;
-    ambient.brightness = if params.atmosphere {
-        let day = smoothstep((up.dot(to_star) + 0.15) / 0.35) * (1.0 - altitude / atmosphere_depth(&params)).clamp(0.0, 1.0);
-        AMBIENT_NIGHT + (AMBIENT_DAY - AMBIENT_NIGHT) * day
+    let day = if params.atmosphere {
+        smoothstep((up.dot(to_star) + 0.15) / 0.35) * (1.0 - altitude / atmosphere_depth(&params)).clamp(0.0, 1.0)
     } else {
-        AMBIENT_AIRLESS
+        0.0
     };
-    ambient.color = AMBIENT_TINT;
+    ambient.brightness = AMBIENT_SPACE + (AMBIENT_DAY - AMBIENT_SPACE) * day;
+    ambient.color = if day > 0.0 { AMBIENT_TINT } else { AMBIENT_SPACE_TINT };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
