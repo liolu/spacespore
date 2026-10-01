@@ -33,9 +33,9 @@ const USE_MARGIN: f32 = 30_000.0;
 /// Rayon minimal du dessin (il grandit avec la distance pour rester visible).
 pub const MIN_DRAW_RADIUS: f32 = 1_500.0;
 /// Distance de la caméra au-delà de laquelle une ouverture n'est plus dessinée.
-pub const DRAW_RANGE: f32 = 3_000_000.0;
+pub const DRAW_RANGE: f32 = 3_000_000.0 * crate::settings::GALAXY_SCALE;
 /// Le trait entre deux ouvertures connues est dessiné de plus loin.
-const LINE_RANGE: f32 = 30_000_000.0;
+const LINE_RANGE: f32 = 30_000_000.0 * crate::settings::GALAXY_SCALE;
 /// Distance maximale du vaisseau à l'ouverture pour l'emprunter (il se pose au-dessus d'elle).
 const ENTER_RANGE: f32 = 30_000.0;
 

@@ -279,16 +279,19 @@ pub(crate) fn pseudo_rand(seed: u32) -> f32 {
 }
 
 pub const SYSTEM_GRID_SIZE: usize = 100;
-pub const SYSTEM_CELL_SIZE: f32 = 100_000.0;
+/// Échelle de la galaxie : toutes les distances entre étoiles (et entre galaxies) sont multipliées
+/// par ce facteur, les systèmes eux-mêmes (étoile, planètes, lunes) gardent leur taille.
+pub const GALAXY_SCALE: f32 = 100.0;
+pub const SYSTEM_CELL_SIZE: f32 = 100_000.0 * GALAXY_SCALE;
 pub const STREAM_RADIUS: f32 = 3.0;
 /// Graine du monde par défaut (partagée par tous les joueurs).
 pub const DEFAULT_WORLD_SEED: u64 = 42;
-pub const GALAXY_RADIUS: f32 = 9_000_000.0;
+pub const GALAXY_RADIUS: f32 = 9_000_000.0 * GALAXY_SCALE;
 
 /// Nombre de galaxies extérieures (ids 1..=NUM_DISTANT_GALAXIES).
 pub const NUM_DISTANT_GALAXIES: usize = 100;
 /// Aucun système n'est généré à moins de cette distance d'un trou noir galactique.
-pub const CORE_EXCLUSION: f32 = 150_000.0;
+pub const CORE_EXCLUSION: f32 = 150_000.0 * GALAXY_SCALE;
 
 /// Forme d'une galaxie. Index 0 = galaxie principale, 1.. = galaxies extérieures.
 #[derive(Clone, Debug)]
@@ -311,9 +314,9 @@ pub struct GalaxyConfig {
 pub fn default_galaxies(world_seed: u64) -> Vec<GalaxyConfig> {
     use bevy::math::{EulerRot, Quat, Vec3};
     const META_ARMS: usize = 5;
-    const META_RADIUS: f32 = 200_000_000.0;
+    const META_RADIUS: f32 = 200_000_000.0 * GALAXY_SCALE;
     const META_TWIST: f32 = 4.0;
-    const MIN_DIST: f32 = 40_000_000.0;
+    const MIN_DIST: f32 = 40_000_000.0 * GALAXY_SCALE;
     /// Deux galaxies restent séparées d'au moins ce multiple de la somme de leurs rayons.
     const SPACING: f32 = 2.0;
     let tau = std::f32::consts::TAU;
@@ -330,7 +333,7 @@ pub fn default_galaxies(world_seed: u64) -> Vec<GalaxyConfig> {
         num_arms: 5,
         twist: 5.0,
         kind: crate::galaxy_shape::GalaxyKind::Spiral,
-        core_radius: 30_000.0,
+        core_radius: 30_000.0 * GALAXY_SCALE,
         seed: 0,
         arm_stars: 0,
         scatter_stars: 0,
@@ -342,7 +345,7 @@ pub fn default_galaxies(world_seed: u64) -> Vec<GalaxyConfig> {
         let rk = |k: u32| pseudo_rand(gs * 13 + k);
         let rk_k = |n: u32, k: u32| pseudo_rand((gs * 13 + n).wrapping_add(k));
 
-        let radius = 1_300_000.0 + (rk(7) * 0.6 + rk(27) * 0.4).powf(1.3) * 6_000_000.0;
+        let radius = (1_300_000.0 + (rk(7) * 0.6 + rk(27) * 0.4).powf(1.3) * 6_000_000.0) * GALAXY_SCALE;
 
         // Position de la galaxie sur les bras de la méta-spirale, à l'écart des autres :
         // on retire au sort jusqu'à trouver une place libre (à défaut, la moins serrée)
@@ -358,7 +361,7 @@ pub fn default_galaxies(world_seed: u64) -> Vec<GalaxyConfig> {
             let theta = spiral + scatter;
             let c = Vec3::new(
                 r * theta.cos(),
-                (rk_k(5, k) - 0.5) * 16_000_000.0,
+                (rk_k(5, k) - 0.5) * 16_000_000.0 * GALAXY_SCALE,
                 r * theta.sin(),
             );
             // Marge restante par rapport au voisin le plus proche (>= 0 : place libre)
@@ -387,7 +390,7 @@ pub fn default_galaxies(world_seed: u64) -> Vec<GalaxyConfig> {
             num_arms: 2 + (rk(9) * 5.0) as usize,
             twist: 1.5 + rk(11) * 7.5,
             kind: crate::galaxy_shape::GalaxyKind::for_index(gi, world_hash),
-            core_radius: 10_000.0 + rk(23) * 20_000.0,
+            core_radius: (10_000.0 + rk(23) * 20_000.0) * GALAXY_SCALE,
             seed: gs * 1000,
             arm_stars: 170 + (rk(19) * 380.0) as usize,
             scatter_stars: 40 + (rk(31) * 120.0) as usize,
@@ -525,7 +528,7 @@ fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystem
 
         let x = r * theta.cos();
         let z = r * theta.sin();
-        let thickness = 60000.0 * (1.0 - r / gr * 0.7);
+        let thickness = 60000.0 * GALAXY_SCALE * (1.0 - r / gr * 0.7);
         let y = (pseudo_rand(s * 7 + 7) - 0.5) * thickness;
 
         let (sr, si, sc) = make_star(s);
@@ -553,7 +556,7 @@ fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystem
         let theta = pseudo_rand(s * 7 + 5) * tau;
         let x = r * theta.cos();
         let z = r * theta.sin();
-        let y = (pseudo_rand(s * 7 + 7) - 0.5) * 3000.0;
+        let y = (pseudo_rand(s * 7 + 7) - 0.5) * 3000.0 * GALAXY_SCALE;
 
         let (sr, si, sc) = make_star(s);
         systems.push(StarSystemConfig {
@@ -607,6 +610,19 @@ fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystem
             });
             local_idx += 1;
         }
+    }
+
+    // Le système de départ (indice 0) est placé près du centre de la galaxie : les nombres flottants
+    // n'y ont qu'une précision de ~2 unités (contre ~60 au bord), de quoi marcher sur une planète
+    let near = |p: [f32; 3]| (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
+    let wanted = CORE_EXCLUSION * 1.3;
+    if let Some(best) = (1..systems.len())
+        .filter(|&i| systems[i].galaxy_id == 0 && near(systems[i].position) >= wanted)
+        .min_by(|&a, &b| near(systems[a].position).total_cmp(&near(systems[b].position)))
+    {
+        let p = systems[best].position;
+        systems[best].position = systems[0].position;
+        systems[0].position = p;
     }
 
     systems

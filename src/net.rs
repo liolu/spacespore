@@ -499,7 +499,7 @@ fn sanitize_color(c: [f32; 3]) -> [f32; 3] {
 }
 
 fn valid_vec(v: &[f32]) -> bool {
-    v.iter().all(|x| x.is_finite() && x.abs() < 1.0e9)
+    v.iter().all(|x| x.is_finite() && x.abs() < 1.0e12)
 }
 
 /// Empreinte de la carte générée. N'utilise que des valeurs calculées sans
