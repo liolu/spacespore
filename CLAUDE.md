@@ -55,7 +55,10 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   extraterrestres. Partage par `terrain.rs` et `mesher.rs` (couleur vue de l'espace = sol).
   Phase 9 : habitabilite et dangers (`habitability.rs`), traits 98/1,5/0,4/0,1 % (`traits.rs`), lunes = toute la
   chaine (`system.rs::world_layers`, maree `tidal_heating`, `MoonConfig::as_planet` pour terrain/rendu/profil),
-  anneaux et aurores (`planet.rs::spawn_ring_and_aurora`), panneau scanner de l'astre cible (`scanner.rs`, touche I). L'etoile a un type (`planetgen/star.rs`, O..M, naine blanche/brune, sous-geante, geante rouge) :
+  anneaux et aurores (`planet.rs::spawn_ring_and_aurora`), panneau scanner de l'astre cible (`scanner.rs`, touche I).
+  Phase 7 : vie independante de l'habitabilite (`planetgen/life.rs`, sans plantes les biomes verts restent nus),
+  decor voxel des tuiles proches (`decor.rs` : `tile_decor` calcule avec la tuile, enfants de la tuile, maillages
+  et materiaux partages). Banc : `cargo test --release bench_decor -- --ignored --nocapture`. L'etoile a un type (`planetgen/star.rs`, O..M, naine blanche/brune, sous-geante, geante rouge) :
   une G garde l'echelle, les autres types ont leur taille reelle (1 R_sol ~ 1 050 000 a l'ecran), compressee
   au-dela de 1,5 M (max 6,5 M) ; les planetes d'une geante sont repoussees hors d'elle. Aucun type impose (Sol compris). Planetes et lunes
   sont explorables : zoomer sous 1000 du vaisseau = navigation basse altitude (ZQSD, Maj, Espace/Ctrl, clic

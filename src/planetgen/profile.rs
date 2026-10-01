@@ -253,8 +253,16 @@ pub struct ReliefSection {
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct BiologySection {
-    /// Niveau de vie (microbienne, simple, complexe) : phase 7.
+    /// Niveau de vie (microbienne, simple, complexe), indépendant de l'habitabilité.
     pub life: Option<String>,
+    /// Chances de vie microbienne, simple, complexe (0 à 1).
+    pub life_chances: BTreeMap<&'static str, f64>,
+    /// Chimie du vivant (réaliste, spéculative ou fictive).
+    pub biochemistry: Option<String>,
+    /// Des plantes couvrent les sols.
+    pub flora: bool,
+    /// Faune : paramètres seulement (créatures visibles en 0.11).
+    pub fauna: Option<super::life::Fauna>,
     /// Biomes par part de la surface émergée, avec leur rigueur.
     pub biomes: Vec<BiomeShare>,
     /// Sols dominants des régions sèches ou sans vie.
@@ -501,8 +509,16 @@ fn biology_section(p: &PlanetConfig) -> BiologySection {
         soils.push("argile".to_string());
     }
     soils.push("sable".to_string());
+    let life = &p.life;
     BiologySection {
-        life: None,
+        life: Some(life.level.name().to_string()),
+        life_chances: [("microbienne", life.chance_microbial), ("simple", life.chance_simple), ("complexe", life.chance_complex)]
+            .into_iter()
+            .map(|(k, v)| (k, f(v)))
+            .collect(),
+        biochemistry: (!life.biochemistry.is_empty()).then(|| life.biochemistry.clone()),
+        flora: life.flora,
+        fauna: life.fauna.clone(),
         biomes,
         soils,
         alien_flora: Some(b.alien),

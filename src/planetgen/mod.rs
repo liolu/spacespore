@@ -23,6 +23,7 @@ pub mod genome;
 pub mod geology;
 pub mod habitability;
 pub mod hydrology;
+pub mod life;
 pub mod live;
 pub mod profile;
 pub mod seed_code;

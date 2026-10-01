@@ -479,7 +479,11 @@ const MAX_STEP_DOUBLINGS: u32 = 2;
 /// haute dessine la paroi qui les sépare. Une « jupe » descend le long des bords de la tuile pour
 /// cacher les fentes avec les tuiles voisines de profondeur différente.
 pub fn build_tile_mesh(params: &BodyParams, key: TileKey) -> Mesh {
-    let terrain = Terrain::new(*params);
+    build_tile_mesh_with(&Terrain::new(*params), key)
+}
+
+/// Comme `build_tile_mesh`, avec un `Terrain` déjà construit (partagé avec le décor).
+pub fn build_tile_mesh_with(terrain: &Terrain, key: TileKey) -> Mesh {
     let layout = terrain.layout;
     let depth = (key.depth as u32).min(layout.max_depth);
     let lattice = (TILE_CELLS as u32) << depth;

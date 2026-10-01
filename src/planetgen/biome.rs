@@ -188,6 +188,9 @@ pub struct BiomeParams {
     pub regolith: bool,
     /// Des mers se sont évaporées : déserts de sel dans les bassins.
     pub salt: bool,
+    /// Des plantes poussent (phase 7, `life.rs`) : sinon les biomes verts restent nus.
+    #[serde(default)]
+    pub flora: bool,
 }
 
 /// Données d'entrée.
@@ -205,6 +208,8 @@ pub struct BiomeInput {
     pub magnetic_field: f64,
     /// De l'eau, mais plus liquide en surface (évaporée ou partie).
     pub dried_water: bool,
+    /// Des plantes poussent (vie au moins simple, phase 7).
+    pub flora: bool,
     /// UV et rayons X reçus (Terre = 1).
     pub uv: f64,
     pub xray: f64,
@@ -240,6 +245,7 @@ pub fn generate(input: &BiomeInput) -> BiomeParams {
         sulfur: input.sulfur > 0.001,
         regolith: input.pressure < 0.01 && input.surface_age > 1.0,
         salt: input.dried_water,
+        flora: input.flora,
     }
 }
 
@@ -299,8 +305,26 @@ impl BiomeField {
     }
 
     /// Biome du sol émergé (ou d'un bassin à sec) dans la direction `dir`. `rh` : hauteur
-    /// au-dessus de la mer.
+    /// au-dessus de la mer. Sans plantes (`flora`), les biomes verts laissent voir leur sol nu.
     pub fn biome(&self, climate: &Climate, hydro: &Hydro, airless: bool, atmosphere: bool, rh: f32, dir: Vec3) -> Biome {
+        let b = self.environment(climate, hydro, airless, atmosphere, rh, dir);
+        if self.params.flora || !b.vegetated() {
+            return b;
+        }
+        let t = climate.temperature(dir.y.abs().clamp(0.0, 1.0).asin(), relative_altitude(rh), None);
+        match self.soil(dir, climate, hydro, rh, t) {
+            Soil::Volcanic => Biome::BasaltField,
+            Soil::Metal => Biome::RustPlain,
+            Soil::Salt => Biome::SaltFlat,
+            Soil::Regolith => Biome::Regolith,
+            Soil::Ice => Biome::IceSheet,
+            Soil::Sand | Soil::Clay if rh > 0.3 => Biome::Alpine,
+            Soil::Sand | Soil::Clay => Biome::Desert,
+        }
+    }
+
+    /// Biome que l'environnement permettrait, plantes comprises.
+    fn environment(&self, climate: &Climate, hydro: &Hydro, airless: bool, atmosphere: bool, rh: f32, dir: Vec3) -> Biome {
         let p = &self.params;
         if airless {
             return Biome::Regolith;
@@ -417,7 +441,7 @@ mod tests {
     }
 
     fn earth_params(alien: bool) -> BiomeParams {
-        BiomeParams { defined: true, seed: 3, wetness: 0.8, radiation: 0.05, alien, volcanism: 0.2, metal: false, sulfur: false, regolith: false, salt: false }
+        BiomeParams { defined: true, seed: 3, wetness: 0.8, radiation: 0.05, alien, volcanism: 0.2, metal: false, sulfur: false, regolith: false, salt: false, flora: true }
     }
 
     #[test]
@@ -487,6 +511,15 @@ mod tests {
         }
         for b in [Biome::BasaltField, Biome::RustPlain, Biome::SaltFlat, Biome::Regolith] {
             assert!(seen.contains(&b), "{b:?} absent : {seen:?}");
+        }
+    }
+
+    #[test]
+    fn without_plants_green_biomes_are_bare() {
+        let field = BiomeField::new(BiomeParams { flora: false, ..earth_params(false) });
+        let climate = Climate { mean_c: 20.0, span: 50.0, lapse: 50.0, diurnal: 10.0, tilt: 23.0 };
+        for dir in sphere(3000) {
+            assert!(!field.biome(&climate, &Hydro::default(), false, true, 0.15, dir).vegetated());
         }
     }
 

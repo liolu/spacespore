@@ -185,6 +185,16 @@ fn body_text(p: &PlanetProfile) -> (String, u8) {
         w += ", ocean sous la glace";
     }
     lines.push(w);
+    if let Some(life) = &p.biology.life {
+        let mut l = format!("Vie : {life}");
+        if let Some(chem) = &p.biology.biochemistry {
+            l += &format!("  -  {chem}");
+        }
+        if let Some(f) = &p.biology.fauna {
+            l += &format!("\nFaune : ~{} especes, jusqu'a {:.0} m ({})", f.species, f.max_size_m, f.locomotion.join(", "));
+        }
+        lines.push(l);
+    }
     if let Some(score) = p.gameplay.habitability {
         lines.push(format!("Habitabilite : {:.2}  {}", score, p.gameplay.habitability_label.clone().unwrap_or_default()));
     }

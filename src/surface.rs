@@ -19,7 +19,8 @@ use crate::net_ui::NetPanel;
 use crate::planet::{MoonId, MoonRoot, PlanetId, PlanetRoot, StarRoot};
 use crate::settings::GameSettings;
 use crate::ship::Ship;
-use crate::terrain::{build_tile_mesh, select_tiles, BodyParams, Terrain, TileKey};
+use crate::terrain::{build_tile_mesh, select_tiles, BodyParams, Terrain, TileKey, build_tile_mesh_with};
+use crate::decor::{tile_decor, DecorAssets, DecorInstance};
 use crate::ui::{CameraTarget, MenuState, TargetKind};
 use crate::{CameraController, ZoomLevel};
 
@@ -1078,7 +1079,7 @@ struct TileEntry {
 struct TileStore {
     body: Option<TargetKind>,
     built: HashMap<TileKey, TileEntry>,
-    tasks: HashMap<TileKey, Task<Mesh>>,
+    tasks: HashMap<TileKey, Task<(Mesh, Vec<DecorInstance>)>>,
     material: Option<Handle<StandardMaterial>>,
     far_hidden: bool,
 }
@@ -1111,6 +1112,7 @@ fn update_tiles(
     mut store: ResMut<TileStore>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    decor: Res<DecorAssets>,
     cam_q: Query<&Transform, With<Camera3d>>,
     planets: Query<(Entity, &PlanetId, &Transform), (With<PlanetRoot>, Without<Camera3d>)>,
     moons: Query<(Entity, &MoonId, &Transform), (With<MoonRoot>, Without<Camera3d>)>,
@@ -1183,9 +1185,11 @@ fn update_tiles(
     let finished: Vec<TileKey> = store.tasks.keys().copied().collect();
     for key in finished {
         let Some(task) = store.tasks.get_mut(&key) else { continue };
-        if let Some(mesh) = block_on(future::poll_once(task)) {
+        if let Some((mesh, objects)) = block_on(future::poll_once(task)) {
             store.tasks.remove(&key);
             let entity = spawn_tile(&mut commands, &mut meshes, &material, root, mesh);
+            // Décor de la tuile (tuiles proches seulement) : il disparaît avec elle
+            decor.spawn(&mut commands, entity, &objects);
             store.built.insert(key, TileEntry { entity, last_needed: now });
         }
     }
@@ -1203,7 +1207,13 @@ fn update_tiles(
             break;
         }
         let p = params;
-        store.tasks.insert(key, pool.spawn(async move { build_tile_mesh(&p, key) }));
+        store.tasks.insert(
+            key,
+            pool.spawn(async move {
+                let terrain = Terrain::new(p);
+                (build_tile_mesh_with(&terrain, key), tile_decor(&terrain, key))
+            }),
+        );
     }
 
     // Tuiles à afficher : la feuille si elle est prête, sinon son plus proche ancêtre prêt
