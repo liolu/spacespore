@@ -6,6 +6,7 @@ use noise::{Fbm, NoiseFn, Perlin};
 use crate::lod::LodLevel;
 use crate::planet::{CubeFace, VoxelType};
 use crate::planetgen::climate::{land_material, sea_material, Climate};
+use crate::planetgen::hydrology::Hydro;
 fn max_greedy_for_lod(lod: LodLevel) -> usize {
     match lod {
         LodLevel::Lod0 | LodLevel::Lod1 => 1,
@@ -280,6 +281,7 @@ pub fn build_chunk_mesh(
     detail_scale: f32,
     lod: LodLevel,
     climate: Climate,
+    hydro: Hydro,
     atmosphere: bool,
 ) -> Mesh {
     let res = lod.resolution();
@@ -335,8 +337,8 @@ pub fn build_chunk_mesh(
             // Même climat que le terrain voxel (`planetgen::climate`) : la vue de l'espace et le sol concordent
             let rh = height_val - sl;
             let lat = dir.y.abs();
-            surface_types[ix][iy] = land_material(&climate, false, atmosphere, rh, lat);
-            seas[ix][iy] = sea_material(&climate, false, atmosphere, lat);
+            surface_types[ix][iy] = land_material(&climate, &hydro, false, atmosphere, rh, lat);
+            seas[ix][iy] = sea_material(&climate, &hydro, false, lat);
         }
     }
 
@@ -390,7 +392,7 @@ pub fn build_chunk_mesh(
         let var = cell_color_var[ix.min(res - 1)][iy.min(res - 1)];
 
         // Water depth darkening
-        let depth_darken = if vtype == VoxelType::Water {
+        let depth_darken = if vtype.is_liquid() && vtype != VoxelType::Lava {
             ((radius - r_hi) / 12.0).clamp(0.0, 0.45)
         } else {
             0.0
