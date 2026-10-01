@@ -113,6 +113,8 @@ pub struct MoonConfig {
     #[serde(default = "default_moon_gravity")] pub gravity_g: f32,
     /// Climat (phase 3) : lune sans air.
     #[serde(default)] pub climate:        Option<Climate>,
+    /// Relief (phase 5) : cratères.
+    #[serde(default)] pub relief:         Option<Relief>,
 }
 fn default_moon_gravity() -> f32 { 0.16 }
 impl Default for MoonConfig {
@@ -120,7 +122,7 @@ impl Default for MoonConfig {
         orbit_distance: 400.0, radius: 60.0, seed: 77,
         eccentricity: 0.0, inclination: 0.0, ascending_node: 0.0,
         arg_periapsis: 0.0, mean_anomaly_0: 0.0,
-        radius_earth: 0.0, mass_earth: 0.0, gravity_g: default_moon_gravity(), climate: None,
+        radius_earth: 0.0, mass_earth: 0.0, gravity_g: default_moon_gravity(), climate: None, relief: None,
     } }
 }
 
@@ -172,6 +174,8 @@ pub struct PlanetConfig {
     #[serde(default)] pub air:            Air,
     /// Eau et glace (phase 4) : liquide des mers, couverture, calottes, eau souterraine.
     #[serde(default)] pub hydrology:      Hydrology,
+    /// Géologie et relief (phase 5).
+    #[serde(default)] pub geology:        Geology,
 }
 fn default_gravity() -> f32 { 1.0 }
 fn default_star_radius()    -> f32 { 250.0 }
@@ -189,7 +193,7 @@ impl Default for PlanetConfig {
             arg_periapsis: 0.0, mean_anomaly_0: 0.0,
             kind: PlanetKind::Rocky, hot: false, mass_earth: 0.0, radius_earth: 0.0,
             semi_major_au: 0.0, period_days: 0.0, rotation_h: 0.0, axial_tilt: 0.0,
-            tidally_locked: false, gravity_g: 1.0, temperature_c: None, climate: None, air: Air::default(), hydrology: Hydrology::default(),
+            tidally_locked: false, gravity_g: 1.0, temperature_c: None, climate: None, air: Air::default(), hydrology: Hydrology::default(), geology: Geology::default(),
         }
     }
 }
@@ -354,6 +358,7 @@ use crate::planetgen::genome::SystemGenome;
 use crate::planetgen::star::{StarClass, StarPhysics};
 use crate::planetgen::atmosphere::Air;
 use crate::planetgen::climate::Climate;
+use crate::planetgen::geology::{Geology, Relief};
 use crate::planetgen::hydrology::Hydrology;
 use crate::planetgen::system::PlanetKind;
 use crate::planetgen::live::WorldDeltas;

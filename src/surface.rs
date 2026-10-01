@@ -1405,6 +1405,7 @@ mod tests {
             haze: EARTH_SKY,
             pressure: 1.0,
             hydro: crate::planetgen::hydrology::Hydro::default(),
+            relief: crate::planetgen::geology::Relief::default(),
         })
     }
 

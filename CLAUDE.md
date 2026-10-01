@@ -44,7 +44,11 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   partagees par `terrain.rs` et `mesher.rs`. Brume de l'horizon et brouillard des geantes : `gas.rs`.
   Eau et glace (`planetgen/hydrology.rs`) : etat de l'eau (diagramme de phase), couverture oceanique -> niveau de
   la mer (relief ~ N(0,5 ; 0,09)), mers d'eau, methane, ammoniac ou lave (`VoxelType` Ice/Methane/Ammonia/Lava),
-  neige seulement s'il y a de l'eau (`Hydro::snow`) ou du givre de CO2. L'etoile a un type (`planetgen/star.rs`, O..M, naine blanche/brune, sous-geante, geante rouge) :
+  neige seulement s'il y a de l'eau (`Hydro::snow`) ou du givre de CO2.
+  Geologie et relief (`planetgen/geology.rs`) : activite interne, tectonique, volcans, seismes, champ magnetique,
+  erosion ; `ReliefField::offset` (plaques -> montagnes/rifts, volcans, canyons, plateaux, crateres) ajoute au bruit
+  des continents, partage par `terrain.rs` et `mesher.rs`. Banc des tuiles : `cargo test --release bench_tiles --
+  --ignored --nocapture` (1,07 ms/tuile avant la phase 5, 1,18 apres). L'etoile a un type (`planetgen/star.rs`, O..M, naine blanche/brune, sous-geante, geante rouge) :
   une G garde l'echelle, les autres types ont leur taille reelle (1 R_sol ~ 1 050 000 a l'ecran), compressee
   au-dela de 1,5 M (max 6,5 M) ; les planetes d'une geante sont repoussees hors d'elle. Aucun type impose (Sol compris). Planetes et lunes
   sont explorables : zoomer sous 1000 du vaisseau = navigation basse altitude (ZQSD, Maj, Espace/Ctrl, clic

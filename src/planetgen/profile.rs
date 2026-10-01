@@ -231,10 +231,16 @@ pub struct HydrologySection {
 pub struct GeologySection {
     pub age_gyr: Option<f64>,
     pub surface_age_gyr: Option<f64>,
+    /// Chaleur interne (0 à 1).
     pub activity: Option<f64>,
     pub tectonics: Option<String>,
     pub volcanism: Option<f64>,
+    /// Séismes de magnitude 5 et plus, Terre = 1.
+    pub quakes: Option<f64>,
+    /// Champ magnétique de surface, Terre = 1.
     pub magnetic_field: Option<f64>,
+    /// Érosion (0 à 1) : pluie, vent, glace, âge de la surface.
+    pub erosion: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -378,6 +384,23 @@ fn climate_section(p: &PlanetConfig) -> ClimateSection {
     }
 }
 
+fn geology_section(p: &PlanetConfig) -> GeologySection {
+    let g = &p.geology;
+    if g.age_gyr <= 0.0 {
+        return GeologySection::default();
+    }
+    GeologySection {
+        age_gyr: Some(f(g.age_gyr)),
+        surface_age_gyr: Some(f(g.surface_age_gyr)),
+        activity: Some(f(g.activity)),
+        tectonics: Some(g.tectonics.name().to_string()),
+        volcanism: Some(f(g.volcanism)),
+        quakes: Some(f(g.quakes)),
+        magnetic_field: Some(f(g.magnetic_field)),
+        erosion: Some(f(g.relief.erosion)),
+    }
+}
+
 fn composition(id: BodyId, deltas: &WorldDeltas) -> CompositionSection {
     let delta = delta_of(deltas, id);
     CompositionSection { bulk: delta.composition.iter().map(|(k, v)| (k.clone(), Live::new(0.0, *v))).collect() }
@@ -427,12 +450,12 @@ impl PlanetProfile {
                     groundwater: known.then(|| f(h.groundwater_m)),
                 }
             },
-            geology: GeologySection::default(),
+            geology: geology_section(p),
             relief: ReliefSection {
                 terrain_height_game: f(p.terrain_height),
                 noise_scale: f(p.noise_scale),
                 detail_scale: f(p.detail_scale),
-                features: Vec::new(),
+                features: p.geology.features(),
             },
             biology: BiologySection::default(),
             resources: ResourcesSection::default(),

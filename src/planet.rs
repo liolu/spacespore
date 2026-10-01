@@ -1049,7 +1049,7 @@ fn build_planet_chunks(
     divs: usize,
     cam_local: Vec3,
 ) -> Vec<(CubeFace, usize, usize, LodLevel, Mesh)> {
-    let (climate, hydro, atmosphere) = (pcfg.climate(), pcfg.hydrology.hydro, pcfg.atmosphere);
+    let (climate, hydro, atmosphere, relief) = (pcfg.climate(), pcfg.hydrology.hydro, pcfg.atmosphere, pcfg.geology.relief);
     let mut jobs = Vec::with_capacity(6 * divs * divs);
     for face in CubeFace::all() {
         for gx in 0..divs {
@@ -1067,7 +1067,7 @@ fn build_planet_chunks(
                 let mesh = build_chunk_mesh(
                     face, gx, gy, divs,
                     pcfg.radius, pcfg.sea_level, pcfg.terrain_height,
-                    pcfg.seed, pcfg.noise_scale, pcfg.detail_scale, lod, climate, hydro, atmosphere,
+                    pcfg.seed, pcfg.noise_scale, pcfg.detail_scale, lod, climate, hydro, atmosphere, relief,
                 );
                 (face, gx, gy, lod, mesh)
             });
@@ -1741,9 +1741,9 @@ fn update_lod(
                 pcfg.radius, pcfg.sea_level, pcfg.terrain_height,
                 pcfg.seed, pcfg.noise_scale, pcfg.detail_scale,
             );
-            let (climate, hydro, atmosphere) = (pcfg.climate(), pcfg.hydrology.hydro, pcfg.atmosphere);
+            let (climate, hydro, atmosphere, relief) = (pcfg.climate(), pcfg.hydrology.hydro, pcfg.atmosphere, pcfg.geology.relief);
             let task = pool.spawn(async move {
-                build_chunk_mesh(face, gx, gy, divs, radius, sea, height, seed, noise, detail, new_lod, climate, hydro, atmosphere)
+                build_chunk_mesh(face, gx, gy, divs, radius, sea, height, seed, noise, detail, new_lod, climate, hydro, atmosphere, relief)
             });
             commands.entity(entity).insert(LodTask { task, lod: new_lod });
             in_flight += 1;

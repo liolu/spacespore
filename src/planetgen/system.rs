@@ -15,7 +15,8 @@ use serde::{Deserialize, Serialize};
 use super::atmosphere::{self, AirInput};
 use super::climate::Climate;
 use super::genome::SystemGenome;
-use super::hydrology::{self, HydroInput};
+use super::geology::{self, GeoInput, Geology};
+use super::hydrology::{self, HydroInput, Liquid, WaterState};
 use super::seeds::{Layer, LayerRng};
 use super::star::{StarClass, StarPhysics};
 use crate::settings::{MoonConfig, PlanetConfig};
@@ -204,6 +205,7 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
                 mass_earth: mass as f32,
                 gravity_g: (mass / (r_earth * r_earth)) as f32,
                 climate: Some(moon_climate),
+                relief: Some(geology::moon_relief(moon_seed)),
             });
         }
 
@@ -243,6 +245,26 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
             &HydroInput { kind: d.kind, snow_ratio: d.au / snow, mass: d.mass, air: &air, climate: &climate },
             &mut LayerRng::new(seed as u64, Layer::Hydrology),
         );
+        // Géologie et relief (phase 5) : tectonique, volcans, cratères, érosion
+        let geology = if gaseous {
+            Geology::default()
+        } else {
+            geology::generate(
+                &GeoInput {
+                    mass: d.mass,
+                    age_gyr: star.age_gyr,
+                    gravity: d.mass / (d.radius * d.radius),
+                    liquid_water: hydrology.hydro.liquid == Liquid::Water && hydrology.water_state == WaterState::Liquid,
+                    pressure: air.pressure_bar as f64,
+                    ice: hydrology.ice_caps > 0.05,
+                    wind_ms: air.wind_ms as f64,
+                    rotation_h,
+                    locked,
+                },
+                seed,
+                &mut LayerRng::new(seed as u64, Layer::Geology),
+            )
+        };
 
         planets.push(PlanetConfig {
             orbit_distance: 0.0, // placée plus bas
@@ -277,6 +299,7 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
             climate: Some(climate),
             air,
             hydrology,
+            geology,
             ..Default::default()
         });
     }
