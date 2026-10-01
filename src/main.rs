@@ -1894,6 +1894,21 @@ fn temp_label(
 }
 
 
+/// Les textes de l'interface n'ont pas de lettres accentuées (la police les affiche en carrés).
+fn ascii(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'à' | 'â' | 'ä' => 'a',
+            'î' | 'ï' => 'i',
+            'ô' | 'ö' => 'o',
+            'ù' | 'û' | 'ü' => 'u',
+            'ç' => 'c',
+            other => other,
+        })
+        .collect()
+}
+
 fn update_system_hud(
     settings: Res<GameSettings>,
     camera_target: Res<CameraTarget>,
@@ -1951,7 +1966,7 @@ fn update_system_hud(
         TargetKind::WormholeMouth(si) => (None, settings.systems.get(si).map(|s| format!("Trou de ver de {}", s.name))),
         TargetKind::GalacticCore => (None, Some("Trou Noir Galactique".to_string())),
         TargetKind::DistantGalaxyCore(id) => (None, Some(match settings.galaxies.get(id as usize) {
-            Some(g) => format!("Galaxie {} · {}", id, g.kind.name()),
+            Some(g) => format!("Galaxie {} - {}", id, ascii(g.kind.name())),
             None => format!("Galaxie {}", id),
         })),
         _ => (None, None),

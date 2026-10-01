@@ -341,7 +341,7 @@ const CLOUD_PALETTE: [[f32; 3]; CLOUD_COLORS] = [
 ];
 /// Niveaux d'opacité (fondu) : un matériau par couleur et par niveau.
 const CLOUD_STEPS: usize = 8;
-const CLOUD_MAX_ALPHA: f32 = 0.11;
+const CLOUD_MAX_ALPHA: f32 = 0.06;
 const CLOUD_TEXTURE: u32 = 128;
 /// Nuages de la galaxie principale ; les autres en ont selon leur taille.
 const CLOUDS_MAIN: usize = 220;
