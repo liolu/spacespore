@@ -242,7 +242,18 @@ impl eframe::App for LauncherApp {
             ui.vertical_centered(|ui| {
                 ui.add_space(8.0);
                 ui.heading("SpaceSpore");
-                ui.label(format!("Installe : {}", spacespore_common::installed_label()));
+                // Sur quelle version on se trouve : canal, numéro et, pour l'instable, le build
+                let (badge, color) = match CHANNEL {
+                    Channel::Stable => ("STABLE", egui::Color32::from_rgb(90, 200, 120)),
+                    Channel::Unstable => ("INSTABLE", egui::Color32::from_rgb(240, 170, 60)),
+                    Channel::Dev => ("LOCAL", egui::Color32::GRAY),
+                };
+                ui.horizontal(|ui| {
+                    ui.label("Installe :");
+                    ui.label(egui::RichText::new(badge).strong().color(color));
+                    ui.label(spacespore_common::installed_label());
+                });
+                ui.small("Nouvelle numerotation : AA.MM.JJ_HH:MM_vVERSION.REVISION (heure UTC)");
                 ui.add_space(8.0);
 
                 // ── Choix du canal ──
@@ -374,7 +385,7 @@ impl eframe::App for LauncherApp {
                             if ui.button(action).clicked() {
                                 self.start_update(info.clone());
                             }
-                            if ui.button("Jouer sans changer").clicked() {
+                            if ui.button("Jouer").clicked() {
                                 self.launch_game(&ctx);
                             }
                         });
@@ -406,16 +417,19 @@ impl eframe::App for LauncherApp {
                             ui.label("Installation...");
                         });
                     }
+                    // Le jeu ne se lance jamais tout seul : il faut cliquer sur « Jouer »
                     Stage::Installed(msg) => {
                         ui.label(msg);
-                        ui.label("Lancement de SpaceSpore...");
-                        self.launch_game(&ctx);
+                        ui.add_space(10.0);
+                        if ui.add_sized([140.0, 34.0], egui::Button::new("Jouer")).clicked() {
+                            self.launch_game(&ctx);
+                        }
                     }
                     Stage::Failed(err) => {
                         ui.colored_label(egui::Color32::LIGHT_RED, format!("Erreur : {}", err));
                         ui.add_space(10.0);
                         ui.horizontal(|ui| {
-                            if ui.button("Jouer quand meme").clicked() {
+                            if ui.button("Jouer").clicked() {
                                 self.launch_game(&ctx);
                             }
                             if ui.button("Quitter").clicked() {
@@ -432,6 +446,37 @@ impl eframe::App for LauncherApp {
 // ─────────────────────────────────────────────────────────────────────────
 //  Téléchargement / installation
 // ─────────────────────────────────────────────────────────────────────────
+
+/// Écarte le launcher actuel (en cours d'exécution) pour pouvoir écrire le nouveau à sa place.
+fn replace_running_launcher(install_dir: &Path, launcher_name: &str) -> io::Result<()> {
+    // Anciennes copies des mises à jour précédentes (celles encore ouvertes sont ignorées)
+    if let Ok(entries) = fs::read_dir(install_dir) {
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy().starts_with(&format!("{launcher_name}.old")) {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
+    let current = install_dir.join(launcher_name);
+    if !current.exists() {
+        return Ok(());
+    }
+    let old = install_dir.join(format!("{launcher_name}.old-{}", std::process::id()));
+    // L'antivirus ou une autre fenêtre peut tenir le fichier un instant : on réessaie
+    let mut last = None;
+    for _ in 0..8 {
+        match fs::rename(&current, &old) {
+            Ok(()) => return Ok(()),
+            Err(e) => last = Some(e),
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    let e = last.unwrap();
+    Err(io::Error::new(
+        e.kind(),
+        format!("{launcher_name} : impossible de le remplacer ({e}). Fermez les autres fenetres SpaceSpore et le jeu, puis reessayez."),
+    ))
+}
 
 fn download_and_apply(
     info: &VersionInfo,
@@ -502,14 +547,11 @@ fn download_and_apply(
             continue;
         }
 
-        // Ne pas écraser le launcher lui-même pendant qu'il tourne
+        // Ne pas écraser le launcher lui-même pendant qu'il tourne : sous Windows on peut renommer
+        // un exécutable en cours d'exécution, pas le remplacer. Chaque lancement utilise son propre
+        // nom d'ancienne copie (celle d'un autre launcher encore ouvert ne bloque donc rien).
         if relative == launcher_name {
-            let old_path = install_dir.join(format!("{}.old", launcher_name));
-            let _ = fs::remove_file(&old_path);
-            let new_path = install_dir.join(&relative);
-            if new_path.exists() {
-                let _ = fs::rename(&new_path, &old_path);
-            }
+            replace_running_launcher(install_dir, &launcher_name)?;
         }
 
         let out_path = install_dir.join(&relative);

@@ -341,7 +341,7 @@ const CLOUD_PALETTE: [[f32; 3]; CLOUD_COLORS] = [
 ];
 /// Niveaux d'opacité (fondu) : un matériau par couleur et par niveau.
 const CLOUD_STEPS: usize = 8;
-const CLOUD_MAX_ALPHA: f32 = 0.22;
+const CLOUD_MAX_ALPHA: f32 = 0.06;
 const CLOUD_TEXTURE: u32 = 128;
 /// Nuages de la galaxie principale ; les autres en ont selon leur taille.
 const CLOUDS_MAIN: usize = 220;
@@ -503,9 +503,11 @@ fn cloud_fade(dist: f32, size: f32, galaxy_dist: f32) -> f32 {
 fn update_clouds(
     cam_q: Query<&GlobalTransform, With<Camera3d>>,
     settings: Res<GameSettings>,
+    dim: Res<crate::surface::GalaxyDim>,
     mats: Option<Res<CloudMaterials>>,
     mut clouds: Query<(&GalaxyCloud, &mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>), Without<Camera3d>>,
     mut last: Local<Option<(Vec3, Vec3)>>,
+    mut last_keep: Local<f32>,
 ) {
     let Some(mats) = mats else { return };
     let Ok(cam) = cam_q.get_single() else { return };
@@ -513,18 +515,20 @@ fn update_clouds(
     let fwd = cam.forward().as_vec3();
     // Des milliers de nuages : inutile de tout recalculer si la caméra n'a presque pas bougé
     if let Some((p, f)) = *last {
-        if f.dot(fwd) > 0.9995 && p.distance_squared(cam_pos) < 25.0 * 25.0 {
+        if f.dot(fwd) > 0.9995 && p.distance_squared(cam_pos) < 25.0 * 25.0 && (dim.0 - *last_keep).abs() < 0.03 {
             return;
         }
     }
     *last = Some((cam_pos, fwd));
+    *last_keep = dim.0;
 
     let galaxy_dist: Vec<f32> = settings.galaxies.iter().map(|g| cam_pos.distance(g.center())).collect();
     for (cloud, mut tf, mut vis, mut mat) in &mut clouds {
         let gdist = galaxy_dist.get(cloud.galaxy_id as usize).copied().unwrap_or(f32::MAX);
         let to_cloud = tf.translation - cam_pos;
         let dist = to_cloud.length();
-        let fade = cloud_fade(dist, cloud.size, gdist);
+        // La galaxie principale s'estompe près d'une planète ou d'une lune
+        let fade = cloud_fade(dist, cloud.size, gdist) * if cloud.galaxy_id == 0 { dim.0 } else { 1.0 };
         let step = (fade * (CLOUD_STEPS - 1) as f32).round() as usize;
         // Invisible, ou derrière la caméra : rien à dessiner
         if step == 0 || (dist > cloud.size && fwd.dot(to_cloud / dist) < -0.4) {

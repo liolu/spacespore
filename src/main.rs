@@ -885,8 +885,8 @@ const GALAXY_JUMP_MIN_ZOOM: f32 = 10_000_000.0 * settings::GALAXY_SCALE;
 
 /// Portée fixe d'un déplacement du vaisseau (le cercle blanc). Au-delà, il faut avancer par
 /// étapes, passer par un trou de ver, ou sauter entre galaxies via leur trou noir.
-/// Un déplacement va d'une étoile à sa voisine (≈ 14 millions) : 10 fois l'écart moyen entre étoiles.
-const MAX_TRAVEL_RANGE: f32 = 1_500_000.0 * settings::GALAXY_SCALE;
+/// Un déplacement va d'une étoile à sa voisine (≈ 15 millions) : quelques fois l'écart entre étoiles.
+const MAX_TRAVEL_RANGE: f32 = 750_000.0 * settings::GALAXY_SCALE;
 /// Zoom maximal de la caméra.
 const MAX_ZOOM: f32 = 40_000_000_000.0;
 
@@ -1130,7 +1130,10 @@ fn camera_controller(
     // ── Mode vaisseau (defaut) : vaisseau orbite l'astre ─────────────
     let star_r = star_radius(&camera_target.0, &queries, &settings);
     let raw_target = resolve_target(&camera_target, &queries, &settings);
-    let target_pos = if raw_target == Vec3::ZERO && ctrl.last_target_pos.length_squared() > 100.0 {
+    // Un astre introuvable (pas encore chargé) résout à l'origine : on garde alors la dernière position.
+    // Mais le trou noir de la galaxie principale peut être lui-même à l'origine : c'est une vraie position.
+    let is_origin_core = matches!(camera_target.0, TargetKind::GalacticCore);
+    let target_pos = if raw_target == Vec3::ZERO && !is_origin_core && ctrl.last_target_pos.length_squared() > 100.0 {
         ctrl.last_target_pos
     } else {
         ctrl.last_target_pos = raw_target;
@@ -1639,6 +1642,13 @@ fn setup_fps_display(
             },
         ))
         .with_children(|p| {
+            // Version et build du jeu en cours
+            p.spawn((
+                Text::new(format!("SpaceSpore {}", spacespore_common::installed_label())),
+                TextFont { font_size: 13.0, ..default() },
+                TextColor(Color::srgb(0.7, 0.7, 0.75)),
+            ));
+
             p.spawn((
                 Text::new("FPS: --"),
 
@@ -1887,6 +1897,21 @@ fn temp_label(
 }
 
 
+/// Les textes de l'interface n'ont pas de lettres accentuées (la police les affiche en carrés).
+fn ascii(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'à' | 'â' | 'ä' => 'a',
+            'î' | 'ï' => 'i',
+            'ô' | 'ö' => 'o',
+            'ù' | 'û' | 'ü' => 'u',
+            'ç' => 'c',
+            other => other,
+        })
+        .collect()
+}
+
 fn update_system_hud(
     settings: Res<GameSettings>,
     camera_target: Res<CameraTarget>,
@@ -1944,7 +1969,7 @@ fn update_system_hud(
         TargetKind::WormholeMouth(si) => (None, settings.systems.get(si).map(|s| format!("Trou de ver de {}", s.name))),
         TargetKind::GalacticCore => (None, Some("Trou Noir Galactique".to_string())),
         TargetKind::DistantGalaxyCore(id) => (None, Some(match settings.galaxies.get(id as usize) {
-            Some(g) => format!("Galaxie {} · {}", id, g.kind.name()),
+            Some(g) => format!("Galaxie {} - {}", id, ascii(g.kind.name())),
             None => format!("Galaxie {}", id),
         })),
         _ => (None, None),

@@ -1,10 +1,10 @@
 {
-  "version": "0.8.1",
-  "version_code": 801,
+  "version": "0.9.0",
+  "version_code": 900,
   "release_date": "2026-10-01",
-  "download_url": "https://github.com/liolu/spacespore/releases/download/v0.8.1/spacespore-v0.8.1-windows.zip",
-  "download_url_linux": "https://github.com/liolu/spacespore/releases/download/v0.8.1/spacespore-v0.8.1-linux.zip",
-  "download_url_macos": "https://github.com/liolu/spacespore/releases/download/v0.8.1/spacespore-v0.8.1-macos.zip",
-  "release_notes": "Make planets reachable at system scale: P key, body rings, clickable star/planet discs, bounded star beacon",
+  "download_url": "https://github.com/liolu/spacespore/releases/download/v0.9.0/spacespore-v0.9.0-windows.zip",
+  "download_url_linux": "https://github.com/liolu/spacespore/releases/download/v0.9.0/spacespore-v0.9.0-linux.zip",
+  "download_url_macos": "https://github.com/liolu/spacespore/releases/download/v0.9.0/spacespore-v0.9.0-macos.zip",
+  "release_notes": "Floating origin (f64 absolute positions, world recentres on the ship), galaxy x100 with huge stars/planets, star sectors of ~100, absolute HUD coordinates",
   "min_updater_version": 1
 }

@@ -34,7 +34,7 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
 - Proportions d'un systeme (generees depuis la graine du monde, `settings.rs`) : etoile 600 000 a 1 500 000 de
   rayon, planete <= etoile/100, lune <= planete/3, premiere orbite a 2,4 rayons d'etoile. Planetes et lunes
   sont explorables : zoomer sous 1000 du vaisseau = navigation basse altitude (ZQSD, Maj, Espace/Ctrl, clic
-  droit, molette), `Entree` = atterrir puis marcher, `Entree` = redecoller. Le dessous du vaisseau reste
+  droit, molette), `V` = atterrir (sortir du vaisseau) puis marcher, `V` = redecoller. Le dessous du vaisseau reste
   parallele a la surface. `src/terrain.rs` = terrain voxel (champ de hauteur, quadtree de tuiles),
   `src/surface.rs` = vol, atterrissage, marche, lumiere. Saves : `saves/vX.Y.Z/` (settings, world, info).
 - Plateforme : Windows, PowerShell, clavier AZERTY

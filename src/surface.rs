@@ -27,15 +27,13 @@ use crate::{CameraController, ZoomLevel};
 const SPACE_SKY: Color = Color::srgb(0.005, 0.005, 0.02);
 const DAY_SKY: [f32; 3] = [0.36, 0.58, 0.92];
 
-/// Éclairement du soleil pendant un séjour (lux) : la lumière ponctuelle de l'étoile est bien trop
-/// faible, à cette distance, pour lire le relief à hauteur d'homme.
-const SUN_LUX: f32 = 4_500.0;
-/// Lumière ambiante : celle de l'espace, et celle de jour sous une atmosphère.
+/// La lumière vient uniquement de l'étoile (lumière ponctuelle réelle : sa position, sa couleur et
+/// sa chute en 1/d²), jamais d'un « soleil » ajouté : une planète lointaine reçoit moins de lumière,
+/// la nuit tombe d'elle-même. Seule la lumière diffuse du ciel est ajoutée, sous une atmosphère.
 const AMBIENT_SPACE: f32 = 300.0;
-const AMBIENT_NIGHT: f32 = 600.0;
-const AMBIENT_DAY: f32 = 2_500.0;
-const AMBIENT_AIRLESS: f32 = 1_300.0;
-/// Teinte de la lumière diffuse pendant un séjour (plus claire que celle de l'espace).
+/// Lumière diffuse du ciel en plein jour sous une atmosphère.
+const AMBIENT_DAY: f32 = 1_500.0;
+/// Teinte de la lumière diffuse du ciel (plus claire que celle de l'espace).
 const AMBIENT_TINT: Color = Color::srgb(0.55, 0.6, 0.75);
 const AMBIENT_SPACE_TINT: Color = Color::srgb(0.25, 0.25, 0.35);
 
@@ -45,13 +43,19 @@ const MAX_TILE_TASKS: usize = 10;
 const MAX_TILES: usize = 520;
 const TILE_KEEP_SECS: f64 = 8.0;
 
+/// Touche pour sortir du vaisseau (atterrir) et y rentrer (décoller) : une touche que le reste
+/// du jeu n'utilise pas (C, E, F, G, L, M, P et T servent déjà).
+pub const ENTER_SHIP_KEY: KeyCode = KeyCode::KeyV;
+
 pub struct SurfacePlugin;
 
 impl Plugin for SurfacePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Surface>()
+            .init_resource::<GalaxyDim>()
             .init_resource::<TileStore>()
             .add_systems(Startup, setup_hud)
+            .add_systems(Update, update_galaxy_dim)
             .add_systems(
                 Update,
                 (surface_control, surface_light, update_tiles, update_hud)
@@ -588,7 +592,7 @@ fn surface_control(
     let dt = ctx.time.delta_secs().min(0.1);
     let now = ctx.time.elapsed_secs_f64();
     let ui_open = ctx.menu.open || ctx.panel.open || ctx.panel.guild_open || ctx.panel.focus.is_some();
-    let enter = (ctx.keys.just_pressed(KeyCode::Enter) || ctx.keys.just_pressed(KeyCode::NumpadEnter)) && !ui_open;
+    let enter = ctx.keys.just_pressed(ENTER_SHIP_KEY) && !ui_open;
 
     // ── En orbite : on attend l'ordre d'atterrir ─────────────────────────
     if surface.phase == Phase::Orbit {
@@ -622,7 +626,7 @@ fn surface_control(
                     surface.fdescend = true;
                     surface.phase = Phase::Flying;
                     *ship_vis = Visibility::Inherited;
-                    net.notify("Navigation : ZQSD/WASD voler, Maj accelerer, Espace/Ctrl monter/descendre, Entree atterrir, molette pour revenir.", now);
+                    net.notify("Navigation : ZQSD/WASD voler, Maj accelerer, Espace/Ctrl monter/descendre, V atterrir, molette pour revenir.", now);
                     return;
                 }
             }
@@ -645,7 +649,7 @@ fn surface_control(
         let heading = dir1 - dir0 * dir0.dot(dir1);
         begin_descent(&mut surface, kind, terrain, dir0, local0.length(), dir1, heading, ship_tf.scale.x, *cam_tf);
         *ship_vis = Visibility::Inherited;
-        net.notify("Atterrissage... (Entree pour redecoller une fois au sol)", now);
+        net.notify("Atterrissage... (V pour redecoller une fois au sol)", now);
         return;
     }
 
@@ -702,7 +706,7 @@ fn surface_control(
                     surface.cam_from = *cam_tf;
                     surface.cam_blend = 0.0;
                     surface.phase = Phase::Walking;
-                    net.notify("ZQSD/WASD : marcher  Maj : courir  Espace : sauter  Entree : decoller", now);
+                    net.notify("ZQSD/WASD : marcher  Maj : courir  Espace : sauter  V : decoller", now);
                 } else {
                     // De retour en orbite : le vaisseau stationne au-dessus du point de décollage
                     surface.hover = Some((kind, dir));
@@ -891,31 +895,74 @@ fn surface_control(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+//  Galaxie estompée près d'un astre
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Part de l'éclat de la galaxie principale (étoiles, bras, nuages) conservée : 1 loin de tout
+/// astre, de plus en plus faible à mesure que la caméra s'approche d'une planète ou d'une lune
+/// (le ciel d'un astre n'est plus noyé sous les couleurs de la galaxie).
+#[derive(Resource)]
+pub struct GalaxyDim(pub f32);
+
+impl Default for GalaxyDim {
+    fn default() -> Self {
+        Self(1.0)
+    }
+}
+
+/// À cette distance de l'astre (en rayons, depuis sa surface), l'estompage commence.
+const DIM_RADII: f32 = 12.0;
+/// Part de l'éclat conservée au ras de la surface.
+const DIM_FLOOR: f32 = 0.08;
+
+fn update_galaxy_dim(
+    target: Res<CameraTarget>,
+    settings: Res<GameSettings>,
+    planets: Query<(&Transform, &PlanetId), With<PlanetRoot>>,
+    moons: Query<(&Transform, &MoonId), With<MoonRoot>>,
+    cam_q: Query<&Transform, (With<Camera3d>, Without<PlanetRoot>, Without<MoonRoot>)>,
+    mut dim: ResMut<GalaxyDim>,
+) {
+    let Ok(cam) = cam_q.get_single() else { return };
+    let body = match target.0 {
+        TargetKind::Planet(id) => planets.iter().find(|(_, p)| p.0 == id).map(|(t, _)| t.translation),
+        TargetKind::Moon(pid, mi) => moons.iter().find(|(_, m)| m.planet_idx == pid && m.moon_idx == mi).map(|(t, _)| t.translation),
+        _ => None,
+    };
+    let radius = body_params(&settings, &target.0).map(|p| p.radius);
+    let keep = match (body, radius) {
+        (Some(center), Some(r)) => {
+            let altitude = (cam.translation.distance(center) - r).max(0.0);
+            let closeness = (1.0 - altitude / (DIM_RADII * r)).clamp(0.0, 1.0);
+            1.0 - (1.0 - DIM_FLOOR) * smoothstep(closeness)
+        }
+        _ => 1.0,
+    };
+    if (dim.0 - keep).abs() > 0.002 {
+        dim.0 = keep;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 //  Lumière
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Pendant un séjour, le soleil (lumière directionnelle) éclaire l'astre depuis son étoile : la
-/// face éclairée, la nuit et le crépuscule viennent de l'ombrage, comme dans la réalité.
-#[allow(clippy::too_many_arguments)]
+/// Lumière diffuse du ciel pendant un séjour : de jour sous une atmosphère seulement (la nuit, et
+/// sans air, il n'y a que la lumière directe de l'étoile).
 fn surface_light(
     surface: Res<Surface>,
     mut ambient: ResMut<AmbientLight>,
-    mut sun: Query<(&mut DirectionalLight, &mut Transform), (With<crate::SunLight>, Without<PlanetRoot>, Without<MoonRoot>, Without<StarRoot>)>,
     planets: Query<(&Transform, &PlanetId), With<PlanetRoot>>,
     moons: Query<(&Transform, &MoonId), With<MoonRoot>>,
     stars: Query<&Transform, With<StarRoot>>,
-    cam_q: Query<&Transform, (With<Camera3d>, Without<PlanetRoot>, Without<MoonRoot>, Without<StarRoot>, Without<crate::SunLight>)>,
+    cam_q: Query<&Transform, (With<Camera3d>, Without<PlanetRoot>, Without<MoonRoot>, Without<StarRoot>)>,
     mut was_active: Local<bool>,
 ) {
-    let active = surface.active();
-    if !active {
+    if !surface.active() {
         if *was_active {
             *was_active = false;
             ambient.brightness = AMBIENT_SPACE;
             ambient.color = AMBIENT_SPACE_TINT;
-            for (mut light, _) in &mut sun {
-                light.illuminance = 0.0;
-            }
         }
         return;
     }
@@ -938,23 +985,16 @@ fn surface_light(
     else {
         return;
     };
-    for (mut light, mut tf) in &mut sun {
-        light.illuminance = SUN_LUX;
-        light.shadows_enabled = false;
-        *tf = Transform::IDENTITY.looking_to(Dir3::new(-to_star).unwrap_or(Dir3::NEG_Y), Dir3::Y);
-    }
-
-    // Lumière diffuse : l'atmosphère la renforce de jour (et la nuit tombe), sans air elle reste faible
     let cam_local = cam.translation - center;
     let up = cam_local.normalize_or(Vec3::Y);
     let altitude = cam_local.length() - params.radius;
-    ambient.brightness = if params.atmosphere {
-        let day = smoothstep((up.dot(to_star) + 0.15) / 0.35) * (1.0 - altitude / atmosphere_depth(&params)).clamp(0.0, 1.0);
-        AMBIENT_NIGHT + (AMBIENT_DAY - AMBIENT_NIGHT) * day
+    let day = if params.atmosphere {
+        smoothstep((up.dot(to_star) + 0.15) / 0.35) * (1.0 - altitude / atmosphere_depth(&params)).clamp(0.0, 1.0)
     } else {
-        AMBIENT_AIRLESS
+        0.0
     };
-    ambient.color = AMBIENT_TINT;
+    ambient.brightness = AMBIENT_SPACE + (AMBIENT_DAY - AMBIENT_SPACE) * day;
+    ambient.color = if day > 0.0 { AMBIENT_TINT } else { AMBIENT_SPACE_TINT };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1230,11 +1270,11 @@ fn update_hud(
 ) {
     let label = match surface.phase {
         Phase::Orbit => match body_params(&settings, &target.0) {
-            Some(_) => "Zoomez sous 1000 pour naviguer autour de l'astre   Entree : atterrir   P : planete suivante   M : lune".to_string(),
+            Some(_) => "Zoomez sous 1000 pour naviguer autour de l'astre   V : atterrir   P : planete suivante   M : lune".to_string(),
             None if matches!(target.0, TargetKind::Star(_)) => "P : aller a la planete suivante du systeme".to_string(),
             None => String::new(),
         },
-        Phase::Flying => "ZQSD/WASD : voler   A/D : tourner   Maj : accelerer   Espace/Ctrl : monter/descendre\nClic droit : orbiter   Molette : zoom (>1000 : orbite)   Entree : atterrir".to_string(),
+        Phase::Flying => "ZQSD/WASD : voler   A/D : tourner   Maj : accelerer   Espace/Ctrl : monter/descendre\nClic droit : orbiter   Molette : zoom (>1000 : orbite)   V : atterrir".to_string(),
         Phase::Descending => "Atterrissage en cours...".to_string(),
         Phase::Ascending => "Decollage en cours...".to_string(),
         Phase::Walking => {
@@ -1247,7 +1287,7 @@ fn update_hud(
             let temp = params.map_or(0.0, |p| p.temperature);
             let alt = w.pos.length() - radius;
             format!(
-                "ZQSD/WASD : marcher   Maj : courir   Espace : sauter   Entree : decoller\nLat {lat:.1}  Lon {lon:.1}  Alt {alt:.0}  Temp. {temp:.0} C{}",
+                "ZQSD/WASD : marcher   Maj : courir   Espace : sauter   V : decoller\nLat {lat:.1}  Lon {lon:.1}  Alt {alt:.0}  Temp. {temp:.0} C{}",
                 if w.in_water { "  (a l'eau)" } else { "" }
             )
         }
