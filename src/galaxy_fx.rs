@@ -32,7 +32,7 @@ use crate::{CameraController, ZoomLevel};
 
 /// Portée de voisinage : sert seulement à faire grandir un territoire PNJ d'étoile en étoile
 /// (les traits, eux, n'ont aucune limite de distance).
-const LINK_RANGE_MAIN: f32 = 60_000.0 * crate::settings::GALAXY_SCALE;
+const LINK_RANGE_MAIN: f32 = 120_000.0 * crate::settings::GALAXY_SCALE;
 const LINK_RANGE_OTHER: f32 = 120_000.0 * crate::settings::GALAXY_SCALE;
 /// Factions PNJ de la galaxie principale ; les autres en ont selon leur taille.
 const NPC_MAIN: usize = 14;

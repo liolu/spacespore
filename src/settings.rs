@@ -410,8 +410,8 @@ fn star_color(seed: u32) -> [f32; 3] {
 
 fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystemConfig> {
     const NUM_ARMS: usize = 5;
-    const ARM_STARS: usize = 10_000;
-    const SCATTER_STARS: usize = 2_500;
+    const ARM_STARS: usize = 2_500;
+    const SCATTER_STARS: usize = 625;
     const ARM_TWIST: f32 = 5.0;
     let tau = std::f32::consts::TAU;
     let gr = GALAXY_RADIUS;
