@@ -1130,7 +1130,10 @@ fn camera_controller(
     // ── Mode vaisseau (defaut) : vaisseau orbite l'astre ─────────────
     let star_r = star_radius(&camera_target.0, &queries, &settings);
     let raw_target = resolve_target(&camera_target, &queries, &settings);
-    let target_pos = if raw_target == Vec3::ZERO && ctrl.last_target_pos.length_squared() > 100.0 {
+    // Un astre introuvable (pas encore chargé) résout à l'origine : on garde alors la dernière position.
+    // Mais le trou noir de la galaxie principale peut être lui-même à l'origine : c'est une vraie position.
+    let is_origin_core = matches!(camera_target.0, TargetKind::GalacticCore);
+    let target_pos = if raw_target == Vec3::ZERO && !is_origin_core && ctrl.last_target_pos.length_squared() > 100.0 {
         ctrl.last_target_pos
     } else {
         ctrl.last_target_pos = raw_target;
