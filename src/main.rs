@@ -270,6 +270,8 @@ fn main() {
                 select_world_target,
                 highlight_hovered_galaxy,
                 select_next_moon,
+                select_next_planet,
+                draw_body_markers,
                 camera_controller,
                 update_sun_direction,
                 update_fps_display,
@@ -544,7 +546,10 @@ fn select_world_target(
         consider(transform.translation(), tolerance, TargetKind::Planet(id.0));
     }
     for (transform, id) in &queries.star_q {
-        consider(transform.translation(), 80.0, TargetKind::Star(id.0));
+        // Les étoiles sont immenses : on les sélectionne en cliquant n'importe où sur leur disque
+        let radius = settings.systems.get(id.0 / 1000).and_then(|s| s.stars.get(id.0 % 1000)).map_or(0.0, |s| s.radius);
+        let tolerance = body_click_tolerance(camera, camera_transform, &viewport, transform.translation(), radius);
+        consider(transform.translation(), tolerance, TargetKind::Star(id.0));
     }
     for (transform, root) in &queries.gas_q {
         consider(transform.translation(), 80.0, TargetKind::GasPlanet(root.idx));
@@ -746,6 +751,67 @@ fn lock_system_at_planet_zoom(
         }
     }
     *previous = Some(target.0);
+}
+
+/// `P` : passe à la planète suivante du système chargé (à ces échelles, les planètes sont des
+/// points minuscules : impossible de les viser à la souris depuis l'étoile).
+fn select_next_planet(
+    keys: Res<ButtonInput<KeyCode>>,
+    settings: Res<GameSettings>,
+    mut target: ResMut<CameraTarget>,
+    net_panel: Res<NetPanel>,
+    menu: Res<MenuState>,
+    travel: Res<wormhole::WormholeTravel>,
+    surface: Res<surface::Surface>,
+    spawned: Res<planet::SpawnedSystems>,
+) {
+    if !keys.just_pressed(KeyCode::KeyP) || net_panel.focus.is_some() || menu.open || travel.active() || surface.active() {
+        return;
+    }
+    let Some(&sys_i) = spawned.0.iter().next() else { return };
+    let Some(count) = settings.systems.get(sys_i).map(|s| s.planets.len()).filter(|&n| n > 0) else { return };
+    let next = match target.0 {
+        TargetKind::Planet(id) | TargetKind::Moon(id, _) if id / 1000 == sys_i => (id % 1000 + 1) % count,
+        _ => 0,
+    };
+    target.0 = TargetKind::Planet(sys_i * 1000 + next);
+}
+
+/// Cercles autour des planètes et des lunes vues de loin : sans eux, à l'échelle d'un système
+/// (étoile de 100 000 de rayon), elles sont invisibles.
+fn draw_body_markers(
+    zoom: Res<ZoomLevel>,
+    settings: Res<GameSettings>,
+    target: Res<CameraTarget>,
+    cam_q: Query<&GlobalTransform, With<Camera3d>>,
+    planets: Query<(&GlobalTransform, &PlanetId), With<PlanetRoot>>,
+    moons: Query<(&GlobalTransform, &MoonId), With<MoonRoot>>,
+    mut gizmos: Gizmos,
+) {
+    if !matches!(*zoom, ZoomLevel::Planet | ZoomLevel::System) {
+        return;
+    }
+    let Ok(cam) = cam_q.get_single() else { return };
+    let (cam_pos, cam_rot) = (cam.translation(), cam.rotation());
+    let mut ring = |pos: Vec3, radius: f32, selected: bool, color: Color| {
+        let dist = cam_pos.distance(pos);
+        // Visible (≈ 1 % de l'écran) seulement quand l'astre lui-même est trop petit
+        if dist < radius * 10.0 {
+            return;
+        }
+        let r = (dist * 0.012).max(radius * 1.6) * if selected { 1.4 } else { 1.0 };
+        gizmos.circle(Isometry3d::new(pos, cam_rot), r, color);
+    };
+    for (gt, id) in &planets {
+        let radius = surface::body_params(&settings, &TargetKind::Planet(id.0)).map_or(0.0, |p| p.radius);
+        let selected = target.0 == TargetKind::Planet(id.0);
+        ring(gt.translation(), radius, selected, if selected { Color::srgb(1.0, 0.9, 0.3) } else { Color::srgba(0.4, 0.8, 1.0, 0.8) });
+    }
+    for (gt, id) in &moons {
+        let radius = surface::body_params(&settings, &TargetKind::Moon(id.planet_idx, id.moon_idx)).map_or(0.0, |p| p.radius);
+        let selected = target.0 == TargetKind::Moon(id.planet_idx, id.moon_idx);
+        ring(gt.translation(), radius, selected, if selected { Color::srgb(1.0, 0.9, 0.3) } else { Color::srgba(0.7, 0.7, 0.75, 0.6) });
+    }
 }
 
 fn select_next_moon(
