@@ -180,6 +180,14 @@ pub struct StarConfig {
     #[serde(default = "default_flare_speed")]         pub flare_speed:    f32,
     #[serde(default = "default_flare_size")]          pub flare_size:     f32,
     #[serde(default = "default_flare_distance")]      pub flare_distance: f32,
+    /// Type de l'étoile (phase 1 de `ROADMAP-0.10.md`) ; sa physique complète se recalcule depuis
+    /// la graine du système (`planetgen::star::StarPhysics`).
+    #[serde(default)]                                 pub class:          StarClass,
+    /// Température de surface (K) ; 0 = inconnue (déduite de la couleur).
+    #[serde(default)]                                 pub temperature_k:  f32,
+    /// Rayon qu'aurait une étoile G dans ce système (600 000 à 1 500 000) : l'échelle des orbites,
+    /// des planètes et de la lumière, quel que soit le type. 0 = le rayon de l'étoile.
+    #[serde(default)]                                 pub orbit_scale:    f32,
 }
 fn default_star_intensity()     -> f32 { 20.0 }
 fn default_star_light_range()   -> f32 { 10000.0 }
@@ -197,13 +205,56 @@ impl StarConfig {
         radius * 16.0
     }
 
-    /// Flux lumineux (lumens) : environ 3 000 lux à 3 rayons de l'étoile pour une intensité de 20.
+    /// Étoile générée d'après sa physique ; `g_radius` : échelle G du système.
+    pub fn from_physics(p: &StarPhysics, g_radius: f32) -> Self {
+        let radius = p.render_radius(g_radius as f64);
+        let (flare_count, flare_height, flare_speed) = p.flares();
+        Self {
+            radius,
+            intensity: p.light_intensity(),
+            // Couvre les orbites (échelle G), même repoussées hors d'une géante
+            light_range: Self::light_range_for(g_radius) + radius * 2.0,
+            light_color_r: p.color[0],
+            light_color_g: p.color[1],
+            light_color_b: p.color[2],
+            flare_count,
+            flare_height,
+            flare_speed,
+            class: p.class,
+            temperature_k: p.temperature_k as f32,
+            orbit_scale: g_radius,
+            ..Default::default()
+        }
+    }
+
+    /// Lumière propre de la surface (matériau émissif) : couleur du corps noir, plus forte pour
+    /// une étoile lumineuse, plus faible pour une naine brune.
+    pub fn emissive_rgb(&self) -> [f32; 3] {
+        let k = 10.0 * (self.intensity / 20.0).sqrt().clamp(0.4, 1.6);
+        [self.light_color_r * 1.1 * k, self.light_color_g * k, self.light_color_b * 0.9 * k]
+    }
+
+    /// Éclat d'une étoile vue de loin (taille du point), 1 pour le Soleil.
+    pub fn glow(&self) -> f32 {
+        (self.intensity / 20.0).powf(0.6).clamp(0.3, 2.0)
+    }
+
+    /// Échelle des orbites et de la lumière (rayon d'une G dans ce système).
+    pub fn scale(&self) -> f32 {
+        if self.orbit_scale > 0.0 { self.orbit_scale } else { self.radius }
+    }
+
+    /// Flux lumineux (lumens) : environ 3 000 lux à 3 fois l'échelle du système (~3 rayons d'une
+    /// G) pour une intensité de 20, quelle que soit la taille réelle de l'étoile.
     pub fn lumens(&self) -> f32 {
-        let d = self.radius * 3.0;
+        let d = self.scale() * 3.0;
         3_000.0 * (self.intensity / 20.0) * 4.0 * std::f32::consts::PI * d * d
     }
 
     pub fn temperature(&self) -> f32 {
+        if self.temperature_k > 0.0 {
+            return self.temperature_k;
+        }
         let r = self.light_color_r;
         let b = self.light_color_b;
         if b > r {
@@ -221,6 +272,7 @@ impl Default for StarConfig {
             light_color_r: 1.0, light_color_g: 0.92, light_color_b: 0.65,
             flare_count: 5, flare_height: 60.0, flare_speed: 1.0,
             flare_size: 6.0, flare_distance: 15.0,
+            class: StarClass::G, temperature_k: 0.0, orbit_scale: 0.0,
         }
     }
 }
@@ -250,6 +302,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
 use crate::planetgen::genome::SystemGenome;
+use crate::planetgen::star::{StarClass, StarPhysics};
 use crate::planetgen::live::WorldDeltas;
 
 static ORIGIN: [AtomicU64; 3] = [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)];
@@ -311,15 +364,37 @@ impl Default for StarSystemConfig {
     }
 }
 
+/// Les planètes restent au moins à cette distance (en rayons de l'étoile) du centre d'une géante.
+pub const GIANT_CLEARANCE: f32 = 1.6;
+
 impl StarSystemConfig {
     fn generated(name: String, position: [f32; 3], galaxy_id: u32, star: StarConfig, genome: SystemGenome) -> Self {
         Self { name, position, galaxy_id, stars: vec![star], asteroid_belts: Vec::new(), genome: Some(genome), planets: OnceLock::new() }
     }
 
     fn generate_planets(&self) -> Vec<PlanetConfig> {
-        match self.genome {
-            Some(g) => g.planets(self.stars.first().map_or(250.0, |s| s.radius)),
-            None => Vec::new(),
+        let Some(genome) = self.genome else { return Vec::new() };
+        let Some(star) = self.stars.first() else { return genome.planets(250.0) };
+        let mut planets = genome.planets(star.scale());
+        // Une géante déborde sur les premières orbites : on repousse tout le système hors d'elle
+        let clear = star.radius * GIANT_CLEARANCE;
+        if let Some(first) = planets.first() {
+            let shift = clear - (first.orbit_distance - first.radius);
+            if shift > 0.0 {
+                for p in &mut planets {
+                    p.orbit_distance += shift;
+                }
+            }
+        }
+        planets
+    }
+
+    /// Planètes telles que le génome les donne, sans les repousser hors d'une géante (tests).
+    #[cfg(test)]
+    pub fn genome_planets(&self) -> Vec<PlanetConfig> {
+        match (self.genome, self.stars.first()) {
+            (Some(g), Some(star)) => g.planets(star.scale()),
+            _ => Vec::new(),
         }
     }
 
@@ -353,6 +428,15 @@ impl StarSystemConfig {
         if self.genome.is_some() {
             self.planets.take();
         }
+    }
+
+    /// Physique complète de l'étoile principale, recalculée depuis la graine (`None` : étoile
+    /// donnée à la main, sans génome).
+    pub fn star_physics(&self) -> Option<StarPhysics> {
+        let seed = self.genome?.seed;
+        let rank = pseudo_rand(seed.wrapping_mul(5).wrapping_add(31));
+        // Le type enregistré prime sur le tirage (système de départ toujours G)
+        Some(StarPhysics::generate(seed as u64, rank as f64, self.stars.first().map(|s| s.class)))
     }
 
     /// Graine du système (sert aux sous-graines de l'étoile).
@@ -521,15 +605,6 @@ pub fn default_galaxies(world_seed: u64) -> Vec<GalaxyConfig> {
     galaxies
 }
 
-fn star_color(seed: u32) -> [f32; 3] {
-    let c = pseudo_rand(seed);
-    if c < 0.2 { [1.0, 0.5, 0.3] }
-    else if c < 0.4 { [1.0, 0.7, 0.4] }
-    else if c < 0.6 { [1.0, 0.92, 0.65] }
-    else if c < 0.8 { [0.8, 0.85, 1.0] }
-    else { [0.6, 0.7, 1.0] }
-}
-
 pub(crate) fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystemConfig> {
     const NUM_ARMS: usize = 5;
     // Galaxie principale : 5 000 à 10 000 étoiles d'après la graine du monde
@@ -565,26 +640,22 @@ pub(crate) fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec
     let sd = ((world_seed as u32) ^ ((world_seed >> 32) as u32)).wrapping_mul(0x9E37_79B1);
     let mixed = |x: u32| x.wrapping_add(sd);
 
-    // Une étoile fait 600 000 à 1 500 000 de rayon : au moins 100 fois ses planètes (4 200 à 14 000),
-    // et reste un point à l'échelle de la galaxie (les étoiles voisines sont à ~28 000 000)
-    let make_star = |seed: u32| -> (f32, f32, [f32; 3]) {
+    // Échelle G du système : 600 000 à 1 500 000, au moins 100 fois ses planètes (4 200 à 14 000).
+    // L'étoile elle-même a un type tiré au sort (naine rouge, G, géante… voir `planetgen::star`) :
+    // une G garde ce rayon, les autres ont les proportions réelles. Son rang dans son type (masse)
+    // reprend le même tirage.
+    let make_star_as = |seed: u32, forced: Option<StarClass>| -> StarConfig {
         let seed = mixed(seed);
         let r_f = pseudo_rand(seed.wrapping_mul(5).wrapping_add(31));
-        let radius = 600_000.0 + r_f * 900_000.0;
-        let intensity = 8.0 + r_f * 27.0;
-        let sc = star_color(seed.wrapping_mul(5).wrapping_add(37));
-        (radius, intensity, sc)
+        let g_radius = 600_000.0 + r_f * 900_000.0;
+        StarConfig::from_physics(&StarPhysics::generate(seed as u64, r_f as f64, forced), g_radius)
     };
+    // Le système de départ (Sol) a toujours une étoile G, comme le Soleil
+    let make_star = |seed: u32, first: bool| make_star_as(seed, first.then_some(StarClass::G));
 
     // Planètes et lunes : seulement leur génome, elles sont recalculées à la demande
     // (`planetgen::genome`). `sb` : base des graines de planètes (doit rester loin de u32::MAX).
     let genome = |seed: u32, sb: u32| SystemGenome { seed: mixed(seed), planet_base: mixed(sb) };
-    let star = |(radius, intensity, sc): (f32, f32, [f32; 3])| StarConfig {
-        radius, intensity,
-        light_color_r: sc[0], light_color_g: sc[1], light_color_b: sc[2],
-        light_range: StarConfig::light_range_for(radius),
-        ..Default::default()
-    };
 
     let distant_count: usize = galaxies.iter().skip(1).map(|g| g.arm_stars + g.scatter_stars).sum();
     let mut systems = Vec::with_capacity(arm_stars + scatter_stars + distant_count);
@@ -610,7 +681,7 @@ pub(crate) fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec
         let thickness = 60000.0 * GALAXY_SCALE * (1.0 - r / gr * 0.7);
         let y = (pseudo_rand(s * 7 + 7) - 0.5) * thickness;
 
-        systems.push(StarSystemConfig::generated(gen_name(i), [x, y, z], 0, star(make_star(s)), genome(s, (s + 1) * 100)));
+        systems.push(StarSystemConfig::generated(gen_name(i), [x, y, z], 0, make_star(s, systems.is_empty()), genome(s, (s + 1) * 100)));
     }
 
     // ── Étoiles dispersées entre les bras ─────────────────────────────
@@ -625,7 +696,7 @@ pub(crate) fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec
         let y = (pseudo_rand(s * 7 + 7) - 0.5) * 3000.0 * GALAXY_SCALE;
 
         systems.push(StarSystemConfig::generated(
-            gen_name(arm_stars + i), [x, y, z], 0, star(make_star(s)), genome(s, (s + 1) * 100),
+            gen_name(arm_stars + i), [x, y, z], 0, make_star(s, systems.is_empty()), genome(s, (s + 1) * 100),
         ));
     }
 
@@ -653,7 +724,7 @@ pub(crate) fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec
                 format!("G{}-{}-{}", gid, prefixes[pi], local_idx * 7 + 1031),
                 [world.x, world.y, world.z],
                 gid as u32,
-                star(make_star(s)),
+                make_star(s, systems.is_empty()),
                 genome(s, (global_idx + 1) * 100),
             ));
             local_idx += 1;
@@ -1087,18 +1158,24 @@ mod tests {
         let (mut hot, mut temperate, mut cold) = (0, 0, 0);
         for sys in systems.iter().take(3000) {
             let star = &sys.stars[0];
-            assert!((600_000.0..=1_500_000.0).contains(&star.radius), "etoile de rayon {}", star.radius);
+            // Échelle G du système (rayon d'une G) : la taille réelle de l'étoile dépend de son type
+            let scale = star.scale();
+            assert!((600_000.0..=1_500_000.0).contains(&scale), "echelle {scale}");
+            if star.class == crate::planetgen::star::StarClass::G {
+                assert!((star.radius - scale).abs() <= 5.0, "une G garde l'echelle d'avant");
+            }
             assert!((1..=3).contains(&sys.planets().len()), "{} planetes", sys.planets().len());
             let mut previous_edge = star.radius;
+            let shift = sys.planets()[0].orbit_distance - sys.genome_planets()[0].orbit_distance;
             for p in sys.planets() {
-                // Étoile au moins 100 fois plus grande que la planète, lune au moins 3 fois plus petite
-                assert!(p.radius * 100.0 <= star.radius, "planete {} pour une etoile de {}", p.radius, star.radius);
-                assert!(p.radius >= star.radius / 100.0 * 0.7 - 1.0 && p.radius >= 4_000.0);
+                // Une G au moins 100 fois plus grande que la planète, lune au moins 3 fois plus petite
+                assert!(p.radius * 100.0 <= scale, "planete {} pour une echelle de {}", p.radius, scale);
+                assert!(p.radius >= scale / 100.0 * 0.7 - 1.0 && p.radius >= 4_000.0);
                 assert!(p.orbit_distance - p.radius > previous_edge, "planete dans l'etoile ou dans la precedente");
                 previous_edge = p.orbit_distance + p.radius;
-                assert!(p.orbit_distance + p.radius < star.radius * 8.0, "systeme trop etendu");
+                assert!(p.orbit_distance + p.radius < scale * 8.0 + shift, "systeme trop etendu");
                 assert!(p.terrain_height > 0.0 && p.terrain_height < p.radius * 0.06);
-                assert_eq!(p.star_radius, star.radius);
+                assert_eq!(p.star_radius, scale);
                 assert!((1..=2).contains(&p.moons.len()), "{} lunes", p.moons.len());
                 let mut moon_edge = p.radius + p.terrain_height;
                 for m in &p.moons {

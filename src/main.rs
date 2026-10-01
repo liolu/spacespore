@@ -1959,7 +1959,11 @@ fn update_system_hud(
     let (sys_idx, body_label) = match camera_target.0 {
         TargetKind::Star(id) => {
             let si = id / 1000;
-            (Some(si), settings.systems.get(si).map(|s| s.name.clone()))
+            let label = settings.systems.get(si).map(|s| match s.stars.get(id % 1000) {
+                Some(star) => format!("{} - {}", s.name, star.class.name()),
+                None => s.name.clone(),
+            });
+            (Some(si), label)
         }
         TargetKind::Planet(id) => {
             let si = id / 1000;

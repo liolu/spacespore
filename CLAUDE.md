@@ -28,11 +28,15 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   relatives a une origine absolue en f64 qui suit le vaisseau (recentrage au-dela de 100 000). Ne jamais garder une
   position « monde » en memoire : stocker l'absolu (`abs_center()`, `Wormhole.abs_a`, `Peer.abs`) et convertir.
   `StarSystemConfig::center()` / `GalaxyConfig::center()` = monde ; `abs_center` = absolu (generation, caches).
-- Echelle : `GALAXY_SCALE` (settings.rs, x100) multiplie les distances entre etoiles/galaxies (rayon 900 M, ~3 100
-  etoiles a ~28 M l'une de l'autre) ; les systemes gardent leur taille. Les etoiles lointaines sont groupees en
+- Echelle : `GALAXY_SCALE` (settings.rs, x100) multiplie les distances entre etoiles/galaxies (rayon 900 M ; voisine
+  la plus proche a ~4,9 M en mediane dans la galaxie principale, ~1,5 M ailleurs, mesure en phase 1) ; les
+  systemes gardent leur taille. Les etoiles lointaines sont groupees en
   secteurs de ~100 etoiles (`StarSectors`) affiches/mis a jour ensemble.
-- Proportions d'un systeme (generees depuis la graine du monde, `settings.rs`) : etoile 600 000 a 1 500 000 de
-  rayon, planete <= etoile/100, lune <= planete/3, premiere orbite a 2,4 rayons d'etoile. Planetes et lunes
+- Proportions d'un systeme (generees depuis la graine du monde, `settings.rs`) : echelle G du systeme
+  600 000 a 1 500 000 (`StarConfig::scale()`), planete <= echelle/100, lune <= planete/3, premiere orbite a 2,4
+  fois l'echelle. L'etoile a un type (`planetgen/star.rs`, O..M, naine blanche/brune, sous-geante, geante rouge) :
+  une G garde l'echelle, les autres types ont leur taille reelle (1 R_sol ~ 1 050 000 a l'ecran), compressee
+  au-dela de 1,5 M (max 6,5 M) ; les planetes d'une geante sont repoussees hors d'elle. Sol (systeme 0) est G. Planetes et lunes
   sont explorables : zoomer sous 1000 du vaisseau = navigation basse altitude (ZQSD, Maj, Espace/Ctrl, clic
   droit, molette), `V` = atterrir (sortir du vaisseau) puis marcher, `V` = redecoller. Le dessous du vaisseau reste
   parallele a la surface. `src/terrain.rs` = terrain voxel (champ de hauteur, quadtree de tuiles),

@@ -21,6 +21,7 @@ pub mod live;
 pub mod profile;
 pub mod seed_code;
 pub mod seeds;
+pub mod star;
 pub mod units;
 
 #[cfg(test)]
@@ -102,19 +103,97 @@ mod tests {
         h
     }
 
-    /// Non-régression : les planètes recalculées à la demande sont exactement celles que la
-    /// version 0.9 stockait (empreintes relevées avant la phase 0, avec le même calcul).
+    /// Empreinte des seules planètes et lunes.
+    fn planets_digest(systems: &[StarSystemConfig], planets_of: impl Fn(&StarSystemConfig) -> Vec<crate::settings::PlanetConfig>) -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut eat = |v: u64| {
+            for b in v.to_le_bytes() {
+                h ^= b as u64;
+                h = h.wrapping_mul(0x100_0000_01b3);
+            }
+        };
+        for sys in systems {
+            let planets = planets_of(sys);
+            eat(planets.len() as u64);
+            for p in &planets {
+                for v in [p.orbit_distance, p.radius, p.sea_level, p.terrain_height, p.noise_scale, p.detail_scale,
+                          p.star_radius, p.cloud_altitude] {
+                    eat(v.to_bits() as u64);
+                }
+                eat(p.seed as u64);
+                eat(p.atmosphere as u64);
+                for m in &p.moons {
+                    for v in [m.orbit_distance, m.radius, m.mean_anomaly_0] {
+                        eat(v.to_bits() as u64);
+                    }
+                    eat(m.seed as u64);
+                }
+            }
+        }
+        h
+    }
+
+    /// Non-régression : les étoiles ont changé (phase 1) mais les planètes et lunes restent
+    /// exactement celles de la version 0.9 (empreinte relevée avant la phase 1) ; seules celles des
+    /// géantes sont repoussées hors de l'étoile.
     #[test]
-    fn planets_on_demand_give_exactly_the_old_world() {
+    fn planets_are_those_of_version_0_9() {
         let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
         let systems = default_systems(&galaxies, DEFAULT_WORLD_SEED);
         assert_eq!(systems.len(), 143_892);
-        assert_eq!(world_digest(&systems, 3000), 0x0dec_0af8_df04_1568, "3 000 premiers systemes");
-        assert_eq!(world_digest(&systems, usize::MAX), 0xfa72_26ce_7c26_73b0, "tous les systemes");
-        let other = default_systems(&default_galaxies(7), 7);
-        assert_eq!(world_digest(&other, usize::MAX), 0x389b_860e_1d56_d147, "graine 7");
+        assert_eq!(planets_digest(&systems, |s| s.genome_planets()), 0x5fe1_883d_9414_8c9c);
+        let mut pushed = 0;
+        for sys in &systems {
+            let (now, before) = (sys.planets_uncached(), sys.genome_planets());
+            let star = &sys.stars[0];
+            let overlaps = before[0].orbit_distance - before[0].radius < star.radius * crate::settings::GIANT_CLEARANCE;
+            for (a, b) in now.iter().zip(&before) {
+                assert_eq!(a.radius.to_bits(), b.radius.to_bits());
+                if overlaps {
+                    assert!(a.orbit_distance > b.orbit_distance);
+                } else {
+                    assert_eq!(a.orbit_distance.to_bits(), b.orbit_distance.to_bits());
+                }
+            }
+            pushed += overlaps as usize;
+        }
+        // Seules les géantes (et quelques grosses étoiles chaudes) repoussent leurs planètes
+        assert!(pushed > 100 && pushed < systems.len() / 50, "{pushed} systemes repousses");
+    }
+
+    /// Le monde (étoiles comprises) est reproductible au bit près.
+    #[test]
+    fn the_world_is_reproducible() {
+        let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
+        let a = default_systems(&galaxies, DEFAULT_WORLD_SEED);
+        let b = default_systems(&galaxies, DEFAULT_WORLD_SEED);
+        assert_eq!(world_digest(&a, usize::MAX), world_digest(&b, usize::MAX));
+        let c = default_systems(&default_galaxies(7), 7);
+        assert_ne!(world_digest(&a, 3000), world_digest(&c, 3000));
         // Le parcours n'a rien gardé en mémoire
-        assert!(systems.iter().all(|s| !s.planets_cached()));
+        assert!(a.iter().all(|s| !s.planets_cached()));
+    }
+
+    /// Chaque étoile suit son type ; aucune ne dépasse 6,5 M de rayon affiché.
+    #[test]
+    fn stars_follow_their_type() {
+        use crate::planetgen::star::StarClass;
+        let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
+        let systems = default_systems(&galaxies, DEFAULT_WORLD_SEED);
+        let mut count = std::collections::HashMap::new();
+        for sys in &systems {
+            let star = &sys.stars[0];
+            *count.entry(star.class).or_insert(0usize) += 1;
+            assert!(star.radius > 0.0 && star.radius <= 6_500_000.0, "{}", star.radius);
+            assert!(star.temperature_k > 250.0);
+            let physics = sys.star_physics().unwrap();
+            assert_eq!(physics.class, star.class);
+            assert!((physics.temperature_k as f32 - star.temperature_k).abs() < 1.0);
+        }
+        let share = |c: StarClass| *count.get(&c).unwrap_or(&0) as f64 / systems.len() as f64;
+        assert!(share(StarClass::M) > 0.6 && share(StarClass::G) > 0.05 && share(StarClass::G) < 0.1);
+        assert!(share(StarClass::RedGiant) > 0.003 && share(StarClass::WhiteDwarf) > 0.03);
+        println!("types : {count:?}");
     }
 
     #[test]
