@@ -14,7 +14,8 @@ use noise::{Fbm, NoiseFn, Perlin};
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
 
 use crate::planet::VoxelType;
-use crate::planetgen::climate::{land_material, relative_altitude, sea_material, Climate};
+use crate::planetgen::biome::{Biome, BiomeField, BiomeParams};
+use crate::planetgen::climate::{relative_altitude, sea_material, Climate};
 use crate::planetgen::geology::{moon_relief, Relief, ReliefField};
 use crate::planetgen::hydrology::Hydro;
 use crate::settings::{MoonConfig, PlanetConfig};
@@ -64,6 +65,8 @@ pub struct BodyParams {
     pub hydro: Hydro,
     /// Formes du relief issues de la géologie (phase 5).
     pub relief: Relief,
+    /// Sols et biomes (phase 6).
+    pub biomes: BiomeParams,
 }
 
 /// Ciel d'une planète faite à la main (sans atmosphère calculée) : celui de la Terre.
@@ -94,6 +97,7 @@ impl BodyParams {
             pressure: if p.air.present() { p.air.pressure_bar } else if p.atmosphere { 1.0 } else { 0.0 },
             hydro: if p.gaseous() { Hydro::DRY } else { p.hydrology.hydro },
             relief: p.geology.relief,
+            biomes: p.biomes,
         }
     }
 
@@ -117,6 +121,7 @@ impl BodyParams {
             pressure: 0.0,
             hydro: Hydro::DRY,
             relief: m.relief.unwrap_or_else(|| moon_relief(m.seed)),
+            biomes: BiomeParams::default(),
         }
     }
 
@@ -273,6 +278,7 @@ pub struct Terrain {
     fine: Fbm<Perlin>,
     color: Perlin,
     relief: ReliefField,
+    biomes: BiomeField,
 }
 
 impl Terrain {
@@ -294,6 +300,7 @@ impl Terrain {
             fine,
             color: Perlin::new(params.seed.wrapping_add(200)),
             relief: ReliefField::new(params.relief),
+            biomes: BiomeField::new(params.biomes),
         }
     }
 
@@ -326,9 +333,22 @@ impl Terrain {
     }
 
     /// Matière du sol : d'après la température locale (latitude, altitude), voir `planetgen::climate`.
-    fn surface_type(&self, rh: f32, sin_lat: f32) -> VoxelType {
+    fn surface_type(&self, rh: f32, dir: Vec3) -> VoxelType {
         let p = &self.params;
-        land_material(&p.climate, &p.hydro, p.airless, p.atmosphere, rh, sin_lat)
+        self.biomes.material(&p.climate, &p.hydro, p.airless, p.atmosphere, rh, dir)
+    }
+
+    /// Biome dans la direction `dir` (`None` : sous la mer, ou planète sans biomes calculés).
+    pub fn biome_at(&self, dir: Vec3) -> Option<Biome> {
+        let p = &self.params;
+        if !p.biomes.defined || p.gaseous {
+            return None;
+        }
+        let (h, _) = self.raw_height(dir);
+        if h < p.radius && sea_material(&p.climate, &p.hydro, p.airless, dir.y.abs()).is_some() {
+            return None;
+        }
+        Some(self.biomes.biome(&p.climate, &p.hydro, p.airless, p.atmosphere, (h - p.radius) / p.terrain_height.max(1.0), dir))
     }
 
     /// Température (°C) dans la direction `dir`, à la hauteur relative `rh`.
@@ -364,7 +384,8 @@ impl Terrain {
             ];
             (p.radius, kind, color)
         } else {
-            let kind = self.surface_type(hv - p.sea_level, dir.y.abs());
+            // Hauteur réelle (collines comprises) : une colline au bord de l'eau n'est pas une plage
+            let kind = self.surface_type((h - p.radius) / p.terrain_height.max(1.0), dir);
             let color = if p.airless {
                 let (lo, hi) = ([0.45, 0.44, 0.42], [0.70, 0.68, 0.65]);
                 [
@@ -561,6 +582,7 @@ mod tests {
             pressure: 1.0,
             hydro: Hydro::default(),
             relief: Relief::default(),
+            biomes: BiomeParams::default(),
         }
     }
 
@@ -751,6 +773,7 @@ mod sea_level_tests {
             climate: crate::planetgen::climate::Climate::default(), sky: EARTH_SKY, sunset: EARTH_SUNSET, haze: EARTH_SKY, pressure: 1.0,
             hydro: Hydro::default(),
             relief: Relief::default(),
+            biomes: BiomeParams::default(),
         }
     }
 }

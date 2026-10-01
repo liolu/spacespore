@@ -176,6 +176,8 @@ pub struct PlanetConfig {
     #[serde(default)] pub hydrology:      Hydrology,
     /// Géologie et relief (phase 5).
     #[serde(default)] pub geology:        Geology,
+    /// Sols et biomes (phase 6).
+    #[serde(default)] pub biomes:         BiomeParams,
 }
 fn default_gravity() -> f32 { 1.0 }
 fn default_star_radius()    -> f32 { 250.0 }
@@ -193,7 +195,7 @@ impl Default for PlanetConfig {
             arg_periapsis: 0.0, mean_anomaly_0: 0.0,
             kind: PlanetKind::Rocky, hot: false, mass_earth: 0.0, radius_earth: 0.0,
             semi_major_au: 0.0, period_days: 0.0, rotation_h: 0.0, axial_tilt: 0.0,
-            tidally_locked: false, gravity_g: 1.0, temperature_c: None, climate: None, air: Air::default(), hydrology: Hydrology::default(), geology: Geology::default(),
+            tidally_locked: false, gravity_g: 1.0, temperature_c: None, climate: None, air: Air::default(), hydrology: Hydrology::default(), geology: Geology::default(), biomes: BiomeParams::default(),
         }
     }
 }
@@ -358,6 +360,7 @@ use crate::planetgen::genome::SystemGenome;
 use crate::planetgen::star::{StarClass, StarPhysics};
 use crate::planetgen::atmosphere::Air;
 use crate::planetgen::climate::Climate;
+use crate::planetgen::biome::BiomeParams;
 use crate::planetgen::geology::{Geology, Relief};
 use crate::planetgen::hydrology::Hydrology;
 use crate::planetgen::system::PlanetKind;

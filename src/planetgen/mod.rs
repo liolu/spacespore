@@ -16,6 +16,7 @@
 #![allow(dead_code)]
 
 pub mod atmosphere;
+pub mod biome;
 pub mod cache;
 pub mod climate;
 pub mod genome;

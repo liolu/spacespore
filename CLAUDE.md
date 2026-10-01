@@ -48,7 +48,11 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   Geologie et relief (`planetgen/geology.rs`) : activite interne, tectonique, volcans, seismes, champ magnetique,
   erosion ; `ReliefField::offset` (plaques -> montagnes/rifts, volcans, canyons, plateaux, crateres) ajoute au bruit
   des continents, partage par `terrain.rs` et `mesher.rs`. Banc des tuiles : `cargo test --release bench_tiles --
-  --ignored --nocapture` (1,07 ms/tuile avant la phase 5, 1,18 apres). L'etoile a un type (`planetgen/star.rs`, O..M, naine blanche/brune, sous-geante, geante rouge) :
+  --ignored --nocapture` (1,07 ms/tuile avant la phase 5, 1,18 apres, 1,20 avec les biomes).
+  Sols et biomes (`planetgen/biome.rs`) : `BiomeField::material` choisit la matiere du sol (une `VoxelType` par
+  biome : toundra, taiga, foret, jungle, cristal, spores, verre, soufre, basalte, sel, rouille...) d'apres
+  temperature, humidite (ceintures + bruit), altitude reelle, sol et radiation ; terrestres si O2, sinon
+  extraterrestres. Partage par `terrain.rs` et `mesher.rs` (couleur vue de l'espace = sol). L'etoile a un type (`planetgen/star.rs`, O..M, naine blanche/brune, sous-geante, geante rouge) :
   une G garde l'echelle, les autres types ont leur taille reelle (1 R_sol ~ 1 050 000 a l'ecran), compressee
   au-dela de 1,5 M (max 6,5 M) ; les planetes d'une geante sont repoussees hors d'elle. Aucun type impose (Sol compris). Planetes et lunes
   sont explorables : zoomer sous 1000 du vaisseau = navigation basse altitude (ZQSD, Maj, Espace/Ctrl, clic

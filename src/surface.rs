@@ -1406,6 +1406,7 @@ mod tests {
             pressure: 1.0,
             hydro: crate::planetgen::hydrology::Hydro::default(),
             relief: crate::planetgen::geology::Relief::default(),
+            biomes: crate::planetgen::biome::BiomeParams::default(),
         })
     }
 

@@ -255,7 +255,23 @@ pub struct ReliefSection {
 pub struct BiologySection {
     /// Niveau de vie (microbienne, simple, complexe) : phase 7.
     pub life: Option<String>,
-    pub biomes: Vec<String>,
+    /// Biomes par part de la surface émergée, avec leur rigueur.
+    pub biomes: Vec<BiomeShare>,
+    /// Sols dominants des régions sèches ou sans vie.
+    pub soils: Vec<String>,
+    pub alien_flora: Option<bool>,
+    /// Radiation au sol (0 : abritée, 1 : grillée).
+    pub radiation: Option<f64>,
+    /// Couleur moyenne de la planète vue de l'espace (sRGB).
+    pub global_color: Option<[f32; 3]>,
+}
+
+/// Part d'un biome.
+#[derive(Clone, Debug, Serialize)]
+pub struct BiomeShare {
+    pub name: String,
+    pub fraction: f64,
+    pub realism: Realism,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -401,6 +417,61 @@ fn geology_section(p: &PlanetConfig) -> GeologySection {
     }
 }
 
+/// Biomes et couleur globale : on échantillonne le vrai terrain (relief, mers, climat).
+fn biology_section(p: &PlanetConfig) -> BiologySection {
+    let b = &p.biomes;
+    if !b.defined {
+        return BiologySection::default();
+    }
+    let terrain = crate::terrain::Terrain::new(crate::terrain::BodyParams::planet(p));
+    let n = 800;
+    let mut counts: BTreeMap<&'static str, (usize, Realism)> = BTreeMap::new();
+    let mut land = 0;
+    let mut color = [0.0f32; 3];
+    for i in 0..n {
+        let z = 1.0 - 2.0 * (i as f32 + 0.5) / n as f32;
+        let a = i as f32 * 2.399_963;
+        let r = (1.0 - z * z).sqrt();
+        let dir = bevy::math::Vec3::new(r * a.cos(), z, r * a.sin());
+        let c = terrain.column(dir, terrain.voxel()).color;
+        color = [color[0] + c[0], color[1] + c[1], color[2] + c[2]];
+        if let Some(biome) = terrain.biome_at(dir) {
+            land += 1;
+            counts.entry(biome.name()).or_insert((0, biome.realism())).0 += 1;
+        }
+    }
+    let mut biomes: Vec<BiomeShare> = counts
+        .into_iter()
+        .map(|(name, (k, realism))| BiomeShare { name: name.to_string(), fraction: k as f64 / land.max(1) as f64, realism })
+        .collect();
+    biomes.sort_by(|x, y| y.fraction.total_cmp(&x.fraction));
+    let mut soils = Vec::new();
+    if b.volcanism > 0.3 {
+        soils.push("volcanique (basalte)".to_string());
+    }
+    if b.metal {
+        soils.push("metallique (rouille)".to_string());
+    }
+    if b.salt {
+        soils.push("sel (mers evaporees)".to_string());
+    }
+    if b.regolith {
+        soils.push("regolithe".to_string());
+    }
+    if b.wetness > 0.4 {
+        soils.push("argile".to_string());
+    }
+    soils.push("sable".to_string());
+    BiologySection {
+        life: None,
+        biomes,
+        soils,
+        alien_flora: Some(b.alien),
+        radiation: Some(f(b.radiation)),
+        global_color: Some(color.map(|x| x / n as f32)),
+    }
+}
+
 fn composition(id: BodyId, deltas: &WorldDeltas) -> CompositionSection {
     let delta = delta_of(deltas, id);
     CompositionSection { bulk: delta.composition.iter().map(|(k, v)| (k.clone(), Live::new(0.0, *v))).collect() }
@@ -457,7 +528,7 @@ impl PlanetProfile {
                 detail_scale: f(p.detail_scale),
                 features: p.geology.features(),
             },
-            biology: BiologySection::default(),
+            biology: biology_section(p),
             resources: ResourcesSection::default(),
             gameplay: GameplaySection {
                 walkable: !p.gaseous(),
