@@ -18,7 +18,9 @@ mod net_ui;
 mod planet;
 mod settings;
 mod ship;
+mod surface;
 mod system_gen;
+mod terrain;
 mod ui;
 mod wormhole;
 mod update_checker;
@@ -81,6 +83,7 @@ use astre::Remnant_stellaire::supernova::SupernovaRoot;
 #[derive(SystemParam)]
 pub struct TargetQueries<'w, 's> {
     pub wormholes: Res<'w, wormhole::Wormholes>,
+    pub surface: Res<'w, surface::Surface>,
 
     pub planet_q:
         Query<'w, 's, (&'static GlobalTransform, &'static PlanetId), With<PlanetRoot>>,
@@ -236,6 +239,7 @@ fn main() {
 
         // ── Vaisseau ────────────────────────────────────────────────────
         .add_plugins(ShipPlugin)
+        .add_plugins(surface::SurfacePlugin)
 
         // ── UI ──────────────────────────────────────────────────────────
         .add_plugins(UiPlugin)
@@ -384,6 +388,22 @@ fn setup_scene(
     ));
 }
 
+/// Rayon de clic (en pixels) autour du centre d'une planète : au moins 80, sinon son disque à l'écran.
+fn body_click_tolerance(
+    camera: &Camera,
+    camera_transform: &GlobalTransform,
+    viewport: &graphics::ViewportScale,
+    center: Vec3,
+    radius: f32,
+) -> f32 {
+    const MIN: f32 = 80.0;
+    let edge = center + camera_transform.right() * radius;
+    match (camera.world_to_viewport(camera_transform, center), camera.world_to_viewport(camera_transform, edge)) {
+        (Ok(a), Ok(b)) => viewport.to_window(a).distance(viewport.to_window(b)).max(MIN),
+        _ => MIN,
+    }
+}
+
 /// Rayon de clic (en pixels) autour du centre d'une galaxie. À la vue d'ensemble, il suit la
 /// taille de la galaxie à l'écran : on la sélectionne en cliquant n'importe où sur son disque.
 fn galaxy_click_tolerance(
@@ -473,6 +493,10 @@ fn select_world_target(
     if travel.active() {
         return;
     }
+    // Atterri ou en vol d'atterrissage : la souris sert à regarder autour
+    if queries.surface.active() {
+        return;
+    }
     // Clic sur un élément d'interface : ne pas sélectionner d'astre derrière
     if ui_interactions.iter().any(|i| *i != Interaction::None) {
         return;
@@ -492,7 +516,8 @@ fn select_world_target(
         if along > 0.0 {
             let closest = ray.origin + *ray.direction * along;
             let ray_distance = closest.distance(position);
-            if ray_distance <= 300.0 && zoom.can_navigate_to(&TargetKind::Moon(id.planet_idx, id.moon_idx)) && best.map_or(true, |(distance, _)| along < distance) {
+            let moon_radius = surface::body_params(&settings, &TargetKind::Moon(id.planet_idx, id.moon_idx)).map_or(0.0, |p| p.radius);
+            if ray_distance <= moon_radius.max(300.0) && zoom.can_navigate_to(&TargetKind::Moon(id.planet_idx, id.moon_idx)) && best.map_or(true, |(distance, _)| along < distance) {
                 best = Some((along, TargetKind::Moon(id.planet_idx, id.moon_idx)));
             }
         }
@@ -513,7 +538,10 @@ fn select_world_target(
     };
 
     for (transform, id) in &queries.planet_q {
-        consider(transform.translation(), 80.0, TargetKind::Planet(id.0));
+        // Les planètes sont immenses : on les sélectionne en cliquant n'importe où sur leur disque
+        let radius = surface::body_params(&settings, &TargetKind::Planet(id.0)).map_or(0.0, |p| p.radius);
+        let tolerance = body_click_tolerance(camera, camera_transform, &viewport, transform.translation(), radius);
+        consider(transform.translation(), tolerance, TargetKind::Planet(id.0));
     }
     for (transform, id) in &queries.star_q {
         consider(transform.translation(), 80.0, TargetKind::Star(id.0));
@@ -726,8 +754,9 @@ fn select_next_moon(
     mut target: ResMut<CameraTarget>,
     net_panel: Res<NetPanel>,
     travel: Res<wormhole::WormholeTravel>,
+    surface: Res<surface::Surface>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyM) || net_panel.focus.is_some() || travel.active() {
+    if !keys.just_pressed(KeyCode::KeyM) || net_panel.focus.is_some() || travel.active() || surface.active() {
         return;
     }
 
@@ -764,7 +793,8 @@ pub struct CameraController {
 }
 
 /// Limite du zoom 1 : en dessous, on reste verrouillé dans le système courant.
-pub const ZOOM_PLANET_MAX: f32 = 10_000.0;
+/// Les systèmes s'étendent sur ~200 000 unités (planètes géantes) : toute l'échelle de zoom suit.
+pub const ZOOM_PLANET_MAX: f32 = 200_000.0;
 
 /// Distance de caméra pour voir une galaxie entière (reste au zoom 4 pour
 /// pouvoir cliquer ses étoiles).
@@ -802,9 +832,9 @@ impl ZoomLevel {
     fn from_distance(d: f32) -> Self {
         if d < ZOOM_PLANET_MAX {
             ZoomLevel::Planet
-        } else if d < 50_000.0 {
+        } else if d < 600_000.0 {
             ZoomLevel::System
-        } else if d < 500_000.0 {
+        } else if d < 2_000_000.0 {
             ZoomLevel::Sector
         } else if d < 6_000_000.0 {
             ZoomLevel::Galaxy
@@ -873,8 +903,26 @@ fn hover_height(target: &CameraTarget, settings: &GameSettings) -> f32 {
     if let Some(r) = core_radius {
         return r * 1.8;
     }
+    // Planète ou lune : au-dessus de sa surface (elles sont immenses)
+    if let Some(params) = surface::body_params(settings, &target.0) {
+        return surface::hover_radius(&params);
+    }
     let (min_distance, _) = camera_distance_range(target, settings);
     (min_distance * 0.5).max(80.0)
+}
+
+/// Point de stationnement du vaisseau : au-dessus de l'astre ciblé (de son dernier point
+/// d'atterrissage s'il y en a un, sinon au pôle nord).
+fn hover_position(
+    target_pos: Vec3,
+    target: &CameraTarget,
+    settings: &GameSettings,
+    surface: &surface::Surface,
+    net: &Net,
+    zoom_distance: f32,
+) -> Vec3 {
+    let up = surface.hover_dir(&target.0).unwrap_or(Vec3::Y);
+    target_pos + up * hover_height(target, settings) + hover_offset(&target.0, net, zoom_distance)
 }
 
 /// Décalage du point de stationnement : aucun sur un trou noir ou un trou de ver (le vaisseau s'y
@@ -939,6 +987,13 @@ fn camera_controller(
         return;
     };
 
+    // ── Atterrissage / marche : `surface.rs` pilote la caméra et le vaisseau ──
+    if queries.surface.active() {
+        mouse_motion.clear();
+        mouse_wheel.clear();
+        return;
+    }
+
     // ── Mode vue libre (F1) : caméra libre sans vaisseau ─────────────
     if *ship_mode == ShipMode::Free {
         if menu_open {
@@ -999,10 +1054,13 @@ fn camera_controller(
 
         let sp = if let Ok((mut ship_tf, mut ship_vis)) = ship_q.get_single_mut() {
             let hide_ship = matches!(*zoom_level, ZoomLevel::Galaxy | ZoomLevel::Cosmos | ZoomLevel::DeepSpace);
-            let hover_pos = target_pos + Vec3::Y * hover_height(&camera_target, &settings) + hover_offset(&camera_target.0, &net, ctrl.distance);
+            let hover_pos = hover_position(target_pos, &camera_target, &settings, &queries.surface, &net, ctrl.distance);
             if !travel.active() {
                 // Caché (vue galaxie) : le vaisseau se place quand même sur son astre, sans croisière
                 steer_ship(&mut ship_tf, hover_pos, hide_ship, time.delta_secs());
+                if surface::body_params(&settings, &camera_target.0).is_some() {
+                    surface::level_ship(&mut ship_tf, target_pos);
+                }
             }
             if hide_ship {
                 *ship_vis = Visibility::Hidden;
@@ -1090,10 +1148,13 @@ fn camera_controller(
     // ── Vaisseau : croisière puis posé au-dessus de l'astre ────────
     let ship_pos = if let Ok((mut ship_tf, mut ship_vis)) = ship_q.get_single_mut() {
         let hide_ship = matches!(*zoom_level, ZoomLevel::Galaxy | ZoomLevel::Cosmos | ZoomLevel::DeepSpace);
-        let hover_pos = target_pos + Vec3::Y * hover_height(&camera_target, &settings) + hover_offset(&camera_target.0, &net, ctrl.distance);
+        let hover_pos = hover_position(target_pos, &camera_target, &settings, &queries.surface, &net, ctrl.distance);
         if !travel.active() {
             // Caché (vue galaxie) : le vaisseau se place quand même sur son astre, sans croisière
             steer_ship(&mut ship_tf, hover_pos, hide_ship, time.delta_secs());
+            if surface::body_params(&settings, &camera_target.0).is_some() {
+                surface::level_ship(&mut ship_tf, target_pos);
+            }
         }
         if hide_ship {
             *ship_vis = Visibility::Hidden;
@@ -1112,6 +1173,10 @@ fn camera_controller(
 
     // ── Caméra centrée sur le vaisseau ────────────────────────────
     cam_tf.translation = ship_pos + cam_rotation * Vec3::new(0.0, 0.0, ctrl.distance);
+    // Autour d'une planète ou d'une lune, la caméra ne passe pas sous la surface
+    if let Some(params) = surface::body_params(&settings, &camera_target.0) {
+        cam_tf.translation = surface::keep_outside(cam_tf.translation, target_pos, &params);
+    }
     cam_tf.look_at(ship_pos, Vec3::Y);
 }
 
@@ -1291,17 +1356,10 @@ fn camera_distance_range(
     settings: &GameSettings,
 ) -> (f32, f32) {
     match target.0 {
-        TargetKind::Planet(i) => {
-            let r = settings
-                .planets
-                .get(i)
-                .map(|p| p.radius)
-                .unwrap_or(50.0);
-
-            (r * 1.4, 9_999_999.0)
+        TargetKind::Planet(_) | TargetKind::Moon(_, _) => {
+            // On peut s'approcher jusqu'à 40 du vaisseau : sous 1000, navigation autour de l'astre
+            (40.0, 9_999_999.0)
         }
-
-        TargetKind::Moon(_, _) => (20.0, 9_999_999.0),
 
         TargetKind::Star(i) => {
             let r = settings
@@ -1621,6 +1679,14 @@ fn update_fps_display(
                     .and_then(|s| s.planets.get(li))
                     .map(|p| p.temperature())
                     .unwrap_or(15.0)
+            }
+
+            // Une lune reçoit autant de chaleur que sa planète
+            TargetKind::Moon(planet_id, _) => {
+                settings.systems.get(planet_id / 1000)
+                    .and_then(|s| s.planets.get(planet_id % 1000))
+                    .map(|p| p.temperature())
+                    .unwrap_or(-270.0)
             }
 
             TargetKind::Star(id) => {
