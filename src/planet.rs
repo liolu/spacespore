@@ -96,6 +96,8 @@ pub struct StarChunk;
 pub struct FarStar {
     pub sys_idx: usize,
     pub radius: f32,
+    /// Éclat selon la luminosité du type d'étoile (1 = Soleil).
+    pub glow: f32,
     pub galaxy_id: u32,
 }
 
@@ -445,7 +447,7 @@ fn generate_all(
                     MeshMaterial3d(atlas_mat.clone()),
                     Transform::from_translation(center).with_scale(Vec3::splat(star_cfg.radius * 0.5)),
                     NotShadowCaster,
-                    FarStar { sys_idx: si, radius: star_cfg.radius, galaxy_id: sys.galaxy_id },
+                    FarStar { sys_idx: si, radius: star_cfg.radius, glow: star_cfg.glow(), galaxy_id: sys.galaxy_id },
                 ))
                 .id();
             far_stars.push((sys.galaxy_id, si, sys.abs_center(), entity));
@@ -1017,7 +1019,7 @@ fn spawn_system_bodies(
         let b = star_cfg.light_color_b;
         let star_material = materials.add(StandardMaterial {
             base_color: Color::srgb(r, g, b),
-            emissive: LinearRgba::new(r * 12.0, g * 10.0, b * 3.0, 1.0),
+            emissive: { let [er, eg, eb] = star_cfg.emissive_rgb(); LinearRgba::new(er, eg, eb, 1.0) },
             unlit: true,
             ..default()
         });
@@ -1745,7 +1747,7 @@ fn reload_stars(
         let b = star_cfg.light_color_b;
         let star_material = materials.add(StandardMaterial {
             base_color: Color::srgb(r, g, b),
-            emissive: LinearRgba::new(r * 12.0, g * 10.0, b * 3.0, 1.0),
+            emissive: { let [er, eg, eb] = star_cfg.emissive_rgb(); LinearRgba::new(er, eg, eb, 1.0) },
             unlit: true,
             ..default()
         });
@@ -2027,7 +2029,8 @@ fn update_far_star_scale(
 
             if *vis != Visibility::Inherited { *vis = Visibility::Inherited; }
             let min_scale = fs.radius * 0.5;
-            let angular_scale = dist * 0.005;
+            // Une étoile lumineuse paraît plus grosse qu'une naine rouge ou brune
+            let angular_scale = dist * 0.005 * fs.glow;
             let dist_shrink = (20_000_000.0 * GALAXY_SCALE / gal_dist.max(1.0)).clamp(0.05, 1.0);
             let mut scale = angular_scale.max(min_scale) * dist_shrink;
             if lod_fade > 0.0 { scale *= 1.0 - lod_fade; }

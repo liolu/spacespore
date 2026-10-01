@@ -55,21 +55,32 @@ pub struct StarProfile {
     pub system: String,
     pub seed: u64,
     pub layer_seeds: BTreeMap<&'static str, String>,
-    /// Type spectral (O, B, A, F, G, K, M, naine blanche…) : phase 1.
-    pub spectral_class: Option<String>,
+    /// Type (« naine rouge (M) », « geante rouge »…).
+    pub class: String,
+    /// Type spectral complet (« G2 V », « M4 V », « K1 III », « DA3.1 »…).
+    pub spectral_type: Option<String>,
+    /// Rayon affiché (unités du jeu) : compressé pour les géantes.
     pub radius_game: f64,
+    /// Rayon réel.
     pub radius_sun: f64,
     pub mass_sun: Option<f64>,
     pub luminosity_sun: Option<f64>,
     pub temperature_k: f64,
+    /// Couleur du corps noir (sRGB).
     pub color: [f32; 3],
     /// Intensité lumineuse du rendu (unités du jeu).
     pub light_intensity: f32,
     pub age_gyr: Option<f64>,
     pub lifetime_gyr: Option<f64>,
+    /// Activité magnétique, 0 à 1.
     pub magnetic_activity: Option<f64>,
-    pub uv_x_flux: Option<f64>,
+    /// UV reçus dans la zone habitable (Soleil/Terre = 1).
+    pub uv_flux: Option<f64>,
+    /// Rayons X (Soleil = 1).
+    pub xray_flux: Option<f64>,
+    /// Vent stellaire, perte de masse (Soleil = 1).
     pub stellar_wind: Option<f64>,
+    pub flares: u32,
     pub traits: Vec<Trait>,
 }
 
@@ -77,25 +88,31 @@ impl StarProfile {
     pub fn build(sys_idx: usize, star_idx: usize, sys: &StarSystemConfig, star: &StarConfig) -> Self {
         let seed = sys.body_seed();
         let id = BodyId::Star { system: sys_idx as u32, index: star_idx as u16 };
+        // Seule l'étoile principale d'un système généré a une physique complète
+        let physics = if star_idx == 0 { sys.star_physics() } else { None };
+        let p = physics.as_ref();
         Self {
             id: id.key(),
             name: if sys.stars.len() > 1 { format!("{} {}", sys.name, (b'A' + star_idx as u8) as char) } else { sys.name.clone() },
             system: sys.name.clone(),
             seed,
             layer_seeds: layer_seeds(seed, &[Layer::Star]),
-            spectral_class: None,
+            class: star.class.name().to_string(),
+            spectral_type: p.map(|p| p.spectral_type.clone()),
             radius_game: f(star.radius),
-            radius_sun: units::game_to_sun_radii(f(star.radius)),
-            mass_sun: None,
-            luminosity_sun: None,
-            temperature_k: f(star.temperature()),
+            radius_sun: p.map_or_else(|| units::game_to_sun_radii(f(star.radius)), |p| p.radius_sun),
+            mass_sun: p.map(|p| p.mass_sun),
+            luminosity_sun: p.map(|p| p.luminosity_sun),
+            temperature_k: p.map_or_else(|| f(star.temperature()), |p| p.temperature_k),
             color: [star.light_color_r, star.light_color_g, star.light_color_b],
             light_intensity: star.intensity,
-            age_gyr: None,
-            lifetime_gyr: None,
-            magnetic_activity: None,
-            uv_x_flux: None,
-            stellar_wind: None,
+            age_gyr: p.map(|p| p.age_gyr),
+            lifetime_gyr: p.map(|p| p.lifetime_gyr),
+            magnetic_activity: p.map(|p| p.activity),
+            uv_flux: p.map(|p| p.uv_flux),
+            xray_flux: p.map(|p| p.xray_flux),
+            stellar_wind: p.map(|p| p.stellar_wind),
+            flares: star.flare_count,
             traits: Vec::new(),
         }
     }
@@ -395,7 +412,9 @@ mod tests {
         let deltas = WorldDeltas::new();
         for (si, sys) in settings.systems.iter().enumerate().take(200) {
             let star = StarProfile::build(si, 0, sys, &sys.stars[0]);
-            assert!((0.9..2.4).contains(&star.radius_sun), "{}", star.radius_sun);
+            // Physique réelle : de la naine blanche (0,01 R☉) à la géante (100 R☉)
+            assert!((0.005..=101.0).contains(&star.radius_sun), "{}", star.radius_sun);
+            assert!(star.spectral_type.is_some() && star.mass_sun.is_some());
             for (pi, p) in sys.planets().iter().enumerate() {
                 let prof = PlanetProfile::planet(si, pi, sys, p, &deltas);
                 assert_eq!(prof.id, format!("s{si}.p{pi}"));
