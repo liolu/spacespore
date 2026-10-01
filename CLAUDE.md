@@ -24,6 +24,11 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
 ## Structure
 
 - Cargo workspace : root = jeu, `tools/` = common/installer/updater/launcher
+- Planetes et lunes tres grandes (rayon 6 000 a 13 000, lunes 1 500 a 3 500), explorables :
+  `Entree` atterrit sur l'astre cible (a l'endroit pointe par la souris), `Entree` redecolle.
+  `src/terrain.rs` = terrain voxel (champ de hauteur, quadtree de tuiles, maillage), `src/surface.rs` =
+  atterrissage, marche (ZQSD/WASD, Maj, Espace), lumiere et tuiles. Pendant un sejour le maillage lointain
+  de la planete (`FarMesh`) est remplace par les tuiles.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

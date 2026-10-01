@@ -9,10 +9,14 @@ use std::path::PathBuf;
 
 pub const SAVE_VERSION: u32 = 9;
 
-/// Dossier `saves/` à côté de l'exécutable (installation portable).
-/// Si ce dossier n'est pas accessible en écriture (ex. installation système
-/// sous Linux, ou bundle `.app` en lecture seule sous macOS), on se rabat sur
-/// le dossier de données de l'utilisateur :
+/// Dossier des sauvegardes de CETTE version : `saves/v0.8.0/` (un dossier par version installée).
+/// Il contient `settings.json` (réglages et progression), `world.json` (la sauvegarde du monde :
+/// graine, territoires, trous de ver connus, guilde...) et `info.json` (résumé lisible : version,
+/// graine, joueur, dernière partie).
+///
+/// `saves/` se trouve à côté de l'exécutable (installation portable). Si ce dossier n'est pas
+/// accessible en écriture (installation système sous Linux, bundle `.app` en lecture seule sous
+/// macOS), on se rabat sur le dossier de données de l'utilisateur :
 ///   Windows : %APPDATA%\SpaceSpore\saves
 ///   Linux   : ~/.local/share/SpaceSpore/saves
 ///   macOS   : ~/Library/Application Support/SpaceSpore/saves
@@ -22,18 +26,61 @@ pub fn data_dir() -> PathBuf {
         let beside_exe = std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(|d| d.join("saves")));
-        if let Some(path) = beside_exe {
-            if is_writable_dir(&path) {
-                return path;
+        let base = match beside_exe {
+            Some(path) if is_writable_dir(&path) => path,
+            _ => {
+                let fallback = dirs::data_dir()
+                    .map(|d| d.join("SpaceSpore").join("saves"))
+                    .unwrap_or_else(|| PathBuf::from("saves"));
+                fs::create_dir_all(&fallback).ok();
+                fallback
             }
+        };
+        let dir = base.join(version_folder_name());
+        let fresh = !dir.exists();
+        fs::create_dir_all(&dir).ok();
+        if fresh {
+            migrate_saves(&base, &dir);
         }
-        let fallback = dirs::data_dir()
-            .map(|d| d.join("SpaceSpore").join("saves"))
-            .unwrap_or_else(|| PathBuf::from("saves"));
-        fs::create_dir_all(&fallback).ok();
-        fallback
+        dir
     })
     .clone()
+}
+
+/// `v0.8.0`, `v0.8.0-instable` ou `v0.8.0-dev` (une compilation locale ne touche pas aux vraies sauvegardes).
+pub fn version_folder_name() -> String {
+    let suffix = match spacespore_common::CHANNEL {
+        spacespore_common::Channel::Stable => "",
+        spacespore_common::Channel::Unstable => "-instable",
+        spacespore_common::Channel::Dev => "-dev",
+    };
+    format!("v{}{}", spacespore_common::VERSION, suffix)
+}
+
+/// Fichiers repris à la première ouverture d'une nouvelle version : ceux de l'ancien dossier
+/// commun `saves/`, sinon ceux du dossier de la version la plus récemment utilisée.
+const CARRIED_FILES: [&str; 3] = ["settings.json", "economy.json", "net_cache.json"];
+
+fn migrate_saves(base: &std::path::Path, dir: &std::path::Path) {
+    let legacy = CARRIED_FILES.iter().any(|f| base.join(f).exists());
+    let source = if legacy {
+        Some(base.to_path_buf())
+    } else {
+        fs::read_dir(base)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.path() != dir && e.path().join("settings.json").exists())
+            .max_by_key(|e| e.path().join("settings.json").metadata().and_then(|m| m.modified()).ok())
+            .map(|e| e.path())
+    };
+    let Some(source) = source else { return };
+    for name in CARRIED_FILES {
+        let from = source.join(name);
+        if from.exists() {
+            let _ = fs::copy(&from, dir.join(name));
+        }
+    }
 }
 
 fn is_writable_dir(path: &std::path::Path) -> bool {
@@ -106,9 +153,18 @@ impl Default for PlanetConfig {
 }
 impl PlanetConfig {
     pub fn temperature(&self) -> f32 {
-        -270.0 + 50_000_000.0 / self.orbit_distance.max(10.0)
+        -270.0 + PLANET_HEAT / self.orbit_distance.max(10.0)
     }
 }
+
+/// Chaleur reçue par une planète : température = -270 + PLANET_HEAT / distance à l'étoile.
+/// Calibrée sur les orbites de `make_planets` : brûlante au plus près (≈ 280 °C), tempérée
+/// vers 70 000, glacée au-delà de 110 000.
+const PLANET_HEAT: f32 = 22_000_000.0;
+
+/// Les orbites sont ~25 fois plus larges que dans les anciennes versions : la lumière des
+/// étoiles (portée, et intensité en proportion du carré) suit cette échelle.
+pub const LIGHT_DISTANCE_SCALE: f32 = 25.0;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct StarConfig {
@@ -375,19 +431,51 @@ fn default_systems(galaxies: &[GalaxyConfig]) -> Vec<StarSystemConfig> {
         (radius, intensity, sc)
     };
 
-    // `sb` : base des graines de planètes (doit rester loin de u32::MAX)
+    // `sb` : base des graines de planètes (doit rester loin de u32::MAX).
+    // 1 à 3 planètes, 1 à 2 lunes chacune, toutes très grandes : on peut s'y poser et y marcher
+    // (voir `surface.rs`). Rien d'autre que + - * / ici : le résultat doit être identique sur
+    // toutes les machines (empreinte du monde en multijoueur).
     let make_planets = |seed: u32, sb: u32| -> Vec<PlanetConfig> {
-        let n = (pseudo_rand(seed * 3 + 41) * 2.5) as usize;
-        (0..n).map(|pi| {
+        let n = 1 + (pseudo_rand(seed * 3 + 41) * 2.999) as usize;
+        let mut orbit = 0.0_f32;
+        let mut planets = Vec::with_capacity(n);
+        for pi in 0..n {
             let pu = pi as u32;
-            PlanetConfig {
-                orbit_distance: 1750.0 + pi as f32 * 1500.0 + pseudo_rand(sb + pu + 60) * 800.0,
-                radius: 100.0 + pi as f32 * 60.0 + pseudo_rand(sb + pu + 50) * 100.0,
+            let r = |k: u32| pseudo_rand(sb + pu + k);
+            orbit = if pi == 0 { 40_000.0 + r(60) * 30_000.0 } else { orbit + 28_000.0 + r(60) * 20_000.0 };
+            let radius = 6_000.0 + pi as f32 * 1_500.0 + r(50) * 4_000.0;
+            let atmosphere = pseudo_rand(seed * 11 + pu + 71) < 0.35;
+
+            let moons = (0..1 + (r(90) * 1.999) as usize)
+                .map(|mi| {
+                    let mu = mi as u32;
+                    let m = |k: u32| pseudo_rand(sb + 200 + pu * 16 + mu * 4 + k);
+                    let moon_radius = (1_500.0 + m(0) * 2_000.0).min(radius * 0.45);
+                    MoonConfig {
+                        orbit_distance: radius * 2.5 + 6_000.0 + mi as f32 * 16_000.0 + m(1) * 3_000.0,
+                        radius: moon_radius,
+                        seed: sb + 500 + pu * 8 + mu,
+                        mean_anomaly_0: m(2) * std::f32::consts::TAU,
+                        ..Default::default()
+                    }
+                })
+                .collect();
+
+            planets.push(PlanetConfig {
+                orbit_distance: orbit,
+                radius,
+                sea_level: if atmosphere { 0.2 + r(83) * 0.4 } else { r(83) * 0.1 },
+                terrain_height: radius * (0.025 + r(80) * 0.025),
                 seed: sb + pu,
-                atmosphere: pseudo_rand(seed * 11 + pu + 71) < 0.35,
+                noise_scale: 1.5 + r(81) * 2.0,
+                detail_scale: 3.0 + r(82) * 3.0,
+                atmosphere,
+                cloud_altitude: 250.0 + r(84) * 200.0,
+                moons,
                 ..Default::default()
-            }
-        }).collect()
+            });
+        }
+        planets
     };
 
     let distant_count: usize = galaxies.iter().skip(1).map(|g| g.arm_stars + g.scatter_stars).sum();
@@ -422,6 +510,7 @@ fn default_systems(galaxies: &[GalaxyConfig]) -> Vec<StarSystemConfig> {
             stars: vec![StarConfig {
                 radius: sr, intensity: si,
                 light_color_r: sc[0], light_color_g: sc[1], light_color_b: sc[2],
+                light_range: 10_000.0 * LIGHT_DISTANCE_SCALE,
                 ..Default::default()
             }],
             planets: make_planets(s, (s + 1) * 100),
@@ -448,6 +537,7 @@ fn default_systems(galaxies: &[GalaxyConfig]) -> Vec<StarSystemConfig> {
             stars: vec![StarConfig {
                 radius: sr, intensity: si,
                 light_color_r: sc[0], light_color_g: sc[1], light_color_b: sc[2],
+                light_range: 10_000.0 * LIGHT_DISTANCE_SCALE,
                 ..Default::default()
             }],
             planets: make_planets(s, (s + 1) * 100),
@@ -483,6 +573,7 @@ fn default_systems(galaxies: &[GalaxyConfig]) -> Vec<StarSystemConfig> {
                 stars: vec![StarConfig {
                     radius: sr, intensity: si,
                     light_color_r: sc[0], light_color_g: sc[1], light_color_b: sc[2],
+                    light_range: 10_000.0 * LIGHT_DISTANCE_SCALE,
                     ..Default::default()
                 }],
                 planets: make_planets(s, (global_idx + 1) * 100),
@@ -689,6 +780,7 @@ impl GameSettings {
             settings.save();
             settings
         };
+        s.apply_world_save();
         s.galaxies = default_galaxies(s.world_seed);
         s.systems = default_systems(&s.galaxies);
         s.comets.clear();
@@ -705,6 +797,10 @@ impl GameSettings {
         s.magnetars.clear();
         s.neutron_stars.clear();
         s.supernovae.clear();
+        // Nouvelle version (ou ancienne sauvegarde) : on écrit tout de suite world.json et info.json
+        if !data_dir().join("world.json").exists() {
+            s.save();
+        }
         s
     }
 
@@ -720,6 +816,94 @@ impl GameSettings {
         let path = Self::config_path();
         if let Ok(json) = serde_json::to_string(self) {
             fs::write(path, json).ok();
+        }
+        let world = WorldSave::from(self);
+        if let Ok(json) = serde_json::to_string_pretty(&world) {
+            fs::write(data_dir().join("world.json"), json).ok();
+        }
+        let info = SaveInfo::from(self);
+        if let Ok(json) = serde_json::to_string_pretty(&info) {
+            fs::write(data_dir().join("info.json"), json).ok();
+        }
+    }
+
+    /// La sauvegarde du monde prime sur `settings.json` pour tout ce qui la compose.
+    fn apply_world_save(&mut self) {
+        let Ok(text) = fs::read_to_string(data_dir().join("world.json")) else { return };
+        let Ok(world) = serde_json::from_str::<WorldSave>(&text) else { return };
+        self.world_seed = world.world_seed;
+        self.claims = world.claims;
+        self.allies = world.allies;
+        self.enemies = world.enemies;
+        self.known_wormholes = world.known_wormholes;
+        self.clan_tag = world.clan_tag;
+        self.guild = world.guild;
+        self.guild_archive = world.guild_archive;
+    }
+}
+
+/// Sauvegarde du monde : sa graine et ce que le joueur y a fait (`world.json`).
+#[derive(Serialize, Deserialize)]
+struct WorldSave {
+    version: String,
+    world_seed: u64,
+    #[serde(default)] claims: Vec<u32>,
+    #[serde(default)] allies: Vec<String>,
+    #[serde(default)] enemies: Vec<String>,
+    #[serde(default)] known_wormholes: Vec<u32>,
+    #[serde(default)] clan_tag: String,
+    #[serde(default)] guild: Option<crate::guild::GuildRecord>,
+    #[serde(default)] guild_archive: Vec<crate::guild::GuildRecord>,
+}
+
+impl From<&GameSettings> for WorldSave {
+    fn from(s: &GameSettings) -> Self {
+        Self {
+            version: spacespore_common::VERSION.to_string(),
+            world_seed: s.world_seed,
+            claims: s.claims.clone(),
+            allies: s.allies.clone(),
+            enemies: s.enemies.clone(),
+            known_wormholes: s.known_wormholes.clone(),
+            clan_tag: s.clan_tag.clone(),
+            guild: s.guild.clone(),
+            guild_archive: s.guild_archive.clone(),
+        }
+    }
+}
+
+/// Résumé lisible de la partie (`info.json`) : jamais relu par le jeu.
+#[derive(Serialize)]
+struct SaveInfo {
+    game_version: String,
+    save_version: u32,
+    world_seed: u64,
+    galaxies: usize,
+    systems: usize,
+    player_name: String,
+    player_id: u64,
+    clan_tag: String,
+    claimed_systems: usize,
+    known_wormholes: usize,
+    last_saved_unix: u64,
+}
+
+impl From<&GameSettings> for SaveInfo {
+    fn from(s: &GameSettings) -> Self {
+        Self {
+            game_version: spacespore_common::VERSION.to_string(),
+            save_version: s.save_version,
+            world_seed: s.world_seed,
+            galaxies: s.galaxies.len(),
+            systems: s.systems.len(),
+            player_name: s.player_name.clone(),
+            player_id: s.player_id,
+            clan_tag: s.clan_tag.clone(),
+            claimed_systems: s.claims.len(),
+            known_wormholes: s.known_wormholes.len(),
+            last_saved_unix: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs()),
         }
     }
 }
@@ -807,5 +991,83 @@ mod tests {
         }
         // Jamais collées : au moins 1,5 fois la somme des rayons entre deux centres
         assert!(worst >= 1.5, "deux galaxies trop proches : {worst}");
+    }
+
+    #[test]
+    fn planets_and_moons_are_huge_and_do_not_overlap() {
+        let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
+        let systems = default_systems(&galaxies);
+        let mut hot = 0;
+        let mut cold = 0;
+        let mut temperate = 0;
+        for sys in systems.iter().take(3000) {
+            assert!((1..=3).contains(&sys.planets.len()), "{} planetes", sys.planets.len());
+            let mut previous_edge = 0.0;
+            for p in &sys.planets {
+                assert!((6_000.0..=13_000.0).contains(&p.radius), "planete de rayon {}", p.radius);
+                assert!(p.orbit_distance - p.radius > previous_edge, "planetes qui se chevauchent");
+                previous_edge = p.orbit_distance + p.radius;
+                assert!(p.terrain_height > 0.0 && p.terrain_height < p.radius * 0.06);
+                assert!((1..=2).contains(&p.moons.len()), "{} lunes", p.moons.len());
+                let mut moon_edge = p.radius + p.terrain_height;
+                for m in &p.moons {
+                    assert!(m.radius >= 1_500.0 && m.radius <= p.radius * 0.45, "lune de rayon {}", m.radius);
+                    assert!(m.orbit_distance - m.radius > moon_edge, "lune dans la planete ou dans la lune precedente");
+                    moon_edge = m.orbit_distance + m.radius;
+                }
+                match p.temperature() {
+                    t if t > 100.0 => hot += 1,
+                    t if t > -20.0 => temperate += 1,
+                    _ => cold += 1,
+                }
+            }
+        }
+        // Des mondes brulants, temperes et glaces : de quoi varier les paysages
+        assert!(hot > 100 && temperate > 100 && cold > 100, "chaud {hot}, tempere {temperate}, froid {cold}");
+    }
+
+    #[test]
+    fn a_new_version_folder_inherits_the_latest_saves() {
+        let base = std::env::temp_dir().join(format!("spacespore-saves-test-{}", std::process::id()));
+        let old = base.join("v0.7.0");
+        let new = base.join("v0.8.0");
+        fs::create_dir_all(&old).unwrap();
+        fs::create_dir_all(&new).unwrap();
+        fs::write(old.join("settings.json"), "{\"player_id\":7}").unwrap();
+        fs::write(old.join("economy.json"), "{}").unwrap();
+        migrate_saves(&base, &new);
+        assert_eq!(fs::read_to_string(new.join("settings.json")).unwrap(), "{\"player_id\":7}");
+        assert!(new.join("economy.json").exists());
+        // Le dossier de l'ancienne version n'est pas touché
+        assert!(old.join("settings.json").exists());
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn world_save_keeps_the_seed_and_the_player_progress() {
+        let mut s = GameSettings::default();
+        s.world_seed = 1234;
+        s.claims = vec![3, 9];
+        s.known_wormholes = vec![5];
+        let json = serde_json::to_string(&WorldSave::from(&s)).unwrap();
+        let back: WorldSave = serde_json::from_str(&json).unwrap();
+        assert_eq!((back.world_seed, back.claims, back.known_wormholes), (1234, vec![3, 9], vec![5]));
+        assert!(version_folder_name().starts_with('v'));
+    }
+
+    #[test]
+    fn the_generated_world_is_reproducible() {
+        let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
+        let a = default_systems(&galaxies);
+        let b = default_systems(&galaxies);
+        assert_eq!(a.len(), b.len());
+        for (x, y) in a.iter().zip(&b).take(500) {
+            assert_eq!(x.planets.len(), y.planets.len());
+            for (p, q) in x.planets.iter().zip(&y.planets) {
+                assert_eq!(p.radius.to_bits(), q.radius.to_bits());
+                assert_eq!(p.orbit_distance.to_bits(), q.orbit_distance.to_bits());
+                assert_eq!(p.moons.len(), q.moons.len());
+            }
+        }
     }
 }

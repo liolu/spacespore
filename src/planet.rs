@@ -10,11 +10,15 @@ use crate::kepler::{OrbitalElements, DEFAULT_MU};
 use crate::lod::{compute_lod_level, LodChunk, LodLevel};
 use crate::mesher::{build_celestial_chunk_mesh, build_chunk_mesh};
 use crate::galaxy_shape::{CapMode, Shape};
-use crate::settings::{GalaxyConfig, GameSettings, PlanetConfig, SystemSpatialIndex, CORE_EXCLUSION, SYSTEM_CELL_SIZE, STREAM_RADIUS};
+use crate::settings::{GalaxyConfig, GameSettings, PlanetConfig, SystemSpatialIndex, CORE_EXCLUSION, LIGHT_DISTANCE_SCALE, SYSTEM_CELL_SIZE, STREAM_RADIUS};
+use crate::surface::{FarMesh, Surface};
 use bevy::render::view::NoFrustumCulling;
 use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, ComputeTaskPool, Task};
 use crate::astre::{AstreLodRoot, ReloadAstre};
 use crate::ship::Ship;
+/// Les planètes géantes sont loin de leur étoile : sans ce surplus (en plus du carré de l'échelle
+/// des orbites), elles restent presque noires vues de l'espace.
+const STAR_LIGHT_BOOST: f32 = 40.0;
 const STAR_DIVISIONS: usize = 4;
 const MOON_DIVISIONS: usize = 3;
 
@@ -981,7 +985,7 @@ fn spawn_system_bodies(
         let r = star_cfg.light_color_r;
         let g = star_cfg.light_color_g;
         let b = star_cfg.light_color_b;
-        let intensity = star_cfg.intensity * 2_000_000.0 * 100.0;
+        let intensity = star_cfg.intensity * 2_000_000.0 * 100.0 * LIGHT_DISTANCE_SCALE * LIGHT_DISTANCE_SCALE * STAR_LIGHT_BOOST;
         let light = commands
             .spawn((
                 PointLight {
@@ -1036,6 +1040,7 @@ fn spawn_system_bodies(
                         planet_id: id_base + i,
                     },
                     LodChunk,
+                    FarMesh,
                 ))
                 .id();
             commands.entity(root).add_child(child);
@@ -1064,7 +1069,7 @@ fn spawn_system_bodies(
                     for gy in 0..MOON_DIVISIONS {
                         let mesh = build_celestial_chunk_mesh(
                             face, gx, gy, MOON_DIVISIONS,
-                            mcfg.radius, 2.0, mcfg.seed, 1.5,
+                            mcfg.radius, mcfg.radius * 0.03, mcfg.seed, 1.5,
                             [0.45, 0.44, 0.42, 1.0], [0.7, 0.68, 0.65, 1.0],
                             LodLevel::Lod2,
                         );
@@ -1073,6 +1078,7 @@ fn spawn_system_bodies(
                                 Mesh3d(meshes.add(mesh)),
                                 MeshMaterial3d(planet_material.clone()),
                                 Transform::IDENTITY,
+                                FarMesh,
                             ))
                             .id();
                         commands.entity(moon_root).add_child(child);
@@ -1128,7 +1134,7 @@ fn spawn_system_bodies(
     }
 }
 
-fn orbit_planets(
+pub(crate) fn orbit_planets(
     time: Res<Time>,
     clock: Res<UniverseClock>,
     settings: Res<GameSettings>,
@@ -1177,7 +1183,7 @@ fn orbit_stars(
     }
 }
 
-fn orbit_moons(
+pub(crate) fn orbit_moons(
     time: Res<Time>,
     clock: Res<UniverseClock>,
     settings: Res<GameSettings>,
@@ -1496,6 +1502,7 @@ pub struct LodTask {
 
 fn update_lod(
     mut commands: Commands,
+    surface: Res<Surface>,
     settings: Res<GameSettings>,
     camera_q: Query<&Transform, With<Camera3d>>,
     planet_q: Query<(&GlobalTransform, &PlanetId), With<PlanetRoot>>,
@@ -1529,6 +1536,10 @@ fn update_lod(
             break;
         }
         if task.is_some() {
+            continue;
+        }
+        // Planète où l'on se pose : le terrain voxel remplace ce maillage
+        if surface.active_planet() == Some(chunk.planet_id) {
             continue;
         }
 
@@ -1674,7 +1685,7 @@ fn reload_stars(
         )).id();
         commands.entity(entity).add_child(beacon);
 
-        let intensity = star_cfg.intensity * 2_000_000.0 * 100.0;
+        let intensity = star_cfg.intensity * 2_000_000.0 * 100.0 * LIGHT_DISTANCE_SCALE * LIGHT_DISTANCE_SCALE * STAR_LIGHT_BOOST;
         let light = commands.spawn((
             PointLight {
                 intensity,
@@ -1731,6 +1742,7 @@ fn reload_planets(
                     planet_id: pid.0,
                 },
                 LodChunk,
+                FarMesh,
             )).id();
             commands.entity(entity).add_child(child);
         }
@@ -1767,7 +1779,7 @@ fn reload_moons(
                 for gy in 0..MOON_DIVISIONS {
                     let mesh = build_celestial_chunk_mesh(
                         face, gx, gy, MOON_DIVISIONS,
-                        mcfg.radius, 2.0, mcfg.seed, 1.5,
+                        mcfg.radius, mcfg.radius * 0.03, mcfg.seed, 1.5,
                         [0.45, 0.44, 0.42, 1.0], [0.7, 0.68, 0.65, 1.0],
                         LodLevel::Lod2,
                     );
@@ -1775,6 +1787,7 @@ fn reload_moons(
                         Mesh3d(meshes.add(mesh)),
                         MeshMaterial3d(planet_material.clone()),
                         Transform::IDENTITY,
+                        FarMesh,
                     )).id();
                     commands.entity(entity).add_child(child);
                 }
@@ -1961,6 +1974,17 @@ fn rotate_accretion_disk(
     }
 }
 
+/// Distance du centre d'un système au-delà de laquelle on l'a quitté : dernière orbite, avec ses
+/// lunes et le rayon de la planète, plus une marge.
+fn system_reach(sys: &crate::settings::StarSystemConfig) -> f32 {
+    let planets = sys.planets.iter().map(|p| {
+        let moons = p.moons.iter().map(|m| m.orbit_distance + m.radius).fold(0.0_f32, f32::max);
+        p.orbit_distance + p.radius.max(moons)
+    });
+    let stars = sys.stars.iter().map(|st| st.orbit_distance + st.radius);
+    planets.chain(stars).fold(10_000.0_f32, f32::max) * 1.2 + 10_000.0
+}
+
 fn stream_system_bodies(
     mut commands: Commands,
     settings: Res<GameSettings>,
@@ -1995,7 +2019,15 @@ fn stream_system_bodies(
         }
     }
 
-    let want = closest.map(|(si, _)| si);
+    // Le système chargé reste chargé tant que le vaisseau est dans sa zone : ses orbites sont
+    // larges, un système voisin peut avoir un centre plus proche sans que l'on ait quitté le nôtre.
+    let staying = spawned
+        .0
+        .iter()
+        .next()
+        .copied()
+        .filter(|&si| settings.systems.get(si).is_some_and(|sys| ship_pos.distance(sys.center()) < system_reach(sys)));
+    let want = staying.or(closest.map(|(si, _)| si));
 
     let mut to_despawn: Vec<usize> = Vec::new();
     for &si in spawned.0.iter() {
