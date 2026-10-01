@@ -378,6 +378,11 @@ impl Default for Surface {
 }
 
 impl Surface {
+    /// Recentrage de l'origine flottante : la pose de caméra mémorisée est en repère monde.
+    pub fn shift(&mut self, delta: Vec3) {
+        self.cam_from.translation -= delta;
+    }
+
     /// Atterrissage, séjour ou décollage en cours : la caméra n'est plus pilotée par l'orbite.
     pub fn active(&self) -> bool {
         self.phase != Phase::Orbit
@@ -799,7 +804,7 @@ fn surface_control(
 
             // Cap, vitesse et altitude
             heading = (Quat::from_axis_angle(up, turn * 1.3 * dt) * heading).normalize();
-            let top_speed = (terrain.params.radius * 0.15).clamp(120.0, 1500.0) * if boost { 4.0 } else { 1.0 };
+            let top_speed = (terrain.params.radius * 0.15).clamp(120.0, 4000.0) * if boost { 4.0 } else { 1.0 };
             surface.fspeed += (forward * top_speed - surface.fspeed) * (1.0 - (-2.0 * dt).exp());
             surface.fvert += (vertical * 400.0 - surface.fvert) * (1.0 - (-4.0 * dt).exp());
             let next = (surface.fpos + heading * surface.fspeed * dt).normalize();
@@ -1427,7 +1432,7 @@ mod tests {
         for params in bodies {
             let t = Terrain::new(params);
             let l = t.layout;
-            assert!(l.voxel > 4.0 && l.voxel <= 24.0, "voxel {} pour un rayon de {}", l.voxel, params.radius);
+            assert!(l.voxel > 3.0 && l.voxel <= 11.0, "voxel {} pour un rayon de {}", l.voxel, params.radius);
             for dir in spots {
                 let dir = dir.normalize();
                 // Le sol existe, est fini et reste près de la surface
