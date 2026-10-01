@@ -252,11 +252,14 @@ mod tests {
     #[test]
     fn every_target_kind_exports_a_profile() {
         let settings = GameSettings::default();
-        let cache = ProfileCache::build(&settings, 3);
+        // Un système dont la première planète a une lune
+        let si = (0..).find(|&s| !settings.systems[s].planets()[0].moons.is_empty()).unwrap();
+        let s = si as u32;
+        let cache = ProfileCache::build(&settings, si);
         for id in [
-            BodyId::Star { system: 3, index: 0 },
-            BodyId::Planet { system: 3, index: 0 },
-            BodyId::Moon { system: 3, planet: 0, index: 0 },
+            BodyId::Star { system: s, index: 0 },
+            BodyId::Planet { system: s, index: 0 },
+            BodyId::Moon { system: s, planet: 0, index: 0 },
             // Hors du système chargé : calculé à la demande
             BodyId::Planet { system: 4_000, index: 0 },
         ] {
@@ -267,7 +270,7 @@ mod tests {
             assert!(json.trim_start().starts_with("{
   \"id\""), "{json}");
         }
-        assert!(profile_of(&settings, &cache, BodyId::Planet { system: 3, index: 999 }).is_none());
+        assert!(profile_of(&settings, &cache, BodyId::Planet { system: s, index: 999 }).is_none());
         assert!(profile_of(&settings, &cache, BodyId::Planet { system: u32::MAX, index: 0 }).is_none());
     }
 

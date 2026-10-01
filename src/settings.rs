@@ -107,12 +107,18 @@ pub struct MoonConfig {
     #[serde(default)] pub ascending_node: f32,
     #[serde(default)] pub arg_periapsis:  f32,
     #[serde(default)] pub mean_anomaly_0: f32,
+    /// Physique réelle (phase 2) : rayon (R⊕), masse (M⊕), gravité de surface (g).
+    #[serde(default)] pub radius_earth:   f32,
+    #[serde(default)] pub mass_earth:     f32,
+    #[serde(default = "default_moon_gravity")] pub gravity_g: f32,
 }
+fn default_moon_gravity() -> f32 { 0.16 }
 impl Default for MoonConfig {
     fn default() -> Self { Self {
         orbit_distance: 400.0, radius: 60.0, seed: 77,
         eccentricity: 0.0, inclination: 0.0, ascending_node: 0.0,
         arg_periapsis: 0.0, mean_anomaly_0: 0.0,
+        radius_earth: 0.0, mass_earth: 0.0, gravity_g: default_moon_gravity(),
     } }
 }
 
@@ -137,7 +143,28 @@ pub struct PlanetConfig {
     #[serde(default)] pub ascending_node: f32,
     #[serde(default)] pub arg_periapsis:  f32,
     #[serde(default)] pub mean_anomaly_0: f32,
+    // ── Physique réelle (phase 2 de `ROADMAP-0.10.md`, voir `planetgen::system`) ──
+    /// Rocheuse, mini-Neptune, géante de glace ou gazeuse (sans sol).
+    #[serde(default)] pub kind:           PlanetKind,
+    /// Géante chaude (Jupiter chaud, tout près de son étoile).
+    #[serde(default)] pub hot:            bool,
+    #[serde(default)] pub mass_earth:     f32,
+    #[serde(default)] pub radius_earth:   f32,
+    /// Distance physique à l'étoile (UA) ; `orbit_distance` est la distance affichée.
+    #[serde(default)] pub semi_major_au:  f32,
+    #[serde(default)] pub period_days:    f32,
+    /// Période de rotation (heures) : stockée, le jour/nuit vient en 0.11.
+    #[serde(default)] pub rotation_h:     f32,
+    /// Inclinaison de l'axe (degrés).
+    #[serde(default)] pub axial_tilt:     f32,
+    /// Rotation synchrone : une face toujours tournée vers l'étoile.
+    #[serde(default)] pub tidally_locked: bool,
+    /// Gravité de surface (g).
+    #[serde(default = "default_gravity")] pub gravity_g: f32,
+    /// Température moyenne (°C) ; `None` : ancienne formule (distance en rayons d'étoile).
+    #[serde(default)] pub temperature_c:  Option<f32>,
 }
+fn default_gravity() -> f32 { 1.0 }
 fn default_star_radius()    -> f32 { 250.0 }
 fn default_cloud_density()  -> f32 { 0.5 }
 fn default_cloud_altitude() -> f32 { 20.0 }
@@ -151,14 +178,22 @@ impl Default for PlanetConfig {
             cloud_density: 0.5, cloud_altitude: 100.0, cloud_speed: 0.02,
             eccentricity: 0.0, inclination: 0.0, ascending_node: 0.0,
             arg_periapsis: 0.0, mean_anomaly_0: 0.0,
+            kind: PlanetKind::Rocky, hot: false, mass_earth: 0.0, radius_earth: 0.0,
+            semi_major_au: 0.0, period_days: 0.0, rotation_h: 0.0, axial_tilt: 0.0,
+            tidally_locked: false, gravity_g: 1.0, temperature_c: None,
         }
     }
 }
 impl PlanetConfig {
-    /// -270 + PLANET_HEAT_RATIO / (distance en rayons d'étoile) : la chaleur dépend de la taille
-    /// de l'étoile, pas de l'unité de distance.
+    /// Température moyenne (°C) : celle de la génération (insolation de l'étoile en UA), sinon
+    /// -270 + PLANET_HEAT_RATIO / (distance en rayons d'étoile) pour une planète faite à la main.
     pub fn temperature(&self) -> f32 {
-        -270.0 + PLANET_HEAT_RATIO * self.star_radius.max(1.0) / self.orbit_distance.max(10.0)
+        self.temperature_c.unwrap_or_else(|| -270.0 + PLANET_HEAT_RATIO * self.star_radius.max(1.0) / self.orbit_distance.max(10.0))
+    }
+
+    /// Géante gazeuse ou neptunienne : pas de sol.
+    pub fn gaseous(&self) -> bool {
+        self.kind.gaseous()
     }
 }
 
@@ -303,6 +338,7 @@ use std::sync::OnceLock;
 
 use crate::planetgen::genome::SystemGenome;
 use crate::planetgen::star::{StarClass, StarPhysics};
+use crate::planetgen::system::PlanetKind;
 use crate::planetgen::live::WorldDeltas;
 
 static ORIGIN: [AtomicU64; 3] = [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)];
@@ -364,38 +400,16 @@ impl Default for StarSystemConfig {
     }
 }
 
-/// Les planètes restent au moins à cette distance (en rayons de l'étoile) du centre d'une géante.
-pub const GIANT_CLEARANCE: f32 = 1.6;
-
 impl StarSystemConfig {
     fn generated(name: String, position: [f32; 3], galaxy_id: u32, star: StarConfig, genome: SystemGenome) -> Self {
         Self { name, position, galaxy_id, stars: vec![star], asteroid_belts: Vec::new(), genome: Some(genome), planets: OnceLock::new() }
     }
 
     fn generate_planets(&self) -> Vec<PlanetConfig> {
-        let Some(genome) = self.genome else { return Vec::new() };
-        let Some(star) = self.stars.first() else { return genome.planets(250.0) };
-        let mut planets = genome.planets(star.scale());
-        // Une géante déborde sur les premières orbites : on repousse tout le système hors d'elle
-        let clear = star.radius * GIANT_CLEARANCE;
-        if let Some(first) = planets.first() {
-            let shift = clear - (first.orbit_distance - first.radius);
-            if shift > 0.0 {
-                for p in &mut planets {
-                    p.orbit_distance += shift;
-                }
-            }
-        }
-        planets
-    }
-
-    /// Planètes telles que le génome les donne, sans les repousser hors d'une géante (tests).
-    #[cfg(test)]
-    pub fn genome_planets(&self) -> Vec<PlanetConfig> {
-        match (self.genome, self.stars.first()) {
-            (Some(g), Some(star)) => g.planets(star.scale()),
-            _ => Vec::new(),
-        }
+        let (Some(genome), Some(star), Some(physics)) = (self.genome, self.stars.first(), self.star_physics()) else {
+            return Vec::new();
+        };
+        genome.planets(&physics, star.scale(), star.radius)
     }
 
     /// Planètes du système (et leurs lunes), recalculées à la première demande.
@@ -469,8 +483,10 @@ pub const SYSTEM_GRID_SIZE: usize = 100;
 /// Échelle de la galaxie : toutes les distances entre étoiles (et entre galaxies) sont multipliées
 /// par ce facteur, les systèmes eux-mêmes (étoile, planètes, lunes) gardent leur taille. Sans
 /// limite de précision grâce à l'origine flottante (voir plus haut et `origin.rs`) : la galaxie
-/// principale fait 900 millions de rayon, ses étoiles sont à ~28 millions l'une de l'autre.
-pub const GALAXY_SCALE: f32 = 100.0;
+/// principale fait 2,7 milliards de rayon ; la voisine la plus proche d'une étoile est à ~15 M en
+/// médiane (~4,5 M dans les autres galaxies), plus qu'un système avec ses 1 à 8 planètes (~4 M en
+/// médiane, 11 M pour 99 % d'entre eux). 300 depuis la phase 2 (100 avant).
+pub const GALAXY_SCALE: f32 = 300.0;
 pub const SYSTEM_CELL_SIZE: f32 = 100_000.0 * GALAXY_SCALE;
 pub const STREAM_RADIUS: f32 = 3.0;
 /// Graine du monde par défaut (partagée par tous les joueurs).
@@ -1152,10 +1168,12 @@ mod tests {
     }
 
     #[test]
-    fn stars_dwarf_planets_and_planets_dwarf_moons() {
+    fn planets_follow_their_star_and_never_touch() {
+        use crate::planetgen::system::PlanetKind;
         let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
         let systems = default_systems(&galaxies, DEFAULT_WORLD_SEED);
         let (mut hot, mut temperate, mut cold) = (0, 0, 0);
+        let mut kinds = std::collections::HashMap::new();
         for sys in systems.iter().take(3000) {
             let star = &sys.stars[0];
             // Échelle G du système (rayon d'une G) : la taille réelle de l'étoile dépend de son type
@@ -1164,34 +1182,51 @@ mod tests {
             if star.class == crate::planetgen::star::StarClass::G {
                 assert!((star.radius - scale).abs() <= 5.0, "une G garde l'echelle d'avant");
             }
-            assert!((1..=3).contains(&sys.planets().len()), "{} planetes", sys.planets().len());
+            let planets = sys.planets();
+            assert!((1..=8).contains(&planets.len()), "{} planetes", planets.len());
+            let earth = scale / 109.0;
             let mut previous_edge = star.radius;
-            let shift = sys.planets()[0].orbit_distance - sys.genome_planets()[0].orbit_distance;
-            for p in sys.planets() {
-                // Une G au moins 100 fois plus grande que la planète, lune au moins 3 fois plus petite
-                assert!(p.radius * 100.0 <= scale, "planete {} pour une echelle de {}", p.radius, scale);
-                assert!(p.radius >= scale / 100.0 * 0.7 - 1.0 && p.radius >= 4_000.0);
-                assert!(p.orbit_distance - p.radius > previous_edge, "planete dans l'etoile ou dans la precedente");
-                previous_edge = p.orbit_distance + p.radius;
-                assert!(p.orbit_distance + p.radius < scale * 8.0 + shift, "systeme trop etendu");
-                assert!(p.terrain_height > 0.0 && p.terrain_height < p.radius * 0.06);
+            let mut previous_au = 0.0;
+            for p in planets {
+                *kinds.entry(p.kind).or_insert(0usize) += 1;
+                // Proportions réelles : 1 R⊕ = échelle / 109
+                assert!((p.radius / earth / p.radius_earth - 1.0).abs() < 0.01, "{} {}", p.radius, p.radius_earth);
+                assert!(p.radius_earth > 0.2 && p.radius_earth < 16.0, "{}", p.radius_earth);
+                assert!(p.semi_major_au > previous_au, "orbites dans l'ordre");
+                previous_au = p.semi_major_au;
+                // Ni dans l'étoile ni dans la précédente (lunes comprises), même au périastre
+                let reach = p.moons.iter().map(|m| m.orbit_distance + m.radius).fold(p.radius, f32::max);
+                let periapsis = p.orbit_distance * (1.0 - p.eccentricity);
+                assert!(periapsis - reach > previous_edge, "planete dans l'etoile ou dans la precedente");
+                previous_edge = p.orbit_distance * (1.0 + p.eccentricity) + reach;
+                assert!(p.gravity_g > 0.0 && p.mass_earth > 0.0);
+                if p.gaseous() {
+                    assert!(!p.atmosphere && p.terrain_height == 0.0);
+                } else {
+                    assert!(p.terrain_height > 0.0 && p.terrain_height < p.radius * 0.06);
+                }
                 assert_eq!(p.star_radius, scale);
-                assert!((1..=2).contains(&p.moons.len()), "{} lunes", p.moons.len());
                 let mut moon_edge = p.radius + p.terrain_height;
                 for m in &p.moons {
-                    assert!(m.radius * 3.0 <= p.radius * 1.0001, "lune {} pour une planete de {}", m.radius, p.radius);
+                    assert!(m.radius * 3.0 <= p.radius * 1.01, "lune {} pour une planete de {}", m.radius, p.radius);
                     assert!(m.orbit_distance - m.radius > moon_edge, "lune dans la planete ou dans la lune precedente");
                     moon_edge = m.orbit_distance + m.radius;
+                    assert!(m.gravity_g > 0.0 && m.gravity_g < 0.6, "{}", m.gravity_g);
                 }
-                match p.temperature() {
-                    t if t > 100.0 => hot += 1,
-                    t if t > -20.0 => temperate += 1,
-                    _ => cold += 1,
+                if p.kind == PlanetKind::Rocky {
+                    match p.temperature() {
+                        t if t > 100.0 => hot += 1,
+                        t if t > -20.0 => temperate += 1,
+                        _ => cold += 1,
+                    }
                 }
             }
         }
         // Des mondes brulants, temperes et glaces : de quoi varier les paysages
         assert!(hot > 100 && temperate > 100 && cold > 100, "chaud {hot}, tempere {temperate}, froid {cold}");
+        for kind in [PlanetKind::Rocky, PlanetKind::MiniNeptune, PlanetKind::IceGiant, PlanetKind::GasGiant] {
+            assert!(kinds.get(&kind).copied().unwrap_or(0) > 300, "{kinds:?}");
+        }
     }
 
     #[test]

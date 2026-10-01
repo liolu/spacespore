@@ -28,13 +28,16 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   relatives a une origine absolue en f64 qui suit le vaisseau (recentrage au-dela de 100 000). Ne jamais garder une
   position « monde » en memoire : stocker l'absolu (`abs_center()`, `Wormhole.abs_a`, `Peer.abs`) et convertir.
   `StarSystemConfig::center()` / `GalaxyConfig::center()` = monde ; `abs_center` = absolu (generation, caches).
-- Echelle : `GALAXY_SCALE` (settings.rs, x100) multiplie les distances entre etoiles/galaxies (rayon 900 M ; voisine
-  la plus proche a ~4,9 M en mediane dans la galaxie principale, ~1,5 M ailleurs, mesure en phase 1) ; les
-  systemes gardent leur taille. Les etoiles lointaines sont groupees en
+- Echelle : `GALAXY_SCALE` (settings.rs, les distances entre etoiles/galaxies x300 depuis la phase 2) multiplie les distances entre etoiles/galaxies
+  (rayon 2,7 G ; voisine la plus proche a ~15 M en mediane dans la galaxie principale, ~4,5 M ailleurs) ; les
+  systemes gardent leur taille (~4 M en mediane, 11 M pour 99 %). Les etoiles lointaines sont groupees en
   secteurs de ~100 etoiles (`StarSectors`) affiches/mis a jour ensemble.
 - Proportions d'un systeme (generees depuis la graine du monde, `settings.rs`) : echelle G du systeme
-  600 000 a 1 500 000 (`StarConfig::scale()`), planete <= echelle/100, lune <= planete/3, premiere orbite a 2,4
-  fois l'echelle. L'etoile a un type (`planetgen/star.rs`, O..M, naine blanche/brune, sous-geante, geante rouge) :
+  600 000 a 1 500 000 (`StarConfig::scale()`) ; 1 R_terre = echelle/109. 1 a 8 planetes (`planetgen/system.rs`) :
+  orbites en UA (zone habitable ~ racine(L)), affichees en echelle log (zone habitable a 3,2 echelles), rocheuses,
+  mini-Neptunes, geantes de glace et gazeuses (masse -> rayon de Chen-Kipping, gravite reelle a pied) ; lunes
+  <= planete/3. Geantes gazeuses : pas de sol, on y vole jusqu'au coeur (`GAS_CORE`), la pression retire des PV
+  (`gas.rs`, `combat.rs`), destruction = retour en orbite. Valeurs affichees arrondies (empreinte reseau). L'etoile a un type (`planetgen/star.rs`, O..M, naine blanche/brune, sous-geante, geante rouge) :
   une G garde l'echelle, les autres types ont leur taille reelle (1 R_sol ~ 1 050 000 a l'ecran), compressee
   au-dela de 1,5 M (max 6,5 M) ; les planetes d'une geante sont repoussees hors d'elle. Sol (systeme 0) est G. Planetes et lunes
   sont explorables : zoomer sous 1000 du vaisseau = navigation basse altitude (ZQSD, Maj, Espace/Ctrl, clic
@@ -45,9 +48,9 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   `sys.planets()` les recalcule depuis le genome du systeme (cache libere loin du vaisseau), `planets_mut()`
   pour l'editeur, `planets_uncached()` pour parcourir tous les systemes. Profils `StarProfile`/`PlanetProfile`,
   sous-graines par couche (`seeds.rs`, numeros figes), conversions dans `units.rs` uniquement, valeurs
-  vivantes = depart + delta (`live.rs`, `body_deltas` de `world.json`). Test de non-regression du monde :
-  `planetgen::tests::planets_on_demand_give_exactly_the_old_world` (changer la generation = nouvelles
-  empreintes + `PROTOCOL`). Chat : `/profil` exporte l'astre cible en JSON, `/graine` = code court.
+  vivantes = depart + delta (`live.rs`, `body_deltas` de `world.json`). Tests du monde : `planetgen::tests`
+  (reproductible, types d'etoiles) et `settings::tests::planets_follow_their_star_and_never_touch` ; changer la
+  generation = augmenter `PROTOCOL` (`net.rs`). Chat : `/profil` exporte l'astre cible en JSON, `/graine` = code court.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

@@ -4,7 +4,8 @@
 //  Touche F : tirer sur le vaisseau attaquable le plus proche (neutre ou
 //  ennemi, jamais un allié). Chaque tir retire de la coque ; à zéro le
 //  vaisseau est détruit puis réapparaît réparé quelques secondes plus tard.
-//  La coque se répare seule après un moment sans dégâts.
+//  La coque se répare seule après un moment sans dégâts. La pression d'une géante gazeuse
+//  l'abîme aussi (`gas.rs`) : détruit, le vaisseau réapparaît en orbite, hors de l'atmosphère.
 //
 //  Pas de serveur : le tireur annonce le total de ses tirs sur chaque joueur
 //  (`PlayerStatus::hits`) et c'est la cible qui retire sa propre coque en
@@ -15,6 +16,7 @@ use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 use crate::claims::{SiegeState, SIEGE_SECS};
+use crate::gas::GasState;
 use crate::diplomacy::{relation_with, same_guild, their_declared, my_declared, faction_key, Relation};
 use crate::net::{display_name, Net, MAX_HP};
 use crate::net_ui::NetPanel;
@@ -40,8 +42,9 @@ impl Plugin for CombatPlugin {
             .add_systems(Startup, setup_combat_hud)
             .add_systems(
                 Update,
-                (reset_on_new_session, fire, receive_hits, repair, announce, draw_beams, update_combat_hud)
-                    .chain(),
+                (reset_on_new_session, fire, receive_hits, gas_pressure, repair, announce, draw_beams, update_combat_hud)
+                    .chain()
+                    .after(crate::surface::SurfaceControl),
             )
             // Après le contrôleur de caméra, qui réaffiche le vaisseau à chaque frame
             .add_systems(
@@ -72,6 +75,8 @@ struct CombatState {
     /// Dernier joueur sur qui j'ai tiré, et quand.
     last_target: Option<(u32, f64)>,
     peer_hp: HashMap<u32, u8>,
+    /// Dégâts de pression pas encore retirés (fraction de PV).
+    gas_damage: f32,
     /// Position déclarée par chaque joueur envers moi (pour prévenir des changements).
     stances: HashMap<u32, Relation>,
 }
@@ -225,6 +230,39 @@ fn receive_hits(
     }
 }
 
+/// La pression d'une géante gazeuse abîme la coque ; à 0 PV, le vaisseau est détruit et ramené en
+/// orbite au-dessus de l'endroit survolé (il réapparaît hors de l'atmosphère).
+fn gas_pressure(
+    time: Res<Time>,
+    gas: Res<GasState>,
+    mut state: ResMut<CombatState>,
+    mut net: ResMut<Net>,
+    mut surface: ResMut<crate::surface::Surface>,
+) {
+    let Some(inside) = &gas.inside else {
+        state.gas_damage = 0.0;
+        return;
+    };
+    if net.local.hp == 0 {
+        return;
+    }
+    let now = time.elapsed_secs_f64();
+    state.gas_damage += inside.damage_per_sec * time.delta_secs();
+    state.last_damage = now;
+    state.regen = 0.0;
+    let lost = state.gas_damage.floor();
+    if lost >= 1.0 {
+        state.gas_damage -= lost;
+        net.local.hp = net.local.hp.saturating_sub(lost.min(255.0) as u8);
+    }
+    if net.local.hp == 0 {
+        state.gas_damage = 0.0;
+        state.dead_until = Some(now + RESPAWN_SECS);
+        surface.eject();
+        net.notify(&format!("Votre vaisseau a ete broye par la pression de {} !", inside.name), now);
+    }
+}
+
 /// Réapparition après destruction, et réparation lente hors combat.
 fn repair(time: Res<Time>, mut state: ResMut<CombatState>, mut net: ResMut<Net>) {
     let now = time.elapsed_secs_f64();
@@ -319,6 +357,7 @@ fn update_combat_hud(
     settings: Res<GameSettings>,
     siege: Res<SiegeState>,
     state: Res<CombatState>,
+    gas: Res<GasState>,
     mut hud: Query<(&mut Text, &mut TextColor), With<CombatHudText>>,
 ) {
     let now = time.elapsed_secs_f64();
@@ -336,11 +375,16 @@ fn update_combat_hud(
     if hp == 0 {
         let left = state.dead_until.map_or(0.0, |u| (u - now).max(0.0));
         lines.push(format!("VAISSEAU DETRUIT  -  reparation dans {left:.0} s"));
+    } else if let Some(inside) = &gas.inside {
+        lines.push(format!("Coque {hp}/{MAX_HP}"));
+        lines.push(format!("Pression de {} : -{:.0} PV/s  -  remontez !", inside.name, inside.damage_per_sec));
     } else if net.is_enabled() && (net.player_count() > 1 || hp < MAX_HP) {
         lines.push(format!("Coque {hp}/{MAX_HP}   (F : tirer)"));
+    } else if hp < MAX_HP {
+        lines.push(format!("Coque {hp}/{MAX_HP}   (reparation en cours)"));
     }
     let label = lines.join("\n");
-    let color = if hp == 0 {
+    let color = if hp == 0 || gas.inside.is_some() {
         Relation::Enemy.color()
     } else if hp < MAX_HP / 2 {
         Color::srgb(1.0, 0.75, 0.3)

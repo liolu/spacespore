@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 
 use super::live::{delta_of, BodyId, Live, WorldDeltas};
 use super::seeds::{layer_seed, Layer};
-use super::units;
+use super::{system, units};
 use crate::settings::{MoonConfig, PlanetConfig, StarConfig, StarSystemConfig};
 
 /// Rigueur d'une donnée (règle 5) : réaliste, spéculative ou fictive.
@@ -277,11 +277,15 @@ const PLANET_LAYERS: [Layer; 12] = [
 ];
 
 /// Physique d'un corps de rayon `radius_game` : rayon et masse vivants, le reste en découle.
-fn physics(radius_game: f64, id: BodyId, deltas: &WorldDeltas) -> PhysicsSection {
+/// Physique d'un corps : rayon et masse vivants (départ de la génération + deltas), gravité,
+/// libération et densité recalculées depuis les valeurs courantes. `radius_earth` / `mass_earth`
+/// à 0 : corps fait à la main, déduits du rayon affiché (masse volumique terrestre).
+fn physics(radius_game: f64, radius_earth: f64, mass_earth: f64, size: Option<&str>, id: BodyId, deltas: &WorldDeltas) -> PhysicsSection {
     let delta = delta_of(deltas, id);
-    let radius = Live::new(units::game_to_earth_radii(radius_game), delta.radius_earth);
-    let base_radius = radius.base;
-    let mass = Live::new(base_radius * base_radius * base_radius, delta.mass_earth);
+    let base_radius = if radius_earth > 0.0 { radius_earth } else { units::game_to_earth_radii(radius_game) };
+    let base_mass = if mass_earth > 0.0 { mass_earth } else { base_radius * base_radius * base_radius };
+    let radius = Live::new(base_radius, delta.radius_earth);
+    let mass = Live::new(base_mass, delta.mass_earth);
     // Gravité, libération et densité se recalculent toujours depuis les valeurs courantes
     let (m, r) = (mass.current().max(0.0), radius.current().max(0.0));
     PhysicsSection {
@@ -291,8 +295,13 @@ fn physics(radius_game: f64, id: BodyId, deltas: &WorldDeltas) -> PhysicsSection
         density_g_cm3: units::density(m, r),
         surface_gravity_g: units::surface_gravity(m, r),
         escape_velocity_km_s: units::escape_velocity(m, r),
-        size_class: None,
+        size_class: size.map(str::to_string),
     }
+}
+
+/// Valeur positive, sinon `None` (donnée absente d'un corps fait à la main).
+fn some(x: f32) -> Option<f64> {
+    (x > 0.0).then(|| f(x))
 }
 
 fn composition(id: BodyId, deltas: &WorldDeltas) -> CompositionSection {
@@ -304,7 +313,8 @@ impl PlanetProfile {
     pub fn planet(sys_idx: usize, index: usize, sys: &StarSystemConfig, p: &PlanetConfig, deltas: &WorldDeltas) -> Self {
         let id = BodyId::Planet { system: sys_idx as u32, index: index as u16 };
         let star_radius = f(p.star_radius);
-        let au = units::orbit_game_to_au(f(p.orbit_distance), star_radius);
+        let au = if p.semi_major_au > 0.0 { f(p.semi_major_au) } else { units::orbit_game_to_au(f(p.orbit_distance), star_radius) };
+        let size = system::size_class(p.kind, f(p.radius_earth.max(0.0)), p.hot);
         let seed = p.seed as u64;
         Self {
             id: id.key(),
@@ -321,9 +331,12 @@ impl PlanetProfile {
                 ascending_node: f(p.ascending_node),
                 arg_periapsis: f(p.arg_periapsis),
                 mean_anomaly_0: f(p.mean_anomaly_0),
-                ..Default::default()
+                period_days: some(p.period_days),
+                axial_tilt_deg: (p.semi_major_au > 0.0).then(|| f(p.axial_tilt)),
+                rotation_period_h: some(p.rotation_h),
+                tidally_locked: (p.semi_major_au > 0.0).then_some(p.tidally_locked),
             },
-            physics: physics(f(p.radius), id, deltas),
+            physics: physics(f(p.radius), f(p.radius_earth), f(p.mass_earth), (p.radius_earth > 0.0).then_some(size), id, deltas),
             composition: composition(id, deltas),
             atmosphere: AtmosphereSection {
                 present: p.atmosphere,
@@ -343,7 +356,15 @@ impl PlanetProfile {
             },
             biology: BiologySection::default(),
             resources: ResourcesSection::default(),
-            gameplay: GameplaySection { walkable: true, ..Default::default() },
+            gameplay: GameplaySection {
+                walkable: !p.gaseous(),
+                hazards: if p.gaseous() {
+                    vec!["pas de sol : la pression abime la coque du vaisseau".to_string()]
+                } else {
+                    Vec::new()
+                },
+                ..Default::default()
+            },
             traits: Vec::new(),
         }
     }
@@ -360,7 +381,11 @@ impl PlanetProfile {
         let id = BodyId::Moon { system: sys_idx as u32, planet: planet_index as u16, index: index as u16 };
         let parent = BodyId::Planet { system: sys_idx as u32, index: planet_index as u16 };
         // Une lune est à la distance de sa planète de l'étoile : même climat (comme `BodyParams::moon`)
-        let au = units::orbit_game_to_au(f(planet.orbit_distance), f(planet.star_radius));
+        let au = if planet.semi_major_au > 0.0 {
+            f(planet.semi_major_au)
+        } else {
+            units::orbit_game_to_au(f(planet.orbit_distance), f(planet.star_radius))
+        };
         let body = crate::terrain::BodyParams::moon(m, planet);
         let seed = m.seed as u64;
         Self {
@@ -380,7 +405,7 @@ impl PlanetProfile {
                 mean_anomaly_0: f(m.mean_anomaly_0),
                 ..Default::default()
             },
-            physics: physics(f(m.radius), id, deltas),
+            physics: physics(f(m.radius), f(m.radius_earth), f(m.mass_earth), (m.radius_earth > 0.0).then_some("lune"), id, deltas),
             composition: composition(id, deltas),
             atmosphere: AtmosphereSection::default(),
             climate: ClimateSection { mean_temperature_c: f(body.temperature), ..Default::default() },
@@ -418,12 +443,13 @@ mod tests {
             for (pi, p) in sys.planets().iter().enumerate() {
                 let prof = PlanetProfile::planet(si, pi, sys, p, &deltas);
                 assert_eq!(prof.id, format!("s{si}.p{pi}"));
-                // Planètes du jeu : 0,7 à 2,4 R⊕ ; orbites de ~0,6 à 2 UA
+                // Physique réelle de la génération (phase 2)
                 let r = prof.physics.radius_earth.current();
-                assert!((0.6..2.4).contains(&r), "rayon {r}");
-                let au = prof.orbit.semi_major_axis_au.current();
-                assert!((0.5..2.1).contains(&au), "orbite {au} UA");
-                assert!(prof.physics.surface_gravity_g > 0.5 && prof.physics.surface_gravity_g < 2.5);
+                assert_eq!(r, f(p.radius_earth));
+                assert_eq!(prof.orbit.semi_major_axis_au.current(), f(p.semi_major_au));
+                assert!((prof.physics.surface_gravity_g / f(p.gravity_g) - 1.0).abs() < 1e-3);
+                assert!(prof.physics.size_class.is_some() && prof.orbit.period_days.is_some());
+                assert_eq!(prof.gameplay.walkable, !p.gaseous());
                 assert_eq!(prof.climate.mean_temperature_c, f(p.temperature()));
                 for (mi, m) in p.moons.iter().enumerate() {
                     let moon = PlanetProfile::moon(si, pi, mi, sys, p, m, &deltas);

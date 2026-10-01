@@ -213,6 +213,7 @@ fn generate_rocky_planet(
             ascending_node: rng.range_f32(0.0, std::f32::consts::TAU),
             arg_periapsis: rng.range_f32(0.0, std::f32::consts::TAU),
             mean_anomaly_0: rng.range_f32(0.0, std::f32::consts::TAU),
+            ..Default::default()
         });
         moon_orbit += rng.range_f32(150.0, 400.0);
     }
@@ -236,5 +237,6 @@ fn generate_rocky_planet(
         mean_anomaly_0: rng.range_f32(0.0, std::f32::consts::TAU),
         moons,
         star_radius: 250.0,
+        ..Default::default()
     });
 }
