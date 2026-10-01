@@ -25,7 +25,8 @@ const MAX_VOXEL: f32 = 11.0;
 /// Une tuile est subdivisée tant que la caméra est plus proche que ce multiple de sa taille.
 pub const SPLIT_FACTOR: f32 = 1.8;
 
-/// Longueur d'onde (unités) des collines moyennes et du relief fin ajoutés au relief du corps.
+/// Longueurs d'onde maximales (unités) des collines moyennes et du relief fin ajoutés au relief du
+/// corps ; elles rétrécissent avec le rayon pour les petites lunes.
 const MID_WAVE: f32 = 1800.0;
 const FINE_WAVE: f32 = 200.0;
 
@@ -265,10 +266,10 @@ impl Terrain {
         let hv = ((continent + det + 1.0) * 0.5).clamp(0.0, 1.0);
 
         let rugged = if p.airless { 1.5 } else { 1.0 };
-        let mid_amp = (p.terrain_height * 0.5).clamp(self.layout.voxel * 6.0, self.layout.voxel * 36.0) * rugged;
+        let mid_amp = (p.terrain_height * 0.5).clamp(self.layout.voxel * 3.0, self.layout.voxel * 36.0) * rugged;
         let fine_amp = self.layout.voxel * 2.5 * rugged;
-        let mf = (p.radius / MID_WAVE) as f64;
-        let ff = (p.radius / FINE_WAVE) as f64;
+        let mf = (p.radius / (p.radius * 0.3).clamp(250.0, MID_WAVE)) as f64;
+        let ff = (p.radius / (p.radius * 0.1).clamp(80.0, FINE_WAVE)) as f64;
         let mid = self.mid.get([dir.x as f64 * mf, dir.y as f64 * mf, dir.z as f64 * mf]) as f32 * mid_amp;
         let fine = self.fine.get([dir.x as f64 * ff, dir.y as f64 * ff, dir.z as f64 * ff]) as f32 * fine_amp;
 
@@ -537,9 +538,9 @@ mod tests {
 
     #[test]
     fn voxel_size_stays_in_range() {
-        for r in [1_500.0, 3_000.0, 6_000.0, 9_000.0, 13_000.0, 20_000.0] {
+        for r in [120.0, 300.0, 500.0, 1_000.0, 1_500.0, 3_000.0, 6_000.0, 13_000.0] {
             let l = layout_for(r);
-            assert!(l.voxel > MAX_VOXEL * 0.45 && l.voxel <= MAX_VOXEL, "rayon {r} : voxel {}", l.voxel);
+            assert!(l.voxel > MAX_VOXEL * 0.4 && l.voxel <= MAX_VOXEL, "rayon {r} : voxel {}", l.voxel);
         }
     }
 

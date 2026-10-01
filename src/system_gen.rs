@@ -235,5 +235,6 @@ fn generate_rocky_planet(
         arg_periapsis: rng.range_f32(0.0, std::f32::consts::TAU),
         mean_anomaly_0: rng.range_f32(0.0, std::f32::consts::TAU),
         moons,
+        star_radius: 250.0,
     });
 }
