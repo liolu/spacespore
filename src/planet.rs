@@ -1982,7 +1982,7 @@ fn rotate_accretion_disk(
 /// Distance du centre d'un système au-delà de laquelle on l'a quitté : dernière orbite, avec ses
 /// lunes et le rayon de la planète, plus une marge.
 /// Rayon de recherche (au plus) d'un système qui contient le vaisseau.
-const MAX_SYSTEM_REACH: f32 = 1_800_000.0;
+const MAX_SYSTEM_REACH: f32 = 4_000_000.0;
 
 fn system_reach(sys: &crate::settings::StarSystemConfig) -> f32 {
     let planets = sys.planets.iter().map(|p| {

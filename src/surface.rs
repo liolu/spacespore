@@ -1400,4 +1400,60 @@ mod tests {
         let far = c + Vec3::new(p.radius * 5.0, 0.0, 0.0);
         assert_eq!(keep_outside(far, c, &p), far);
     }
+
+    /// Audit : tous les corps générés (planètes et lunes de nombreux systèmes) sont sûrs à explorer.
+    #[test]
+    fn every_generated_body_is_safe_to_walk_on() {
+        use crate::terrain::{build_tile_mesh, select_tiles, TileKey};
+        let settings = GameSettings::default();
+        let mut bodies = Vec::new();
+        for sys in settings.systems.iter().take(150) {
+            for p in &sys.planets {
+                bodies.push(BodyParams::planet(p));
+                for m in &p.moons {
+                    bodies.push(BodyParams::moon(m, p));
+                }
+            }
+        }
+        assert!(bodies.len() > 200);
+        let spots = [
+            Vec3::Y,
+            Vec3::NEG_Y,
+            Vec3::new(1.0, 1.0, 1.0),
+            Vec3::new(-1.0, 0.2, -1.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 0.0, -1.0),
+        ];
+        for params in bodies {
+            let t = Terrain::new(params);
+            let l = t.layout;
+            assert!(l.voxel > 4.0 && l.voxel <= 24.0, "voxel {} pour un rayon de {}", l.voxel, params.radius);
+            for dir in spots {
+                let dir = dir.normalize();
+                // Le sol existe, est fini et reste près de la surface
+                let g = t.ground(dir);
+                assert!(g.top.is_finite() && (g.top - params.radius).abs() < params.radius * 0.5, "sol {} (rayon {})", g.top, params.radius);
+                // Marche 5 s dans chaque sens sans jamais passer sous le sol ni produire de NaN
+                for heading in [Vec3::X, Vec3::Z, Vec3::NEG_X] {
+                    let mut w = Walker::spawn(&t, dir, heading);
+                    for _ in 0..300 {
+                        w.step(&t, &WalkInput { forward: 1.0, sprint: true, ..default() }, 1.0 / 60.0);
+                        assert!(w.pos.is_finite() && w.heading.is_finite());
+                        // À la couture entre deux faces du cube, les deux grilles de colonnes se recouvrent : la
+                        // hauteur peut différer d'un voxel pour un même point (corrigé à l'image suivante)
+                        assert!(w.pos.length() >= t.ground(w.up()).top - t.voxel() * 1.5, "sous le sol (rayon {})", params.radius);
+                    }
+                }
+                // Le quadtree reste borné et ses tuiles sont valides
+                let cam = dir * (g.top + t.voxel() * 2.0);
+                let mut tiles = Vec::new();
+                select_tiles(l, params.radius, cam, &mut tiles);
+                assert!(tiles.len() < 700, "{} tuiles pour un rayon de {}", tiles.len(), params.radius);
+                let key = *tiles.iter().max_by_key(|k| k.depth).unwrap();
+                let mesh = build_tile_mesh(&params, key);
+                assert!(mesh.count_vertices() > 1000);
+                let _ = TileKey::root(0);
+            }
+        }
+    }
 }

@@ -24,10 +24,10 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
 ## Structure
 
 - Cargo workspace : root = jeu, `tools/` = common/installer/updater/launcher
-- Echelle de la galaxie : `GALAXY_SCALE` (settings.rs, x100) multiplie toutes les distances entre etoiles/galaxies
-  (rayon 900 M, etoiles ~14 M l'une de l'autre) ; les systemes gardent leur taille. Le systeme de depart est
+- Echelle de la galaxie : `GALAXY_SCALE` (settings.rs, x12) multiplie toutes les distances entre etoiles/galaxies
+  (rayon ~110 M, ~1 000 etoiles espacees de ~6 M) ; les systemes gardent leur taille. Le systeme de depart est
   place pres du centre (precision flottante ~2 unites, ~60 au bord : le terrain y tremble).
-- Proportions d'un systeme (generees depuis la graine du monde, `settings.rs`) : etoile 45 000 a 75 000 de
+- Proportions d'un systeme (generees depuis la graine du monde, `settings.rs`) : etoile 250 000 a 400 000 de
   rayon, planete <= etoile/100, lune <= planete/3, premiere orbite a 2,4 rayons d'etoile. Planetes et lunes
   sont explorables : zoomer sous 1000 du vaisseau = navigation basse altitude (ZQSD, Maj, Espace/Ctrl, clic
   droit, molette), `Entree` = atterrir puis marcher, `Entree` = redecoller. Le dessous du vaisseau reste

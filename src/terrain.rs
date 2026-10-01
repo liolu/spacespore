@@ -20,7 +20,7 @@ use crate::settings::{MoonConfig, PlanetConfig};
 pub const TILE_CELLS: usize = 32;
 
 /// Taille maximale d'un voxel au niveau le plus fin.
-const MAX_VOXEL: f32 = 11.0;
+const MAX_VOXEL: f32 = 24.0;
 
 /// Une tuile est subdivisée tant que la caméra est plus proche que ce multiple de sa taille.
 pub const SPLIT_FACTOR: f32 = 1.8;
@@ -540,7 +540,7 @@ mod tests {
     fn voxel_size_stays_in_range() {
         for r in [120.0, 300.0, 500.0, 1_000.0, 1_500.0, 3_000.0, 6_000.0, 13_000.0] {
             let l = layout_for(r);
-            assert!(l.voxel > MAX_VOXEL * 0.4 && l.voxel <= MAX_VOXEL, "rayon {r} : voxel {}", l.voxel);
+            assert!(l.voxel > MAX_VOXEL * 0.2 && l.voxel <= MAX_VOXEL, "rayon {r} : voxel {}", l.voxel);
         }
     }
 
