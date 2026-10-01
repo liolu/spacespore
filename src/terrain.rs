@@ -15,6 +15,7 @@ use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
 
 use crate::planet::VoxelType;
 use crate::planetgen::climate::{land_material, relative_altitude, sea_material, Climate};
+use crate::planetgen::geology::{moon_relief, Relief, ReliefField};
 use crate::planetgen::hydrology::Hydro;
 use crate::settings::{MoonConfig, PlanetConfig};
 
@@ -61,6 +62,8 @@ pub struct BodyParams {
     pub pressure: f32,
     /// Liquide des mers et glaces possibles (phase 4).
     pub hydro: Hydro,
+    /// Formes du relief issues de la géologie (phase 5).
+    pub relief: Relief,
 }
 
 /// Ciel d'une planète faite à la main (sans atmosphère calculée) : celui de la Terre.
@@ -90,6 +93,7 @@ impl BodyParams {
             haze: if p.air.present() { p.air.haze } else { EARTH_SKY },
             pressure: if p.air.present() { p.air.pressure_bar } else if p.atmosphere { 1.0 } else { 0.0 },
             hydro: if p.gaseous() { Hydro::DRY } else { p.hydrology.hydro },
+            relief: p.geology.relief,
         }
     }
 
@@ -112,6 +116,7 @@ impl BodyParams {
             haze: [0.0; 3],
             pressure: 0.0,
             hydro: Hydro::DRY,
+            relief: m.relief.unwrap_or_else(|| moon_relief(m.seed)),
         }
     }
 
@@ -267,6 +272,7 @@ pub struct Terrain {
     mid: Fbm<Perlin>,
     fine: Fbm<Perlin>,
     color: Perlin,
+    relief: ReliefField,
 }
 
 impl Terrain {
@@ -287,6 +293,7 @@ impl Terrain {
             mid,
             fine,
             color: Perlin::new(params.seed.wrapping_add(200)),
+            relief: ReliefField::new(params.relief),
         }
     }
 
@@ -301,9 +308,12 @@ impl Terrain {
         let continent = self.continent.get([s.x as f64, s.y as f64, s.z as f64]) as f32;
         let ds = p.detail_scale as f64;
         let det = self.detail.get([s.x as f64 * ds, s.y as f64 * ds, s.z as f64 * ds]) as f32 * 0.15;
-        let hv = ((continent + det + 1.0) * 0.5).clamp(0.0, 1.0);
+        let base = ((continent + det + 1.0) * 0.5).clamp(0.0, 1.0);
+        // Montagnes, rifts, volcans, canyons, plateaux, cratères (`planetgen::geology`)
+        let hv = (base + self.relief.offset(dir, base)).clamp(0.0, 1.2);
 
-        let rugged = if p.airless { 1.5 } else { 1.0 };
+        // L'érosion adoucit aussi les collines et le relief fin
+        let rugged = (if p.airless { 1.5 } else { 1.0 }) * (1.0 - 0.5 * p.relief.erosion);
         let mid_amp = (p.terrain_height * 0.5).clamp(self.layout.voxel * 3.0, self.layout.voxel * 36.0) * rugged;
         let fine_amp = self.layout.voxel * 2.5 * rugged;
         let mf = (p.radius / (p.radius * 0.3).clamp(250.0, MID_WAVE)) as f64;
@@ -550,6 +560,7 @@ mod tests {
             haze: EARTH_SKY,
             pressure: 1.0,
             hydro: Hydro::default(),
+            relief: Relief::default(),
         }
     }
 
@@ -739,6 +750,75 @@ mod sea_level_tests {
             noise_scale: 2.0, detail_scale: 4.0, temperature: 15.0, gravity: 1.0, gaseous: false,
             climate: crate::planetgen::climate::Climate::default(), sky: EARTH_SKY, sunset: EARTH_SUNSET, haze: EARTH_SKY, pressure: 1.0,
             hydro: Hydro::default(),
+            relief: Relief::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod bench {
+    use super::*;
+
+    /// Temps de construction des tuiles (ignoré : `cargo test --release bench_tiles -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn bench_tiles() {
+        let settings = crate::settings::GameSettings::default();
+        let mut bodies = Vec::new();
+        for sys in settings.systems.iter().take(40) {
+            for p in sys.planets() {
+                if !p.gaseous() {
+                    bodies.push(BodyParams::planet(p));
+                }
+            }
+        }
+        let start = std::time::Instant::now();
+        let mut tiles = 0;
+        for p in bodies.iter().take(30) {
+            let t = Terrain::new(*p);
+            let dir = Vec3::new(0.3, 0.7, -0.4).normalize();
+            let mut keys = Vec::new();
+            select_tiles(t.layout, p.radius, dir * (t.ground(dir).top + 20.0), &mut keys);
+            for key in keys.iter().take(40) {
+                std::hint::black_box(build_tile_mesh(p, *key));
+                tiles += 1;
+            }
+        }
+        let ms = start.elapsed().as_secs_f64() * 1000.0;
+        println!("BENCH {tiles} tuiles en {ms:.0} ms : {:.2} ms par tuile", ms / tiles as f64);
+    }
+}
+
+#[cfg(test)]
+mod geology_tests {
+    use super::*;
+
+    /// Le relief géologique (montagnes, rifts, cratères) ne déplace guère la couverture océanique
+    /// voulue par l'hydrologie.
+    #[test]
+    fn relief_keeps_the_ocean_fraction() {
+        let settings = crate::settings::GameSettings::default();
+        let mut checked = 0;
+        for sys in settings.systems.iter().take(3000) {
+            for p in sys.planets_uncached().iter().filter(|p| !p.gaseous() && p.hydrology.ocean_fraction > 0.05) {
+                if checked >= 40 {
+                    return;
+                }
+                checked += 1;
+                let t = Terrain::new(BodyParams::planet(p));
+                let n = 2000;
+                let under = (0..n)
+                    .filter(|&i| {
+                        let z = 1.0 - 2.0 * (i as f32 + 0.5) / n as f32;
+                        let a = i as f32 * 2.399_963;
+                        let r = (1.0 - z * z).sqrt();
+                        t.raw_height(Vec3::new(r * a.cos(), z, r * a.sin())).1 < p.sea_level
+                    })
+                    .count() as f32
+                    / n as f32;
+                assert!((under - p.hydrology.ocean_fraction).abs() < 0.1, "{under} au lieu de {}", p.hydrology.ocean_fraction);
+            }
+        }
+        assert!(checked > 10);
     }
 }
