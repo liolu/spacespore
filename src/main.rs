@@ -859,9 +859,9 @@ pub struct CameraController {
 }
 
 /// Limite du zoom 1 : en dessous, on reste verrouillé dans le système courant.
-/// Un système s'étend sur ~1 million d'unités (étoile de 100 000 de rayon, planètes à 2,4 à 7 rayons) :
+/// Un système s'étend sur ~3 millions d'unités (étoile de 300 000 de rayon, planètes à 2,4 à 7 rayons) :
 /// le niveau « Planète » les contient en entier.
-pub const ZOOM_PLANET_MAX: f32 = 1_200_000.0;
+pub const ZOOM_PLANET_MAX: f32 = 3_500_000.0;
 
 /// Distance de caméra pour voir une galaxie entière (reste au zoom 4 pour
 /// pouvoir cliquer ses étoiles).
@@ -902,9 +902,9 @@ impl ZoomLevel {
     fn from_distance(d: f32) -> Self {
         if d < ZOOM_PLANET_MAX {
             ZoomLevel::Planet
-        } else if d < 1_600_000.0 {
+        } else if d < 4_500_000.0 {
             ZoomLevel::System
-        } else if d < 60_000_000.0 {
+        } else if d < 2_000_000.0 * settings::GALAXY_SCALE {
             ZoomLevel::Sector
         } else if d < 6_000_000.0 * settings::GALAXY_SCALE {
             ZoomLevel::Galaxy

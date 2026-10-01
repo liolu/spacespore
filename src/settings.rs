@@ -281,7 +281,13 @@ pub(crate) fn pseudo_rand(seed: u32) -> f32 {
 pub const SYSTEM_GRID_SIZE: usize = 100;
 /// Échelle de la galaxie : toutes les distances entre étoiles (et entre galaxies) sont multipliées
 /// par ce facteur, les systèmes eux-mêmes (étoile, planètes, lunes) gardent leur taille.
-pub const GALAXY_SCALE: f32 = 100.0;
+///
+/// Compromis de précision : les `f32` de Bevy n'ont que ~7 chiffres. À 100 M du centre une unité
+/// vaut 8 : le terrain d'une planète y tremble, sauf si ses voxels sont bien plus grands. D'où une
+/// galaxie de ~110 M de rayon avec peu d'étoiles (~1 000) très espacées (~6 M), des planètes de
+/// 1 700 à 3 800 de rayon (voxels de ~20) et un système de départ près du centre (précision ~0,25).
+/// Aller plus loin demande une origine flottante (recentrer tout le monde autour du joueur).
+pub const GALAXY_SCALE: f32 = 12.0;
 pub const SYSTEM_CELL_SIZE: f32 = 100_000.0 * GALAXY_SCALE;
 pub const STREAM_RADIUS: f32 = 3.0;
 /// Graine du monde par défaut (partagée par tous les joueurs).
@@ -410,8 +416,8 @@ fn star_color(seed: u32) -> [f32; 3] {
 
 fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystemConfig> {
     const NUM_ARMS: usize = 5;
-    const ARM_STARS: usize = 2_500;
-    const SCATTER_STARS: usize = 625;
+    const ARM_STARS: usize = 800;
+    const SCATTER_STARS: usize = 200;
     const ARM_TWIST: f32 = 5.0;
     let tau = std::f32::consts::TAU;
     let gr = GALAXY_RADIUS;
@@ -443,12 +449,12 @@ fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystem
     let sd = ((world_seed as u32) ^ ((world_seed >> 32) as u32)).wrapping_mul(0x9E37_79B1);
     let mixed = |x: u32| x.wrapping_add(sd);
 
-    // Une étoile fait 45 000 à 75 000 de rayon : au moins 100 fois ses planètes, et assez compacte
-    // pour rester un point à l'échelle de la galaxie (les étoiles voisines sont à ~100 000)
+    // Une étoile fait 250 000 à 400 000 de rayon : au moins 100 fois ses planètes (1 700 à 3 800),
+    // et reste un point à l'échelle de la galaxie (les étoiles voisines sont à ~6 000 000)
     let make_star = |seed: u32| -> (f32, f32, [f32; 3]) {
         let seed = mixed(seed);
         let r_f = pseudo_rand(seed.wrapping_mul(5).wrapping_add(31));
-        let radius = 45_000.0 + r_f * 30_000.0;
+        let radius = 250_000.0 + r_f * 150_000.0;
         let intensity = 8.0 + r_f * 27.0;
         let sc = star_color(seed.wrapping_mul(5).wrapping_add(37));
         (radius, intensity, sc)
@@ -1042,7 +1048,7 @@ mod tests {
         let (mut hot, mut temperate, mut cold) = (0, 0, 0);
         for sys in systems.iter().take(3000) {
             let star = &sys.stars[0];
-            assert!((45_000.0..=75_000.0).contains(&star.radius), "etoile de rayon {}", star.radius);
+            assert!((250_000.0..=400_000.0).contains(&star.radius), "etoile de rayon {}", star.radius);
             assert!((1..=3).contains(&sys.planets.len()), "{} planetes", sys.planets.len());
             let mut previous_edge = star.radius;
             for p in &sys.planets {

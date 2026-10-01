@@ -1427,7 +1427,7 @@ mod tests {
         for params in bodies {
             let t = Terrain::new(params);
             let l = t.layout;
-            assert!(l.voxel > 1.0 && l.voxel <= 11.0, "voxel {} pour un rayon de {}", l.voxel, params.radius);
+            assert!(l.voxel > 4.0 && l.voxel <= 24.0, "voxel {} pour un rayon de {}", l.voxel, params.radius);
             for dir in spots {
                 let dir = dir.normalize();
                 // Le sol existe, est fini et reste près de la surface
@@ -1439,7 +1439,9 @@ mod tests {
                     for _ in 0..300 {
                         w.step(&t, &WalkInput { forward: 1.0, sprint: true, ..default() }, 1.0 / 60.0);
                         assert!(w.pos.is_finite() && w.heading.is_finite());
-                        assert!(w.pos.length() >= t.ground(w.up()).top - 0.01, "sous le sol (rayon {})", params.radius);
+                        // À la couture entre deux faces du cube, les deux grilles de colonnes se recouvrent : la
+                        // hauteur peut différer d'un voxel pour un même point (corrigé à l'image suivante)
+                        assert!(w.pos.length() >= t.ground(w.up()).top - t.voxel() * 1.5, "sous le sol (rayon {})", params.radius);
                     }
                 }
                 // Le quadtree reste borné et ses tuiles sont valides
