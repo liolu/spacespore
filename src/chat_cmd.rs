@@ -113,7 +113,7 @@ fn list_kinds(settings: &GameSettings) -> String {
 
 /// Astre du monde visé par la caméra. `star_loaded` : l'étoile ciblée est celle du système chargé
 /// (id = système × 1000 + n) et non une étoile lointaine (id = indice du système).
-fn target_body(kind: &TargetKind, star_loaded: bool) -> Option<BodyId> {
+pub(crate) fn target_body(kind: &TargetKind, star_loaded: bool) -> Option<BodyId> {
     Some(match *kind {
         TargetKind::Planet(id) => BodyId::Planet { system: (id / 1000) as u32, index: (id % 1000) as u16 },
         TargetKind::Moon(id, m) => BodyId::Moon { system: (id / 1000) as u32, planet: (id % 1000) as u16, index: m as u16 },

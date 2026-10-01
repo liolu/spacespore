@@ -113,16 +113,84 @@ pub struct MoonConfig {
     #[serde(default = "default_moon_gravity")] pub gravity_g: f32,
     /// Climat (phase 3) : lune sans air.
     #[serde(default)] pub climate:        Option<Climate>,
-    /// Relief (phase 5) : cratères.
+    /// Relief (phase 5) : cratères, volcans d'une lune chauffée par les marées.
     #[serde(default)] pub relief:         Option<Relief>,
+    // ── Toute la chaîne de génération (phase 9) : une lune est un monde comme un autre ──
+    #[serde(default)] pub sea_level:      f32,
+    #[serde(default)] pub terrain_height: f32,
+    #[serde(default)] pub noise_scale:    f32,
+    #[serde(default)] pub detail_scale:   f32,
+    #[serde(default)] pub atmosphere:     bool,
+    /// Chauffage par les marées de sa planète (0..1).
+    #[serde(default)] pub tidal_heat:     f32,
+    #[serde(default)] pub air:            Air,
+    #[serde(default)] pub hydrology:      Hydrology,
+    #[serde(default)] pub geology:        Geology,
+    #[serde(default)] pub biomes:         BiomeParams,
+    #[serde(default)] pub habitability:   Habitability,
+    #[serde(default)] pub traits:         Vec<Trait>,
 }
 fn default_moon_gravity() -> f32 { 0.16 }
+impl MoonConfig {
+    /// La chaîne de génération a été appliquée à cette lune (phase 9).
+    pub fn generated(&self) -> bool {
+        self.biomes.defined
+    }
+
+    /// La lune vue comme une planète rocheuse (même terrain, même rendu, même profil), à la
+    /// distance de l'étoile de sa planète.
+    pub fn as_planet(&self, parent: &PlanetConfig) -> PlanetConfig {
+        PlanetConfig {
+            orbit_distance: self.orbit_distance,
+            radius: self.radius,
+            sea_level: self.sea_level,
+            terrain_height: if self.terrain_height > 0.0 { self.terrain_height } else { self.radius * 0.045 },
+            seed: self.seed,
+            noise_scale: self.noise_scale,
+            detail_scale: self.detail_scale,
+            moons: Vec::new(),
+            star_radius: parent.star_radius,
+            atmosphere: self.atmosphere,
+            cloud_density: self.air.cloud_cover,
+            cloud_altitude: 40.0 + self.radius * 0.05,
+            cloud_speed: 0.02 * (self.air.wind_ms / 10.0).clamp(0.2, 4.0),
+            eccentricity: self.eccentricity,
+            inclination: self.inclination,
+            ascending_node: self.ascending_node,
+            arg_periapsis: self.arg_periapsis,
+            mean_anomaly_0: self.mean_anomaly_0,
+            kind: PlanetKind::Rocky,
+            hot: false,
+            mass_earth: self.mass_earth,
+            radius_earth: self.radius_earth,
+            semi_major_au: parent.semi_major_au,
+            period_days: 0.0,
+            rotation_h: 0.0,
+            axial_tilt: 0.0,
+            tidally_locked: true,
+            gravity_g: self.gravity_g,
+            temperature_c: self.climate.map(|c| c.mean_c),
+            climate: self.climate,
+            air: self.air.clone(),
+            hydrology: self.hydrology.clone(),
+            geology: self.geology.clone(),
+            biomes: self.biomes,
+            ring: None,
+            aurora: None,
+            habitability: self.habitability.clone(),
+            traits: self.traits.clone(),
+        }
+    }
+}
 impl Default for MoonConfig {
     fn default() -> Self { Self {
         orbit_distance: 400.0, radius: 60.0, seed: 77,
         eccentricity: 0.0, inclination: 0.0, ascending_node: 0.0,
         arg_periapsis: 0.0, mean_anomaly_0: 0.0,
         radius_earth: 0.0, mass_earth: 0.0, gravity_g: default_moon_gravity(), climate: None, relief: None,
+        sea_level: 0.5, terrain_height: 0.0, noise_scale: 2.0, detail_scale: 4.0, atmosphere: false, tidal_heat: 0.0,
+        air: Air::default(), hydrology: Hydrology::default(), geology: Geology::default(), biomes: BiomeParams::default(),
+        habitability: Habitability::default(), traits: Vec::new(),
     } }
 }
 
@@ -178,6 +246,11 @@ pub struct PlanetConfig {
     #[serde(default)] pub geology:        Geology,
     /// Sols et biomes (phase 6).
     #[serde(default)] pub biomes:         BiomeParams,
+    /// Anneaux et aurores, habitabilité, dangers et traits (phase 9).
+    #[serde(default)] pub ring:           Option<Ring>,
+    #[serde(default)] pub aurora:         Option<Aurora>,
+    #[serde(default)] pub habitability:   Habitability,
+    #[serde(default)] pub traits:         Vec<Trait>,
 }
 fn default_gravity() -> f32 { 1.0 }
 fn default_star_radius()    -> f32 { 250.0 }
@@ -196,6 +269,7 @@ impl Default for PlanetConfig {
             kind: PlanetKind::Rocky, hot: false, mass_earth: 0.0, radius_earth: 0.0,
             semi_major_au: 0.0, period_days: 0.0, rotation_h: 0.0, axial_tilt: 0.0,
             tidally_locked: false, gravity_g: 1.0, temperature_c: None, climate: None, air: Air::default(), hydrology: Hydrology::default(), geology: Geology::default(), biomes: BiomeParams::default(),
+            ring: None, aurora: None, habitability: Habitability::default(), traits: Vec::new(),
         }
     }
 }
@@ -361,6 +435,9 @@ use crate::planetgen::star::{StarClass, StarPhysics};
 use crate::planetgen::atmosphere::Air;
 use crate::planetgen::climate::Climate;
 use crate::planetgen::biome::BiomeParams;
+use crate::planetgen::habitability::Habitability;
+use crate::planetgen::profile::Trait;
+use crate::planetgen::system::{Aurora, Ring};
 use crate::planetgen::geology::{Geology, Relief};
 use crate::planetgen::hydrology::Hydrology;
 use crate::planetgen::system::PlanetKind;

@@ -63,7 +63,7 @@ impl Plugin for PlanetPlugin {
             .add_systems(Startup, (build_spatial_index, generate_all).chain())
             .add_systems(
                 Update,
-                (orbit_planets, orbit_stars, orbit_moons, orbit_asteroid_belts, update_flare_voxels, rotate_clouds, regenerate_all, update_lod, update_star_visibility, update_far_star_scale, update_arm_capsule_lod, stream_system_bodies, reload_stars, reload_planets, reload_moons, reload_asteroid_belts, cleanup_hidden_toplevel, rotate_accretion_disk),
+                (orbit_planets, orbit_stars, orbit_moons, orbit_asteroid_belts, update_flare_voxels, rotate_clouds, shimmer_auroras, regenerate_all, update_lod, update_star_visibility, update_far_star_scale, update_arm_capsule_lod, stream_system_bodies, reload_stars, reload_planets, reload_moons, reload_asteroid_belts, cleanup_hidden_toplevel, rotate_accretion_disk),
             );
     }
 }
@@ -1022,6 +1022,143 @@ pub fn gas_look(p: &PlanetConfig) -> GasLook {
     GasLook { palette: palette.iter().enumerate().map(|(i, c)| tint(*c, 10 + i as u32)).collect(), bands, swirl, contrast }
 }
 
+/// Maillage lointain d'un chunk de lune : mêmes relief, mers et biomes que son terrain voxel
+/// (phase 9), ou l'ancienne roche grise pour une lune faite à la main.
+fn moon_chunk_mesh(mcfg: &crate::settings::MoonConfig, view: Option<&PlanetConfig>, face: CubeFace, gx: usize, gy: usize) -> Mesh {
+    match view {
+        Some(p) => build_chunk_mesh(
+            face, gx, gy, MOON_DIVISIONS,
+            p.radius, p.sea_level, p.terrain_height, p.seed, p.noise_scale, p.detail_scale,
+            LodLevel::Lod2, p.climate(), p.hydrology.hydro, p.atmosphere, p.geology.relief, p.biomes,
+        ),
+        None => build_celestial_chunk_mesh(
+            face, gx, gy, MOON_DIVISIONS,
+            mcfg.radius, mcfg.radius * 0.03, mcfg.seed, 1.5,
+            [0.45, 0.44, 0.42, 1.0], [0.7, 0.68, 0.65, 1.0],
+            LodLevel::Lod2,
+        ),
+    }
+}
+
+/// Tous les chunks lointains d'une lune, construits en parallèle sur tous les cœurs.
+fn build_moon_chunks(mcfg: &crate::settings::MoonConfig, view: Option<&PlanetConfig>) -> Vec<Mesh> {
+    let mut jobs = Vec::with_capacity(6 * MOON_DIVISIONS * MOON_DIVISIONS);
+    for face in CubeFace::all() {
+        for gx in 0..MOON_DIVISIONS {
+            for gy in 0..MOON_DIVISIONS {
+                jobs.push((face, gx, gy));
+            }
+        }
+    }
+    ComputeTaskPool::get().scope(|scope| {
+        for (face, gx, gy) in jobs {
+            scope.spawn(async move { moon_chunk_mesh(mcfg, view, face, gx, gy) });
+        }
+    })
+}
+
+/// Anneau plat (plan XZ) entre deux rayons, normales vers le haut.
+fn annulus_mesh(inner: f32, outer: f32, segments: usize) -> Mesh {
+    let mut positions = Vec::with_capacity(segments * 2 + 2);
+    let mut normals = Vec::with_capacity(segments * 2 + 2);
+    let mut uvs = Vec::with_capacity(segments * 2 + 2);
+    let mut indices = Vec::with_capacity(segments * 6);
+    for i in 0..=segments {
+        let a = i as f32 / segments as f32 * std::f32::consts::TAU;
+        let (c, s) = (a.cos(), a.sin());
+        positions.push([c * inner, 0.0, s * inner]);
+        positions.push([c * outer, 0.0, s * outer]);
+        normals.push([0.0, 1.0, 0.0]);
+        normals.push([0.0, 1.0, 0.0]);
+        uvs.push([0.0, i as f32 / segments as f32]);
+        uvs.push([1.0, i as f32 / segments as f32]);
+    }
+    for i in 0..segments as u32 {
+        let k = i * 2;
+        indices.extend_from_slice(&[k, k + 1, k + 2, k + 1, k + 3, k + 2]);
+    }
+    let mut mesh = Mesh::new(bevy::render::mesh::PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
+    mesh
+}
+
+/// Aurore : rideau lumineux qui ondule (intensité de base, déphasage).
+#[derive(Component)]
+pub struct AuroraGlow {
+    pub base: LinearRgba,
+    pub phase: f32,
+}
+
+/// Anneaux et aurores d'une planète (phase 9), inclinés comme son axe.
+fn spawn_ring_and_aurora(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    pcfg: &PlanetConfig,
+    root: Entity,
+) {
+    let tilt = Quat::from_rotation_x(pcfg.axial_tilt.to_radians());
+    if let Some(ring) = pcfg.ring {
+        let c = ring.color;
+        let material = materials.add(StandardMaterial {
+            base_color: Color::srgba(c[0], c[1], c[2], ring.opacity),
+            alpha_mode: AlphaMode::Blend,
+            cull_mode: None,
+            double_sided: true,
+            perceptual_roughness: 1.0,
+            ..default()
+        });
+        let child = commands
+            .spawn((Mesh3d(meshes.add(annulus_mesh(ring.inner, ring.outer, 160))), MeshMaterial3d(material), Transform::from_rotation(tilt), NotShadowCaster))
+            .id();
+        commands.entity(root).add_child(child);
+    }
+    if let Some(aurora) = pcfg.aurora {
+        let r = pcfg.radius * 1.04;
+        let lat = aurora.latitude.to_radians();
+        let band = 0.07;
+        let (inner, outer) = (r * (lat + band).cos(), r * (lat - band).cos());
+        let c = aurora.color;
+        let base = LinearRgba::new(c[0] * 3.0 * aurora.strength, c[1] * 3.0 * aurora.strength, c[2] * 3.0 * aurora.strength, 1.0);
+        for (k, side) in [1.0f32, -1.0].into_iter().enumerate() {
+            let material = materials.add(StandardMaterial {
+                base_color: Color::srgba(c[0], c[1], c[2], 0.35 * aurora.strength),
+                emissive: base,
+                unlit: true,
+                alpha_mode: AlphaMode::Add,
+                cull_mode: None,
+                double_sided: true,
+                ..default()
+            });
+            let offset = tilt * Vec3::new(0.0, side * r * lat.sin(), 0.0);
+            let child = commands
+                .spawn((
+                    Mesh3d(meshes.add(annulus_mesh(inner, outer, 96))),
+                    MeshMaterial3d(material),
+                    Transform::from_translation(offset).with_rotation(tilt),
+                    NotShadowCaster,
+                    AuroraGlow { base, phase: k as f32 * 1.7 + (pcfg.seed % 100) as f32 * 0.1 },
+                ))
+                .id();
+            commands.entity(root).add_child(child);
+        }
+    }
+}
+
+/// Les aurores ondulent.
+fn shimmer_auroras(time: Res<Time>, glows: Query<(&AuroraGlow, &MeshMaterial3d<StandardMaterial>)>, mut materials: ResMut<Assets<StandardMaterial>>) {
+    let t = time.elapsed_secs();
+    for (glow, mat) in &glows {
+        if let Some(m) = materials.get_mut(&mat.0) {
+            let k = 0.55 + 0.45 * (t * 0.8 + glow.phase).sin() * (t * 0.31 + glow.phase * 2.0).cos();
+            m.emissive = LinearRgba::new(glow.base.red * k, glow.base.green * k, glow.base.blue * k, 1.0);
+        }
+    }
+}
+
 /// Maillages d'une planète : sphère à bandes pour une géante (pas de relief ni de nuages), sinon
 /// les chunks de terrain (avec leur niveau de détail) et la couche de nuages.
 #[allow(clippy::too_many_arguments)]
@@ -1037,6 +1174,7 @@ fn spawn_planet_meshes(
     divs: usize,
     rock_material: &Handle<StandardMaterial>,
 ) {
+    spawn_ring_and_aurora(commands, meshes, materials, pcfg, root);
     if pcfg.gaseous() {
         // Visible des deux côtés : on peut y plonger
         let material = materials.add(StandardMaterial {
@@ -1259,6 +1397,7 @@ fn spawn_system_bodies(
         spawn_planet_meshes(commands, meshes, materials, pcfg, id_base + i, root, planet_world_pos, cam_local, divs, &planet_material);
 
         for (mi, mcfg) in pcfg.moons.iter().enumerate() {
+            let moon_view = mcfg.generated().then(|| mcfg.as_planet(pcfg));
             let offset = Vec3::new(mcfg.orbit_distance, 0.0, 0.0);
             let moon_root = commands
                 .spawn((
@@ -1272,26 +1411,11 @@ fn spawn_system_bodies(
                 ))
                 .id();
 
-            for face in CubeFace::all() {
-                for gx in 0..MOON_DIVISIONS {
-                    for gy in 0..MOON_DIVISIONS {
-                        let mesh = build_celestial_chunk_mesh(
-                            face, gx, gy, MOON_DIVISIONS,
-                            mcfg.radius, mcfg.radius * 0.03, mcfg.seed, 1.5,
-                            [0.45, 0.44, 0.42, 1.0], [0.7, 0.68, 0.65, 1.0],
-                            LodLevel::Lod2,
-                        );
-                        let child = commands
-                            .spawn((
-                                Mesh3d(meshes.add(mesh)),
-                                MeshMaterial3d(planet_material.clone()),
-                                Transform::IDENTITY,
-                                FarMesh,
-                            ))
-                            .id();
-                        commands.entity(moon_root).add_child(child);
-                    }
-                }
+            for mesh in build_moon_chunks(mcfg, moon_view.as_ref()) {
+                let child = commands
+                    .spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(planet_material.clone()), Transform::IDENTITY, FarMesh))
+                    .id();
+                commands.entity(moon_root).add_child(child);
             }
         }
     }
@@ -1966,25 +2090,13 @@ fn reload_moons(
             perceptual_roughness: 0.9,
             ..default()
         });
+        let moon_view = mcfg.generated().then(|| mcfg.as_planet(pcfg));
 
-        for face in CubeFace::all() {
-            for gx in 0..MOON_DIVISIONS {
-                for gy in 0..MOON_DIVISIONS {
-                    let mesh = build_celestial_chunk_mesh(
-                        face, gx, gy, MOON_DIVISIONS,
-                        mcfg.radius, mcfg.radius * 0.03, mcfg.seed, 1.5,
-                        [0.45, 0.44, 0.42, 1.0], [0.7, 0.68, 0.65, 1.0],
-                        LodLevel::Lod2,
-                    );
-                    let child = commands.spawn((
-                        Mesh3d(meshes.add(mesh)),
-                        MeshMaterial3d(planet_material.clone()),
-                        Transform::IDENTITY,
-                        FarMesh,
-                    )).id();
-                    commands.entity(entity).add_child(child);
-                }
-            }
+        for mesh in build_moon_chunks(mcfg, moon_view.as_ref()) {
+            let child = commands
+                .spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(planet_material.clone()), Transform::IDENTITY, FarMesh))
+                .id();
+            commands.entity(entity).add_child(child);
         }
     }
 }
@@ -2322,5 +2434,28 @@ fn stream_system_bodies(
                 spawned.0.insert(si);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod moon_bench {
+    use super::*;
+
+    /// Temps des chunks lointains des lunes d'un système (`cargo test --release bench_moon_chunks -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn bench_moon_chunks() {
+        ComputeTaskPool::get_or_init(bevy::tasks::TaskPool::default);
+        let settings = GameSettings::default();
+        let sys = &settings.systems[25];
+        let start = std::time::Instant::now();
+        let mut n = 0;
+        for p in sys.planets() {
+            for m in &p.moons {
+                let view = m.generated().then(|| m.as_planet(p));
+                n += build_moon_chunks(m, view.as_ref()).len();
+            }
+        }
+        println!("LUNES {n} chunks en {:.0} ms", start.elapsed().as_secs_f64() * 1000.0);
     }
 }
