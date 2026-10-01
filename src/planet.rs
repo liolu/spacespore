@@ -926,8 +926,10 @@ fn spawn_cloud_layer(
     planet_pos: Vec3,
 ) {
     let Some(mesh) = build_cloud_layer_mesh(pcfg) else { return };
+    // Couleur selon le type de nuages (eau, acide sulfurique, méthane...)
+    let c = if pcfg.air.present() { pcfg.air.cloud_color } else { [0.95, 0.95, 0.97] };
     let cloud_material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.95, 0.95, 0.97),
+        base_color: Color::srgb(c[0], c[1], c[2]),
         alpha_mode: AlphaMode::Opaque,
         unlit: false,
         perceptual_roughness: 1.0,
@@ -1032,7 +1034,7 @@ fn build_planet_chunks(
     divs: usize,
     cam_local: Vec3,
 ) -> Vec<(CubeFace, usize, usize, LodLevel, Mesh)> {
-    let temp = pcfg.temperature();
+    let (climate, atmosphere) = (pcfg.climate(), pcfg.atmosphere);
     let mut jobs = Vec::with_capacity(6 * divs * divs);
     for face in CubeFace::all() {
         for gx in 0..divs {
@@ -1050,7 +1052,7 @@ fn build_planet_chunks(
                 let mesh = build_chunk_mesh(
                     face, gx, gy, divs,
                     pcfg.radius, pcfg.sea_level, pcfg.terrain_height,
-                    pcfg.seed, pcfg.noise_scale, pcfg.detail_scale, lod, temp,
+                    pcfg.seed, pcfg.noise_scale, pcfg.detail_scale, lod, climate, atmosphere,
                 );
                 (face, gx, gy, lod, mesh)
             });
@@ -1724,9 +1726,9 @@ fn update_lod(
                 pcfg.radius, pcfg.sea_level, pcfg.terrain_height,
                 pcfg.seed, pcfg.noise_scale, pcfg.detail_scale,
             );
-            let temp = pcfg.temperature();
+            let (climate, atmosphere) = (pcfg.climate(), pcfg.atmosphere);
             let task = pool.spawn(async move {
-                build_chunk_mesh(face, gx, gy, divs, radius, sea, height, seed, noise, detail, new_lod, temp)
+                build_chunk_mesh(face, gx, gy, divs, radius, sea, height, seed, noise, detail, new_lod, climate, atmosphere)
             });
             commands.entity(entity).insert(LodTask { task, lod: new_lod });
             in_flight += 1;
