@@ -129,6 +129,7 @@ pub struct MoonConfig {
     #[serde(default)] pub biomes:         BiomeParams,
     #[serde(default)] pub habitability:   Habitability,
     #[serde(default)] pub traits:         Vec<Trait>,
+    #[serde(default)] pub life:           Life,
 }
 fn default_moon_gravity() -> f32 { 0.16 }
 impl MoonConfig {
@@ -179,6 +180,7 @@ impl MoonConfig {
             aurora: None,
             habitability: self.habitability.clone(),
             traits: self.traits.clone(),
+            life: self.life.clone(),
         }
     }
 }
@@ -190,7 +192,7 @@ impl Default for MoonConfig {
         radius_earth: 0.0, mass_earth: 0.0, gravity_g: default_moon_gravity(), climate: None, relief: None,
         sea_level: 0.5, terrain_height: 0.0, noise_scale: 2.0, detail_scale: 4.0, atmosphere: false, tidal_heat: 0.0,
         air: Air::default(), hydrology: Hydrology::default(), geology: Geology::default(), biomes: BiomeParams::default(),
-        habitability: Habitability::default(), traits: Vec::new(),
+        habitability: Habitability::default(), traits: Vec::new(), life: Life::default(),
     } }
 }
 
@@ -251,6 +253,8 @@ pub struct PlanetConfig {
     #[serde(default)] pub aurora:         Option<Aurora>,
     #[serde(default)] pub habitability:   Habitability,
     #[serde(default)] pub traits:         Vec<Trait>,
+    /// Vie (phase 7) : niveau, chimie, plantes, faune (paramètres).
+    #[serde(default)] pub life:           Life,
 }
 fn default_gravity() -> f32 { 1.0 }
 fn default_star_radius()    -> f32 { 250.0 }
@@ -269,7 +273,7 @@ impl Default for PlanetConfig {
             kind: PlanetKind::Rocky, hot: false, mass_earth: 0.0, radius_earth: 0.0,
             semi_major_au: 0.0, period_days: 0.0, rotation_h: 0.0, axial_tilt: 0.0,
             tidally_locked: false, gravity_g: 1.0, temperature_c: None, climate: None, air: Air::default(), hydrology: Hydrology::default(), geology: Geology::default(), biomes: BiomeParams::default(),
-            ring: None, aurora: None, habitability: Habitability::default(), traits: Vec::new(),
+            ring: None, aurora: None, habitability: Habitability::default(), traits: Vec::new(), life: Life::default(),
         }
     }
 }
@@ -436,6 +440,7 @@ use crate::planetgen::atmosphere::Air;
 use crate::planetgen::climate::Climate;
 use crate::planetgen::biome::BiomeParams;
 use crate::planetgen::habitability::Habitability;
+use crate::planetgen::life::Life;
 use crate::planetgen::profile::Trait;
 use crate::planetgen::system::{Aurora, Ring};
 use crate::planetgen::geology::{Geology, Relief};

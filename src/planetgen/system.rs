@@ -20,6 +20,7 @@ use super::genome::SystemGenome;
 use super::biome::{self, BiomeInput, BiomeParams};
 use super::geology::{self, GeoInput, Geology};
 use super::hydrology::{self, HydroInput, Hydrology, Liquid, WaterState};
+use super::life::{self, Life, LifeInput};
 use super::seeds::{Layer, LayerRng};
 use super::star::{StarClass, StarPhysics};
 use crate::settings::{MoonConfig, PlanetConfig};
@@ -258,6 +259,7 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
                 biomes: ml.biomes,
                 habitability,
                 traits,
+                life: ml.life,
             });
         }
 
@@ -292,7 +294,7 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
             &mut LayerRng::new(seed as u64, Layer::Traits),
         );
 
-        let Layers { air, climate, hydrology, sea_level, geology, biomes, atmosphere } = layers;
+        let Layers { air, climate, hydrology, sea_level, geology, biomes, atmosphere, life } = layers;
         planets.push(PlanetConfig {
             orbit_distance: 0.0, // placée plus bas
             radius,
@@ -332,6 +334,7 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
             aurora,
             habitability,
             traits,
+            life,
             ..Default::default()
         });
     }
@@ -389,6 +392,7 @@ struct Layers {
     geology: Geology,
     biomes: BiomeParams,
     atmosphere: bool,
+    life: Life,
 }
 
 /// Chauffage par les marées (0..1) d'une lune à `ratio` rayons (affichés) de sa planète de
@@ -448,6 +452,35 @@ fn world_layers(w: &WorldInput, seed: u32) -> Layers {
             &mut LayerRng::new(seed as u64, Layer::Geology),
         )
     };
+    // Vie (phase 7) : indépendante de l'habitabilité ; ses plantes verdissent les biomes
+    let radiation = biome::surface_radiation(
+        star.uv_flux * w.lum / (w.au * w.au),
+        star.xray_flux / (w.au * w.au),
+        air.pressure_bar as f64,
+        geology.magnetic_field as f64,
+        air.fraction("O2") as f64,
+    );
+    let life = if gaseous {
+        Life::default()
+    } else {
+        life::generate(
+            &LifeInput {
+                liquid: hydrology.hydro.liquid,
+                water_state: hydrology.water_state,
+                subsurface_ocean: hydrology.subsurface_ocean,
+                atmosphere,
+                pressure: air.pressure_bar as f64,
+                oxygen: air.fraction("O2") as f64,
+                fictional_gas: air.gases.iter().any(|(f, x)| *x > 0.01 && matches!(f.as_str(), "Ae" | "Sp" | "Cx")),
+                radiation,
+                age_gyr: star.age_gyr,
+                gravity: w.mass / (w.radius * w.radius),
+                ocean_fraction: hydrology.ocean_fraction as f64,
+                mean_c: climate.mean_c as f64,
+            },
+            &mut LayerRng::new(seed as u64, Layer::Biology),
+        )
+    };
     let biomes = if gaseous {
         BiomeParams::default()
     } else {
@@ -467,9 +500,10 @@ fn world_layers(w: &WorldInput, seed: u32) -> Layers {
             uv: star.uv_flux * w.lum / (w.au * w.au),
             xray: star.xray_flux / (w.au * w.au),
             dried_water: hydrology.inventory > 0.1 && !liquid_water,
+            flora: life.flora,
         })
     };
-    Layers { air, climate, hydrology, sea_level, geology, biomes, atmosphere }
+    Layers { air, climate, hydrology, sea_level, geology, biomes, atmosphere, life }
 }
 
 /// Aurores : un champ magnétique, de l'air (ou une géante) et le vent de l'étoile. Couleur selon
