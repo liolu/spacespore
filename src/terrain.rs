@@ -46,7 +46,14 @@ pub struct BodyParams {
     pub noise_scale: f32,
     pub detail_scale: f32,
     pub temperature: f32,
+    /// Gravité de surface (g) : la marche et le saut en dépendent.
+    pub gravity: f32,
+    /// Géante gazeuse ou neptunienne : pas de sol, on y vole jusqu'au cœur (`GAS_CORE`).
+    pub gaseous: bool,
 }
+
+/// Une géante gazeuse n'a pas de sol : le vol s'arrête à cette fraction de son rayon (le cœur).
+pub const GAS_CORE: f32 = 0.3;
 
 impl BodyParams {
     pub fn planet(p: &PlanetConfig) -> Self {
@@ -60,6 +67,8 @@ impl BodyParams {
             noise_scale: p.noise_scale,
             detail_scale: p.detail_scale,
             temperature: p.temperature(),
+            gravity: p.gravity_g,
+            gaseous: p.gaseous(),
         }
     }
 
@@ -74,6 +83,8 @@ impl BodyParams {
             noise_scale: 2.0,
             detail_scale: 4.0,
             temperature: parent.temperature(),
+            gravity: m.gravity_g,
+            gaseous: false,
         }
     }
 
@@ -313,6 +324,10 @@ impl Terrain {
     /// Colonne dans la direction `dir`, hauteur arrondie au multiple de `quantum` au-dessus du niveau de la mer.
     pub fn column(&self, dir: Vec3, quantum: f32) -> Column {
         let p = &self.params;
+        // Géante gazeuse : pas de relief, seulement le cœur où le vol s'arrête
+        if p.gaseous {
+            return Column { dir, top: p.radius * GAS_CORE, kind: VoxelType::Stone, color: [0.3, 0.25, 0.2, 1.0] };
+        }
         let (h, hv) = self.raw_height(dir);
         let rel = ((h - p.radius) / quantum).round();
         let water = !p.airless && rel < 0.0;
@@ -521,6 +536,8 @@ mod tests {
             noise_scale: 2.0,
             detail_scale: 4.0,
             temperature: 15.0,
+            gravity: 1.0,
+            gaseous: false,
         }
     }
 
@@ -646,6 +663,17 @@ mod tests {
             .unwrap();
         assert!((best.length() - ground).abs() <= t.voxel() * 8.0 + 1.0, "{} vs {}", best.length(), ground);
         assert!(ground > p.radius - 1.0 && ground < p.radius + p.terrain_height * 3.0);
+    }
+
+    #[test]
+    fn gas_giants_have_no_ground_until_the_core() {
+        let mut p = earth_like();
+        p.gaseous = true;
+        p.radius = 80_000.0;
+        let t = Terrain::new(p);
+        for dir in [Vec3::Y, Vec3::X, Vec3::new(1.0, -2.0, 0.5).normalize()] {
+            assert_eq!(t.ground(dir).top, 80_000.0 * GAS_CORE);
+        }
     }
 
     #[test]

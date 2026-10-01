@@ -8,7 +8,7 @@ use rand::Rng;
 use std::collections::{HashMap, HashSet};
 use crate::kepler::{OrbitalElements, DEFAULT_MU};
 use crate::lod::{compute_lod_level, LodChunk, LodLevel};
-use crate::mesher::{build_celestial_chunk_mesh, build_chunk_mesh};
+use crate::mesher::{build_celestial_chunk_mesh, build_chunk_mesh, build_gas_giant_mesh, GasLook};
 use crate::galaxy_shape::{CapMode, Shape};
 use crate::settings::{GalaxyConfig, GameSettings, PlanetConfig, SystemSpatialIndex, CORE_EXCLUSION, GALAXY_SCALE, SYSTEM_CELL_SIZE, STREAM_RADIUS};
 use crate::surface::{FarMesh, Surface};
@@ -941,6 +941,91 @@ fn spawn_cloud_layer(
     ));
 }
 
+/// Allure d'une géante d'après sa nature et sa graine : Jupiter ou Saturne, Jupiter chaud
+/// (sombre et rougeoyant), Neptune ou Uranus, mini-Neptune (brumeuse, presque unie).
+pub fn gas_look(p: &PlanetConfig) -> GasLook {
+    use crate::planetgen::system::PlanetKind;
+    let h = |k: u32| crate::settings::pseudo_rand(p.seed.wrapping_mul(7).wrapping_add(k));
+    // Légère teinte propre à chaque planète
+    let tint = |c: [f32; 3], k: u32| {
+        let t = (h(k) - 0.5) * 0.12;
+        [(c[0] + t).clamp(0.0, 1.0), (c[1] + t * 0.5).clamp(0.0, 1.0), (c[2] - t).clamp(0.0, 1.0)]
+    };
+    let (palette, bands, swirl, contrast): (Vec<[f32; 3]>, f32, f32, f32) = match p.kind {
+        PlanetKind::GasGiant if p.hot => (
+            vec![[0.35, 0.15, 0.12], [0.55, 0.25, 0.15], [0.25, 0.1, 0.15], [0.7, 0.35, 0.2]],
+            6.0 + h(1) * 4.0, 0.25, 0.8,
+        ),
+        PlanetKind::GasGiant if h(2) < 0.6 => (
+            vec![[0.85, 0.55, 0.25], [0.70, 0.38, 0.15], [0.92, 0.78, 0.55], [0.60, 0.28, 0.10], [0.95, 0.88, 0.70], [0.75, 0.45, 0.20]],
+            8.0 + h(1) * 8.0, 0.15 + h(3) * 0.15, 0.9,
+        ),
+        PlanetKind::GasGiant => (
+            vec![[0.92, 0.85, 0.62], [0.85, 0.75, 0.5], [0.95, 0.9, 0.75], [0.8, 0.68, 0.45]],
+            10.0 + h(1) * 6.0, 0.1, 0.7,
+        ),
+        PlanetKind::IceGiant if h(2) < 0.5 => (
+            vec![[0.15, 0.28, 0.7], [0.2, 0.35, 0.85], [0.25, 0.45, 0.95], [0.35, 0.55, 0.95]],
+            3.0 + h(1) * 3.0, 0.12, 0.5,
+        ),
+        PlanetKind::IceGiant => (vec![[0.55, 0.8, 0.88], [0.6, 0.85, 0.9], [0.65, 0.9, 0.92]], 3.0 + h(1) * 2.0, 0.06, 0.3),
+        _ => (vec![[0.5, 0.65, 0.78], [0.55, 0.7, 0.8], [0.6, 0.75, 0.82]], 2.0 + h(1) * 2.0, 0.08, 0.35),
+    };
+    GasLook { palette: palette.iter().enumerate().map(|(i, c)| tint(*c, 10 + i as u32)).collect(), bands, swirl, contrast }
+}
+
+/// Maillages d'une planète : sphère à bandes pour une géante (pas de relief ni de nuages), sinon
+/// les chunks de terrain (avec leur niveau de détail) et la couche de nuages.
+#[allow(clippy::too_many_arguments)]
+fn spawn_planet_meshes(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    pcfg: &PlanetConfig,
+    planet_id: usize,
+    root: Entity,
+    planet_world_pos: Vec3,
+    cam_local: Vec3,
+    divs: usize,
+    rock_material: &Handle<StandardMaterial>,
+) {
+    if pcfg.gaseous() {
+        // Visible des deux côtés : on peut y plonger
+        let material = materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            perceptual_roughness: 0.85,
+            cull_mode: None,
+            double_sided: true,
+            ..default()
+        });
+        let mesh = build_gas_giant_mesh(pcfg.radius, pcfg.seed, &gas_look(pcfg), GAS_RESOLUTION);
+        let child = commands
+            .spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(material), Transform::IDENTITY, FarMesh))
+            .id();
+        commands.entity(root).add_child(child);
+        return;
+    }
+    for (face, gx, gy, lod, mesh) in build_planet_chunks(pcfg, divs, cam_local) {
+        let child = commands
+            .spawn((
+                Mesh3d(meshes.add(mesh)),
+                MeshMaterial3d(rock_material.clone()),
+                Transform::IDENTITY,
+                PlanetChunk { face, grid_x: gx, grid_y: gy, current_lod: lod, planet_id },
+                LodChunk,
+                FarMesh,
+            ))
+            .id();
+        commands.entity(root).add_child(child);
+    }
+    if pcfg.atmosphere {
+        spawn_cloud_layer(commands, meshes, materials, pcfg, planet_id, planet_world_pos);
+    }
+}
+
+/// Carreaux par face de la sphère d'une géante.
+const GAS_RESOLUTION: usize = 64;
+
 /// Construit tous les chunks d'une planète en parallèle sur tous les cœurs.
 fn build_planet_chunks(
     pcfg: &PlanetConfig,
@@ -1123,29 +1208,7 @@ fn spawn_system_bodies(
             ))
             .id();
 
-        for (face, gx, gy, lod, mesh) in build_planet_chunks(pcfg, divs, cam_local) {
-            let child = commands
-                .spawn((
-                    Mesh3d(meshes.add(mesh)),
-                    MeshMaterial3d(planet_material.clone()),
-                    Transform::IDENTITY,
-                    PlanetChunk {
-                        face,
-                        grid_x: gx,
-                        grid_y: gy,
-                        current_lod: lod,
-                        planet_id: id_base + i,
-                    },
-                    LodChunk,
-                    FarMesh,
-                ))
-                .id();
-            commands.entity(root).add_child(child);
-        }
-
-        if pcfg.atmosphere {
-            spawn_cloud_layer(commands, meshes, materials, pcfg, id_base + i, planet_world_pos);
-        }
+        spawn_planet_meshes(commands, meshes, materials, pcfg, id_base + i, root, planet_world_pos, cam_local, divs, &planet_material);
 
         for (mi, mcfg) in pcfg.moons.iter().enumerate() {
             let offset = Vec3::new(mcfg.orbit_distance, 0.0, 0.0);
@@ -1831,27 +1894,7 @@ fn reload_planets(
         let cam_pos = camera_q.single().translation;
         let cam_local = cam_pos - planet_world_pos;
         let divs = settings.planet_chunk_divisions;
-        for (face, gx, gy, lod, mesh) in build_planet_chunks(pcfg, divs, cam_local) {
-            let child = commands.spawn((
-                Mesh3d(meshes.add(mesh)),
-                MeshMaterial3d(planet_material.clone()),
-                Transform::IDENTITY,
-                PlanetChunk {
-                    face,
-                    grid_x: gx,
-                    grid_y: gy,
-                    current_lod: lod,
-                    planet_id: pid.0,
-                },
-                LodChunk,
-                FarMesh,
-            )).id();
-            commands.entity(entity).add_child(child);
-        }
-
-        if pcfg.atmosphere {
-            spawn_cloud_layer(&mut commands, &mut meshes, &mut materials, pcfg, pid.0, planet_world_pos);
-        }
+        spawn_planet_meshes(&mut commands, &mut meshes, &mut materials, pcfg, pid.0, entity, planet_world_pos, cam_local, divs, &planet_material);
     }
 }
 
@@ -2104,7 +2147,7 @@ fn rotate_accretion_disk(
 /// Distance du centre d'un système au-delà de laquelle on l'a quitté : dernière orbite, avec ses
 /// lunes et le rayon de la planète, plus une marge.
 /// Rayon de recherche (au plus) d'un système qui contient le vaisseau.
-pub(crate) const MAX_SYSTEM_REACH: f32 = 14_000_000.0;
+pub(crate) const MAX_SYSTEM_REACH: f32 = 30_000_000.0;
 
 fn system_reach(sys: &crate::settings::StarSystemConfig) -> f32 {
     let planets = sys.planets().iter().map(|p| {

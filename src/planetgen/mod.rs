@@ -22,6 +22,7 @@ pub mod profile;
 pub mod seed_code;
 pub mod seeds;
 pub mod star;
+pub mod system;
 pub mod units;
 
 #[cfg(test)]
@@ -101,64 +102,6 @@ mod tests {
             }
         }
         h
-    }
-
-    /// Empreinte des seules planètes et lunes.
-    fn planets_digest(systems: &[StarSystemConfig], planets_of: impl Fn(&StarSystemConfig) -> Vec<crate::settings::PlanetConfig>) -> u64 {
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        let mut eat = |v: u64| {
-            for b in v.to_le_bytes() {
-                h ^= b as u64;
-                h = h.wrapping_mul(0x100_0000_01b3);
-            }
-        };
-        for sys in systems {
-            let planets = planets_of(sys);
-            eat(planets.len() as u64);
-            for p in &planets {
-                for v in [p.orbit_distance, p.radius, p.sea_level, p.terrain_height, p.noise_scale, p.detail_scale,
-                          p.star_radius, p.cloud_altitude] {
-                    eat(v.to_bits() as u64);
-                }
-                eat(p.seed as u64);
-                eat(p.atmosphere as u64);
-                for m in &p.moons {
-                    for v in [m.orbit_distance, m.radius, m.mean_anomaly_0] {
-                        eat(v.to_bits() as u64);
-                    }
-                    eat(m.seed as u64);
-                }
-            }
-        }
-        h
-    }
-
-    /// Non-régression : les étoiles ont changé (phase 1) mais les planètes et lunes restent
-    /// exactement celles de la version 0.9 (empreinte relevée avant la phase 1) ; seules celles des
-    /// géantes sont repoussées hors de l'étoile.
-    #[test]
-    fn planets_are_those_of_version_0_9() {
-        let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
-        let systems = default_systems(&galaxies, DEFAULT_WORLD_SEED);
-        assert_eq!(systems.len(), 143_892);
-        assert_eq!(planets_digest(&systems, |s| s.genome_planets()), 0x5fe1_883d_9414_8c9c);
-        let mut pushed = 0;
-        for sys in &systems {
-            let (now, before) = (sys.planets_uncached(), sys.genome_planets());
-            let star = &sys.stars[0];
-            let overlaps = before[0].orbit_distance - before[0].radius < star.radius * crate::settings::GIANT_CLEARANCE;
-            for (a, b) in now.iter().zip(&before) {
-                assert_eq!(a.radius.to_bits(), b.radius.to_bits());
-                if overlaps {
-                    assert!(a.orbit_distance > b.orbit_distance);
-                } else {
-                    assert_eq!(a.orbit_distance.to_bits(), b.orbit_distance.to_bits());
-                }
-            }
-            pushed += overlaps as usize;
-        }
-        // Seules les géantes (et quelques grosses étoiles chaudes) repoussent leurs planètes
-        assert!(pushed > 100 && pushed < systems.len() / 50, "{pushed} systemes repousses");
     }
 
     /// Le monde (étoiles comprises) est reproductible au bit près.

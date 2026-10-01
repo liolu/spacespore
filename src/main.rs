@@ -4,6 +4,7 @@ mod combat;
 mod diplomacy;
 mod chat_cmd;
 mod galaxy_fx;
+mod gas;
 mod npc_ui;
 mod economy;
 mod galaxy_shape;
@@ -204,6 +205,7 @@ fn main() {
         // ── Planètes & corps ────────────────────────────────────────────
         .add_plugins(PlanetPlugin)
         .add_plugins(planetgen::PlanetGenPlugin)
+        .add_plugins(gas::GasPlugin)
 
         // ── Legacy astre plugins désactivés — la galaxie gère tout ──
         // Ressources + events vides pour l'UI (pas de Startup spawn)
@@ -368,7 +370,7 @@ fn setup_scene(
     commands.spawn((
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
-            far: 400_000_000_000.0,
+            far: 4_000_000_000.0 * settings::GALAXY_SCALE,
             ..default()
         }),
 
@@ -863,9 +865,9 @@ pub struct CameraController {
 }
 
 /// Limite du zoom 1 : en dessous, on reste verrouillé dans le système courant.
-/// Un système s'étend sur ~10 millions d'unités (étoile de 1 million de rayon, planètes à 2,4 à 7 rayons) :
-/// le niveau « Planète » les contient en entier.
-pub const ZOOM_PLANET_MAX: f32 = 12_000_000.0;
+/// Un système s'étend sur ~4 millions d'unités en médiane, 11 millions pour 99 % d'entre eux (1 à 8
+/// planètes, voir `planetgen::system`) : le niveau « Planète » les contient en entier.
+pub const ZOOM_PLANET_MAX: f32 = 18_000_000.0;
 
 /// Distance de caméra pour voir une galaxie entière (reste au zoom 4 pour
 /// pouvoir cliquer ses étoiles).
@@ -890,7 +892,7 @@ const GALAXY_JUMP_MIN_ZOOM: f32 = 10_000_000.0 * settings::GALAXY_SCALE;
 /// Un déplacement va d'une étoile à sa voisine (≈ 15 millions) : quelques fois l'écart entre étoiles.
 const MAX_TRAVEL_RANGE: f32 = 750_000.0 * settings::GALAXY_SCALE;
 /// Zoom maximal de la caméra.
-const MAX_ZOOM: f32 = 40_000_000_000.0;
+const MAX_ZOOM: f32 = 400_000_000.0 * settings::GALAXY_SCALE;
 
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZoomLevel {
@@ -906,7 +908,7 @@ impl ZoomLevel {
     fn from_distance(d: f32) -> Self {
         if d < ZOOM_PLANET_MAX {
             ZoomLevel::Planet
-        } else if d < 16_000_000.0 {
+        } else if d < 30_000_000.0 {
             ZoomLevel::System
         } else if d < 2_000_000.0 * settings::GALAXY_SCALE {
             ZoomLevel::Sector
@@ -1968,7 +1970,17 @@ fn update_system_hud(
         TargetKind::Planet(id) => {
             let si = id / 1000;
             let li = id % 1000;
-            let label = settings.systems.get(si).map(|s| format!("{} {}", s.name, li + 1));
+            // « Sol 3 - geante gazeuse, 0,9 g »
+            let label = settings.systems.get(si).map(|s| match s.planets().get(li) {
+                Some(p) if p.radius_earth > 0.0 => format!(
+                    "{} {} - {}, {:.2} g",
+                    s.name,
+                    li + 1,
+                    planetgen::system::size_class(p.kind, p.radius_earth as f64, p.hot),
+                    p.gravity_g
+                ),
+                _ => format!("{} {}", s.name, li + 1),
+            });
             (Some(si), label)
         }
         TargetKind::Moon(planet_id, moon_idx) => {

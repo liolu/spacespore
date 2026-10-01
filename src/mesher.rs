@@ -639,3 +639,99 @@ pub fn build_chunk_mesh(
     mesh.insert_indices(Indices::U32(indices));
     mesh
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Géantes gazeuses et neptuniennes : sphère lisse à bandes (pas de relief)
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Couleurs et allure d'une géante : bandes de latitude, déformées par des tourbillons.
+pub struct GasLook {
+    pub palette: Vec<[f32; 3]>,
+    /// Nombre de bandes de l'équateur au pôle.
+    pub bands: f32,
+    /// Ampleur des tourbillons (radians de latitude).
+    pub swirl: f32,
+    /// Contraste entre bandes (0 : uni, 1 : bandes franches).
+    pub contrast: f32,
+}
+
+/// Couleur de la géante dans la direction `dir` (repris de l'ancien `gas_planet.rs`).
+pub fn gas_color(look: &GasLook, fbm: &Fbm<Perlin>, dir: Vec3) -> [f32; 3] {
+    let lat = dir.y.clamp(-1.0, 1.0).asin();
+    let lon = dir.z.atan2(dir.x);
+    let swirl = fbm.get([dir.x as f64 * 3.0, dir.y as f64 * 9.0, dir.z as f64 * 3.0]) as f32 * look.swirl;
+    let eff_lat = lat + swirl;
+    let band_t = ((eff_lat * look.bands).sin() * 0.5 + 0.5) * look.contrast + 0.5 * (1.0 - look.contrast);
+    let n = look.palette.len().max(2);
+    let idx_f = band_t * (n as f32 - 1.0);
+    let lo = (idx_f as usize).min(n - 2);
+    let detail = fbm.get([lon as f64 * 4.0, eff_lat as f64 * 12.0, 0.5]) as f32;
+    let frac = (idx_f - lo as f32 + detail * 0.15).clamp(0.0, 1.0);
+    let (a, b) = (look.palette[lo], look.palette[(lo + 1).min(look.palette.len() - 1)]);
+    [a[0] + (b[0] - a[0]) * frac, a[1] + (b[1] - a[1]) * frac, a[2] + (b[2] - a[2]) * frac]
+}
+
+/// Sphère-cube lisse de rayon `radius`, `res` × `res` carreaux par face, couleurs par sommet.
+pub fn build_gas_giant_mesh(radius: f32, seed: u32, look: &GasLook, res: usize) -> Mesh {
+    let mut fbm: Fbm<Perlin> = Fbm::new(seed);
+    fbm.octaves = 4;
+    let n1 = res + 1;
+    let mut positions = Vec::with_capacity(6 * n1 * n1);
+    let mut normals = Vec::with_capacity(6 * n1 * n1);
+    let mut colors = Vec::with_capacity(6 * n1 * n1);
+    let mut indices = Vec::with_capacity(6 * res * res * 6);
+    for face in CubeFace::all() {
+        let base = positions.len() as u32;
+        for j in 0..n1 {
+            for i in 0..n1 {
+                let dir = face.to_sphere_pos(i as f32 / res as f32, j as f32 / res as f32).normalize();
+                let c = gas_color(look, &fbm, dir);
+                positions.push((dir * radius).to_array());
+                normals.push(dir.to_array());
+                colors.push([c[0], c[1], c[2], 1.0]);
+            }
+        }
+        for j in 0..res as u32 {
+            for i in 0..res as u32 {
+                let a = base + j * n1 as u32 + i;
+                let (b, c, d) = (a + 1, a + n1 as u32, a + n1 as u32 + 1);
+                indices.extend_from_slice(&[a, c, b, b, c, d]);
+            }
+        }
+    }
+    // Triangles tournés vers l'extérieur, quelle que soit l'orientation de chaque face
+    for tri in indices.chunks_mut(3) {
+        let p = |k: u32| Vec3::from_array(positions[k as usize]);
+        if (p(tri[1]) - p(tri[0])).cross(p(tri[2]) - p(tri[0])).dot(p(tri[0])) < 0.0 {
+            tri.swap(1, 2);
+        }
+    }
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    mesh.insert_indices(Indices::U32(indices));
+    mesh
+}
+
+#[cfg(test)]
+mod gas_tests {
+    use super::*;
+    use bevy::render::mesh::VertexAttributeValues;
+
+    #[test]
+    fn gas_giants_are_smooth_closed_spheres_facing_out() {
+        let look = GasLook { palette: vec![[0.9, 0.7, 0.5], [0.6, 0.4, 0.2], [0.95, 0.9, 0.8]], bands: 10.0, swirl: 0.2, contrast: 1.0 };
+        let mesh = build_gas_giant_mesh(80_000.0, 7, &look, 16);
+        let Some(VertexAttributeValues::Float32x3(pos)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else { panic!() };
+        let Some(Indices::U32(idx)) = mesh.indices() else { panic!() };
+        for v in pos {
+            assert!((Vec3::from_array(*v).length() - 80_000.0).abs() < 1.0);
+        }
+        for tri in idx.chunks(3) {
+            let v = |i: u32| Vec3::from_array(pos[i as usize]);
+            let n = (v(tri[1]) - v(tri[0])).cross(v(tri[2]) - v(tri[0]));
+            assert!(n.dot(v(tri[0])) > 0.0, "face tournee vers l'interieur");
+        }
+    }
+}

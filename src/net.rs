@@ -52,7 +52,7 @@ pub const MAX_NAME_LEN: usize = 16;
 pub const MAX_TAG_LEN: usize = 5;
 /// Étoiles revendiquées au plus par joueur.
 pub const MAX_CLAIMS: usize = 5;
-const PROTOCOL: u32 = 7;
+const PROTOCOL: u32 = 8;
 pub const MAX_CHAT_LEN: usize = 120;
 /// Messages gardés à l'écran / dans l'historique de l'hôte.
 const CHAT_HISTORY: usize = 50;
@@ -528,6 +528,8 @@ pub fn world_fingerprint(settings: &GameSettings) -> u64 {
         let planets = sys.planets_uncached();
         eat(&(planets.len() as u64).to_le_bytes());
         for p in planets.iter() {
+            // Valeurs affichées arrondies à la génération (`planetgen::system`) : identiques partout
+            eat(&[p.kind as u8]);
             eat(&p.seed.to_le_bytes());
             eat(&p.radius.to_bits().to_le_bytes());
             eat(&p.orbit_distance.to_bits().to_le_bytes());

@@ -24,7 +24,7 @@ use crate::ui::{CameraTarget, MenuState, TargetKind};
 use crate::{CameraController, ZoomLevel};
 
 /// Couleur du ciel dans l'espace (celle de `setup_scene`).
-const SPACE_SKY: Color = Color::srgb(0.005, 0.005, 0.02);
+pub(crate) const SPACE_SKY: Color = Color::srgb(0.005, 0.005, 0.02);
 const DAY_SKY: [f32; 3] = [0.36, 0.58, 0.92];
 
 /// La lumière vient uniquement de l'étoile (lumière ponctuelle réelle : sa position, sa couleur et
@@ -58,13 +58,17 @@ impl Plugin for SurfacePlugin {
             .add_systems(Update, update_galaxy_dim)
             .add_systems(
                 Update,
-                (surface_control, surface_light, update_tiles, update_hud)
+                (surface_control.in_set(SurfaceControl), surface_light, update_tiles, update_hud)
                     .chain()
                     .after(crate::planet::orbit_planets)
                     .after(crate::planet::orbit_moons),
             );
     }
 }
+
+/// Pilotage du vaisseau et de la caméra près d'un astre (les géantes gazeuses passent après).
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SurfaceControl;
 
 /// Maillage lointain d'un astre (remplacé par les tuiles pendant un atterrissage).
 #[derive(Component)]
@@ -241,7 +245,8 @@ impl Walker {
         let mut r = self.pos.length();
         let ground = t.ground(up);
         self.in_water = ground.kind == crate::planet::VoxelType::Water;
-        let gravity = (if t.params.airless { MOON_GRAVITY } else { GRAVITY }) * v;
+        // Vraie gravité de l'astre : sur une lune à 0,16 g, on saute six fois plus haut
+        let gravity = GRAVITY * t.params.gravity.clamp(MIN_GRAVITY, 4.0) * v;
         if self.on_ground && inp.jump {
             self.vr = JUMP_VOXELS * v;
             self.on_ground = false;
@@ -286,8 +291,10 @@ const WALK_VOXELS: f32 = 7.0;
 const SPRINT_VOXELS: f32 = 21.0;
 const STEP_VOXELS: f32 = 1.05;
 const JUMP_VOXELS: f32 = 7.5;
+/// Pesanteur à 1 g, en voxels par seconde².
 const GRAVITY: f32 = 22.0;
-const MOON_GRAVITY: f32 = 7.0;
+/// Sous cette gravité (g), on garde un minimum de poids : sinon un saut ne retomberait jamais.
+const MIN_GRAVITY: f32 = 0.05;
 
 // ─────────────────────────────────────────────────────────────────────────
 //  État de l'atterrissage
@@ -397,8 +404,12 @@ impl Surface {
         self.hover.filter(|(k, _)| k == kind).map(|(_, d)| d)
     }
 
-    /// Identifiant de la planète dont le maillage lointain est remplacé par les tuiles.
+    /// Identifiant de la planète dont le maillage lointain est remplacé par les tuiles (jamais une
+    /// géante gazeuse : pas de terrain, on vole dans sa sphère).
     pub fn active_planet(&self) -> Option<usize> {
+        if self.gaseous() {
+            return None;
+        }
         match (self.phase, self.body) {
             (Phase::Orbit, _) => None,
             (_, Some(TargetKind::Planet(id))) => Some(id),
@@ -408,6 +419,19 @@ impl Surface {
 
     fn params(&self) -> Option<BodyParams> {
         self.terrain.as_ref().map(|t| t.params)
+    }
+
+    /// Séjour dans une géante gazeuse.
+    pub fn gaseous(&self) -> bool {
+        self.params().is_some_and(|p| p.gaseous)
+    }
+
+    /// Vaisseau détruit : retour en orbite, au-dessus de l'endroit survolé (hors de l'astre).
+    pub fn eject(&mut self) {
+        if let (Some(kind), true) = (self.body, self.active()) {
+            self.hover = Some((kind, self.fpos.normalize_or(Vec3::Y)));
+        }
+        self.abort();
     }
 
     fn abort(&mut self) {
@@ -623,10 +647,15 @@ fn surface_control(
                     surface.fdist = ctrl.distance.clamp(60.0, FLIGHT_ZOOM * 0.95);
                     surface.fyaw = 0.0;
                     surface.fpitch = 0.35;
-                    surface.fdescend = true;
+                    // Une géante n'a pas de sol : on ne plonge pas d'office vers son cœur
+                    surface.fdescend = !params.gaseous;
                     surface.phase = Phase::Flying;
                     *ship_vis = Visibility::Inherited;
-                    net.notify("Navigation : ZQSD/WASD voler, Maj accelerer, Espace/Ctrl monter/descendre, V atterrir, molette pour revenir.", now);
+                    if params.gaseous {
+                        net.notify("Geante gazeuse : Ctrl pour descendre dans l'atmosphere. Attention, la pression y abime la coque !", now);
+                    } else {
+                        net.notify("Navigation : ZQSD/WASD voler, Maj accelerer, Espace/Ctrl monter/descendre, V atterrir, molette pour revenir.", now);
+                    }
                     return;
                 }
             }
@@ -642,6 +671,10 @@ fn surface_control(
             net.notify("Cet astre est trop loin : approchez-vous de son systeme.", now);
             return;
         };
+        if params.gaseous {
+            net.notify("Pas de sol : une geante gazeuse n'a pas de surface. Zoomez sous 1000 pour entrer dans son atmosphere (la pression abime la coque).", now);
+            return;
+        }
         let terrain = Terrain::new(params);
         let dir1 = ctx.aimed_dir(camera, cam_gt, center, &params);
         let local0 = ship_tf.translation - center;
@@ -810,7 +843,10 @@ fn surface_control(
             heading = (Quat::from_axis_angle(up, turn * 1.3 * dt) * heading).normalize();
             let top_speed = (terrain.params.radius * 0.15).clamp(120.0, 4000.0) * if boost { 4.0 } else { 1.0 };
             surface.fspeed += (forward * top_speed - surface.fspeed) * (1.0 - (-2.0 * dt).exp());
-            surface.fvert += (vertical * 400.0 - surface.fvert) * (1.0 - (-4.0 * dt).exp());
+            // Dans une géante (des dizaines de milliers d'unités d'atmosphère), on monte et
+            // descend plus vite
+            let climb = if terrain.params.gaseous { 400.0 * (terrain.params.radius / 8000.0).max(1.0) } else { 400.0 };
+            surface.fvert += (vertical * climb - surface.fvert) * (1.0 - (-4.0 * dt).exp());
             let next = (surface.fpos + heading * surface.fspeed * dt).normalize();
             let ground = terrain.ground(next).top;
             let ceiling = hover_radius(&params);
@@ -854,6 +890,8 @@ fn surface_control(
                 ctrl.last_target_pos = center;
                 surface.abort();
                 clear.0 = SPACE_SKY;
+            } else if enter && params.gaseous {
+                net.notify("Pas de sol : une geante gazeuse n'a pas de surface. Zoomez sous 1000 pour entrer dans son atmosphere (la pression abime la coque).", now);
             } else if enter {
                 // Atterrir juste devant le vaisseau
                 let terrain = surface.terrain.take().unwrap();
@@ -1050,7 +1088,8 @@ fn update_tiles(
     far: Query<(), With<FarMesh>>,
     mut vis: Query<&mut Visibility>,
 ) {
-    let wanted = if surface.active() { surface.body } else { None };
+    // Pas de tuiles dans une géante gazeuse : sa sphère reste affichée
+    let wanted = if surface.active() && !surface.gaseous() { surface.body } else { None };
 
     // Changement (ou fin) de séjour : on jette les tuiles et on rend le maillage lointain
     if store.body != wanted {
@@ -1270,10 +1309,12 @@ fn update_hud(
 ) {
     let label = match surface.phase {
         Phase::Orbit => match body_params(&settings, &target.0) {
+            Some(p) if p.gaseous => "Geante gazeuse (pas de sol)   Zoomez sous 1000 pour entrer dans son atmosphere   P : planete suivante   M : lune".to_string(),
             Some(_) => "Zoomez sous 1000 pour naviguer autour de l'astre   V : atterrir   P : planete suivante   M : lune".to_string(),
             None if matches!(target.0, TargetKind::Star(_)) => "P : aller a la planete suivante du systeme".to_string(),
             None => String::new(),
         },
+        Phase::Flying if surface.gaseous() => "ZQSD/WASD : voler   A/D : tourner   Maj : accelerer   Espace/Ctrl : monter/descendre\nClic droit : orbiter   Molette : zoom (>1000 : orbite)   Pas de sol : la pression abime la coque".to_string(),
         Phase::Flying => "ZQSD/WASD : voler   A/D : tourner   Maj : accelerer   Espace/Ctrl : monter/descendre\nClic droit : orbiter   Molette : zoom (>1000 : orbite)   V : atterrir".to_string(),
         Phase::Descending => "Atterrissage en cours...".to_string(),
         Phase::Ascending => "Decollage en cours...".to_string(),
@@ -1314,6 +1355,8 @@ mod tests {
             noise_scale: 2.0,
             detail_scale: 4.0,
             temperature: 15.0,
+            gravity: 1.0,
+            gaseous: false,
         })
     }
 
@@ -1421,6 +1464,7 @@ mod tests {
         p.airless = true;
         p.atmosphere = false;
         p.radius = 3000.0;
+        p.gravity = 0.16;
         let t = Terrain::new(p);
         let dir = Vec3::new(0.3, 0.8, 0.2).normalize();
         let mut w = Walker::spawn(&t, dir, Vec3::X);
@@ -1454,7 +1498,10 @@ mod tests {
         let mut bodies = Vec::new();
         for sys in settings.systems.iter().take(150) {
             for p in sys.planets() {
-                bodies.push(BodyParams::planet(p));
+                // Pas de sol sur une géante gazeuse : on n'y marche pas
+                if !p.gaseous() {
+                    bodies.push(BodyParams::planet(p));
+                }
                 for m in &p.moons {
                     bodies.push(BodyParams::moon(m, p));
                 }
