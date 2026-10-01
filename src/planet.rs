@@ -413,7 +413,7 @@ fn generate_all(
         star_brightness_steps.push(materials.add(StandardMaterial {
             base_color: Color::srgba(1.0, 1.0, 1.0, b),
             base_color_texture: Some(atlas.clone()),
-            emissive: LinearRgba::new(12.0 * b, 10.0 * b, 5.0 * b, 1.0),
+            emissive: LinearRgba::new(7.0 * b, 6.0 * b, 3.0 * b, 1.0),
             emissive_texture: Some(atlas.clone()),
             unlit: true,
             alpha_mode: AlphaMode::Add,
@@ -474,11 +474,11 @@ fn generate_all(
         for step in 0..LOD_STEPS {
             let o = step as f32 / (LOD_STEPS - 1) as f32;
             steps.push(materials.add(StandardMaterial {
-                base_color: Color::srgba(c[0], c[1], c[2], 0.15 * o),
+                base_color: Color::srgba(c[0], c[1], c[2], 0.07 * o),
                 emissive: LinearRgba::new(
-                    1.1 * c[0] * o,
-                    1.1 * c[1] * o,
-                    1.1 * c[2] * o,
+                    0.45 * c[0] * o,
+                    0.45 * c[1] * o,
+                    0.45 * c[2] * o,
                     1.0,
                 ),
                 unlit: true,
