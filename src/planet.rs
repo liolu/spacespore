@@ -16,9 +16,6 @@ use bevy::render::view::NoFrustumCulling;
 use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, ComputeTaskPool, Task};
 use crate::astre::{AstreLodRoot, ReloadAstre};
 use crate::ship::Ship;
-/// Taille d'affichage maximale d'une étoile lointaine (billboard) : les vraies étoiles sont
-/// énormes, mais de loin ce n'est qu'un point.
-const FAR_STAR_RADIUS: f32 = 250.0;
 /// Les planètes tournent plus vite que ne le voudrait la gravité d'orbites aussi larges : sans
 /// cela, un tour durerait des heures et le soleil ne bougerait jamais dans le ciel.
 const PLANET_MU_SCALE: f32 = 30.0;
@@ -354,9 +351,9 @@ fn generate_all(
             commands.spawn((
                 Mesh3d(quad_meshes[group].clone()),
                 MeshMaterial3d(atlas_mat.clone()),
-                Transform::from_translation(center).with_scale(Vec3::splat(star_cfg.radius.min(FAR_STAR_RADIUS) * 0.5)),
+                Transform::from_translation(center).with_scale(Vec3::splat(star_cfg.radius * 0.5)),
                 NotShadowCaster,
-                FarStar { sys_idx: si, radius: star_cfg.radius.min(FAR_STAR_RADIUS), galaxy_id: sys.galaxy_id },
+                FarStar { sys_idx: si, radius: star_cfg.radius, galaxy_id: sys.galaxy_id },
             ));
         }
     }

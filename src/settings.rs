@@ -440,11 +440,12 @@ fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystem
     let sd = ((world_seed as u32) ^ ((world_seed >> 32) as u32)).wrapping_mul(0x9E37_79B1);
     let mixed = |x: u32| x.wrapping_add(sd);
 
-    // Une étoile fait 90 000 à 160 000 de rayon : au moins 100 fois ses planètes
+    // Une étoile fait 45 000 à 75 000 de rayon : au moins 100 fois ses planètes, et assez compacte
+    // pour rester un point à l'échelle de la galaxie (les étoiles voisines sont à ~100 000)
     let make_star = |seed: u32| -> (f32, f32, [f32; 3]) {
         let seed = mixed(seed);
         let r_f = pseudo_rand(seed.wrapping_mul(5).wrapping_add(31));
-        let radius = 90_000.0 + r_f * 70_000.0;
+        let radius = 45_000.0 + r_f * 30_000.0;
         let intensity = 8.0 + r_f * 27.0;
         let sc = star_color(seed.wrapping_mul(5).wrapping_add(37));
         (radius, intensity, sc)
@@ -467,7 +468,7 @@ fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystem
             } else {
                 orbit + star_radius * (1.0 + 0.6 * r(60))
             };
-            let radius = star_radius / 100.0 * (0.5 + 0.45 * r(50));
+            let radius = star_radius / 100.0 * (0.7 + 0.25 * r(50));
             let atmosphere = pseudo_rand(seed.wrapping_mul(11).wrapping_add(pu).wrapping_add(71)) < 0.35;
 
             let moons = (0..1 + (r(90) * 1.999) as usize)
@@ -1025,13 +1026,13 @@ mod tests {
         let (mut hot, mut temperate, mut cold) = (0, 0, 0);
         for sys in systems.iter().take(3000) {
             let star = &sys.stars[0];
-            assert!((90_000.0..=160_000.0).contains(&star.radius), "etoile de rayon {}", star.radius);
+            assert!((45_000.0..=75_000.0).contains(&star.radius), "etoile de rayon {}", star.radius);
             assert!((1..=3).contains(&sys.planets.len()), "{} planetes", sys.planets.len());
             let mut previous_edge = star.radius;
             for p in &sys.planets {
                 // Étoile au moins 100 fois plus grande que la planète, lune au moins 3 fois plus petite
                 assert!(p.radius * 100.0 <= star.radius, "planete {} pour une etoile de {}", p.radius, star.radius);
-                assert!(p.radius >= star.radius / 100.0 * 0.5 - 1.0);
+                assert!(p.radius >= star.radius / 100.0 * 0.7 - 1.0 && p.radius >= 300.0);
                 assert!(p.orbit_distance - p.radius > previous_edge, "planete dans l'etoile ou dans la precedente");
                 previous_edge = p.orbit_distance + p.radius;
                 assert!(p.orbit_distance + p.radius < star.radius * 8.0, "systeme trop etendu");
