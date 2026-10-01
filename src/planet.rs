@@ -18,7 +18,7 @@ use crate::astre::{AstreLodRoot, ReloadAstre};
 use crate::ship::Ship;
 /// Les planètes tournent plus vite que ne le voudrait la gravité d'orbites aussi larges : sans
 /// cela, un tour durerait des heures et le soleil ne bougerait jamais dans le ciel.
-const PLANET_MU_SCALE: f32 = 30.0;
+const PLANET_MU_SCALE: f32 = 250.0;
 const STAR_DIVISIONS: usize = 4;
 const MOON_DIVISIONS: usize = 3;
 
@@ -59,6 +59,7 @@ impl Plugin for PlanetPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<RegeneratePlanet>()
             .insert_resource(SpawnedSystems(HashSet::new()))
+            .init_resource::<StarSectors>()
             .add_systems(Startup, (build_spatial_index, generate_all).chain())
             .add_systems(
                 Update,
@@ -96,6 +97,94 @@ pub struct FarStar {
     pub sys_idx: usize,
     pub radius: f32,
     pub galaxy_id: u32,
+}
+
+/// Taille visée d'un secteur : environ 100 étoiles voisines d'une même galaxie.
+const SECTOR_STARS: usize = 100;
+
+/// Un secteur : ~100 étoiles voisines, affichées (ou masquées) et mises à jour ensemble.
+/// À l'échelle de la galaxie, les étoiles lointaines bougent très lentement dans le ciel : un
+/// secteur lointain n'est recalculé que si la caméra a assez bougé pour que cela se voie.
+pub struct Sector {
+    pub galaxy: u32,
+    /// Centre absolu et rayon (distance à l'étoile la plus éloignée).
+    pub abs_center: Vec3,
+    pub radius: f32,
+    systems: Vec<usize>,
+    members: Vec<Entity>,
+    hidden: bool,
+    last_cam: Vec3,
+    last_fwd: Vec3,
+    last_epoch: u32,
+}
+
+#[derive(Resource, Default)]
+pub struct StarSectors {
+    pub list: Vec<Sector>,
+    /// Secteur de chaque système (par indice de système).
+    of_system: HashMap<usize, usize>,
+}
+
+type FarStarItem = (u32, usize, Vec3, Entity);
+
+impl StarSectors {
+    /// (numéro du secteur, nombre d'étoiles) du système.
+    pub fn sector_of(&self, sys: usize) -> Option<(usize, usize)> {
+        let i = *self.of_system.get(&sys)?;
+        Some((i, self.list[i].systems.len()))
+    }
+
+    /// Découpe récursivement les étoiles de chaque galaxie (médiane sur l'axe le plus long)
+    /// jusqu'à des secteurs de `SECTOR_STARS` étoiles au plus.
+    fn build(stars: Vec<FarStarItem>) -> Self {
+        fn split(items: &mut [FarStarItem], out: &mut Vec<Sector>) {
+            if items.is_empty() {
+                return;
+            }
+            if items.len() <= SECTOR_STARS {
+                let center = items.iter().map(|i| i.2).sum::<Vec3>() / items.len() as f32;
+                out.push(Sector {
+                    galaxy: items[0].0,
+                    abs_center: center,
+                    radius: items.iter().map(|i| i.2.distance(center)).fold(0.0, f32::max),
+                    systems: items.iter().map(|i| i.1).collect(),
+                    members: items.iter().map(|i| i.3).collect(),
+                    hidden: false,
+                    last_cam: Vec3::splat(f32::NAN),
+                    last_fwd: Vec3::ZERO,
+                    last_epoch: u32::MAX,
+                });
+                return;
+            }
+            let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+            for i in items.iter() {
+                lo = lo.min(i.2);
+                hi = hi.max(i.2);
+            }
+            let size = hi - lo;
+            let axis = if size.x >= size.y && size.x >= size.z { 0 } else if size.y >= size.z { 1 } else { 2 };
+            items.sort_by(|a, b| a.2[axis].total_cmp(&b.2[axis]));
+            let mid = items.len() / 2;
+            let (left, right) = items.split_at_mut(mid);
+            split(left, out);
+            split(right, out);
+        }
+        let mut by_galaxy: std::collections::BTreeMap<u32, Vec<FarStarItem>> = Default::default();
+        for star in stars {
+            by_galaxy.entry(star.0).or_default().push(star);
+        }
+        let mut list = Vec::new();
+        for (_, mut items) in by_galaxy {
+            split(&mut items, &mut list);
+        }
+        let mut of_system = HashMap::new();
+        for (i, sector) in list.iter().enumerate() {
+            for &sys in &sector.systems {
+                of_system.insert(sys, i);
+            }
+        }
+        Self { list, of_system }
+    }
 }
 
 #[derive(Component)]
@@ -141,7 +230,6 @@ pub struct DistantGalaxyCore {
 #[derive(Component)]
 pub struct GalaxyMeta {
     pub id: u32,
-    pub center: Vec3,
 }
 
 #[derive(Component)]
@@ -338,9 +426,10 @@ fn generate_all(
         .collect();
 
     // Toutes les galaxies (principale et extérieures) : un billboard par système
+    let mut far_stars: Vec<FarStarItem> = Vec::with_capacity(settings.systems.len());
     for (si, sys) in settings.systems.iter().enumerate() {
         let center = sys.center();
-        let gal_center = settings.galaxies.get(sys.galaxy_id as usize).map_or(Vec3::ZERO, |g| g.center);
+        let gal_center = settings.galaxies.get(sys.galaxy_id as usize).map_or(Vec3::ZERO, |g| g.center());
         if center.distance(gal_center) < CORE_EXCLUSION { continue; }
         if let Some(star_cfg) = sys.stars.first() {
             let group = star_color_group(
@@ -348,15 +437,19 @@ fn generate_all(
                 star_cfg.light_color_g,
                 star_cfg.light_color_b,
             );
-            commands.spawn((
-                Mesh3d(quad_meshes[group].clone()),
-                MeshMaterial3d(atlas_mat.clone()),
-                Transform::from_translation(center).with_scale(Vec3::splat(star_cfg.radius * 0.5)),
-                NotShadowCaster,
-                FarStar { sys_idx: si, radius: star_cfg.radius, galaxy_id: sys.galaxy_id },
-            ));
+            let entity = commands
+                .spawn((
+                    Mesh3d(quad_meshes[group].clone()),
+                    MeshMaterial3d(atlas_mat.clone()),
+                    Transform::from_translation(center).with_scale(Vec3::splat(star_cfg.radius * 0.5)),
+                    NotShadowCaster,
+                    FarStar { sys_idx: si, radius: star_cfg.radius, galaxy_id: sys.galaxy_id },
+                ))
+                .id();
+            far_stars.push((sys.galaxy_id, si, sys.abs_center(), entity));
         }
     }
+    commands.insert_resource(StarSectors::build(far_stars));
 
     if let Some(sys) = settings.systems.first() {
         let center = sys.center();
@@ -398,10 +491,10 @@ fn generate_all(
 
     // GalaxyMeta + capsules pour chaque galaxie (0 = principale)
     for (gid, gal) in settings.galaxies.iter().enumerate() {
-        commands.spawn(GalaxyMeta { id: gid as u32, center: gal.center });
+        commands.spawn(GalaxyMeta { id: gid as u32 });
         spawn_arm_capsules(
             &mut commands, &capsule_mesh, &capsule_mat,
-            gid as u32, gal.center, gal.tilt, &gal.shape(), gal.radius,
+            gid as u32, gal.center(), gal.tilt, &gal.shape(), gal.radius,
             // Chaque galaxie extérieure décale sa palette : elles n'ont pas toutes les mêmes couleurs
             if gid == 0 { 0 } else { (crate::settings::pseudo_rand(gid as u32 * 31 + 7) * ARM_COLORS as f32) as usize % ARM_COLORS },
         );
@@ -571,7 +664,7 @@ fn spawn_distant_galaxy_cores(
     let core_mesh = meshes.add(Sphere::new(1.0).mesh().ico(3).unwrap());
 
     for (gi, gal) in galaxies.iter().skip(1).enumerate() {
-        let center = gal.center;
+        let center = gal.center();
         let tilt = gal.tilt;
 
         // Trou noir central
@@ -1850,41 +1943,23 @@ fn reload_asteroid_belts(
     }
 }
 
-/// Renvoie `true` (et mémorise la pose) si la caméra a assez bougé depuis la
-/// dernière mise à jour des billboards lointains. Les étoiles lointaines sont à
-/// des dizaines de milliers d'unités : un seuil de 20 unités / ~2.5° est invisible.
-/// `fwd` = `Vec3::ZERO` pour ignorer l'orientation.
-fn camera_moved_enough(last: &mut Option<(Vec3, Vec3)>, pos: Vec3, fwd: Vec3) -> bool {
-    if let Some((lp, lf)) = *last {
-        let same_dir = fwd == Vec3::ZERO || lf.dot(fwd) > 0.999;
-        if same_dir && lp.distance_squared(pos) < 20.0 * 20.0 {
-            return false;
-        }
-    }
-    *last = Some((pos, fwd));
-    true
-}
-
 fn update_far_star_scale(
     camera_q: Query<(&GlobalTransform, &Transform), With<Camera3d>>,
     spawned: Res<SpawnedSystems>,
     settings: Res<GameSettings>,
     brightness_mats: Res<StarBrightnessMaterials>,
+    epoch: Res<crate::origin::OriginEpoch>,
+    mut sectors: ResMut<StarSectors>,
     mut far_q: Query<(&FarStar, &mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>), Without<Camera3d>>,
-    mut last_cam: Local<Option<(Vec3, Vec3)>>,
 ) {
     let (cam_gt, cam_tf) = camera_q.single();
     let cam_pos = cam_gt.translation();
     let cam_fwd = cam_tf.forward().as_vec3();
-
-    // ~60 000 billboards (toutes galaxies) : inutile de tout recalculer si la caméra n'a quasiment pas bougé
-    if !spawned.is_changed() && !camera_moved_enough(&mut last_cam, cam_pos, cam_fwd) {
-        return;
-    }
+    let system_changed = spawned.is_changed();
 
     // Fondu / luminosité calculés une fois par galaxie (distance caméra → centre galactique)
     let gal_lod: Vec<(f32, f32, usize)> = settings.galaxies.iter().map(|g| {
-        let gal_dist = cam_pos.distance(g.center);
+        let gal_dist = cam_pos.distance(g.center());
         let raw = ((gal_dist - LOD_STARS_END) / (LOD_STARS_GONE - LOD_STARS_END)).clamp(0.0, 1.0);
         let fade = smoothstep(raw);
         let brightness = (5_000_000.0 * GALAXY_SCALE / gal_dist.max(1.0)).clamp(0.05, 1.0) * (1.0 - fade);
@@ -1892,46 +1967,78 @@ fn update_far_star_scale(
         (gal_dist, fade, step)
     }).collect();
 
-    for (fs, mut tf, mut vis, mut mat) in &mut far_q {
-        let (gal_dist, lod_fade, step) = gal_lod.get(fs.galaxy_id as usize).copied().unwrap_or((f32::MAX, 1.0, 0));
-        if lod_fade >= 1.0 {
-            if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
+    for sector in sectors.list.iter_mut() {
+        let (gal_dist, lod_fade, step) = gal_lod.get(sector.galaxy as usize).copied().unwrap_or((f32::MAX, 1.0, 0));
+        let center = crate::settings::to_local(sector.abs_center);
+        let d = cam_pos.distance(center);
+
+        // Tout le secteur est invisible : galaxie estompée, ou secteur lointain dans notre dos
+        let behind = d > sector.radius * 2.0 + 1000.0 && cam_fwd.dot((center - cam_pos) / d) < -0.5;
+        if lod_fade >= 1.0 || behind {
+            if !sector.hidden {
+                sector.hidden = true;
+                for &e in &sector.members {
+                    if let Ok((_, _, mut vis, _)) = far_q.get_mut(e) {
+                        if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
+                    }
+                }
+            }
             continue;
         }
 
-        if spawned.0.contains(&fs.sys_idx) {
-            if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
+        // Un secteur lointain bouge à peine dans le ciel : on ne le recalcule que si la caméra a
+        // parcouru une fraction visible de sa distance (ou tourné, ou si le monde a été recentré)
+        let reach = (d - sector.radius).max(1.0);
+        let still = !sector.hidden
+            && sector.last_epoch == epoch.0
+            && !system_changed
+            && cam_pos.distance(sector.last_cam) < reach * 0.003
+            && cam_fwd.dot(sector.last_fwd) > 0.999;
+        if still {
             continue;
         }
+        sector.hidden = false;
+        sector.last_cam = cam_pos;
+        sector.last_fwd = cam_fwd;
+        sector.last_epoch = epoch.0;
 
-        let to_star = tf.translation - cam_pos;
-        let dist = to_star.length();
+        for &e in &sector.members {
+            let Ok((fs, mut tf, mut vis, mut mat)) = far_q.get_mut(e) else { continue };
+            if spawned.0.contains(&fs.sys_idx) {
+                if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
+                continue;
+            }
 
-        if dist > 1000.0 && cam_fwd.dot(to_star / dist) < -0.5 {
-            if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
-            continue;
+            let to_star = tf.translation - cam_pos;
+            let dist = to_star.length();
+
+            if dist > 1000.0 && cam_fwd.dot(to_star / dist) < -0.5 {
+                if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
+                continue;
+            }
+
+            if *vis != Visibility::Inherited { *vis = Visibility::Inherited; }
+            let min_scale = fs.radius * 0.5;
+            let angular_scale = dist * 0.005;
+            let dist_shrink = (20_000_000.0 * GALAXY_SCALE / gal_dist.max(1.0)).clamp(0.05, 1.0);
+            let mut scale = angular_scale.max(min_scale) * dist_shrink;
+            if lod_fade > 0.0 { scale *= 1.0 - lod_fade; }
+            tf.scale = Vec3::splat(scale);
+
+            if mat.0 != brightness_mats.steps[step] {
+                mat.0 = brightness_mats.steps[step].clone();
+            }
+
+            let n = to_star / dist.max(0.001);
+            tf.look_to(n, Vec3::Y);
         }
-
-        if *vis != Visibility::Inherited { *vis = Visibility::Inherited; }
-        let min_scale = fs.radius * 0.5;
-        let angular_scale = dist * 0.005;
-        let dist_shrink = (20_000_000.0 * GALAXY_SCALE / gal_dist.max(1.0)).clamp(0.05, 1.0);
-        let mut scale = angular_scale.max(min_scale) * dist_shrink;
-        if lod_fade > 0.0 { scale *= 1.0 - lod_fade; }
-        tf.scale = Vec3::splat(scale);
-
-        if mat.0 != brightness_mats.steps[step] {
-            mat.0 = brightness_mats.steps[step].clone();
-        }
-
-        let n = to_star / dist.max(0.001);
-        tf.look_to(n, Vec3::Y);
     }
 }
 
 fn update_arm_capsule_lod(
     camera_q: Query<&GlobalTransform, With<Camera3d>>,
     galaxy_q: Query<&GalaxyMeta>,
+    settings: Res<GameSettings>,
     lod_mats: Res<GalaxyLodMaterials>,
     mut capsule_q: Query<(&ArmCapsule, &mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>)>,
 ) {
@@ -1939,9 +2046,10 @@ fn update_arm_capsule_lod(
 
     let mut gal_dists: HashMap<u32, f32> = HashMap::new();
     for meta in &galaxy_q {
-        gal_dists.insert(meta.id, (cam_pos - meta.center).length());
+        if let Some(g) = settings.galaxies.get(meta.id as usize) {
+            gal_dists.insert(meta.id, (cam_pos - g.center()).length());
+        }
     }
-    gal_dists.insert(0, cam_pos.length());
 
     const DETAIL_CUTOFF: f32 = 200_000_000.0 * GALAXY_SCALE;
     for (cap, mut tf, mut vis, mut mat) in &mut capsule_q {
@@ -1982,7 +2090,7 @@ fn rotate_accretion_disk(
 /// Distance du centre d'un système au-delà de laquelle on l'a quitté : dernière orbite, avec ses
 /// lunes et le rayon de la planète, plus une marge.
 /// Rayon de recherche (au plus) d'un système qui contient le vaisseau.
-const MAX_SYSTEM_REACH: f32 = 4_000_000.0;
+const MAX_SYSTEM_REACH: f32 = 14_000_000.0;
 
 fn system_reach(sys: &crate::settings::StarSystemConfig) -> f32 {
     let planets = sys.planets.iter().map(|p| {

@@ -21,13 +21,13 @@ use crate::net::{display_name, sanitize_tag, Net, MAX_CLAIMS};
 use crate::ship::Ship;
 use crate::net_ui::NetPanel;
 use crate::planet::{StarId, StarRoot};
-use crate::settings::GameSettings;
+use crate::settings::{GameSettings, StarSystemConfig};
 use crate::ui::MenuState;
 use crate::{target_system, CameraTarget};
 
 /// Rayon de la frontière autour d'une étoile revendiquée. Deux étoiles d'un
 /// même propriétaire à moins de 2 rayons ont une frontière commune.
-pub const CLAIM_RADIUS: f32 = 200_000.0 * crate::settings::GALAXY_SCALE;
+pub const CLAIM_RADIUS: f32 = 120_000.0 * crate::settings::GALAXY_SCALE;
 const CIRCLE_SEGMENTS: usize = 96;
 
 pub struct ClaimsPlugin;
@@ -475,9 +475,18 @@ pub(crate) fn outline_segments(borders: &[Border], radius: f32) -> Vec<(Vec3, Ve
 }
 
 pub(crate) fn border_of(settings: &GameSettings, sys: usize) -> Option<Border> {
+    border_with(settings, sys, StarSystemConfig::center)
+}
+
+/// Frontière en coordonnées absolues (pour ce qui est calculé une fois pour toutes).
+pub(crate) fn border_of_abs(settings: &GameSettings, sys: usize) -> Option<Border> {
+    border_with(settings, sys, StarSystemConfig::abs_center)
+}
+
+fn border_with(settings: &GameSettings, sys: usize, at: fn(&StarSystemConfig) -> Vec3) -> Option<Border> {
     let sys = settings.systems.get(sys)?;
     let tilt = settings.galaxies.get(sys.galaxy_id as usize).map_or(Quat::IDENTITY, |g| g.tilt);
-    Some(Border { center: sys.center(), u: tilt * Vec3::X, v: tilt * Vec3::Z, normal: tilt * Vec3::Y })
+    Some(Border { center: at(sys), u: tilt * Vec3::X, v: tilt * Vec3::Z, normal: tilt * Vec3::Y })
 }
 
 fn draw_claims(time: Res<Time>, net: Res<Net>, settings: Res<GameSettings>, guilds: Res<Guilds>, mut gizmos: Gizmos) {

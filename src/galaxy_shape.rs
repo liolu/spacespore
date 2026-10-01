@@ -846,7 +846,7 @@ mod tests {
     fn another_world_seed_gives_other_galaxies() {
         let a = default_galaxies(42);
         let b = default_galaxies(43);
-        let differing = a.iter().zip(&b).skip(1).filter(|(x, y)| x.center.distance(y.center) > 1.0).count();
+        let differing = a.iter().zip(&b).skip(1).filter(|(x, y)| x.abs_center.distance(y.abs_center) > 1.0).count();
         assert!(differing > 90, "{differing}");
         assert!(a.iter().zip(&b).skip(1).any(|(x, y)| x.kind != y.kind));
     }

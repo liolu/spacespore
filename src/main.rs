@@ -15,6 +15,7 @@ mod lod;
 mod mesher;
 mod net;
 mod net_ui;
+mod origin;
 mod planet;
 mod settings;
 mod ship;
@@ -240,6 +241,7 @@ fn main() {
         // ── Vaisseau ────────────────────────────────────────────────────
         .add_plugins(ShipPlugin)
         .add_plugins(surface::SurfacePlugin)
+        .add_plugins(origin::OriginPlugin)
 
         // ── UI ──────────────────────────────────────────────────────────
         .add_plugins(UiPlugin)
@@ -644,7 +646,7 @@ fn select_world_target(
 
     // ── Ouvertures de trous de ver (visibles de près) ──────────────
     for w in &queries.wormholes.list {
-        for (sys, mouth) in [(w.a, w.mouth_a), (w.b, w.mouth_b)] {
+        for (sys, mouth) in [(w.a, w.mouth_a()), (w.b, w.mouth_b())] {
             let dist = cam_pos.distance(mouth);
             if dist <= wormhole::DRAW_RANGE {
                 // Même taille que le dessin de l'ouverture
@@ -664,7 +666,7 @@ fn select_world_target(
                 return;
             }
             let at_core = settings.galaxies.get(current_gal as usize).zip(ship_q.get_single().ok()).is_some_and(|(g, ship)| {
-                ship.translation().distance(g.center) <= g.core_radius * 4.0
+                ship.translation().distance(g.center()) <= g.core_radius * 4.0
             });
             if !at_core {
                 net.notify("Rejoignez le trou noir de votre galaxie pour sauter vers une autre galaxie.", now);
@@ -859,9 +861,9 @@ pub struct CameraController {
 }
 
 /// Limite du zoom 1 : en dessous, on reste verrouillé dans le système courant.
-/// Un système s'étend sur ~3 millions d'unités (étoile de 300 000 de rayon, planètes à 2,4 à 7 rayons) :
+/// Un système s'étend sur ~10 millions d'unités (étoile de 1 million de rayon, planètes à 2,4 à 7 rayons) :
 /// le niveau « Planète » les contient en entier.
-pub const ZOOM_PLANET_MAX: f32 = 3_500_000.0;
+pub const ZOOM_PLANET_MAX: f32 = 12_000_000.0;
 
 /// Distance de caméra pour voir une galaxie entière (reste au zoom 4 pour
 /// pouvoir cliquer ses étoiles).
@@ -902,7 +904,7 @@ impl ZoomLevel {
     fn from_distance(d: f32) -> Self {
         if d < ZOOM_PLANET_MAX {
             ZoomLevel::Planet
-        } else if d < 4_500_000.0 {
+        } else if d < 16_000_000.0 {
             ZoomLevel::System
         } else if d < 2_000_000.0 * settings::GALAXY_SCALE {
             ZoomLevel::Sector
@@ -1894,6 +1896,7 @@ fn update_system_hud(
     star_q: Query<&StarId, With<StarRoot>>,
     wormholes: Res<wormhole::Wormholes>,
     npcs: Res<galaxy_fx::NpcTerritories>,
+    sectors: Res<planet::StarSectors>,
 ) {
     // Étoile revendiquée : on affiche son propriétaire
     let target_sys = match target_system(&camera_target.0, &star_q) {
@@ -1901,6 +1904,9 @@ fn update_system_hud(
         _ => None,
     };
     let mut extra = String::new();
+    if let Some((sector, stars)) = target_sys.and_then(|si| sectors.sector_of(si)) {
+        extra.push_str(&format!("\nSecteur {} ({} etoiles)", sector + 1, stars));
+    }
     if let Some(who) = target_sys.and_then(|si| claims::claim_owner_label(si, &net, &settings, &guilds)) {
         extra.push_str(&format!("\nRevendiquee par {who}"));
     }
@@ -2006,8 +2012,15 @@ fn draw_planet_trails(
     time: Res<Time>,
     planets: Query<(&GlobalTransform, &PlanetId)>,
     mut trails: Local<std::collections::HashMap<usize, std::collections::VecDeque<Vec3>>>,
+    epoch: Res<origin::OriginEpoch>,
+    mut seen_epoch: Local<u32>,
     mut gizmos: Gizmos,
 ) {
+    // L'origine flottante a bougé : les anciennes positions ne sont plus dans le même repère
+    if *seen_epoch != epoch.0 {
+        *seen_epoch = epoch.0;
+        trails.clear();
+    }
     const MAX_POINTS: usize = 120;
     const STEP: f32 = 3_000.0;
     // Seulement aux zooms où l'on voit les planètes
@@ -2053,7 +2066,8 @@ fn update_zoom_hud(
     let xyz = ship_q
         .get_single()
         .map(|gt| {
-            let p = gt.translation();
+            // Position absolue dans l'univers (l'origine flottante rend la position monde sans intérêt)
+            let p = settings::to_abs(gt.translation());
             format!("\nX {:.0}  Y {:.0}  Z {:.0}", p.x, p.y, p.z)
         })
         .unwrap_or_default();

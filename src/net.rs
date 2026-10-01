@@ -33,6 +33,7 @@
 //  synchronisé (inutile : on ne voit pas les planètes de l'autre).
 // ─────────────────────────────────────────────────────────────────────────
 
+use bevy::math::DVec3;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -51,7 +52,7 @@ pub const MAX_NAME_LEN: usize = 16;
 pub const MAX_TAG_LEN: usize = 5;
 /// Étoiles revendiquées au plus par joueur.
 pub const MAX_CLAIMS: usize = 5;
-const PROTOCOL: u32 = 5;
+const PROTOCOL: u32 = 6;
 pub const MAX_CHAT_LEN: usize = 120;
 /// Messages gardés à l'écran / dans l'historique de l'hôte.
 const CHAT_HISTORY: usize = 50;
@@ -132,7 +133,8 @@ struct PlayerState {
     id: u32,
     /// Empreinte du profil actuel du joueur (voir `Profile::fingerprint`).
     ph: u64,
-    pos: [f32; 3],
+    /// Position ABSOLUE (l'origine flottante de chaque joueur est différente).
+    pos: [f64; 3],
     rot: [f32; 4],
     /// Système stellaire où se trouve le joueur (None = espace profond).
     sys: Option<u32>,
@@ -875,7 +877,8 @@ pub struct Peer {
     /// Combat, sièges et diplomatie annoncés par ce joueur.
     pub status: PlayerStatus,
     pub color: [f32; 3],
-    pos: Vec3,
+    /// Position absolue.
+    abs: DVec3,
     rot: Quat,
     vel: Vec3,
     last_update: f64,
@@ -885,9 +888,9 @@ pub struct Peer {
 }
 
 impl Peer {
-    /// Dernière position connue du vaisseau.
+    /// Dernière position connue du vaisseau, dans le repère monde (origine flottante).
     pub fn pos(&self) -> Vec3 {
-        self.pos
+        (self.abs - crate::settings::origin()).as_vec3()
     }
 
     /// État actuel estimé (durée et horloge avancées depuis la réception).
@@ -896,7 +899,7 @@ impl Peer {
         PlayerState {
             id,
             ph: self.ph,
-            pos: self.pos.to_array(),
+            pos: self.abs.to_array(),
             rot: self.rot.to_array(),
             sys: self.sys,
             stay: self.stay + age,
@@ -1201,10 +1204,10 @@ fn pick_lan_host(lan: &[LanHost], my_sid: u64, hosting_alone: bool, world: u64, 
 /// étoiles, diplomatie…) est repris du cache quand son empreinte change ;
 /// un joueur dont on n'a encore aucun profil n'est pas affiché.
 fn update_peer(peers: &mut HashMap<u32, Peer>, profiles: &ProfileCache, st: PlayerState, now: f64) {
-    if !valid_vec(&st.pos) || !valid_vec(&st.rot) {
+    if !st.pos.iter().all(|x| x.is_finite() && x.abs() < 1.0e13) || !valid_vec(&st.rot) {
         return;
     }
-    let pos = Vec3::from_array(st.pos);
+    let pos = DVec3::from_array(st.pos);
     let q = Quat::from_array(st.rot);
     let rot = if q.length_squared() > 1.0e-6 { q.normalize() } else { Quat::IDENTITY };
     if !st.clock.is_finite() || !st.stay.is_finite() {
@@ -1218,16 +1221,16 @@ fn update_peer(peers: &mut HashMap<u32, Peer>, profiles: &ProfileCache, st: Play
         peers.insert(st.id, Peer {
             name: String::new(), tag: String::new(), gid: 0, ph: 0, claims: Vec::new(),
             status: PlayerStatus::default(), color: [1.0; 3],
-            pos, rot, vel: Vec3::ZERO, last_update: now, sys: st.sys, stay: 0.0, clock: 0.0,
+            abs: pos, rot, vel: Vec3::ZERO, last_update: now, sys: st.sys, stay: 0.0, clock: 0.0,
         });
     }
     let Some(p) = peers.get_mut(&st.id) else { return };
 
     let dt = (now - p.last_update) as f32;
     if dt > 0.001 {
-        p.vel = (pos - p.pos) / dt;
+        p.vel = (pos - p.abs).as_vec3() / dt;
     }
-    p.pos = pos;
+    p.abs = pos;
     p.rot = rot;
     p.last_update = now;
     p.sys = st.sys;
@@ -1360,7 +1363,7 @@ pub(crate) fn net_update(
         hits: net.local.hits.clone(),
         siege: net.local.siege,
         taken: net.local.taken.iter().map(|t| t.0).collect(),
-        pos: pos.to_array(),
+        pos: crate::settings::to_abs(pos).to_array(),
         rot: rot.to_array(),
         sys,
         stay: now - net.sys_since,
@@ -1897,7 +1900,7 @@ fn sync_remote_ships(
 
         // Prédiction courte (≤ 0,25 s) + lissage exponentiel
         let age = (now - peer.last_update).clamp(0.0, 0.25) as f32;
-        let predicted = peer.pos + peer.vel * age;
+        let predicted = peer.pos() + peer.vel * age;
         let gap = tf.translation.distance(predicted);
         if gap > 200_000.0 || tf.translation == Vec3::ZERO {
             tf.translation = predicted;
@@ -1928,7 +1931,7 @@ fn sync_remote_ships(
         let outline = materials.add(outline_material(peer.color));
         commands
             .spawn((
-                Transform::from_translation(peer.pos).with_rotation(peer.rot),
+                Transform::from_translation(peer.pos()).with_rotation(peer.rot),
                 Visibility::default(),
                 RemoteShip { id: *id, color: peer.color, outline: outline.clone() },
             ))
@@ -2193,7 +2196,7 @@ mod tests {
         assert_eq!(cnet.player_count(), 2);
         let hote = cnet.peers.values().find(|p| p.name == "Hote").unwrap();
         assert_eq!(hote.color, [1.0, 0.0, 0.0]);
-        assert!(hote.pos.distance(Vec3::new(100.0, 0.0, 0.0)) < 0.01);
+        assert!(hote.pos().distance(Vec3::new(100.0, 0.0, 0.0)) < 0.01);
 
         // Chat : chacun écrit, les deux voient les deux messages une seule fois
         host.world_mut().send_event(NetCommand::Chat("salut".into()));
