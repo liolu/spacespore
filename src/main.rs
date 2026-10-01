@@ -19,6 +19,7 @@ mod net_ui;
 mod origin;
 mod planet;
 mod planetgen;
+mod scanner;
 mod settings;
 mod ship;
 mod surface;
@@ -206,6 +207,7 @@ fn main() {
         .add_plugins(PlanetPlugin)
         .add_plugins(planetgen::PlanetGenPlugin)
         .add_plugins(gas::GasPlugin)
+        .add_plugins(scanner::ScannerPlugin)
 
         // ── Legacy astre plugins désactivés — la galaxie gère tout ──
         // Ressources + events vides pour l'UI (pas de Startup spawn)

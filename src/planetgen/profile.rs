@@ -8,7 +8,7 @@
 //! atmosphère oui/non, température, relief…) et restent vides (`None`, listes vides) pour ce que
 //! les phases suivantes calculeront. Les valeurs marquées « provisoire » seront remplacées.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use super::live::{delta_of, BodyId, Live, WorldDeltas};
@@ -17,7 +17,7 @@ use super::{atmosphere, system, units};
 use crate::settings::{MoonConfig, PlanetConfig, StarConfig, StarSystemConfig};
 
 /// Rigueur d'une donnée (règle 5) : réaliste, spéculative ou fictive.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Realism {
     Realistic,
@@ -26,7 +26,7 @@ pub enum Realism {
 }
 
 /// Trait ou anomalie d'un astre (phase 9).
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Trait {
     pub name: String,
     pub realism: Realism,
@@ -284,8 +284,19 @@ pub struct ResourcesSection {
 pub struct GameplaySection {
     /// On peut s'y poser et y marcher.
     pub walkable: bool,
+    /// Score d'habitabilité (0 à 1) et son verdict.
     pub habitability: Option<f64>,
+    pub habitability_label: Option<String>,
+    /// Facteurs du score : température, eau, pression, radiation, gravité, air (0 à 1).
+    pub habitability_factors: BTreeMap<&'static str, f64>,
+    /// Dangers (« radiation (niveau 2) ») et le pire niveau (0 à 3).
     pub hazards: Vec<String>,
+    pub danger_level: u8,
+    /// Anneaux, aurores, chauffage par les marées.
+    pub ring: Option<String>,
+    pub aurora: Option<String>,
+    pub tidal_heating: Option<f64>,
+    pub subsurface_ocean: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -397,6 +408,34 @@ fn climate_section(p: &PlanetConfig) -> ClimateSection {
         albedo: (air.t_eq_k > 0.0).then(|| f(air.albedo)),
         wind_m_s: (air.t_eq_k > 0.0).then(|| f(air.wind_ms)),
         winds: (!air.winds.is_empty()).then(|| air.winds.clone()),
+    }
+}
+
+fn gameplay_section(p: &PlanetConfig) -> GameplaySection {
+    let h = &p.habitability;
+    let known = !h.label.is_empty();
+    let mut hazards: Vec<String> = h.dangers.iter().map(|d| format!("{} (niveau {})", d.name, d.level)).collect();
+    if p.gaseous() {
+        hazards.insert(0, "pas de sol : la pression abime la coque du vaisseau".to_string());
+    }
+    GameplaySection {
+        walkable: !p.gaseous(),
+        habitability: known.then(|| f(h.score)),
+        habitability_label: known.then(|| h.label.clone()),
+        habitability_factors: if known {
+            [("temperature", h.temperature), ("eau", h.water), ("pression", h.pressure), ("radiation", h.radiation), ("gravite", h.gravity), ("air", h.air)]
+                .into_iter()
+                .map(|(k, v)| (k, f(v)))
+                .collect()
+        } else {
+            BTreeMap::new()
+        },
+        hazards,
+        danger_level: h.danger_level,
+        ring: p.ring.map(|r| format!("de {:.0} a {:.0} (rayon {:.0})", r.inner, r.outer, p.radius)),
+        aurora: p.aurora.map(|a| format!("force {:.2} vers {:.0} degres de latitude", a.strength, a.latitude)),
+        tidal_heating: None,
+        subsurface_ocean: p.hydrology.subsurface_ocean,
     }
 }
 
@@ -530,16 +569,8 @@ impl PlanetProfile {
             },
             biology: biology_section(p),
             resources: ResourcesSection::default(),
-            gameplay: GameplaySection {
-                walkable: !p.gaseous(),
-                hazards: if p.gaseous() {
-                    vec!["pas de sol : la pression abime la coque du vaisseau".to_string()]
-                } else {
-                    Vec::new()
-                },
-                ..Default::default()
-            },
-            traits: Vec::new(),
+            gameplay: gameplay_section(p),
+            traits: p.traits.clone(),
         }
     }
 
@@ -554,6 +585,24 @@ impl PlanetProfile {
     ) -> Self {
         let id = BodyId::Moon { system: sys_idx as u32, planet: planet_index as u16, index: index as u16 };
         let parent = BodyId::Planet { system: sys_idx as u32, index: planet_index as u16 };
+        // Lune générée (phase 9) : toute la chaîne, comme une planète
+        if m.generated() {
+            let mut prof = Self::planet(sys_idx, planet_index, sys, &m.as_planet(planet), deltas);
+            prof.id = id.key();
+            prof.kind = BodyKind::Moon;
+            prof.name = format!("{} {} {}", sys.name, planet_index + 1, (b'a' + index as u8) as char);
+            prof.layer_seeds = layer_seeds(m.seed as u64, &PLANET_LAYERS);
+            prof.orbit.parent = parent.key();
+            prof.orbit.distance_game = f(m.orbit_distance);
+            prof.orbit.period_days = None;
+            prof.orbit.rotation_period_h = None;
+            prof.orbit.axial_tilt_deg = None;
+            prof.orbit.semi_major_axis_au = Live::new(prof.orbit.semi_major_axis_au.base, delta_of(deltas, id).orbit_au);
+            prof.physics = physics(f(m.radius), f(m.radius_earth), f(m.mass_earth), Some("lune"), id, deltas);
+            prof.composition = composition(id, deltas);
+            prof.gameplay.tidal_heating = Some(f(m.tidal_heat));
+            return prof;
+        }
         // Une lune est à la distance de sa planète de l'étoile : même climat (comme `BodyParams::moon`)
         let au = if planet.semi_major_au > 0.0 {
             f(planet.semi_major_au)
@@ -634,6 +683,11 @@ mod tests {
                 assert!((prof.physics.surface_gravity_g / f(p.gravity_g) - 1.0).abs() < 1e-3);
                 assert!(prof.physics.size_class.is_some() && prof.orbit.period_days.is_some());
                 assert_eq!(prof.gameplay.walkable, !p.gaseous());
+                // Habitabilité et dangers (phase 9)
+                assert!(prof.gameplay.habitability.is_some() && prof.gameplay.danger_level <= 3);
+                if p.gaseous() {
+                    assert_eq!(prof.gameplay.danger_level, 3);
+                }
                 // Atmosphère et climat de la phase 3
                 assert_eq!(prof.atmosphere.gases.len(), p.air.gases.len());
                 if prof.atmosphere.present && !p.gaseous() {
@@ -647,7 +701,11 @@ mod tests {
                     let moon = PlanetProfile::moon(si, pi, mi, sys, p, m, &deltas);
                     assert_eq!(moon.orbit.parent, prof.id);
                     assert!(moon.physics.radius_earth.current() < r / 2.9);
-                    assert!(!moon.atmosphere.present);
+                    assert_eq!(moon.id, format!("s{si}.p{pi}.m{mi}"));
+                    // Une lune peut avoir de l'air (Titan) ; si oui, au moins 10 mbar
+                    if moon.atmosphere.present {
+                        assert!(moon.atmosphere.surface_pressure_bar.unwrap() >= 0.01);
+                    }
                 }
             }
         }

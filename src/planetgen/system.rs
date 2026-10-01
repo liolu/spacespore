@@ -12,12 +12,14 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::atmosphere::{self, AirInput};
+use super::atmosphere::{self, Air, AirInput};
 use super::climate::Climate;
+use super::habitability::{self, HabInput, Habitability};
+use super::traits;
 use super::genome::SystemGenome;
 use super::biome::{self, BiomeInput, BiomeParams};
 use super::geology::{self, GeoInput, Geology};
-use super::hydrology::{self, HydroInput, Liquid, WaterState};
+use super::hydrology::{self, HydroInput, Hydrology, Liquid, WaterState};
 use super::seeds::{Layer, LayerRng};
 use super::star::{StarClass, StarPhysics};
 use crate::settings::{MoonConfig, PlanetConfig};
@@ -155,60 +157,16 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
         drafts.push(Draft { kind, au: a, mass, radius, hot: hot_jupiter });
     }
 
-    // ── Lunes, orbites affichées, physique ───────────────────────────────
+    // ── Planètes et lunes : toute la chaîne (atmosphère → biomes), anneaux, aurores ──
     let mut planets: Vec<PlanetConfig> = Vec::with_capacity(n);
     for (pi, d) in drafts.iter().enumerate() {
         let pu = pi as u32;
         let seed = genome.planet_base.wrapping_add(pu);
-        let mut phys = LayerRng::new(seed as u64, Layer::Physics);
-        let _ = (phys.unit(), phys.unit()); // nature et masse, déjà tirées
         let mut relief = LayerRng::new(seed as u64, Layer::Relief);
         let mut spin = LayerRng::new(seed as u64, Layer::Orbit);
         let radius = q(d.radius * earth, 1.0).max(50.0);
         let gaseous = d.kind.gaseous();
-
-        // Lunes : 0 à 2 pour une rocheuse, davantage pour une géante
-        let moon_count = match d.kind {
-            PlanetKind::Rocky if d.radius < 0.5 => spin.weighted(&[0.6, 0.4]),
-            PlanetKind::Rocky | PlanetKind::MiniNeptune => spin.weighted(&[0.3, 0.45, 0.25]),
-            PlanetKind::IceGiant => 1 + spin.weighted(&[0.3, 0.3, 0.25, 0.15]),
-            PlanetKind::GasGiant => 2 + spin.weighted(&[0.35, 0.35, 0.3]),
-        };
         let icy = d.au > snow;
-        // Lunes sans air : température d'équilibre (albédo 0,12), grands écarts jour / nuit
-        let moon_t = atmosphere::equilibrium_temperature(lum, d.au, 0.12) as f32;
-        let moon_climate = Climate { mean_c: moon_t - 273.15, span: moon_t * 0.35, lapse: 0.0, diurnal: moon_t * 0.3, tilt: 0.0 };
-        let mut moons = Vec::with_capacity(moon_count);
-        for mi in 0..moon_count {
-            let mu = mi as u32;
-            let moon_seed = genome.planet_base.wrapping_add(500 + pu * 8 + mu);
-            let mut m = LayerRng::new(moon_seed as u64, Layer::Physics);
-            // Rocheuse : 1/8 à 1/3 de sa planète ; géante : de 0,08 à 0,45 R⊕ (Ganymède 0,41)
-            let r_earth = if gaseous {
-                m.range(0.08, 0.45).min(d.radius / 3.0)
-            } else {
-                d.radius * m.range(0.12, 0.33)
-            };
-            let moon_radius = q(r_earth * earth, 1.0).max(40.0);
-            let spread = if gaseous { (1.8, 1.1, 0.4) } else { (2.4, 1.7, 0.5) };
-            let orbit_distance = radius as f64 * (spread.0 + spread.1 * mi as f64 + spread.2 * m.unit()) + moon_radius as f64 * 3.0;
-            let mass = moon_mass(r_earth, icy);
-            moons.push(MoonConfig {
-                orbit_distance: q(orbit_distance, 1.0),
-                radius: moon_radius,
-                seed: moon_seed,
-                eccentricity: q(m.range(0.0, 0.03), 1e-4),
-                inclination: q(m.range(-0.05, 0.05), 1e-4),
-                ascending_node: q(m.range(0.0, std::f64::consts::TAU), 1e-4),
-                arg_periapsis: q(m.range(0.0, std::f64::consts::TAU), 1e-4),
-                mean_anomaly_0: q(m.range(0.0, std::f64::consts::TAU), 1e-4),
-                radius_earth: r_earth as f32,
-                mass_earth: mass as f32,
-                gravity_g: (mass / (r_earth * r_earth)) as f32,
-                climate: Some(moon_climate),
-                relief: Some(geology::moon_relief(moon_seed)),
-            });
-        }
 
         // Rotation : bloquée près de l'étoile (une face toujours éclairée), sinon 10 à 40 h
         // (9 à 17 h pour les géantes) ; inclinaison de l'axe surtout faible, parfois couchée
@@ -224,72 +182,117 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
         let tilt_roll = spin.unit();
         let axial_tilt = if locked { 0.0 } else if tilt_roll < 0.05 { spin.range(60.0, 180.0) } else { 35.0 * spin.unit().powf(1.5) };
 
-        // Atmosphère et climat (phase 3) : rétention, composition, serre, nuages, vents, ciel
-        let (air, climate) = atmosphere::generate(
-            &AirInput {
-                kind: d.kind,
-                mass: d.mass,
-                radius: d.radius,
-                au: d.au,
-                luminosity: lum,
-                xray: star.xray_flux,
-                star_color: star.color,
-                locked,
-                rotation_h,
-                axial_tilt,
-            },
-            &mut LayerRng::new(seed as u64, Layer::Atmosphere),
-        );
-        let atmosphere = !gaseous && air.present();
-        // Eau et glace (phase 4) : liquide des mers, couverture océanique, calottes
-        let (hydrology, sea_level) = hydrology::generate(
-            &HydroInput { kind: d.kind, snow_ratio: d.au / snow, mass: d.mass, air: &air, climate: &climate },
-            &mut LayerRng::new(seed as u64, Layer::Hydrology),
-        );
-        // Géologie et relief (phase 5) : tectonique, volcans, cratères, érosion (voir plus bas)
-        let geology = if gaseous {
-            Geology::default()
-        } else {
-            geology::generate(
-                &GeoInput {
-                    mass: d.mass,
-                    age_gyr: star.age_gyr,
-                    gravity: d.mass / (d.radius * d.radius),
-                    liquid_water: hydrology.hydro.liquid == Liquid::Water && hydrology.water_state == WaterState::Liquid,
-                    pressure: air.pressure_bar as f64,
-                    ice: hydrology.ice_caps > 0.05,
-                    wind_ms: air.wind_ms as f64,
-                    rotation_h,
-                    locked,
-                },
-                seed,
-                &mut LayerRng::new(seed as u64, Layer::Geology),
-            )
-        };
-        // Sols et biomes (phase 6)
-        let liquid_water = hydrology.hydro.liquid == Liquid::Water && hydrology.water_state == WaterState::Liquid;
-        let biomes = if gaseous {
-            BiomeParams::default()
-        } else {
-            biome::generate(&BiomeInput {
-                seed,
-                ocean_fraction: hydrology.ocean_fraction as f64,
-                liquid_water,
-                cloud_cover: air.cloud_cover as f64,
-                pressure: air.pressure_bar as f64,
-                oxygen: air.fraction("O2") as f64,
-                sulfur: air.fraction("SO2") as f64,
-                volcanism: geology.volcanism as f64,
-                density: super::units::density(d.mass, d.radius),
-                surface_age: geology.surface_age_gyr as f64,
-                magnetic_field: geology.magnetic_field as f64,
-                // UV de l'étoile donnés pour sa zone habitable (√L) : ramenés à cette orbite
-                uv: star.uv_flux * lum / (d.au * d.au),
-                xray: star.xray_flux / (d.au * d.au),
-                dried_water: hydrology.inventory > 0.1 && !liquid_water,
-            })
-        };
+        let world = WorldInput { kind: d.kind, mass: d.mass, radius: d.radius, au: d.au, star, lum, snow, locked, rotation_h, axial_tilt, tidal: 0.0 };
+        let layers = world_layers(&world, seed);
 
+        // Lunes : 0 à 2 pour une rocheuse, davantage pour une géante ; toute la chaîne (une
+        // lune peut avoir de l'air, comme Titan) et le chauffage par les marées (comme Io)
+        let moon_count = match d.kind {
+            PlanetKind::Rocky if d.radius < 0.5 => spin.weighted(&[0.6, 0.4]),
+            PlanetKind::Rocky | PlanetKind::MiniNeptune => spin.weighted(&[0.3, 0.45, 0.25]),
+            PlanetKind::IceGiant => 1 + spin.weighted(&[0.3, 0.3, 0.25, 0.15]),
+            PlanetKind::GasGiant => 2 + spin.weighted(&[0.35, 0.35, 0.3]),
+        };
+        let mut moons: Vec<MoonConfig> = Vec::with_capacity(moon_count);
+        for mi in 0..moon_count {
+            let mu = mi as u32;
+            let moon_seed = genome.planet_base.wrapping_add(500 + pu * 8 + mu);
+            let mut m = LayerRng::new(moon_seed as u64, Layer::Physics);
+            let mut moon_relief = LayerRng::new(moon_seed as u64, Layer::Relief);
+            // Rocheuse : 1/8 à 1/3 de sa planète ; géante : de 0,08 à 0,45 R⊕ (Ganymède 0,41)
+            let r_earth = if gaseous {
+                m.range(0.08, 0.45).min(d.radius / 3.0)
+            } else {
+                d.radius * m.range(0.12, 0.33)
+            };
+            let moon_radius = q(r_earth * earth, 1.0).max(40.0);
+            let spread = if gaseous { (1.8, 1.1, 0.4) } else { (2.4, 1.7, 0.5) };
+            let mut orbit_distance = radius as f64 * (spread.0 + spread.1 * mi as f64 + spread.2 * m.unit()) + moon_radius as f64 * 3.0;
+            // Jamais sur la précédente (une grosse lune sur une orbite large)
+            if let Some(prev) = moons.last() {
+                orbit_distance = orbit_distance.max((prev.orbit_distance + prev.radius) as f64 + 2.0 * moon_radius as f64 + radius as f64 * 0.3);
+            }
+            let mass = moon_mass(r_earth, icy);
+            let eccentricity = q(m.range(0.0, 0.03), 1e-4);
+            // Marées : fortes près d'une planète massive, sur une orbite un peu excentrique (Io : 0,5)
+            let tidal = tidal_heating(d.mass, orbit_distance / radius as f64, eccentricity as f64);
+            let mw = WorldInput {
+                kind: PlanetKind::Rocky,
+                mass,
+                radius: r_earth,
+                au: d.au,
+                star,
+                lum,
+                snow,
+                locked: false,
+                rotation_h: 24.0 * moon_relief.range(2.0, 16.0),
+                axial_tilt: 0.0,
+                tidal,
+            };
+            let ml = world_layers(&mw, moon_seed);
+            let habitability = evaluate_habitability(&ml, false, r_earth, mass);
+            let traits = traits::traits_of(&trait_context(&ml, false, 0.0, false, false, false), &mut LayerRng::new(moon_seed as u64, Layer::Traits));
+            moons.push(MoonConfig {
+                orbit_distance: q(orbit_distance, 1.0),
+                radius: moon_radius,
+                seed: moon_seed,
+                eccentricity,
+                inclination: q(m.range(-0.05, 0.05), 1e-4),
+                ascending_node: q(m.range(0.0, std::f64::consts::TAU), 1e-4),
+                arg_periapsis: q(m.range(0.0, std::f64::consts::TAU), 1e-4),
+                mean_anomaly_0: q(m.range(0.0, std::f64::consts::TAU), 1e-4),
+                radius_earth: r_earth as f32,
+                mass_earth: mass as f32,
+                gravity_g: (mass / (r_earth * r_earth)) as f32,
+                climate: Some(ml.climate),
+                relief: Some(ml.geology.relief),
+                sea_level: q(ml.sea_level as f64, 1e-4),
+                terrain_height: q(moon_radius as f64 * (0.035 + moon_relief.unit() * 0.02), 0.1),
+                noise_scale: q(1.5 + moon_relief.unit() * 2.0, 1e-4),
+                detail_scale: q(3.0 + moon_relief.unit() * 3.0, 1e-4),
+                atmosphere: ml.atmosphere,
+                tidal_heat: tidal as f32,
+                air: ml.air,
+                hydrology: ml.hydrology,
+                geology: ml.geology,
+                biomes: ml.biomes,
+                habitability,
+                traits,
+            });
+        }
+
+        // Anneaux : surtout les géantes ; glace claire au-delà de la ligne des glaces, roche sombre
+        // en deçà ; jamais jusqu'à la première lune
+        let ring_chance = match d.kind {
+            PlanetKind::GasGiant => 0.6,
+            PlanetKind::IceGiant => 0.4,
+            PlanetKind::MiniNeptune => 0.1,
+            PlanetKind::Rocky => 0.02,
+        };
+        let ring = if spin.unit() < ring_chance {
+            let r = radius as f64;
+            let inner = r * spin.range(1.25, 1.5);
+            let mut outer = r * spin.range(1.8, 2.6);
+            if let Some(first) = moons.first() {
+                outer = outer.min((first.orbit_distance - 2.0 * first.radius) as f64);
+            }
+            (outer > inner * 1.15).then(|| Ring {
+                inner: q(inner, 1.0),
+                outer: q(outer, 1.0),
+                color: if icy { [0.86, 0.82, 0.74] } else { [0.5, 0.45, 0.4] },
+                opacity: spin.range(0.35, 0.8) as f32,
+            })
+        } else {
+            None
+        };
+        let aurora = aurora_of(&layers, gaseous, star, d.au);
+        let habitability = evaluate_habitability(&layers, gaseous, d.radius, d.mass);
+        let traits = traits::traits_of(
+            &trait_context(&layers, gaseous, axial_tilt as f32, locked, ring.is_some(), aurora.is_some()),
+            &mut LayerRng::new(seed as u64, Layer::Traits),
+        );
+
+        let Layers { air, climate, hydrology, sea_level, geology, biomes, atmosphere } = layers;
         planets.push(PlanetConfig {
             orbit_distance: 0.0, // placée plus bas
             radius,
@@ -325,6 +328,10 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
             hydrology,
             geology,
             biomes,
+            ring,
+            aurora,
+            habitability,
+            traits,
             ..Default::default()
         });
     }
@@ -332,7 +339,8 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
     // ── Orbites affichées : échelle logarithmique, puis écartées ─────────
     // `reach` : rayon de la planète et de ses lunes ; marge entre deux voisines
     let reach = |p: &PlanetConfig| -> f64 {
-        p.moons.iter().map(|m| (m.orbit_distance + m.radius) as f64).fold(p.radius as f64, f64::max)
+        let ring = p.ring.map_or(0.0, |r| r.outer as f64);
+        p.moons.iter().map(|m| (m.orbit_distance + m.radius) as f64).fold((p.radius as f64).max(ring), f64::max)
     };
     let margin = 0.08 * scale;
     let mut previous_apoapsis = star_radius as f64 * 1.3;
@@ -357,6 +365,194 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
     planets
 }
 
+/// Un monde (planète ou lune) pour toute la chaîne de génération.
+struct WorldInput<'a> {
+    kind: PlanetKind,
+    mass: f64,
+    radius: f64,
+    au: f64,
+    star: &'a StarPhysics,
+    lum: f64,
+    snow: f64,
+    locked: bool,
+    rotation_h: f64,
+    axial_tilt: f64,
+    tidal: f64,
+}
+
+/// Couches calculées d'un monde.
+struct Layers {
+    air: Air,
+    climate: Climate,
+    hydrology: Hydrology,
+    sea_level: f32,
+    geology: Geology,
+    biomes: BiomeParams,
+    atmosphere: bool,
+}
+
+/// Chauffage par les marées (0..1) d'une lune à `ratio` rayons (affichés) de sa planète de
+/// `planet_mass` M⊕. Les orbites des lunes sont comprimées à l'écran : la distance physique vaut
+/// ~2,5 fois la distance affichée. Io (Jupiter, 5,9 rayons) ≈ 0,3 à 0,8 selon son excentricité ;
+/// Europe ≈ 0,05 ; négligeable autour d'une rocheuse.
+pub fn tidal_heating(planet_mass: f64, ratio: f64, eccentricity: f64) -> f64 {
+    let physical = 2.5 * ratio.max(1.0);
+    (0.6 * (planet_mass / 318.0) * (6.0 / physical).powi(5) * (eccentricity / 0.01)).clamp(0.0, 1.0)
+}
+
+/// Atmosphère (phase 3), eau (phase 4), géologie (phase 5), biomes (phase 6).
+fn world_layers(w: &WorldInput, seed: u32) -> Layers {
+    let gaseous = w.kind.gaseous();
+    let star = w.star;
+    let (air, climate) = atmosphere::generate(
+        &AirInput {
+            kind: w.kind,
+            mass: w.mass,
+            radius: w.radius,
+            au: w.au,
+            luminosity: w.lum,
+            xray: star.xray_flux,
+            star_color: star.color,
+            locked: w.locked,
+            rotation_h: w.rotation_h,
+            axial_tilt: w.axial_tilt,
+        },
+        &mut LayerRng::new(seed as u64, Layer::Atmosphere),
+    );
+    let atmosphere = !gaseous && air.present();
+    let (mut hydrology, sea_level) = hydrology::generate(
+        &HydroInput { kind: w.kind, snow_ratio: w.au / w.snow, mass: w.mass, air: &air, climate: &climate },
+        &mut LayerRng::new(seed as u64, Layer::Hydrology),
+    );
+    // Une lune glacée chauffée par les marées cache un océan sous sa glace (Europe, Encelade)
+    hydrology.subsurface_ocean = w.tidal > 0.05 && hydrology.water_state == WaterState::Ice && hydrology.inventory > 0.1;
+    let liquid_water = hydrology.hydro.liquid == Liquid::Water && hydrology.water_state == WaterState::Liquid;
+    let geology = if gaseous {
+        // Une géante : dynamo d'hydrogène métallique, champ magnétique bien plus fort que la Terre
+        Geology { age_gyr: star.age_gyr as f32, magnetic_field: (w.mass / 20.0).sqrt().clamp(1.0, 20.0) as f32, ..Default::default() }
+    } else {
+        geology::generate(
+            &GeoInput {
+                mass: w.mass,
+                age_gyr: star.age_gyr,
+                gravity: w.mass / (w.radius * w.radius),
+                liquid_water,
+                pressure: air.pressure_bar as f64,
+                ice: hydrology.ice_caps > 0.05,
+                wind_ms: air.wind_ms as f64,
+                rotation_h: w.rotation_h,
+                locked: w.locked,
+                tidal: w.tidal,
+            },
+            seed,
+            &mut LayerRng::new(seed as u64, Layer::Geology),
+        )
+    };
+    let biomes = if gaseous {
+        BiomeParams::default()
+    } else {
+        biome::generate(&BiomeInput {
+            seed,
+            ocean_fraction: hydrology.ocean_fraction as f64,
+            liquid_water,
+            cloud_cover: air.cloud_cover as f64,
+            pressure: air.pressure_bar as f64,
+            oxygen: air.fraction("O2") as f64,
+            sulfur: air.fraction("SO2") as f64,
+            volcanism: geology.volcanism as f64,
+            density: super::units::density(w.mass, w.radius),
+            surface_age: geology.surface_age_gyr as f64,
+            magnetic_field: geology.magnetic_field as f64,
+            // UV de l'étoile donnés pour sa zone habitable (√L) : ramenés à cette orbite
+            uv: star.uv_flux * w.lum / (w.au * w.au),
+            xray: star.xray_flux / (w.au * w.au),
+            dried_water: hydrology.inventory > 0.1 && !liquid_water,
+        })
+    };
+    Layers { air, climate, hydrology, sea_level, geology, biomes, atmosphere }
+}
+
+/// Aurores : un champ magnétique, de l'air (ou une géante) et le vent de l'étoile. Couleur selon
+/// le gaz : vert de l'oxygène, violet de l'azote, rose de l'hydrogène, rouge du CO2.
+fn aurora_of(l: &Layers, gaseous: bool, star: &StarPhysics, au: f64) -> Option<Aurora> {
+    let mag = l.geology.magnetic_field as f64;
+    if mag < 0.2 || !(l.atmosphere || gaseous) {
+        return None;
+    }
+    let wind = (star.stellar_wind / (au * au)).max(0.0);
+    let strength = (0.3 * mag.sqrt() * wind.powf(0.25)).clamp(0.0, 1.0) as f32;
+    if strength < 0.1 {
+        return None;
+    }
+    let main = l.air.gases.first().map_or("", |(f, _)| f.as_str());
+    let color = if l.air.fraction("O2") > 0.05 {
+        [0.3, 1.0, 0.5]
+    } else {
+        match main {
+            "H2" => [1.0, 0.4, 0.65],
+            "CO2" => [1.0, 0.45, 0.3],
+            _ => [0.55, 0.45, 1.0],
+        }
+    };
+    Some(Aurora { strength, color, latitude: (68.0 - 6.0 * strength) })
+}
+
+fn evaluate_habitability(l: &Layers, gaseous: bool, radius: f64, mass: f64) -> Habitability {
+    let (equator, pole) = l.climate.range();
+    habitability::evaluate(&HabInput {
+        gaseous,
+        mean_c: l.climate.mean_c,
+        equator_c: equator,
+        pole_c: pole,
+        pressure: l.air.pressure_bar,
+        gases: &l.air.gases,
+        liquid_water: l.hydrology.hydro.liquid == Liquid::Water && l.hydrology.water_state == WaterState::Liquid,
+        ocean_fraction: l.hydrology.ocean_fraction,
+        radiation: l.biomes.radiation,
+        gravity: (mass / (radius * radius)) as f32,
+        volcanism: l.geology.volcanism,
+        quakes: l.geology.quakes,
+        wind_ms: l.air.wind_ms,
+        lava: l.hydrology.hydro.liquid == Liquid::Lava,
+        acid: l.air.clouds == super::atmosphere::CloudKind::Sulfuric,
+    })
+}
+
+fn trait_context(l: &Layers, gaseous: bool, tilt: f32, locked: bool, ring: bool, aurora: bool) -> traits::TraitContext {
+    traits::TraitContext {
+        gaseous,
+        atmosphere: l.atmosphere,
+        volcanism: l.geology.volcanism,
+        liquid_water: l.hydrology.hydro.liquid == Liquid::Water && l.hydrology.water_state == WaterState::Liquid,
+        icy: l.hydrology.water_state == WaterState::Ice,
+        magnetic: l.geology.magnetic_field,
+        old_surface: l.geology.surface_age_gyr > 2.0,
+        tilt,
+        locked,
+        ocean_fraction: l.hydrology.ocean_fraction,
+        lava: l.hydrology.hydro.liquid == Liquid::Lava,
+        ring,
+        aurora,
+    }
+}
+
+/// Anneaux d'une planète (distances depuis son centre, unités du jeu).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Ring {
+    pub inner: f32,
+    pub outer: f32,
+    pub color: [f32; 3],
+    pub opacity: f32,
+}
+
+/// Aurores polaires : force (0..1), couleur, latitude (degrés).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Aurora {
+    pub strength: f32,
+    pub color: [f32; 3],
+    pub latitude: f32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,6 +570,15 @@ mod tests {
         let m = moon_mass(0.273, false);
         assert!((m - 0.0123).abs() < 0.003, "{m}");
         assert!((m / (0.273 * 0.273) - 0.165).abs() < 0.03);
+    }
+
+    #[test]
+    fn tides_heat_io_not_the_moon() {
+        // Io : 5,9 rayons physiques de Jupiter = 2,36 affichés
+        let io = tidal_heating(318.0, 2.36, 0.01);
+        assert!((0.4..0.9).contains(&io), "{io}");
+        assert!(tidal_heating(318.0, 3.76, 0.009) < 0.1, "Europe");
+        assert!(tidal_heating(1.0, 2.4, 0.03) < 0.05, "Lune");
     }
 
     #[test]

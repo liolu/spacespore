@@ -107,6 +107,9 @@ pub struct Hydrology {
     pub inventory: f32,
     /// Eau souterraine, en mètres d'eau répartis sur toute la planète (Terre : ~200 m).
     pub groundwater_m: f32,
+    /// Océan liquide sous une croûte de glace, chauffé par les marées (Europe, Encelade).
+    #[serde(default)]
+    pub subsurface_ocean: bool,
 }
 
 /// Température d'ébullition (K) d'un liquide sous `pressure` bar, d'après sa température
@@ -232,6 +235,7 @@ pub fn generate(input: &HydroInput, rng: &mut LayerRng) -> (Hydrology, f32) {
             ice_caps,
             inventory: inventory as f32,
             groundwater_m,
+            subsurface_ocean: false,
         },
         sea_level,
     )

@@ -102,6 +102,10 @@ impl BodyParams {
     }
 
     pub fn moon(m: &MoonConfig, parent: &PlanetConfig) -> Self {
+        // Lune générée (phase 9) : un monde comme une planète (air, mers, biomes possibles)
+        if m.generated() {
+            return Self::planet(&m.as_planet(parent));
+        }
         Self {
             airless: true,
             atmosphere: false,

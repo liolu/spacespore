@@ -21,6 +21,7 @@ pub mod cache;
 pub mod climate;
 pub mod genome;
 pub mod geology;
+pub mod habitability;
 pub mod hydrology;
 pub mod live;
 pub mod profile;
@@ -28,6 +29,7 @@ pub mod seed_code;
 pub mod seeds;
 pub mod star;
 pub mod system;
+pub mod traits;
 pub mod units;
 
 #[cfg(test)]
@@ -184,8 +186,9 @@ mod tests {
         let per_system = bytes as f64 / systems.len() as f64;
         println!("liste des systemes : {} octets ({per_system:.0} par systeme)", bytes);
         assert!(bytes < 68_889_502 / 2, "{bytes} octets");
-        // Un système chargé (planètes + lunes) ne pèse que quelques centaines d'octets
+        // Un système chargé (planètes, lunes et toute leur chaîne) ne pèse que quelques Ko, et
+        // seuls les systèmes proches du vaisseau sont en mémoire
         let (_, one) = retained_by(|| systems[10].planets().len());
-        assert!(one > 0 && one < 4_000, "{one}");
+        assert!(one > 0 && one < 16_000, "{one}");
     }
 }

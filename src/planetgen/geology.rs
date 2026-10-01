@@ -124,6 +124,8 @@ pub struct GeoInput {
     pub wind_ms: f64,
     pub rotation_h: f64,
     pub locked: bool,
+    /// Chauffage par les marées d'une planète géante proche (lunes, comme Io) : 0 à 1.
+    pub tidal: f64,
 }
 
 /// Chaleur interne (0 à 1) d'une planète de `mass` M⊕ âgée de `age` Gyr.
@@ -135,7 +137,8 @@ pub fn internal_activity(mass: f64, age: f64) -> f64 {
 /// Géologie et relief d'une planète rocheuse.
 pub fn generate(input: &GeoInput, seed: u32, rng: &mut LayerRng) -> Geology {
     let age = input.age_gyr.max(0.05);
-    let activity = internal_activity(input.mass, age);
+    // Les marées d'une géante proche entretiennent la chaleur d'une petite lune (Io, Europe)
+    let activity = internal_activity(input.mass, age).max(input.tidal.clamp(0.0, 1.0));
     let tectonics = if activity > 0.35 && input.liquid_water && input.mass > 0.3 {
         Tectonics::Plates
     } else if activity > 0.08 {
@@ -146,7 +149,8 @@ pub fn generate(input: &GeoInput, seed: u32, rng: &mut LayerRng) -> Geology {
     let volcanism = (activity * rng.range(0.6, 1.4)).clamp(0.0, 1.0);
     let surface_age = match tectonics {
         Tectonics::Plates => rng.range(0.1, 0.5),
-        Tectonics::StagnantLid => rng.range(0.3, 1.0) * age.min(3.0),
+        // Les coulées de lave renouvellent la surface (Vénus : 0,3 à 0,7 Gyr ; Io : quelques millions d'années)
+        Tectonics::StagnantLid => rng.range(0.3, 1.0) * age.min(3.0) * (1.0 - activity).powi(2),
         Tectonics::Inactive => age * rng.range(0.85, 1.0),
     };
     let quakes = match tectonics {
@@ -422,7 +426,7 @@ mod tests {
     use crate::planetgen::seeds::Layer;
 
     fn input(mass: f64, age: f64, water: bool, pressure: f64) -> GeoInput {
-        GeoInput { mass, age_gyr: age, gravity: mass.powf(0.44), liquid_water: water, pressure, ice: false, wind_ms: 10.0, rotation_h: 24.0, locked: false }
+        GeoInput { mass, age_gyr: age, gravity: mass.powf(0.44), liquid_water: water, pressure, ice: false, wind_ms: 10.0, rotation_h: 24.0, locked: false, tidal: 0.0 }
     }
 
     #[test]
@@ -445,6 +449,14 @@ mod tests {
         assert!(mars.surface_age_gyr > 3.5 && mars.relief.craters > 0.5, "{mars:?}");
         // Une atmosphère épaisse et la pluie effacent les cratères
         assert!(earth.relief.craters < 0.2);
+    }
+
+    #[test]
+    fn tides_keep_a_small_moon_volcanic() {
+        let mut rng = LayerRng::new(8, Layer::Geology);
+        let io = generate(&GeoInput { tidal: 0.6, ..input(0.015, 4.6, false, 0.0) }, 8, &mut rng);
+        assert!(io.activity >= 0.6 && io.volcanism > 0.3 && io.relief.volcanoes > 4, "{io:?}");
+        assert!(io.relief.craters < 0.5, "surface renouvelee : peu de crateres");
     }
 
     #[test]
