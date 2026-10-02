@@ -367,6 +367,15 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
         previous_apoapsis = p.orbit_distance as f64 * (1.0 + e);
         previous_reach = r;
     }
+    // Étirement visuel (×5) : toute la disposition du système s'agrandit d'un bloc, après la
+    // physique (marées, anneaux, espacement) calculée sur les distances d'origine
+    let stretch = crate::settings::SPACE_STRETCH;
+    for p in &mut planets {
+        p.orbit_distance *= stretch;
+        for m in &mut p.moons {
+            m.orbit_distance *= stretch;
+        }
+    }
     planets
 }
 

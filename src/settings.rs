@@ -341,7 +341,7 @@ fn default_flare_distance()     -> f32 { 15.0 }
 impl StarConfig {
     /// Portée de la lumière d'une étoile de ce rayon : couvre les orbites les plus lointaines.
     pub fn light_range_for(radius: f32) -> f32 {
-        radius * 16.0
+        radius * 16.0 * SPACE_STRETCH
     }
 
     /// Étoile générée d'après sa physique ; `g_radius` : échelle G du système.
@@ -384,9 +384,10 @@ impl StarConfig {
     }
 
     /// Flux lumineux (lumens) : environ 3 000 lux à 3 fois l'échelle du système (~3 rayons d'une
-    /// G) pour une intensité de 20, quelle que soit la taille réelle de l'étoile.
+    /// G, étirés comme les orbites) pour une intensité de 20, quelle que soit la taille réelle de
+    /// l'étoile : les planètes, plus loin, reçoivent la même lumière qu'avant l'étirement.
     pub fn lumens(&self) -> f32 {
-        let d = self.scale() * 3.0;
+        let d = self.scale() * 3.0 * SPACE_STRETCH;
         3_000.0 * (self.intensity / 20.0) * 4.0 * std::f32::consts::PI * d * d
     }
 
@@ -598,7 +599,14 @@ pub const SYSTEM_GRID_SIZE: usize = 100;
 /// principale fait 2,7 milliards de rayon ; la voisine la plus proche d'une étoile est à ~15 M en
 /// médiane (~4,5 M dans les autres galaxies), plus qu'un système avec ses 1 à 8 planètes (~4 M en
 /// médiane, 11 M pour 99 % d'entre eux). 300 depuis la phase 2 (100 avant).
-pub const GALAXY_SCALE: f32 = 300.0;
+pub const GALAXY_SCALE: f32 = 300.0 * SPACE_STRETCH;
+/// Étirement visuel des distances (×5 depuis la 0.11) : entre les étoiles, les galaxies, et les
+/// orbites des planètes et des lunes. Les tailles des astres et toute la physique (UA, périodes,
+/// températures, marées) ne changent pas ; les orbites affichées tournent selon Kepler, donc plus
+/// lentement.
+pub const SPACE_STRETCH: f32 = 5.0;
+/// Échelle des tailles galactiques (trous noirs centraux) : celle d'avant l'étirement.
+pub const GALAXY_SIZE_SCALE: f32 = 300.0;
 pub const SYSTEM_CELL_SIZE: f32 = 100_000.0 * GALAXY_SCALE;
 pub const STREAM_RADIUS: f32 = 3.0;
 /// Graine du monde par défaut (partagée par tous les joueurs).
@@ -667,7 +675,7 @@ pub fn default_galaxies(world_seed: u64) -> Vec<GalaxyConfig> {
         num_arms: 5,
         twist: 5.0,
         kind: crate::galaxy_shape::GalaxyKind::Spiral,
-        core_radius: 30_000.0 * GALAXY_SCALE,
+        core_radius: 30_000.0 * GALAXY_SIZE_SCALE,
         seed: 0,
         arm_stars: 0,
         scatter_stars: 0,
@@ -724,7 +732,7 @@ pub fn default_galaxies(world_seed: u64) -> Vec<GalaxyConfig> {
             num_arms: 2 + (rk(9) * 5.0) as usize,
             twist: 1.5 + rk(11) * 7.5,
             kind: crate::galaxy_shape::GalaxyKind::for_index(gi, world_hash),
-            core_radius: (10_000.0 + rk(23) * 20_000.0) * GALAXY_SCALE,
+            core_radius: (10_000.0 + rk(23) * 20_000.0) * GALAXY_SIZE_SCALE,
             seed: gs * 1000,
             arm_stars: star_budget(gs).0,
             scatter_stars: star_budget(gs).1,
@@ -1422,3 +1430,4 @@ mod tests {
         }
     }
 }
+

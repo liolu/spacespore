@@ -563,7 +563,7 @@ fn spawn_galactic_core(
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
 ) {
-    let core_radius = 30_000.0_f32 * GALAXY_SCALE; // trou noir central : 10 fois plus grand
+    let core_radius = 30_000.0_f32 * crate::settings::GALAXY_SIZE_SCALE; // trou noir central : 10 fois plus grand
 
     let core_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.01, 0.0, 0.02),
@@ -2331,7 +2331,7 @@ fn rotate_accretion_disk(
 /// Distance du centre d'un système au-delà de laquelle on l'a quitté : dernière orbite, avec ses
 /// lunes et le rayon de la planète, plus une marge.
 /// Rayon de recherche (au plus) d'un système qui contient le vaisseau.
-pub(crate) const MAX_SYSTEM_REACH: f32 = 30_000_000.0;
+pub(crate) const MAX_SYSTEM_REACH: f32 = 30_000_000.0 * crate::settings::SPACE_STRETCH;
 
 fn system_reach(sys: &crate::settings::StarSystemConfig) -> f32 {
     let planets = sys.planets().iter().map(|p| {

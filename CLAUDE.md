@@ -28,9 +28,12 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   relatives a une origine absolue en f64 qui suit le vaisseau (recentrage au-dela de 100 000). Ne jamais garder une
   position « monde » en memoire : stocker l'absolu (`abs_center()`, `Wormhole.abs_a`, `Peer.abs`) et convertir.
   `StarSystemConfig::center()` / `GalaxyConfig::center()` = monde ; `abs_center` = absolu (generation, caches).
-- Echelle : `GALAXY_SCALE` (settings.rs, les distances entre etoiles/galaxies x300 depuis la phase 2) multiplie les distances entre etoiles/galaxies
-  (rayon 2,7 G ; voisine la plus proche a ~15 M en mediane dans la galaxie principale, ~4,5 M ailleurs) ; les
-  systemes gardent leur taille (~4 M en mediane, 11 M pour 99 %). Les etoiles lointaines sont groupees en
+- Echelle : `GALAXY_SCALE` (settings.rs, 300 x `SPACE_STRETCH`) multiplie les distances entre etoiles/galaxies
+  (rayon 13,5 G ; voisine la plus proche ~100 M en mediane). `SPACE_STRETCH` = 5 (0.11) : etirement visuel de
+  toutes les distances (etoiles, galaxies, orbites des planetes et lunes, applique a la fin de `system.rs`) ; tailles
+  des astres (`GALAXY_SIZE_SCALE` pour les trous noirs) et physique (UA, temperatures, marees) inchangees, orbites
+  plus lentes (Kepler), lumiere des etoiles compensee (`lumens`, `light_range_for`), vaisseau x5. Systemes ~19 M
+  en mediane, 52 M pour 99 %. Les etoiles lointaines sont groupees en
   secteurs de ~100 etoiles (`StarSectors`) affiches/mis a jour ensemble.
 - Proportions d'un systeme (generees depuis la graine du monde, `settings.rs`) : echelle G du systeme
   600 000 a 1 500 000 (`StarConfig::scale()`) ; 1 R_terre = echelle/109. 1 a 8 planetes (`planetgen/system.rs`) :
