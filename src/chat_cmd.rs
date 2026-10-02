@@ -37,7 +37,7 @@ impl Plugin for ChatCmdPlugin {
 #[derive(Event)]
 pub struct ChatCommand(pub String);
 
-const COMMANDS: [&str; 11] = ["/tp", "/galaxie", "/profil", "/profile", "/graine", "/seed", "/aller", "/go", "/stats", "/aide", "/help"];
+const COMMANDS: [&str; 15] = ["/tp", "/galaxie", "/profil", "/profile", "/graine", "/seed", "/aller", "/go", "/stats", "/aide", "/help", "/heure", "/time", "/temps", "/speed"];
 
 /// La ligne est une commande du jeu (et non un message à envoyer).
 pub fn is_local(line: &str) -> bool {
@@ -96,10 +96,12 @@ fn find_galaxy(arg: &str, settings: &GameSettings, current: usize) -> Result<usi
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Commandes : (nom, arguments, description). Ordre d'affichage des propositions.
-pub const COMMAND_HELP: [(&str, &str, &str); 7] = [
+pub const COMMAND_HELP: [(&str, &str, &str); 9] = [
     ("/aide", "[commande]", "la liste des commandes, ou l'aide d'une commande"),
     ("/aller", "etoile|planete|lune <type> | suivant", "tests : aller a un type d'etoile, de planete ou de lune"),
     ("/stats", "[n | tout]", "statistiques de tous les astres d'une galaxie (F3 : masquer)"),
+    ("/heure", "", "heure locale, hauteur du soleil et saison de l'astre ou l'on est (ou cible)"),
+    ("/temps", "<facteur>", "tests : accelerer le temps (1 = normal, 60 = une heure de la planete par seconde)"),
     ("/tp", "<n | type de galaxie | liste>", "aller au trou noir d'une galaxie (0 = la notre)"),
     ("/profil", "", "exporter en JSON le profil de l'astre cible"),
     ("/graine", "[code]", "le code court du monde, ou la graine d'un code"),
@@ -121,6 +123,7 @@ fn arguments(command: &str, previous: &[&str], galaxy_kinds: &[String], galaxies
             list.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect()
         }
         ("/stats", 0) => std::iter::once("tout".to_string()).chain(numbers()).collect(),
+        ("/temps" | "/speed", 0) => ["1", "10", "60", "600", "3600"].map(String::from).to_vec(),
         ("/tp" | "/galaxie", _) => ["liste", "maison"].map(String::from).into_iter().chain(galaxy_kinds.iter().cloned()).chain(numbers()).collect(),
         ("/aide" | "/help", 0) => COMMAND_HELP.iter().map(|(n, _, _)| n.trim_start_matches('/').to_string()).collect(),
         _ => Vec::new(),
@@ -165,6 +168,8 @@ pub fn usage(line: &str) -> Option<String> {
     let word = plain(line.trim_start().split_whitespace().next()?);
     let word = match word.as_str() {
         "/go" => "/aller".to_string(),
+        "/time" => "/heure".to_string(),
+        "/speed" => "/temps".to_string(),
         "/help" => "/aide".to_string(),
         "/galaxie" => "/tp".to_string(),
         "/seed" => "/graine".to_string(),
@@ -273,6 +278,7 @@ fn run_chat_commands(
     mut net: ResMut<Net>,
     mut go: EventWriter<crate::test_cmd::GoCommand>,
     mut stats: EventWriter<crate::stats::StatsCommand>,
+    mut clock: EventWriter<crate::world_clock::ClockCommand>,
     profiles: Res<ProfileCache>,
     star_q: Query<&StarId, With<StarRoot>>,
 ) {
@@ -302,6 +308,13 @@ fn run_chat_commands(
             // Statistiques de tous les astres d'une galaxie (`stats.rs`)
             "/stats" => {
                 stats.send(crate::stats::StatsCommand(arg.to_string()));
+            }
+            // Horloge du monde (`world_clock.rs`)
+            "/heure" | "/time" => {
+                clock.send(crate::world_clock::ClockCommand::Hour);
+            }
+            "/temps" | "/speed" => {
+                clock.send(crate::world_clock::ClockCommand::Speed(arg.to_string()));
             }
             "/profil" | "/profile" => {
                 let loaded = matches!(target.0, TargetKind::Star(id) if star_q.iter().any(|s| s.0 == id));

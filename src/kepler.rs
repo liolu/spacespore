@@ -34,10 +34,11 @@ impl OrbitalElements {
         (mu / (self.a * self.a * self.a)).sqrt()
     }
 
-    /// Position 3D au temps t (secondes écoulées)
-    pub fn position(&self, t: f32, mu: f32) -> Vec3 {
-        let n = self.mean_motion(mu);
-        let mean_anomaly = (self.m0 + n * t) % std::f32::consts::TAU;
+    /// Position 3D au temps t (secondes de l'horloge du monde, f64 : précis même après des
+    /// centaines d'heures de jeu)
+    pub fn position(&self, t: f64, mu: f32) -> Vec3 {
+        let n = self.mean_motion(mu) as f64;
+        let mean_anomaly = (self.m0 as f64 + n * t).rem_euclid(std::f64::consts::TAU) as f32;
 
         // Newton-Raphson pour l'anomalie excentrique
         let ecc_anomaly = solve_kepler(mean_anomaly, self.e);

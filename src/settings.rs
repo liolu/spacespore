@@ -940,6 +940,8 @@ pub struct GameSettings {
     /// Modifications des astres depuis leur génération (règle 7, minage en 0.14) : sauvées dans
     /// `world.json`, vides pour l'instant.
     #[serde(skip)]                            pub body_deltas: WorldDeltas,
+    /// Horloge du monde au chargement (secondes de jeu, `world.json`) : ensuite `WorldClock`.
+    #[serde(skip)]                            pub world_clock: f64,
     /// Ce jeu a pris une identité de secours (un autre jeu utilisait la même sauvegarde) :
     /// il ne réécrit plus `settings.json`, pour ne pas écraser le compte de l'autre.
     #[serde(skip)]                            pub temp_identity: bool,
@@ -998,6 +1000,7 @@ impl Default for GameSettings {
             guild: None,
             guild_archive: Vec::new(),
             body_deltas: WorldDeltas::new(),
+            world_clock: 0.0,
             temp_identity: false,
             systems: default_systems(&default_galaxies(DEFAULT_WORLD_SEED), DEFAULT_WORLD_SEED),
             galaxies: default_galaxies(DEFAULT_WORLD_SEED),
@@ -1087,6 +1090,17 @@ impl GameSettings {
         s
     }
 
+    /// Réécrit seulement `world.json` (l'heure du monde y est enregistrée régulièrement).
+    pub fn save_world(&self) {
+        if self.temp_identity || cfg!(test) {
+            return;
+        }
+        let world = WorldSave::from(self);
+        if let Ok(json) = serde_json::to_string_pretty(&world) {
+            fs::write(data_dir().join("world.json"), json).ok();
+        }
+    }
+
     pub fn save(&self) {
         // Identité de secours : la sauvegarde appartient à l'autre jeu
         if self.temp_identity {
@@ -1100,10 +1114,7 @@ impl GameSettings {
         if let Ok(json) = serde_json::to_string(self) {
             fs::write(path, json).ok();
         }
-        let world = WorldSave::from(self);
-        if let Ok(json) = serde_json::to_string_pretty(&world) {
-            fs::write(data_dir().join("world.json"), json).ok();
-        }
+        self.save_world();
         let info = SaveInfo::from(self);
         if let Ok(json) = serde_json::to_string_pretty(&info) {
             fs::write(data_dir().join("info.json"), json).ok();
@@ -1123,6 +1134,7 @@ impl GameSettings {
         self.guild = world.guild;
         self.guild_archive = world.guild_archive;
         self.body_deltas = world.body_deltas;
+        self.world_clock = world.clock;
     }
 }
 
@@ -1140,6 +1152,8 @@ struct WorldSave {
     #[serde(default)] guild_archive: Vec<crate::guild::GuildRecord>,
     /// Deltas des astres (minage, destruction) : départ + delta, voir `planetgen::live`.
     #[serde(default, skip_serializing_if = "WorldDeltas::is_empty")] body_deltas: WorldDeltas,
+    /// Horloge du monde (secondes de jeu depuis sa création, règle 9).
+    #[serde(default)] clock: f64,
 }
 
 impl From<&GameSettings> for WorldSave {
@@ -1155,6 +1169,7 @@ impl From<&GameSettings> for WorldSave {
             guild: s.guild.clone(),
             guild_archive: s.guild_archive.clone(),
             body_deltas: s.body_deltas.clone(),
+            clock: crate::world_clock::saved_secs().max(s.world_clock),
         }
     }
 }

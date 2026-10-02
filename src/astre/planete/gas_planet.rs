@@ -777,7 +777,7 @@ fn orbit_gas_planets(
             omega: cfg.arg_periapsis,
             m0: cfg.mean_anomaly_0,
         };
-        tf.translation = elems.position(t, DEFAULT_MU);
+        tf.translation = elems.position(t as f64, DEFAULT_MU);
     }
 }
 

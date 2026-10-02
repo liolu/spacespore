@@ -426,7 +426,23 @@ impl Surface {
         self.phase != Phase::Orbit
     }
 
-    /// Direction (depuis le centre de l'astre) au-dessus de laquelle le vaisseau stationne.
+    /// Astre où l'on séjourne (vol bas, atterrissage, marche).
+    pub fn body(&self) -> Option<TargetKind> {
+        self.body.filter(|_| self.active())
+    }
+
+    /// Point survolé ou foulé, dans le repère fixe de l'astre (règle 10).
+    pub fn local_point(&self) -> Option<Vec3> {
+        match self.phase {
+            Phase::Orbit => None,
+            Phase::Walking => Some(self.walker.pos),
+            Phase::Flying => Some(self.fpos),
+            Phase::Descending | Phase::Ascending => Some(self.dir1),
+        }
+    }
+
+    /// Direction (repère fixe de l'astre, depuis son centre) au-dessus de laquelle le vaisseau
+    /// stationne.
     pub fn hover_dir(&self, kind: &TargetKind) -> Option<Vec3> {
         self.hover.filter(|(k, _)| k == kind).map(|(_, d)| d)
     }
@@ -595,31 +611,65 @@ struct Ctx<'w, 's> {
 }
 
 impl Ctx<'_, '_> {
-    /// Centre (monde) d'un astre chargé.
-    fn center(&self, kind: &TargetKind) -> Option<Vec3> {
-        match *kind {
-            TargetKind::Planet(id) => self.planets.iter().find(|(_, p)| p.0 == id).map(|(t, _)| t.translation),
+    /// Centre (monde) et orientation d'un astre chargé : son repère fixe tourne avec lui.
+    fn pose(&self, kind: &TargetKind) -> Option<Frame> {
+        let tf = match *kind {
+            TargetKind::Planet(id) => self.planets.iter().find(|(_, p)| p.0 == id).map(|(t, _)| t),
             TargetKind::Moon(planet_idx, moon_idx) => self
                 .moons
                 .iter()
                 .find(|(_, m)| m.planet_idx == planet_idx && m.moon_idx == moon_idx)
-                .map(|(t, _)| t.translation),
+                .map(|(t, _)| t),
             _ => None,
-        }
+        }?;
+        Some(Frame { center: tf.translation, rot: tf.rotation })
     }
 
-    /// Point de la surface pointé par la souris (sinon, le côté tourné vers la caméra).
-    fn aimed_dir(&self, camera: &Camera, cam_gt: &GlobalTransform, center: Vec3, p: &BodyParams) -> Vec3 {
+    /// Point de la surface pointé par la souris (sinon, le côté tourné vers la caméra), dans le
+    /// repère fixe de l'astre.
+    fn aimed_dir(&self, camera: &Camera, cam_gt: &GlobalTransform, frame: &Frame, p: &BodyParams) -> Vec3 {
         let sphere = p.radius + p.terrain_height * 0.2;
         if let Some(cursor) = self.windows.get_single().ok().and_then(|w| w.cursor_position()) {
             if let Ok(ray) = camera.viewport_to_world(cam_gt, self.viewport.to_viewport(cursor)) {
-                let origin = ray.origin - center;
-                if let Some(t) = ray_sphere(origin, *ray.direction, sphere) {
-                    return (origin + *ray.direction * t).normalize();
+                let origin = frame.point(ray.origin);
+                let dir = frame.vector(*ray.direction);
+                if let Some(t) = ray_sphere(origin, dir, sphere) {
+                    return (origin + dir * t).normalize();
                 }
             }
         }
-        (cam_gt.translation() - center).normalize_or(Vec3::Y)
+        frame.point(cam_gt.translation()).normalize_or(Vec3::Y)
+    }
+}
+
+/// Repère fixe d'un astre (règle 10) : centre et orientation dans le monde. Tout ce qui est posé
+/// sur l'astre (vaisseau, marcheur, caméra au sol) est calculé dans ce repère, puis placé dans le
+/// monde au rendu ; la rotation de l'astre l'emporte sans glissement.
+#[derive(Clone, Copy, Debug)]
+pub struct Frame {
+    pub center: Vec3,
+    pub rot: Quat,
+}
+
+impl Frame {
+    /// Point du monde -> repère de l'astre.
+    pub fn point(&self, world: Vec3) -> Vec3 {
+        self.rot.inverse() * (world - self.center)
+    }
+
+    /// Direction du monde -> repère de l'astre.
+    pub fn vector(&self, world: Vec3) -> Vec3 {
+        self.rot.inverse() * world
+    }
+
+    /// Pose dans le repère de l'astre -> monde.
+    pub fn to_world(&self, local: Transform) -> Transform {
+        Transform { translation: self.center + self.rot * local.translation, rotation: self.rot * local.rotation, scale: local.scale }
+    }
+
+    /// Pose du monde -> repère de l'astre.
+    pub fn to_local(&self, world: Transform) -> Transform {
+        Transform { translation: self.point(world.translation), rotation: self.rot.inverse() * world.rotation, scale: world.scale }
     }
 }
 
@@ -667,14 +717,14 @@ fn surface_control(
             surface.zoom_in_until = now + 0.7;
         }
         if ctrl.distance < FLIGHT_ZOOM && now < surface.zoom_in_until {
-            if let (Some(params), Some(center)) = (body_params(&ctx.settings, &kind), ctx.center(&kind)) {
-                let local = ship_tf.translation - center;
+            if let (Some(params), Some(frame)) = (body_params(&ctx.settings, &kind), ctx.pose(&kind)) {
+                let local = frame.point(ship_tf.translation);
                 if (local.length() - hover_radius(&params)).abs() < params.radius * 0.1 + 250.0 {
                     let up = local.normalize_or(Vec3::Y);
                     surface.terrain = Some(Terrain::new(params));
                     surface.body = Some(kind);
                     surface.fpos = local;
-                    surface.heading = tangent(*ship_tf.forward(), up);
+                    surface.heading = tangent(frame.vector(*ship_tf.forward()), up);
                     surface.fspeed = 0.0;
                     surface.fvert = 0.0;
                     surface.fdist = ctrl.distance.clamp(60.0, FLIGHT_ZOOM * 0.95);
@@ -700,7 +750,7 @@ fn surface_control(
             net.notify("Selectionnez une planete ou une lune pour atterrir.", now);
             return;
         };
-        let Some(center) = ctx.center(&kind) else {
+        let Some(frame) = ctx.pose(&kind) else {
             net.notify("Cet astre est trop loin : approchez-vous de son systeme.", now);
             return;
         };
@@ -709,11 +759,11 @@ fn surface_control(
             return;
         }
         let terrain = Terrain::new(params);
-        let dir1 = ctx.aimed_dir(camera, cam_gt, center, &params);
-        let local0 = ship_tf.translation - center;
+        let dir1 = ctx.aimed_dir(camera, cam_gt, &frame, &params);
+        let local0 = frame.point(ship_tf.translation);
         let dir0 = local0.normalize_or(dir1);
         let heading = dir1 - dir0 * dir0.dot(dir1);
-        begin_descent(&mut surface, kind, terrain, dir0, local0.length(), dir1, heading, ship_tf.scale.x, *cam_tf);
+        begin_descent(&mut surface, kind, terrain, dir0, local0.length(), dir1, heading, ship_tf.scale.x, frame.to_local(*cam_tf));
         *ship_vis = Visibility::Inherited;
         net.notify("Atterrissage... (V pour redecoller une fois au sol)", now);
         return;
@@ -724,7 +774,7 @@ fn surface_control(
         surface.abort();
         return;
     };
-    let (Some(center), Some(params)) = (ctx.center(&kind), surface.params()) else {
+    let (Some(frame), Some(params)) = (ctx.pose(&kind), surface.params()) else {
         surface.abort();
         clear.0 = SPACE_SKY;
         set_cursor(&mut ctx.windows, false);
@@ -733,6 +783,11 @@ fn surface_control(
     };
     *zoom = ZoomLevel::Planet;
     *ship_vis = Visibility::Inherited;
+    let center = frame.center;
+    // Tout ce qui suit est calculé dans le repère fixe de l'astre (centre à l'origine), puis placé
+    // dans le monde à la fin ; la pose de départ des fondus (`cam_from`) est aussi dans ce repère
+    let mut ship_local = frame.to_local(*ship_tf);
+    let mut cam_local_tf = frame.to_local(*cam_tf);
 
     match surface.phase {
         // ── Descente vers le point choisi ────────────────────────────────
@@ -752,13 +807,13 @@ fn surface_control(
                 r = r.max(floor);
             }
             surface.heading = tangent(surface.heading, dir);
-            let ship_pos = center + dir * r;
+            let ship_pos = dir * r;
             let ship_rot = look(Vec3::ZERO, surface.heading, dir).rotation;
-            *ship_tf = Transform { translation: ship_pos, rotation: ship_rot, scale: Vec3::splat(scale) };
+            ship_local = Transform { translation: ship_pos, rotation: ship_rot, scale: Vec3::splat(scale) };
 
             surface.cam_blend = (surface.cam_blend + dt / 0.8).min(1.0);
             let chase = chase_pose(ship_pos, dir, surface.heading, scale);
-            *cam_tf = blend_pose(&surface.cam_from, chase, smoothstep(surface.cam_blend));
+            cam_local_tf = blend_pose(&surface.cam_from, chase, smoothstep(surface.cam_blend));
 
             if u >= 1.0 {
                 if descending {
@@ -769,7 +824,7 @@ fn surface_control(
                     surface.ship_rot = ship_rot;
                     surface.ship_scale = scale;
                     surface.walker = walker;
-                    surface.cam_from = *cam_tf;
+                    surface.cam_from = cam_local_tf;
                     surface.cam_blend = 0.0;
                     surface.phase = Phase::Walking;
                     net.notify("ZQSD/WASD : marcher  Maj : courir  Espace : sauter  V : decoller", now);
@@ -811,18 +866,18 @@ fn surface_control(
             surface.walker = walker;
             surface.terrain = Some(terrain);
 
-            // Le vaisseau reste posé là où il a atterri
-            *ship_tf = Transform {
-                translation: center + surface.ship_local,
+            // Le vaisseau reste posé là où il a atterri (et tourne avec l'astre)
+            ship_local = Transform {
+                translation: surface.ship_local,
                 rotation: surface.ship_rot,
                 scale: Vec3::splat(surface.ship_scale),
             };
 
             let up = walker.up();
-            let eye = center + up * walker.eye_r;
+            let eye = up * walker.eye_r;
             let fps = look(eye, walker.view_dir(), up);
             surface.cam_blend = (surface.cam_blend + dt / 0.8).min(1.0);
-            *cam_tf = blend_pose(&surface.cam_from, fps, smoothstep(surface.cam_blend));
+            cam_local_tf = blend_pose(&surface.cam_from, fps, smoothstep(surface.cam_blend));
 
             if enter {
                 let dir = surface.ship_local.normalize();
@@ -835,7 +890,7 @@ fn surface_control(
                 surface.heading = tangent(surface.ship_rot * Vec3::NEG_Z, dir);
                 surface.t = 0.0;
                 surface.dur = (2.5 + (surface.r1 - surface.r0) / 8000.0).clamp(2.5, 6.0);
-                surface.cam_from = *cam_tf;
+                surface.cam_from = cam_local_tf;
                 surface.cam_blend = 0.0;
                 surface.phase = Phase::Ascending;
                 net.notify("Decollage...", now);
@@ -898,9 +953,9 @@ fn surface_control(
             surface.heading = tangent(heading, next);
 
             let scale = (surface.fdist * 0.025).clamp(2.0, 40.0);
-            let ship_pos = center + surface.fpos;
+            let ship_pos = surface.fpos;
             let ship_rot = look(Vec3::ZERO, surface.heading, next).rotation;
-            *ship_tf = Transform { translation: ship_pos, rotation: ship_rot, scale: Vec3::splat(scale) };
+            ship_local = Transform { translation: ship_pos, rotation: ship_rot, scale: Vec3::splat(scale) };
 
             // Caméra derrière le vaisseau, orientable à la souris, jamais sous le relief
             let back = Quat::from_axis_angle(next, surface.fyaw) * -surface.heading;
@@ -910,8 +965,8 @@ fn surface_control(
             if cam_local.length() < floor {
                 cam_local = cam_local.normalize() * floor;
             }
-            let cam_pos = center + cam_local;
-            *cam_tf = look(cam_pos, ship_pos + next * (0.4 * scale) - cam_pos, next);
+            let cam_pos = cam_local;
+            cam_local_tf = look(cam_pos, ship_pos + next * (0.4 * scale) - cam_pos, next);
             surface.terrain = Some(terrain);
             ctrl.distance = surface.fdist;
 
@@ -930,12 +985,17 @@ fn surface_control(
                 let terrain = surface.terrain.take().unwrap();
                 let dir1 = (surface.fpos + surface.heading * scale * 6.0).normalize();
                 let heading = surface.heading;
-                let cam_from = *cam_tf;
+                let cam_from = cam_local_tf;
                 begin_descent(&mut surface, kind, terrain, next, r, dir1, heading, scale, cam_from);
                 net.notify("Atterrissage...", now);
             }
         }
         Phase::Orbit => {}
+    }
+    // Retour au monde (sauf si l'on vient de quitter l'astre : la vue orbitale reprend la main)
+    if surface.active() {
+        *ship_tf = frame.to_world(ship_local);
+        *cam_tf = frame.to_world(cam_local_tf);
     }
 
     // Ciel : couleur de l'atmosphère le jour (coucher de soleil près de l'horizon), noir dans l'espace
@@ -1140,7 +1200,7 @@ fn update_tiles(
     }
     let Some(kind) = store.body else { return };
     let (Some(terrain), Ok(cam)) = (surface.terrain.as_ref(), cam_q.get_single()) else { return };
-    let Some((root, center)) = find_root(&kind, &planets, &moons) else { return };
+    let Some((root, root_tf)) = find_root(&kind, &planets, &moons) else { return };
     let params = terrain.params;
     let layout = terrain.layout;
     let now = time.elapsed_secs_f64();
@@ -1157,8 +1217,9 @@ fn update_tiles(
         })
         .clone();
 
-    // Tuiles voulues autour de la caméra, avec leurs ancêtres (repli le temps de la construction)
-    let cam_local = cam.translation - center;
+    // Tuiles voulues autour de la caméra, avec leurs ancêtres (repli le temps de la construction).
+    // Caméra dans le repère fixe de l'astre : les tuiles tournent avec lui.
+    let cam_local = root_tf.rotation.inverse() * (cam.translation - root_tf.translation);
     let mut leaves = Vec::new();
     select_tiles(layout, params.radius, cam_local, &mut leaves);
     let mut needed: HashSet<TileKey> = HashSet::with_capacity(leaves.len() * 2);
@@ -1284,13 +1345,13 @@ fn find_root(
     kind: &TargetKind,
     planets: &Query<(Entity, &PlanetId, &Transform), (With<PlanetRoot>, Without<Camera3d>)>,
     moons: &Query<(Entity, &MoonId, &Transform), (With<MoonRoot>, Without<Camera3d>)>,
-) -> Option<(Entity, Vec3)> {
+) -> Option<(Entity, Transform)> {
     match *kind {
-        TargetKind::Planet(id) => planets.iter().find(|(_, p, _)| p.0 == id).map(|(e, _, t)| (e, t.translation)),
+        TargetKind::Planet(id) => planets.iter().find(|(_, p, _)| p.0 == id).map(|(e, _, t)| (e, *t)),
         TargetKind::Moon(planet_idx, moon_idx) => moons
             .iter()
             .find(|(_, m, _)| m.planet_idx == planet_idx && m.moon_idx == moon_idx)
-            .map(|(e, _, t)| (e, t.translation)),
+            .map(|(e, _, t)| (e, *t)),
         _ => None,
     }
 }
@@ -1436,6 +1497,35 @@ mod tests {
         let ground = t.ground(w.up()).top;
         assert!((w.pos.length() - ground).abs() < 1e-2, "{} vs {}", w.pos.length(), ground);
         assert!(w.hvel.length() < 1e-2);
+    }
+
+    /// Règle 10 : 10 min debout sur une planète qui tourne (jour de 24 min, orbite autour de
+    /// l'étoile) sans glisser d'un voxel : le marcheur vit dans le repère fixe de l'astre, et sa
+    /// position dans le monde suit exactement le sol sous ses pieds.
+    #[test]
+    fn standing_ten_minutes_on_a_spinning_planet() {
+        use crate::world_clock::{day_secs, season_secs, Spin};
+        let t = world();
+        let dir = Vec3::new(0.3, 0.5, -0.6).normalize();
+        let mut w = Walker::spawn(&t, dir, Vec3::X);
+        settle(&mut w, &t, 3.0);
+        let start = w.pos;
+        let spin = Spin { tilt: 0.4, day_s: day_secs(24.0), year_s: 4.0 * season_secs(365.0), day_phase: 0.3, year_phase: 0.1, locked: false };
+        let dt = 1.0 / 60.0;
+        let mut clock = 5_000.0f64;
+        for k in 0..(600 * 60) {
+            clock += dt as f64;
+            w.step(&t, &WalkInput::default(), dt);
+            if k % 600 == 0 {
+                // Le pied, posé dans le monde, est au-dessus du même point du sol
+                let center = Vec3::new(1.0e5, 0.0, 0.0).lerp(Vec3::new(0.0, 0.0, 1.0e5), k as f32 / 36_000.0);
+                let frame = Frame { center, rot: spin.rotation(clock, -center) };
+                let foot = frame.to_world(Transform::from_translation(w.pos)).translation;
+                let ground = frame.to_world(Transform::from_translation(start)).translation;
+                assert!(foot.distance(ground) < t.voxel() * 0.05, "{}", foot.distance(ground));
+            }
+        }
+        assert!(w.pos.distance(start) < t.voxel() * 0.05, "a glisse de {}", w.pos.distance(start));
     }
 
     #[test]
