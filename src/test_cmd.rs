@@ -13,6 +13,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 use bevy::prelude::*;
+use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task};
 
 use crate::net::Net;
 use crate::planet::{MoonId, MoonRoot, PlanetId, PlanetRoot, SpawnedSystems, StarId, StarRoot};
@@ -32,7 +33,7 @@ impl Plugin for TestCmdPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<GoCommand>()
             .init_resource::<GoState>()
-            .add_systems(Update, (run_go_commands, finish_arrival).chain());
+            .add_systems(Update, (run_go_commands, finish_search, finish_arrival).chain());
     }
 }
 
@@ -54,6 +55,8 @@ pub enum Family {
 struct GoState {
     /// Dernière recherche et dernier système trouvé (pour `/aller suivant`).
     last: Option<(Family, String, usize)>,
+    /// Recherche en arrière-plan (planètes et lunes : les recalculer prend du temps).
+    search: Option<(Family, String, usize, Task<Result<Option<BodyId>, ()>>)>,
     /// Arrivée en cours : système, astre visé, instant limite.
     pending: Option<(usize, BodyId, f64)>,
 }
@@ -226,6 +229,51 @@ fn describe(family: Family) -> &'static str {
     }
 }
 
+/// Cherche dans une liste de systèmes déjà copiés (tâche d'arrière-plan).
+fn find_in(candidates: &[(usize, StarSystemConfig)], family: Family, kind: &str) -> Result<Option<BodyId>, ()> {
+    for (si, sys) in candidates {
+        if let Some(id) = match_in(sys, *si, family, kind)? {
+            return Ok(Some(id));
+        }
+    }
+    Ok(None)
+}
+
+/// Type compris pour cette famille ?
+fn known_type(family: Family, kind: &str) -> bool {
+    match family {
+        Family::Star => star_matches(&StarConfig::default(), kind).is_some(),
+        Family::Planet => planet_matches(&PlanetConfig::default(), kind).is_some(),
+        Family::Moon => moon_matches(&MoonConfig::default(), kind).is_some(),
+    }
+}
+
+/// Téléporte le vaisseau au bord du système de l'astre trouvé ; `finish_arrival` le ciblera.
+#[allow(clippy::too_many_arguments)]
+fn start_travel(
+    id: BodyId,
+    family: Family,
+    kind: &str,
+    settings: &GameSettings,
+    state: &mut GoState,
+    target: &mut CameraTarget,
+    net: &mut Net,
+    ship_q: &mut Query<&mut Transform, With<Ship>>,
+    now: f64,
+) {
+    let si = id.system();
+    let Some(sys) = settings.systems.get(si) else { return };
+    state.last = Some((family, kind.to_string(), si));
+    state.pending = Some((si, id, now + 30.0));
+    target.0 = TargetKind::Star(si);
+    if let Ok(mut ship) = ship_q.get_single_mut() {
+        let scale = sys.stars.first().map_or(1_000_000.0, |s| s.scale());
+        ship.translation = sys.center() + Vec3::new(scale * 2.0, scale * 0.3, 0.0);
+    }
+    net.local.siege = None;
+    net.notify(&format!("Test : {} \"{kind}\" trouvee dans {} ({}). Arrivee...", describe(family), sys.name, id.key()), now);
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_go_commands(
     time: Res<Time>,
@@ -279,35 +327,65 @@ fn run_go_commands(
             net.notify("Impossible pendant un voyage en trou de ver.", now);
             continue;
         }
-        let id = match find(&settings, family, &kind, after, SEARCH_LIMIT) {
-            Err(()) => {
-                let types = match family {
-                    Family::Star => STAR_TYPES,
-                    Family::Planet => PLANET_TYPES,
-                    Family::Moon => MOON_TYPES,
-                };
-                net.notify(&format!("Type inconnu \"{kind}\". Types de {} : {types}.", describe(family)), now);
-                continue;
-            }
-            Ok(None) => {
-                state.last = Some((family, kind.clone(), (after + SEARCH_LIMIT) % settings.systems.len().max(1)));
-                net.notify(&format!("Aucune {} \"{kind}\" dans les {SEARCH_LIMIT} systemes suivants. /aller suivant pour continuer.", describe(family)), now);
-                continue;
-            }
-            Ok(Some(id)) => id,
-        };
-        let si = id.system();
-        let Some(sys) = settings.systems.get(si) else { continue };
-        state.last = Some((family, kind.clone(), si));
-        state.pending = Some((si, id, now + 30.0));
-        // Téléportation au bord du système : il se charge, puis `finish_arrival` cible l'astre
-        target.0 = TargetKind::Star(si);
-        if let Ok(mut ship) = ship_q.get_single_mut() {
-            let scale = sys.stars.first().map_or(1_000_000.0, |s| s.scale());
-            ship.translation = sys.center() + Vec3::new(scale * 2.0, scale * 0.3, 0.0);
+        if state.search.is_some() {
+            net.notify("Une recherche est deja en cours, patientez.", now);
+            continue;
         }
-        net.local.siege = None;
-        net.notify(&format!("Test : {} \"{kind}\" trouvee dans {} ({}). Arrivee...", describe(family), sys.name, id.key()), now);
+        if !known_type(family, &kind) {
+            let types = match family {
+                Family::Star => STAR_TYPES,
+                Family::Planet => PLANET_TYPES,
+                Family::Moon => MOON_TYPES,
+            };
+            net.notify(&format!("Type inconnu \"{kind}\". Types de {} : {types}.", describe(family)), now);
+            continue;
+        }
+        let n = settings.systems.len();
+        if n == 0 {
+            continue;
+        }
+        // Étoiles : rien à recalculer, la recherche est immédiate
+        if family == Family::Star {
+            match find(&settings, family, &kind, after, n) {
+                Ok(Some(id)) => start_travel(id, family, &kind, &settings, &mut state, &mut target, &mut net, &mut ship_q, now),
+                _ => net.notify(&format!("Aucune etoile \"{kind}\" dans cet univers."), now),
+            }
+            continue;
+        }
+        // Planètes et lunes : on copie les systèmes à examiner et on cherche en arrière-plan,
+        // sans figer le jeu
+        let candidates: Vec<(usize, StarSystemConfig)> = (1..=SEARCH_LIMIT.min(n))
+            .map(|k| (after + k) % n)
+            .map(|si| (si, settings.systems[si].clone()))
+            .collect();
+        let task_kind = kind.clone();
+        let task = AsyncComputeTaskPool::get().spawn(async move { find_in(&candidates, family, &task_kind) });
+        state.search = Some((family, kind.clone(), after, task));
+        net.notify(&format!("Recherche d'une {} \"{kind}\"...", describe(family)), now);
+    }
+}
+
+/// Fin d'une recherche en arrière-plan : départ, ou « rien trouvé ».
+#[allow(clippy::too_many_arguments)]
+fn finish_search(
+    time: Res<Time>,
+    settings: Res<GameSettings>,
+    mut state: ResMut<GoState>,
+    mut target: ResMut<CameraTarget>,
+    mut net: ResMut<Net>,
+    mut ship_q: Query<&mut Transform, With<Ship>>,
+) {
+    let Some((_, _, _, task)) = state.search.as_mut() else { return };
+    let Some(result) = block_on(future::poll_once(task)) else { return };
+    let (family, kind, after, _) = state.search.take().unwrap();
+    let now = time.elapsed_secs_f64();
+    match result {
+        Ok(Some(id)) => start_travel(id, family, &kind, &settings, &mut state, &mut target, &mut net, &mut ship_q, now),
+        Ok(None) => {
+            state.last = Some((family, kind.clone(), (after + SEARCH_LIMIT) % settings.systems.len().max(1)));
+            net.notify(&format!("Aucune {} \"{kind}\" dans les {SEARCH_LIMIT} systemes suivants. /aller suivant pour continuer.", describe(family)), now);
+        }
+        Err(()) => net.notify(&format!("Type inconnu \"{kind}\"."), now),
     }
 }
 

@@ -1900,7 +1900,9 @@ fn update_lod(
             let task = pool.spawn(async move {
                 build_chunk_mesh(face, gx, gy, divs, radius, sea, height, seed, noise, detail, new_lod, climate, hydro, atmosphere, relief, biomes)
             });
-            commands.entity(entity).insert(LodTask { task, lod: new_lod });
+            // `try_insert` : le morceau a pu disparaître dans la même image (système quitté,
+            // téléportation `/aller`) ; un `insert` ferait planter le jeu
+            commands.entity(entity).try_insert(LodTask { task, lod: new_lod });
             in_flight += 1;
         }
     }
@@ -2318,7 +2320,7 @@ fn system_reach(sys: &crate::settings::StarSystemConfig) -> f32 {
     planets.chain(stars).fold(10_000.0_f32, f32::max) * 1.2 + 10_000.0
 }
 
-fn stream_system_bodies(
+pub(crate) fn stream_system_bodies(
     mut commands: Commands,
     settings: Res<GameSettings>,
     spatial: Res<SystemSpatialIndex>,
