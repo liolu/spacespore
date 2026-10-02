@@ -100,10 +100,12 @@ ce n'est pas recommandé.
 Ordre : **0 → 1 → 2 → 3 → 4 → 5 → 6 → 9 → 7 → 8**. L'interface passe avant la vie pour vérifier en
 jeu que les chiffres sont cohérents.
 
-### 0.11 — Temps, profondeur, ciel et vie
-Détaillé dans **`ROADMAP-0.11.md`** : jour/nuit, saisons, voxels 3D, grottes, montagnes, cratères,
-ceintures d'astéroïdes, anneaux, comètes, étoiles multiples, météo, eau vivante, faune, son.
-Copie de cette feuille de route avant ce changement : `roadmaps/ROADMAP-0.10-sauvegarde.md`.
+### 0.11 — Temps et profondeur
+- Rotation des planètes : jour/nuit, température qui varie entre jour et nuit (et selon les saisons).
+- Grottes : terrain en voxels 3D (tubes de lave, karst, glace…) à la place du champ de hauteur près du joueur.
+- Faune visible, étoiles doubles et triples.
+
+### 0.12 – 0.13 — à définir
 
 ### 0.14 — Minage et destruction (prévision)
 - Minage réel du terrain (voxels 3D de la 0.11) avec les ressources de la phase 8.
@@ -205,8 +207,11 @@ et fictifs (Xenium, Aetherite…, étiquetés), avec abondance, profondeur, dist
 difficulté d'extraction. Branche-les sur l'économie existante (biens « Ressources ») et sur le scanner.
 Pas encore de minage (0.14), mais les données doivent être prêtes pour lui. »
 
-### 0.11 — Temps et profondeur
-Remplacé par la feuille de route détaillée **`ROADMAP-0.11.md`** (phases et prompts).
+### 0.11 — Jour/nuit et grottes (à coller plus tard)
+« Lis `ROADMAP-0.10.md` et `CLAUDE.md`. Version 0.11 : fais tourner les planètes sur elles-mêmes avec la
+période de rotation de la phase 2 (attention au repère du marcheur et à l'origine flottante), jour/nuit
+et température qui varie avec l'heure et la saison. Puis remplace le champ de hauteur près du joueur
+par un terrain en voxels 3D pour avoir des grottes (tubes de lave, karst, glace). Une PR par sujet. »
 
 ### 0.14 — Minage et destruction (à coller plus tard)
 « Lis `ROADMAP-0.10.md` et `CLAUDE.md`. Version 0.14 : minage réel du terrain voxel 3D avec les
