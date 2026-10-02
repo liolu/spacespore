@@ -15,7 +15,7 @@ use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
 
 use crate::planet::VoxelType;
 use crate::planetgen::biome::{Biome, BiomeField, BiomeParams};
-use crate::planetgen::climate::{relative_altitude, sea_material, Climate};
+use crate::planetgen::climate::{sea_material, Climate};
 use crate::planetgen::geology::{moon_relief, Relief, ReliefField};
 use crate::planetgen::hydrology::Hydro;
 use crate::settings::{MoonConfig, PlanetConfig};
@@ -349,15 +349,10 @@ impl Terrain {
             return None;
         }
         let (h, _) = self.raw_height(dir);
-        if h < p.radius && sea_material(&p.climate, &p.hydro, p.airless, dir.y.abs()).is_some() {
+        if h < p.radius && sea_material(&p.climate, &p.hydro, p.airless, dir.y).is_some() {
             return None;
         }
         Some(self.biomes.biome(&p.climate, &p.hydro, p.airless, p.atmosphere, (h - p.radius) / p.terrain_height.max(1.0), dir))
-    }
-
-    /// Température (°C) dans la direction `dir`, à la hauteur relative `rh`.
-    pub fn temperature_at(&self, dir: Vec3, rh: f32) -> f32 {
-        self.params.climate.temperature(dir.y.clamp(-1.0, 1.0).asin(), relative_altitude(rh), None)
     }
 
     /// Colonne dans la direction `dir`, hauteur arrondie au multiple de `quantum` au-dessus du niveau de la mer.
@@ -370,7 +365,7 @@ impl Terrain {
         let (h, hv) = self.raw_height(dir);
         let rel = ((h - p.radius) / quantum).round();
         // Sous le niveau de la mer : eau, banquise, ou bassin à sec (trop chaud, ou sans air)
-        let sea = if rel < 0.0 { sea_material(&p.climate, &p.hydro, p.airless, dir.y.abs()) } else { None };
+        let sea = if rel < 0.0 { sea_material(&p.climate, &p.hydro, p.airless, dir.y) } else { None };
         let water = sea.is_some();
 
         let var = self.color.get([dir.x as f64 * 12.0, dir.y as f64 * 12.0, dir.z as f64 * 12.0]) as f32 * 0.10;

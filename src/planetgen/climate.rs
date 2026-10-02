@@ -5,16 +5,46 @@
 //! se décident colonne par colonne avec la température locale. Le maillage lointain (`mesher.rs`)
 //! et le terrain voxel (`terrain.rs`) utilisent les mêmes fonctions.
 
+use bevy::math::Vec3;
 use serde::{Deserialize, Serialize};
 
 use super::hydrology::{Hydro, Liquid};
 use crate::planet::VoxelType;
 
-/// Instant de la journée et de l'année (0.11) : 0 = minuit / début d'année, 0,5 = midi.
+/// Instant de la journée (0.11) : heure locale, 0 = minuit, 0,5 = midi. La saison est portée
+/// par le climat lui-même (`Climate::season`, voir `Climate::at`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Moment {
     pub hour: f32,
-    pub season: f32,
+}
+
+/// Heure la plus chaude de la journée (fraction de jour) : le sol rend la chaleur avec retard,
+/// le maximum vient vers 14 h 30 et le minimum vers 2 h 30, avant l'aube.
+pub const DAY_PEAK: f32 = 14.5 / 24.0;
+
+/// Saison du moment (0.11, A3), calculée par `world_clock::Spin::season`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Season {
+    /// Déclinaison de l'étoile (radians) : la zone la plus chaude remonte vers l'hémisphère d'été.
+    pub decl: f32,
+    /// Écart de température dû à l'excentricité (K) : plus chaud au périhélie.
+    pub offset: f32,
+    /// Longitude (repère fixe de l'astre) où l'étoile est au zénith : donne l'heure locale de
+    /// chaque point (givre du matin). `None` : moyenne de la journée.
+    pub sun_lon: Option<f32>,
+}
+
+impl Season {
+    /// Arrondie pour les maillages : on ne les reconstruit que si elle change vraiment (1° de
+    /// déclinaison, 1 K, une heure de la planète).
+    pub fn quantized(self, with_hour: bool) -> Self {
+        let step = std::f32::consts::TAU / 24.0;
+        Self {
+            decl: (self.decl.to_degrees().round()).to_radians(),
+            offset: self.offset.round(),
+            sun_lon: if with_hour { self.sun_lon.map(|l| (l / step).round() * step) } else { None },
+        }
+    }
 }
 
 /// Paramètres de température d'un astre.
@@ -30,11 +60,15 @@ pub struct Climate {
     pub diurnal: f32,
     /// Inclinaison de l'axe (degrés) : les saisons (0.11).
     pub tilt: f32,
+    /// Saison du moment (jamais sauvée : elle vient de l'horloge du monde). Par défaut, la
+    /// moyenne de l'année.
+    #[serde(skip)]
+    pub season: Season,
 }
 
 impl Default for Climate {
     fn default() -> Self {
-        Self { mean_c: 15.0, span: 50.0, lapse: 50.0, diurnal: 10.0, tilt: 23.0 }
+        Self { mean_c: 15.0, span: 50.0, lapse: 50.0, diurnal: 10.0, tilt: 23.0, season: Season::default() }
     }
 }
 
@@ -51,19 +85,45 @@ impl Climate {
         Self { mean_c, lapse: if atmosphere { 50.0 } else { 0.0 }, ..Default::default() }
     }
 
-    /// Température (°C) à la latitude `lat` (radians) et à l'altitude relative `alt` (0 = niveau
-    /// de la mer, 1 = sommet du relief). `moment` : heure et saison (0.11) ; `None` = moyenne.
+    /// Le même climat à une saison donnée.
+    pub fn at(mut self, season: Season) -> Self {
+        self.season = season;
+        self
+    }
+
+    /// Température (°C) à la latitude `lat` (radians, signée) et à l'altitude relative `alt`
+    /// (0 = niveau de la mer, 1 = sommet du relief), à la saison du climat. `moment` : heure
+    /// locale (0.11) ; `None` = moyenne de la journée.
     ///
-    /// La moyenne sur toute la sphère vaut `mean_c` : sin² de la latitude vaut 1/3 en moyenne.
+    /// La moyenne sur toute la sphère (et sur l'année) vaut `mean_c` : sin² de la latitude vaut 1/3.
     pub fn temperature(&self, lat: f32, alt: f32, moment: Option<Moment>) -> f32 {
         let tau = std::f32::consts::TAU;
-        let (lat, daily) = match moment {
-            // Été dans l'hémisphère nord à la saison 0 : la zone la plus chaude remonte de `tilt`
-            Some(m) => (lat - self.tilt.to_radians() * (tau * m.season).cos(), self.diurnal * (tau * (m.hour - 0.5)).cos()),
-            None => (lat, 0.0),
-        };
+        // La zone la plus chaude suit l'étoile (déclinaison) ; le maximum du jour vient après midi
+        let lat = lat - self.season.decl;
+        let daily = moment.map_or(0.0, |m| self.diurnal * (tau * (m.hour - DAY_PEAK)).cos());
         let s = lat.sin();
-        self.mean_c + self.span * (1.0 / 3.0 - s * s) - self.lapse * alt.clamp(0.0, 1.0) + daily
+        self.mean_c + self.span * (1.0 / 3.0 - s * s) - self.lapse * alt.clamp(0.0, 1.0) + self.season.offset + daily
+    }
+
+    /// Heure locale (0..1) dans la direction `dir` (repère fixe de l'astre), si la saison porte
+    /// la position de l'étoile.
+    pub fn local_hour(&self, dir: Vec3) -> Option<f32> {
+        let lon = dir.x.atan2(dir.z);
+        self.season.sun_lon.map(|s| (0.5 + (lon - s) / std::f32::consts::TAU).rem_euclid(1.0))
+    }
+
+    /// Givre du matin : entre l'aube et le milieu de la matinée, là où la nuit est descendue sous
+    /// 0 °C et où il ne fait pas encore chaud (les zones gelées toute la journée sont déjà
+    /// enneigées).
+    pub fn frost_at(&self, dir: Vec3, alt: f32) -> bool {
+        let Some(hour) = self.local_hour(dir) else { return false };
+        if !(3.5 / 24.0..9.5 / 24.0).contains(&hour) {
+            return false;
+        }
+        let lat = dir.y.clamp(-1.0, 1.0).asin();
+        let coldest = self.temperature(lat, alt, Some(Moment { hour: DAY_PEAK - 0.5 }));
+        let now = self.temperature(lat, alt, Some(Moment { hour }));
+        coldest < 0.0 && now < 4.0 && self.temperature(lat, alt, None) > FREEZE_C
     }
 
     /// Températures à l'équateur et aux pôles (niveau de la mer, moyenne).
@@ -84,7 +144,8 @@ pub fn land_material(climate: &Climate, hydro: &Hydro, airless: bool, atmosphere
     if airless {
         return VoxelType::Stone;
     }
-    let t = climate.temperature(sin_lat.clamp(0.0, 1.0).asin(), relative_altitude(rh), None);
+    // Latitude signée : les saisons ne sont pas les mêmes au nord et au sud
+    let t = climate.temperature(sin_lat.clamp(-1.0, 1.0).asin(), relative_altitude(rh), None);
     let dry = || if rh < 0.12 { VoxelType::Sand } else { VoxelType::Stone };
     if t > SCORCH_C {
         return if rh < 0.30 { VoxelType::Sand } else { VoxelType::Stone };
@@ -124,7 +185,7 @@ pub fn sea_material(climate: &Climate, hydro: &Hydro, airless: bool, sin_lat: f3
         Liquid::Ammonia => VoxelType::Ammonia,
         Liquid::Lava => VoxelType::Lava,
     };
-    let t = climate.temperature(sin_lat.clamp(0.0, 1.0).asin(), 0.0, None);
+    let t = climate.temperature(sin_lat.clamp(-1.0, 1.0).asin(), 0.0, None);
     if t > hydro.boil_c {
         None
     } else if t < hydro.freeze_c {
@@ -140,7 +201,7 @@ mod tests {
     use super::*;
 
     fn earth() -> Climate {
-        Climate { mean_c: 15.0, span: 50.0, lapse: 50.0, diurnal: 10.0, tilt: 23.4 }
+        Climate { mean_c: 15.0, span: 50.0, lapse: 50.0, diurnal: 10.0, tilt: 23.4, ..Default::default() }
     }
 
     #[test]
@@ -158,12 +219,37 @@ mod tests {
     fn altitude_season_and_hour_change_the_temperature() {
         let c = earth();
         assert!(c.temperature(0.3, 1.0, None) < c.temperature(0.3, 0.0, None) - 40.0);
-        let noon = c.temperature(0.0, 0.0, Some(Moment { hour: 0.5, season: 0.25 }));
-        let night = c.temperature(0.0, 0.0, Some(Moment { hour: 0.0, season: 0.25 }));
+        let afternoon = c.temperature(0.0, 0.0, Some(Moment { hour: DAY_PEAK }));
+        let noon = c.temperature(0.0, 0.0, Some(Moment { hour: 0.5 }));
+        let night = c.temperature(0.0, 0.0, Some(Moment { hour: 0.0 }));
         assert!(noon - night > 15.0);
+        // Le plus chaud vient après midi
+        assert!(afternoon > noon);
         // Été au nord : plus chaud à 45° N qu'à 45° S
-        let summer = Some(Moment { hour: 0.5, season: 0.0 });
-        assert!(c.temperature(0.8, 0.0, summer) > c.temperature(-0.8, 0.0, summer) + 10.0);
+        let summer = c.at(Season { decl: 23.4f32.to_radians(), ..Default::default() });
+        assert!(summer.temperature(0.8, 0.0, None) > summer.temperature(-0.8, 0.0, None) + 10.0);
+        // La moyenne de l'année reste la moyenne
+        let winter = c.at(Season { decl: -23.4f32.to_radians(), ..Default::default() });
+        let mean = (summer.temperature(0.8, 0.0, None) + winter.temperature(0.8, 0.0, None)) * 0.5;
+        assert!((mean - c.temperature(0.8, 0.0, None)).abs() < 1.5);
+    }
+
+    #[test]
+    fn frost_appears_in_the_morning_where_nights_freeze() {
+        // Climat tempéré froid : nuits sous 0, journées douces
+        let c = Climate { mean_c: 2.0, span: 10.0, lapse: 0.0, diurnal: 8.0, ..earth() };
+        let dir = Vec3::new(0.0, 0.0, 1.0);
+        // L'étoile au zénith à la longitude 0 : midi ici ; décalée de 6 h vers l'est : 6 h du matin
+        let at = |hour: f32| c.at(Season { sun_lon: Some((0.5 - hour / 24.0) * std::f32::consts::TAU), ..Default::default() });
+        assert!((at(6.0).local_hour(dir).unwrap() * 24.0 - 6.0).abs() < 0.01);
+        assert!(at(6.0).frost_at(dir, 0.0), "givre a 6 h");
+        assert!(!at(14.0).frost_at(dir, 0.0), "fondu l'apres-midi");
+        assert!(!at(23.0).frost_at(dir, 0.0), "pas le soir");
+        // Sans heure (vue de loin) : pas de givre
+        assert!(!c.frost_at(dir, 0.0));
+        // Nuits douces : pas de givre
+        let warm = Climate { mean_c: 25.0, ..c };
+        assert!(!warm.at(at(6.0).season).frost_at(dir, 0.0));
     }
 
     #[test]
@@ -207,7 +293,7 @@ mod exotic_tests {
 
     #[test]
     fn exotic_seas_use_their_own_material_and_freeze_point() {
-        let titan = Climate { mean_c: -179.0, span: 3.0, lapse: 0.0, diurnal: 1.0, tilt: 0.0 };
+        let titan = Climate { mean_c: -179.0, span: 3.0, lapse: 0.0, diurnal: 1.0, tilt: 0.0, ..Default::default() };
         let methane = Hydro { liquid: Liquid::Methane, freeze_c: -182.0, boil_c: -155.0, snow: true, co2_frost: false };
         assert_eq!(sea_material(&titan, &methane, false, 0.0), Some(VoxelType::Methane));
         let lava = Hydro { liquid: Liquid::Lava, freeze_c: 1_000.0, boil_c: 3_000.0, snow: false, co2_frost: false };
