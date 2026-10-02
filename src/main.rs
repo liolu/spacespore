@@ -21,6 +21,7 @@ mod net_ui;
 mod origin;
 mod planet;
 mod planetgen;
+mod rocks;
 mod scanner;
 mod settings;
 mod ship;

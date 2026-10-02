@@ -236,6 +236,43 @@ struct Volcano {
     kind: VolcanoKind,
 }
 
+/// Ce que le relief donne dans une direction (0.11, B3) : la hauteur ajoutée et de quoi choisir
+/// la matière du sol (éboulis au pied des chaînes, coulées de lave figées, falaises).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ReliefSample {
+    pub h: f32,
+    /// Dans une chaîne de montagnes (0 à 1).
+    pub mountain: f32,
+    /// Éboulis au pied d'une chaîne ou d'une falaise.
+    pub scree: bool,
+    /// Coulée de lave figée (flancs d'un volcan).
+    pub lava: bool,
+    /// Bord de falaise (mesas, canyons) : 0 à 1.
+    pub cliff: f32,
+}
+
+/// Bruit en crêtes (0 à 1, pointu en haut) : 1 − |bruit|, au carré, sur trois octaves.
+fn ridged(noise: &Perlin, dir: Vec3, freq: f64) -> f32 {
+    let mut sum = 0.0;
+    let mut norm = 0.0;
+    let mut amp = 1.0;
+    let mut f = freq;
+    for _ in 0..3 {
+        let n = noise.get([dir.x as f64 * f, dir.y as f64 * f, dir.z as f64 * f]) as f32;
+        let r = (1.0 - n.abs()).powi(2);
+        sum += r * amp;
+        norm += amp;
+        amp *= 0.5;
+        f *= 2.3;
+    }
+    sum / norm
+}
+
+fn smooth01(x: f32) -> f32 {
+    let x = x.clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
+}
+
 /// Formes du relief d'un astre, prêtes à être évaluées colonne par colonne.
 pub struct ReliefField {
     relief: Relief,
@@ -244,6 +281,8 @@ pub struct ReliefField {
     volcanoes: Vec<Volcano>,
     ridges: Perlin,
     canyons: Perlin,
+    /// Niveau de la mer (hauteur relative) : les marches des mesas s'y alignent.
+    sea: f32,
 }
 
 fn hash3(x: i32, y: i32, z: i32, k: u32) -> u32 {
@@ -301,7 +340,13 @@ impl ReliefField {
                 }
             })
             .collect();
-        Self { relief, plates, volcanoes, ridges: Perlin::new(s.wrapping_add(400)), canyons: Perlin::new(s.wrapping_add(500)) }
+        Self { relief, plates, volcanoes, ridges: Perlin::new(s.wrapping_add(400)), canyons: Perlin::new(s.wrapping_add(500)), sea: 0.5 }
+    }
+
+    /// Le même relief pour une mer au niveau `sea`.
+    pub fn with_sea(mut self, sea: f32) -> Self {
+        self.sea = sea;
+        self
     }
 
     /// Rien à ajouter (planète faite à la main, géante).
@@ -312,20 +357,37 @@ impl ReliefField {
 
     /// Hauteur relative ajoutée dans la direction `dir` (unitaire), sur un relief de base `base`.
     pub fn offset(&self, dir: Vec3, base: f32) -> f32 {
+        self.sample(dir, base).h
+    }
+
+    /// Hauteur ajoutée et nature du relief dans la direction `dir`.
+    pub fn sample(&self, dir: Vec3, base: f32) -> ReliefSample {
         let r = &self.relief;
+        let mut out = ReliefSample::default();
         if self.is_flat() {
-            return 0.0;
+            return out;
         }
         let soft = 1.0 - 0.5 * r.erosion;
         let mut h = 0.0;
 
-        // Plateaux : marches douces sur le relief de base
+        // Plateaux et mesas : marches plates aux bords abrupts (falaises), d'autant plus nettes
+        // que l'érosion est faible
         if r.terraces > 0.0 {
-            let steps = 14.0;
-            let x = base * steps;
-            let f = x.fract();
-            let stepped = (x.floor() + f * f * f * (f * (f * 6.0 - 15.0) + 10.0)) / steps;
+            // Plateau plat au milieu de chaque marche, falaise à mi-chemin entre deux : symétrique,
+            // donc le relief ne monte ni ne descend en moyenne (la mer garde sa place)
+            // Marches alignées sur le niveau de la mer (plateaux à mi-marche au-dessus et au-dessous) :
+            // la côte devient une falaise et la mer garde exactement sa place
+            let steps = 8.0;
+            let x = (base - self.sea) * steps - 0.5;
+            let n = x.round();
+            let d = x - n;
+            let edge = 0.06 + 0.2 * r.erosion;
+            let rise = 0.5 * d.signum() * smooth01((d.abs() - (0.5 - edge)) / edge);
+            let stepped = (n + rise + 0.5) / steps + self.sea;
             h += (stepped - base) * r.terraces;
+            out.cliff = out.cliff.max(if d.abs() > 0.5 - edge { r.terraces } else { 0.0 });
+            // Éboulis au pied des falaises
+            out.scree |= r.terraces > 0.3 && (0.5 - 2.0 * edge..0.5 - edge).contains(&d.abs()) && d < 0.0;
         }
 
         // Plaques : chaînes de montagnes là où deux plaques se rapprochent, rifts où elles s'écartent
@@ -346,10 +408,14 @@ impl ReliefField {
                 let (a, b) = (self.plates[i1], self.plates[i2]);
                 let closing = (a.1 - b.1).dot(b.0 - a.0) > 0.0;
                 if closing {
-                    // Crêtes irrégulières le long de la chaîne
-                    let n = self.ridges.get([dir.x as f64 * 14.0, dir.y as f64 * 14.0, dir.z as f64 * 14.0]) as f32;
-                    let ridge = 1.0 - n.abs();
-                    h += r.mountains * w * w * (0.45 + 0.55 * ridge) * soft;
+                    // Chaîne jeune : crêtes vives et sommets pointus (bruit en crêtes) ; l'érosion
+                    // les arrondit. Des cols (creux de la crête) permettent de passer.
+                    let ridge = ridged(&self.ridges, dir, 14.0).powf(1.4 - 0.8 * r.erosion);
+                    let pass = 0.55 + 0.45 * smooth01(self.canyons.get([dir.x as f64 * 4.0, dir.y as f64 * 4.0, dir.z as f64 * 4.0]) as f32 * 2.0 + 0.5);
+                    h += r.mountains * w * w * (0.3 + 1.0 * ridge * pass) * soft;
+                    out.mountain = w;
+                    // Éboulis au pied des pentes
+                    out.scree |= (0.15..0.45).contains(&w);
                 } else {
                     h -= r.rifts * w * w * soft;
                 }
@@ -363,24 +429,40 @@ impl ReliefField {
                 continue;
             }
             let d = c.min(1.0).acos() / v.radius;
+            // Cratère au sommet : un creux, d'autant plus large que le volcan est plat
+            let (crater, depth) = match v.kind {
+                VolcanoKind::Shield => (0.08, 0.15),
+                VolcanoKind::Cone => (0.1, 0.3),
+                VolcanoKind::Caldera => (0.25, 0.6),
+            };
+            let pit = if d < crater { v.height * depth * (1.0 - (d / crater).powi(2)) } else { 0.0 };
             h += soft
-                * match v.kind {
+                * (match v.kind {
                     VolcanoKind::Shield => v.height * (1.0 - d).powf(1.5),
                     VolcanoKind::Cone => v.height * (1.0 - d).powf(2.6),
-                    VolcanoKind::Caldera => {
-                        let pit = if d < 0.25 { v.height * 0.6 * (1.0 - d / 0.25) } else { 0.0 };
-                        v.height * (1.0 - d).powf(1.2) - pit
-                    }
-                };
+                    VolcanoKind::Caldera => v.height * (1.0 - d).powf(1.2),
+                } - pit);
+            // Coulées figées : des langues qui descendent les flancs (bruit tournant autour du
+            // sommet), légèrement en relief
+            if (crater..0.95).contains(&d) {
+                let side = (dir - v.center * c).normalize_or_zero();
+                let n = self.ridges.get([side.x as f64 * 6.0 + 50.0, side.y as f64 * 6.0, side.z as f64 * 6.0 + d as f64 * 1.5]) as f32;
+                if n.abs() < 0.12 {
+                    out.lava = true;
+                    h += v.height * 0.04 * (1.0 - n.abs() / 0.12) * (1.0 - d);
+                }
+            }
         }
 
-        // Canyons et failles : sillons étroits et sinueux
+        // Canyons et failles : sillons sinueux, profonds, à fond plat et parois raides
         if r.canyons > 0.0 {
             let n = self.canyons.get([dir.x as f64 * 3.0, dir.y as f64 * 3.0, dir.z as f64 * 3.0]) as f32;
-            let w = 0.035;
+            let w = 0.04;
             if n.abs() < w {
                 let t = 1.0 - n.abs() / w;
-                h -= r.canyons * t * t * soft;
+                let wall = t.powf(0.3 + 0.7 * r.erosion);
+                h -= r.canyons * 1.5 * wall * soft;
+                out.cliff = out.cliff.max(if t < 0.35 { 1.0 } else { 0.0 });
             }
         }
 
@@ -416,7 +498,8 @@ impl ReliefField {
                 }
             }
         }
-        h
+        out.h = h;
+        out
     }
 }
 
@@ -501,5 +584,70 @@ mod tests {
         let e = sample(&eroded, 20_000);
         let depth = |v: &[f32]| v.iter().cloned().fold(0.0, f32::min);
         assert!(depth(&e) > depth(&c) * 0.3);
+    }
+
+    /// B3 : cratère au sommet des volcans, coulées figées sur leurs flancs.
+    #[test]
+    fn volcanoes_have_a_summit_crater_and_lava_flows() {
+        let field = ReliefField::new(Relief { seed: 3, volcanoes: 1, volcano_height: 0.3, ..Default::default() });
+        let v = field.volcanoes[0];
+        let side = v.center.any_orthonormal_vector();
+        let at = |d: f32| field.offset((v.center + side * (d * v.radius).tan()).normalize(), 0.5);
+        let crater = match v.kind {
+            VolcanoKind::Shield => 0.08,
+            VolcanoKind::Cone => 0.1,
+            VolcanoKind::Caldera => 0.25,
+        };
+        assert!(at(0.0) < at(crater * 1.2), "pas de cratere : {} vs {}", at(0.0), at(crater * 1.2));
+        assert!(at(crater * 1.2) > at(0.9), "le sommet est plus haut que le pied");
+        let lava = (0..2000)
+            .filter(|&k| {
+                let a = k as f32 * 0.0031;
+                let d = 0.2 + 0.7 * (k as f32 * 0.618).fract();
+                let around = bevy::math::Quat::from_axis_angle(v.center, a * std::f32::consts::TAU) * side;
+                field.sample((v.center + around * (d * v.radius).tan()).normalize(), 0.5).lava
+            })
+            .count();
+        assert!(lava > 20, "{lava} points de coulees");
+    }
+
+    /// B3 : mesas aux falaises nettes (plateaux plats, marches abruptes), alignées sur la mer :
+    /// la côte ne bouge pas.
+    #[test]
+    fn mesas_have_flat_tops_sharp_cliffs_and_keep_the_coast() {
+        let sea = 0.47;
+        let field = ReliefField::new(Relief { seed: 2, terraces: 1.0, ..Default::default() }).with_sea(sea);
+        let mut flat = 0;
+        let mut cliffs = 0;
+        let n = 4000;
+        let mut prev: Option<f32> = None;
+        for i in 0..n {
+            let base = 0.2 + 0.6 * i as f32 / n as f32;
+            let h = base + field.offset(Vec3::Y, base);
+            // La mer garde sa place
+            assert_eq!(base < sea, h < sea, "base {base} -> {h}");
+            if let Some(p) = prev {
+                let step = h - p;
+                if step.abs() < 1e-5 {
+                    flat += 1;
+                }
+                if step > 0.6 / n as f32 * 5.0 {
+                    cliffs += 1;
+                }
+            }
+            prev = Some(h);
+        }
+        assert!(flat > n / 2, "plateaux : {flat}");
+        assert!(cliffs > 10, "falaises : {cliffs}");
+    }
+
+    /// B3 : une chaîne jeune a des sommets plus pointus qu'une chaîne érodée.
+    #[test]
+    fn young_ranges_are_sharper_than_eroded_ones() {
+        let young = ReliefField::new(Relief { seed: 9, plates: 10, mountains: 0.2, ..Default::default() });
+        let old = ReliefField::new(Relief { erosion: 0.9, ..young.relief });
+        let (hy, ho) = (sample(&young, 20_000), sample(&old, 20_000));
+        let peak = |v: &[f32]| v.iter().cloned().fold(0.0, f32::max);
+        assert!(peak(&hy) > peak(&ho) * 1.3, "{} vs {}", peak(&hy), peak(&ho));
     }
 }

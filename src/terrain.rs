@@ -22,10 +22,13 @@ use std::sync::Arc;
 use crate::planet::VoxelType;
 use crate::planetgen::biome::{Biome, BiomeField, BiomeParams};
 use crate::planetgen::climate::{sea_material, Climate};
-use crate::planetgen::geology::{moon_relief, Relief, ReliefField};
+use crate::planetgen::geology::{moon_relief, Relief, ReliefField, ReliefSample};
 use crate::planetgen::hydrology::Hydro;
 use crate::settings::{MoonConfig, PlanetConfig};
 use crate::caves::{eval_pieces, ore_chance, CaveCell, CaveStyle, Caves, Piece, Region};
+#[cfg(test)]
+use crate::caves::Shape;
+use crate::rocks::Rocks;
 use crate::voxel::{BodyVoxels, Cell, BLOCK};
 
 /// Colonnes par côté d'une tuile.
@@ -297,6 +300,8 @@ pub struct Terrain {
     voxels: Option<Arc<BodyVoxels>>,
     /// Grottes (B2), partagées entre les tuiles d'un même astre (cache des régions).
     pub caves: Option<Arc<Caves>>,
+    /// Arches et cheminées de fée (B3), partagées de même.
+    pub rocks: Option<Arc<Rocks>>,
 }
 
 impl Terrain {
@@ -317,11 +322,14 @@ impl Terrain {
             mid,
             fine,
             color: Perlin::new(params.seed.wrapping_add(200)),
-            relief: ReliefField::new(params.relief),
+            relief: ReliefField::new(params.relief).with_sea(params.sea_level),
             biomes: BiomeField::new(params.biomes),
             overhang: None,
             voxels: None,
             caves: CaveStyle::of(&params).map(|s| Arc::new(Caves::new(s, params.seed, params.layout().voxel))),
+            // Seulement là où le vent et l'eau sculptent la roche
+            rocks: (params.atmosphere && !params.airless && !params.gaseous && params.pressure >= 0.05)
+                .then(|| Arc::new(Rocks::new(params.seed, params.radius, params.layout().voxel))),
         }
         .with_overhang()
     }
@@ -332,6 +340,21 @@ impl Terrain {
             self.caves = caves;
         }
         self
+    }
+
+    /// Le même terrain avec les arches (et leur cache) d'un autre terrain du même astre.
+    pub fn with_rocks(mut self, rocks: Option<Arc<Rocks>>) -> Self {
+        if rocks.is_some() {
+            self.rocks = rocks;
+        }
+        self
+    }
+
+    /// Ce que les arches demandent au relief : rayon du sol, terre ferme, relief sculpté.
+    pub fn rock_ground(&self, dir: Vec3) -> (f32, bool, f32) {
+        let (h, _, s) = self.raw_height_full(dir);
+        let sculpted = s.mountain.max(s.cliff).max(self.params.relief.terraces * 0.5).max(self.params.relief.canyons * 4.0).min(1.0);
+        (h, h > self.params.radius + self.layout.voxel, sculpted)
     }
 
     /// Rayon du sol (champ de hauteur brut) dans la direction `dir` : la surface des grottes.
@@ -356,6 +379,12 @@ impl Terrain {
 
     /// Rayon brut (non quantifié) du sol dans la direction `dir`, et sa « hauteur relative » 0..1.
     fn raw_height(&self, dir: Vec3) -> (f32, f32) {
+        let (h, hv, _) = self.raw_height_full(dir);
+        (h, hv)
+    }
+
+    /// Comme `raw_height`, avec la nature du relief (éboulis, coulées, falaises).
+    fn raw_height_full(&self, dir: Vec3) -> (f32, f32, ReliefSample) {
         let p = &self.params;
         let s = dir * p.noise_scale;
         let continent = self.continent.get([s.x as f64, s.y as f64, s.z as f64]) as f32;
@@ -363,7 +392,8 @@ impl Terrain {
         let det = self.detail.get([s.x as f64 * ds, s.y as f64 * ds, s.z as f64 * ds]) as f32 * 0.15;
         let base = ((continent + det + 1.0) * 0.5).clamp(0.0, 1.0);
         // Montagnes, rifts, volcans, canyons, plateaux, cratères (`planetgen::geology`)
-        let hv = (base + self.relief.offset(dir, base)).clamp(0.0, 1.2);
+        let sample = self.relief.sample(dir, base);
+        let hv = (base + sample.h).clamp(0.0, 1.2);
 
         // L'érosion adoucit aussi les collines et le relief fin
         let rugged = (if p.airless { 1.5 } else { 1.0 }) * (1.0 - 0.5 * p.relief.erosion);
@@ -375,7 +405,7 @@ impl Terrain {
         let fine = self.fine.get([dir.x as f64 * ff, dir.y as f64 * ff, dir.z as f64 * ff]) as f32 * fine_amp;
 
         let h = p.radius + (hv - p.sea_level) * p.terrain_height + mid + fine;
-        (h, hv)
+        (h, hv, sample)
     }
 
     /// Matière du sol : d'après la température locale (latitude, altitude), voir `planetgen::climate`.
@@ -419,7 +449,7 @@ impl Terrain {
         if p.gaseous {
             return Column { dir, top: p.radius * GAS_CORE, kind: VoxelType::Stone, color: [0.3, 0.25, 0.2, 1.0] };
         }
-        let (h, hv) = self.raw_height(dir);
+        let (h, hv, relief) = self.raw_height_full(dir);
         let rel = ((h - p.radius) / quantum).round();
         // Sous le niveau de la mer : eau, banquise, ou bassin à sec (trop chaud, ou sans air)
         let sea = if rel < 0.0 { sea_material(&p.climate, &p.hydro, p.airless, dir.y) } else { None };
@@ -441,7 +471,16 @@ impl Terrain {
             (p.radius, kind, color)
         } else {
             // Hauteur réelle (collines comprises) : une colline au bord de l'eau n'est pas une plage
-            let kind = self.surface_type((h - p.radius) / p.terrain_height.max(1.0), dir);
+            let mut kind = self.surface_type((h - p.radius) / p.terrain_height.max(1.0), dir);
+            // Coulées de lave figées (basalte), éboulis au pied des pentes et des falaises (sauf
+            // sous la neige éternelle des sommets)
+            if !p.airless && kind != VoxelType::Snow && kind != VoxelType::Ice {
+                if relief.lava {
+                    kind = VoxelType::Basalt;
+                } else if relief.scree && relief.cliff < 0.5 {
+                    kind = VoxelType::Stone;
+                }
+            }
             let color = if p.airless {
                 let (lo, hi) = ([0.45, 0.44, 0.42], [0.70, 0.68, 0.65]);
                 [
@@ -577,10 +616,20 @@ impl Terrain {
             }
             return self.caves.as_ref().map_or(VoxelType::Stone, |c| c.style.rock);
         }
+        let p = dir * (self.layer_radius(k) + self.layout.voxel * 0.5);
         if let Some(o) = &self.overhang {
-            if o.solid(dir * (self.layer_radius(k) + self.layout.voxel * 0.5)) {
+            if o.solid(p) {
                 return VoxelType::Stone;
             }
+        }
+        // Arches et cheminées de fée posées sur le sol
+        let added = |piece: &Piece| matches!(piece, Piece::Add(s) if s.contains(p));
+        let hit = match pieces {
+            Some(list) => list.iter().any(|(k0, k1, piece)| (*k0..=*k1).contains(&k) && added(piece)),
+            None => self.rocks.as_ref().is_some_and(|r| r.pieces_near(dir, &|d| self.rock_ground(d)).iter().any(added)),
+        };
+        if hit {
+            return VoxelType::Stone;
         }
         VoxelType::Air
     }
@@ -639,6 +688,13 @@ impl Terrain {
         }
         if let Some((_, hi)) = self.voxels.as_ref().and_then(|v| v.layers_in(face, i.div_euclid(BLOCK), j.div_euclid(BLOCK))) {
             k = k.max(hi);
+        }
+        if let Some(rocks) = &self.rocks {
+            let dir = self.cell_dir(face, i, j);
+            for piece in rocks.pieces_near(dir, &|d| self.rock_ground(d)).iter() {
+                let (c, r) = piece.bound();
+                k = k.max(self.layer(c.length() + r) + 1);
+            }
         }
         k
     }
@@ -979,6 +1035,8 @@ pub fn build_voxel_tile_mesh(t: &Terrain, key: TileKey) -> Mesh {
         }
         None => Vec::new(),
     };
+    let dirs = [corner(0, 0), corner(TILE_CELLS, 0), corner(0, TILE_CELLS), corner(TILE_CELLS, TILE_CELLS), tile_dir];
+    let rock_pieces: Vec<Piece> = t.rocks.as_ref().map_or(Vec::new(), |r| r.for_tile(&dirs, &|d| t.rock_ground(d)));
     // Pour chaque colonne : les régions dont la sphère englobante croise la colonne, et les
     // couches concernées (le reste de la colonne est de la roche pleine)
     // Seulement les pièces dans le cône de la tuile
@@ -995,6 +1053,7 @@ pub fn build_voxel_tile_mesh(t: &Terrain, key: TileKey) -> Mesh {
             let len = bc.length().max(1.0);
             bc.angle_between(tile_dir) < cone + (br + 2.0 * v) / len
         })
+        .chain(rock_pieces)
         .collect();
     let mut col_pieces: Vec<Vec<(i32, i32, Piece)>> = Vec::with_capacity(cols.len());
     let mut col_spans: Vec<Vec<(i32, i32)>> = Vec::with_capacity(cols.len());
@@ -1009,7 +1068,9 @@ pub fn build_voxel_tile_mesh(t: &Terrain, key: TileKey) -> Mesh {
             let perp2 = bc.length_squared() - along * along;
             if along > 0.0 && perp2 < br * br {
                 let half = (br * br - perp2).sqrt();
-                let span = (t.layer(along - half) - 1, (t.layer(along + half) + 1).min(c.top_k));
+                // (les arches dépassent du sol ; les grottes restent dessous)
+                let top = if matches!(piece, Piece::Add(_)) { t.layer(along + half) + 1 } else { (t.layer(along + half) + 1).min(c.top_k) };
+                let span = (t.layer(along - half) - 1, top);
                 if span.0 <= span.1 {
                     list.push((span.0, span.1, *piece));
                     // Seules les pièces creusées ouvrent des faces à dessiner
@@ -1323,6 +1384,7 @@ mod tests {
         let mut t = Terrain::new(p);
         t.overhang = None;
         t.caves = None;
+        t.rocks = None;
         for face in 0..6u8 {
             for (s, tt) in [(0.1, -0.2), (0.999, 0.3), (-0.999, -0.999)] {
                 let key = finest(&t, face_dir(face, s, tt));
@@ -1450,6 +1512,38 @@ mod tests {
         let (base, top_k) = t.base_cell_column(center);
         let deep = t.layer(base.top - crate::caves::MAX_DEPTH - 2.0 * caves.size);
         assert_ne!(t.kind_at(face, i, j, deep, center, &base, top_k), VoxelType::Air);
+    }
+
+    /// B3 : des arches et des cheminées de fée posées sur le sol, avec de l'air dessous (vraie 3D),
+    /// et leur dessus pris pour le sol.
+    #[test]
+    fn natural_arches_stand_on_the_ground() {
+        let mut p = earth_like();
+        p.relief = Relief { seed: 5, plates: 8, mountains: 0.25, terraces: 0.8, ..Default::default() };
+        let t = Terrain::new(p);
+        let rocks = t.rocks.clone().expect("arches (planete avec de l'air)");
+        let mut checked = 0;
+        for k in 0..400 {
+            let a = k as f32 * 0.37;
+            let dir = Vec3::new(a.cos() * 0.6, 0.5 + 0.3 * (a * 0.7).sin(), a.sin() * 0.6).normalize();
+            for piece in rocks.pieces_near(dir, &|d| t.rock_ground(d)).iter() {
+                let Piece::Add(Shape::Capsule(a, b, _)) = piece else { continue };
+                // Le point le plus haut d'une capsule au-dessus du sol : de la roche, et le sol
+                // de la colonne est au moins à sa hauteur
+                let top = if a.length() > b.length() { *a } else { *b };
+                let d = top.normalize();
+                let base = t.base_column(d, t.voxel()).top;
+                if top.length() < base + 4.0 * t.voxel() {
+                    continue;
+                }
+                assert!(t.ground(d).top >= top.length() - 2.0 * t.voxel(), "arche non prise pour le sol");
+                checked += 1;
+            }
+            if checked > 3 {
+                break;
+            }
+        }
+        assert!(checked > 0, "aucune arche trouvee");
     }
 
     /// Un delta (minage, 0.14) creuse bien une cellule : le sol descend d'un voxel.
