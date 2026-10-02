@@ -52,7 +52,7 @@ pub const MAX_NAME_LEN: usize = 16;
 pub const MAX_TAG_LEN: usize = 5;
 /// Étoiles revendiquées au plus par joueur.
 pub const MAX_CLAIMS: usize = 5;
-const PROTOCOL: u32 = 6;
+const PROTOCOL: u32 = 15;
 pub const MAX_CHAT_LEN: usize = 120;
 /// Messages gardés à l'écran / dans l'historique de l'hôte.
 const CHAT_HISTORY: usize = 50;
@@ -519,11 +519,17 @@ pub fn world_fingerprint(settings: &GameSettings) -> u64 {
         eat(sys.name.as_bytes());
         eat(&(sys.stars.len() as u64).to_le_bytes());
         for st in &sys.stars {
+            // Rayon arrondi à 10 unités (`StarPhysics::render_radius`) : identique partout
+            eat(&[st.class as u8]);
             eat(&st.radius.to_bits().to_le_bytes());
             eat(&st.orbit_distance.to_bits().to_le_bytes());
         }
-        eat(&(sys.planets.len() as u64).to_le_bytes());
-        for p in &sys.planets {
+        // Sans remplir le cache des planètes : on parcourt tous les systèmes
+        let planets = sys.planets_uncached();
+        eat(&(planets.len() as u64).to_le_bytes());
+        for p in planets.iter() {
+            // Valeurs affichées arrondies à la génération (`planetgen::system`) : identiques partout
+            eat(&[p.kind as u8]);
             eat(&p.seed.to_le_bytes());
             eat(&p.radius.to_bits().to_le_bytes());
             eat(&p.orbit_distance.to_bits().to_le_bytes());

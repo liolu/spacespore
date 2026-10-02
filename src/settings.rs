@@ -107,12 +107,96 @@ pub struct MoonConfig {
     #[serde(default)] pub ascending_node: f32,
     #[serde(default)] pub arg_periapsis:  f32,
     #[serde(default)] pub mean_anomaly_0: f32,
+    /// Physique réelle (phase 2) : rayon (R⊕), masse (M⊕), gravité de surface (g).
+    #[serde(default)] pub radius_earth:   f32,
+    #[serde(default)] pub mass_earth:     f32,
+    #[serde(default = "default_moon_gravity")] pub gravity_g: f32,
+    /// Climat (phase 3) : lune sans air.
+    #[serde(default)] pub climate:        Option<Climate>,
+    /// Relief (phase 5) : cratères, volcans d'une lune chauffée par les marées.
+    #[serde(default)] pub relief:         Option<Relief>,
+    // ── Toute la chaîne de génération (phase 9) : une lune est un monde comme un autre ──
+    #[serde(default)] pub sea_level:      f32,
+    #[serde(default)] pub terrain_height: f32,
+    #[serde(default)] pub noise_scale:    f32,
+    #[serde(default)] pub detail_scale:   f32,
+    #[serde(default)] pub atmosphere:     bool,
+    /// Chauffage par les marées de sa planète (0..1).
+    #[serde(default)] pub tidal_heat:     f32,
+    #[serde(default)] pub air:            Air,
+    #[serde(default)] pub hydrology:      Hydrology,
+    #[serde(default)] pub geology:        Geology,
+    #[serde(default)] pub biomes:         BiomeParams,
+    #[serde(default)] pub habitability:   Habitability,
+    #[serde(default)] pub traits:         Vec<Trait>,
+    #[serde(default)] pub life:           Life,
+    /// Composition globale et gisements (phase 8).
+    #[serde(default)] pub resources:      crate::planetgen::resources::Resources,
+}
+fn default_moon_gravity() -> f32 { 0.16 }
+impl MoonConfig {
+    /// La chaîne de génération a été appliquée à cette lune (phase 9).
+    pub fn generated(&self) -> bool {
+        self.biomes.defined
+    }
+
+    /// La lune vue comme une planète rocheuse (même terrain, même rendu, même profil), à la
+    /// distance de l'étoile de sa planète.
+    pub fn as_planet(&self, parent: &PlanetConfig) -> PlanetConfig {
+        PlanetConfig {
+            orbit_distance: self.orbit_distance,
+            radius: self.radius,
+            sea_level: self.sea_level,
+            terrain_height: if self.terrain_height > 0.0 { self.terrain_height } else { self.radius * 0.045 },
+            seed: self.seed,
+            noise_scale: self.noise_scale,
+            detail_scale: self.detail_scale,
+            moons: Vec::new(),
+            star_radius: parent.star_radius,
+            atmosphere: self.atmosphere,
+            cloud_density: self.air.cloud_cover,
+            cloud_altitude: 40.0 + self.radius * 0.05,
+            cloud_speed: 0.02 * (self.air.wind_ms / 10.0).clamp(0.2, 4.0),
+            eccentricity: self.eccentricity,
+            inclination: self.inclination,
+            ascending_node: self.ascending_node,
+            arg_periapsis: self.arg_periapsis,
+            mean_anomaly_0: self.mean_anomaly_0,
+            kind: PlanetKind::Rocky,
+            hot: false,
+            mass_earth: self.mass_earth,
+            radius_earth: self.radius_earth,
+            semi_major_au: parent.semi_major_au,
+            period_days: 0.0,
+            rotation_h: 0.0,
+            axial_tilt: 0.0,
+            tidally_locked: true,
+            gravity_g: self.gravity_g,
+            temperature_c: self.climate.map(|c| c.mean_c),
+            climate: self.climate,
+            air: self.air.clone(),
+            hydrology: self.hydrology.clone(),
+            geology: self.geology.clone(),
+            biomes: self.biomes,
+            ring: None,
+            aurora: None,
+            habitability: self.habitability.clone(),
+            traits: self.traits.clone(),
+            life: self.life.clone(),
+            resources: self.resources.clone(),
+        }
+    }
 }
 impl Default for MoonConfig {
     fn default() -> Self { Self {
         orbit_distance: 400.0, radius: 60.0, seed: 77,
         eccentricity: 0.0, inclination: 0.0, ascending_node: 0.0,
         arg_periapsis: 0.0, mean_anomaly_0: 0.0,
+        radius_earth: 0.0, mass_earth: 0.0, gravity_g: default_moon_gravity(), climate: None, relief: None,
+        sea_level: 0.5, terrain_height: 0.0, noise_scale: 2.0, detail_scale: 4.0, atmosphere: false, tidal_heat: 0.0,
+        air: Air::default(), hydrology: Hydrology::default(), geology: Geology::default(), biomes: BiomeParams::default(),
+        habitability: Habitability::default(), traits: Vec::new(), life: Life::default(),
+        resources: Default::default(),
     } }
 }
 
@@ -137,7 +221,48 @@ pub struct PlanetConfig {
     #[serde(default)] pub ascending_node: f32,
     #[serde(default)] pub arg_periapsis:  f32,
     #[serde(default)] pub mean_anomaly_0: f32,
+    // ── Physique réelle (phase 2 de `ROADMAP-0.10.md`, voir `planetgen::system`) ──
+    /// Rocheuse, mini-Neptune, géante de glace ou gazeuse (sans sol).
+    #[serde(default)] pub kind:           PlanetKind,
+    /// Géante chaude (Jupiter chaud, tout près de son étoile).
+    #[serde(default)] pub hot:            bool,
+    #[serde(default)] pub mass_earth:     f32,
+    #[serde(default)] pub radius_earth:   f32,
+    /// Distance physique à l'étoile (UA) ; `orbit_distance` est la distance affichée.
+    #[serde(default)] pub semi_major_au:  f32,
+    #[serde(default)] pub period_days:    f32,
+    /// Période de rotation (heures) : stockée, le jour/nuit vient en 0.11.
+    #[serde(default)] pub rotation_h:     f32,
+    /// Inclinaison de l'axe (degrés).
+    #[serde(default)] pub axial_tilt:     f32,
+    /// Rotation synchrone : une face toujours tournée vers l'étoile.
+    #[serde(default)] pub tidally_locked: bool,
+    /// Gravité de surface (g).
+    #[serde(default = "default_gravity")] pub gravity_g: f32,
+    /// Température moyenne (°C) ; `None` : ancienne formule (distance en rayons d'étoile).
+    #[serde(default)] pub temperature_c:  Option<f32>,
+    /// Climat (phase 3) : température selon la latitude et l'altitude ; `None` : d'après
+    /// `temperature()`.
+    #[serde(default)] pub climate:        Option<Climate>,
+    /// Atmosphère (phase 3) : composition, pression, nuages, vents, couleurs du ciel.
+    #[serde(default)] pub air:            Air,
+    /// Eau et glace (phase 4) : liquide des mers, couverture, calottes, eau souterraine.
+    #[serde(default)] pub hydrology:      Hydrology,
+    /// Géologie et relief (phase 5).
+    #[serde(default)] pub geology:        Geology,
+    /// Sols et biomes (phase 6).
+    #[serde(default)] pub biomes:         BiomeParams,
+    /// Anneaux et aurores, habitabilité, dangers et traits (phase 9).
+    #[serde(default)] pub ring:           Option<Ring>,
+    #[serde(default)] pub aurora:         Option<Aurora>,
+    #[serde(default)] pub habitability:   Habitability,
+    #[serde(default)] pub traits:         Vec<Trait>,
+    /// Vie (phase 7) : niveau, chimie, plantes, faune (paramètres).
+    #[serde(default)] pub life:           Life,
+    /// Composition globale et gisements (phase 8).
+    #[serde(default)] pub resources:      crate::planetgen::resources::Resources,
 }
+fn default_gravity() -> f32 { 1.0 }
 fn default_star_radius()    -> f32 { 250.0 }
 fn default_cloud_density()  -> f32 { 0.5 }
 fn default_cloud_altitude() -> f32 { 20.0 }
@@ -151,14 +276,28 @@ impl Default for PlanetConfig {
             cloud_density: 0.5, cloud_altitude: 100.0, cloud_speed: 0.02,
             eccentricity: 0.0, inclination: 0.0, ascending_node: 0.0,
             arg_periapsis: 0.0, mean_anomaly_0: 0.0,
+            kind: PlanetKind::Rocky, hot: false, mass_earth: 0.0, radius_earth: 0.0,
+            semi_major_au: 0.0, period_days: 0.0, rotation_h: 0.0, axial_tilt: 0.0,
+            tidally_locked: false, gravity_g: 1.0, temperature_c: None, climate: None, air: Air::default(), hydrology: Hydrology::default(), geology: Geology::default(), biomes: BiomeParams::default(),
+            ring: None, aurora: None, habitability: Habitability::default(), traits: Vec::new(), life: Life::default(), resources: Default::default(),
         }
     }
 }
 impl PlanetConfig {
-    /// -270 + PLANET_HEAT_RATIO / (distance en rayons d'étoile) : la chaleur dépend de la taille
-    /// de l'étoile, pas de l'unité de distance.
+    /// Température moyenne (°C) : celle de la génération (insolation de l'étoile en UA), sinon
+    /// -270 + PLANET_HEAT_RATIO / (distance en rayons d'étoile) pour une planète faite à la main.
     pub fn temperature(&self) -> f32 {
-        -270.0 + PLANET_HEAT_RATIO * self.star_radius.max(1.0) / self.orbit_distance.max(10.0)
+        self.temperature_c.unwrap_or_else(|| -270.0 + PLANET_HEAT_RATIO * self.star_radius.max(1.0) / self.orbit_distance.max(10.0))
+    }
+
+    /// Géante gazeuse ou neptunienne : pas de sol.
+    pub fn gaseous(&self) -> bool {
+        self.kind.gaseous()
+    }
+
+    /// Climat : celui de la génération, sinon déduit de la température moyenne.
+    pub fn climate(&self) -> Climate {
+        self.climate.unwrap_or_else(|| Climate::from_mean(self.temperature(), self.atmosphere))
     }
 }
 
@@ -180,6 +319,14 @@ pub struct StarConfig {
     #[serde(default = "default_flare_speed")]         pub flare_speed:    f32,
     #[serde(default = "default_flare_size")]          pub flare_size:     f32,
     #[serde(default = "default_flare_distance")]      pub flare_distance: f32,
+    /// Type de l'étoile (phase 1 de `ROADMAP-0.10.md`) ; sa physique complète se recalcule depuis
+    /// la graine du système (`planetgen::star::StarPhysics`).
+    #[serde(default)]                                 pub class:          StarClass,
+    /// Température de surface (K) ; 0 = inconnue (déduite de la couleur).
+    #[serde(default)]                                 pub temperature_k:  f32,
+    /// Rayon qu'aurait une étoile G dans ce système (600 000 à 1 500 000) : l'échelle des orbites,
+    /// des planètes et de la lumière, quel que soit le type. 0 = le rayon de l'étoile.
+    #[serde(default)]                                 pub orbit_scale:    f32,
 }
 fn default_star_intensity()     -> f32 { 20.0 }
 fn default_star_light_range()   -> f32 { 10000.0 }
@@ -197,13 +344,56 @@ impl StarConfig {
         radius * 16.0
     }
 
-    /// Flux lumineux (lumens) : environ 3 000 lux à 3 rayons de l'étoile pour une intensité de 20.
+    /// Étoile générée d'après sa physique ; `g_radius` : échelle G du système.
+    pub fn from_physics(p: &StarPhysics, g_radius: f32) -> Self {
+        let radius = p.render_radius(g_radius as f64);
+        let (flare_count, flare_height, flare_speed) = p.flares();
+        Self {
+            radius,
+            intensity: p.light_intensity(),
+            // Couvre les orbites (échelle G), même repoussées hors d'une géante
+            light_range: Self::light_range_for(g_radius) + radius * 2.0,
+            light_color_r: p.color[0],
+            light_color_g: p.color[1],
+            light_color_b: p.color[2],
+            flare_count,
+            flare_height,
+            flare_speed,
+            class: p.class,
+            temperature_k: p.temperature_k as f32,
+            orbit_scale: g_radius,
+            ..Default::default()
+        }
+    }
+
+    /// Lumière propre de la surface (matériau émissif) : couleur du corps noir, plus forte pour
+    /// une étoile lumineuse, plus faible pour une naine brune.
+    pub fn emissive_rgb(&self) -> [f32; 3] {
+        let k = 10.0 * (self.intensity / 20.0).sqrt().clamp(0.4, 1.6);
+        [self.light_color_r * 1.1 * k, self.light_color_g * k, self.light_color_b * 0.9 * k]
+    }
+
+    /// Éclat d'une étoile vue de loin (taille du point), 1 pour le Soleil.
+    pub fn glow(&self) -> f32 {
+        (self.intensity / 20.0).powf(0.6).clamp(0.3, 2.0)
+    }
+
+    /// Échelle des orbites et de la lumière (rayon d'une G dans ce système).
+    pub fn scale(&self) -> f32 {
+        if self.orbit_scale > 0.0 { self.orbit_scale } else { self.radius }
+    }
+
+    /// Flux lumineux (lumens) : environ 3 000 lux à 3 fois l'échelle du système (~3 rayons d'une
+    /// G) pour une intensité de 20, quelle que soit la taille réelle de l'étoile.
     pub fn lumens(&self) -> f32 {
-        let d = self.radius * 3.0;
+        let d = self.scale() * 3.0;
         3_000.0 * (self.intensity / 20.0) * 4.0 * std::f32::consts::PI * d * d
     }
 
     pub fn temperature(&self) -> f32 {
+        if self.temperature_k > 0.0 {
+            return self.temperature_k;
+        }
         let r = self.light_color_r;
         let b = self.light_color_b;
         if b > r {
@@ -221,6 +411,7 @@ impl Default for StarConfig {
             light_color_r: 1.0, light_color_g: 0.92, light_color_b: 0.65,
             flare_count: 5, flare_height: 60.0, flare_speed: 1.0,
             flare_size: 6.0, flare_distance: 15.0,
+            class: StarClass::G, temperature_k: 0.0, orbit_scale: 0.0,
         }
     }
 }
@@ -247,6 +438,21 @@ impl Default for AsteroidBeltConfig {
 
 use bevy::math::{DVec3, Vec3};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
+
+use crate::planetgen::genome::SystemGenome;
+use crate::planetgen::star::{StarClass, StarPhysics};
+use crate::planetgen::atmosphere::Air;
+use crate::planetgen::climate::Climate;
+use crate::planetgen::biome::BiomeParams;
+use crate::planetgen::habitability::Habitability;
+use crate::planetgen::life::Life;
+use crate::planetgen::profile::Trait;
+use crate::planetgen::system::{Aurora, Ring};
+use crate::planetgen::geology::{Geology, Relief};
+use crate::planetgen::hydrology::Hydrology;
+use crate::planetgen::system::PlanetKind;
+use crate::planetgen::live::WorldDeltas;
 
 static ORIGIN: [AtomicU64; 3] = [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)];
 
@@ -276,15 +482,21 @@ pub fn to_abs(local: Vec3) -> DVec3 {
 //  Système stellaire
 // ─────────────────────────────────────────────────────────────────────────
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+/// Un système stellaire. Ses planètes et ses lunes ne sont pas stockées (règle 1 de
+/// `ROADMAP-0.10.md`) : `planets()` les recalcule depuis le génome à la première demande et les
+/// garde en cache tant que le système est proche du vaisseau (`planetgen::cache`).
+#[derive(Clone, Debug)]
 pub struct StarSystemConfig {
     pub name: String,
     pub position: [f32; 3],
     /// Galaxie d'appartenance (0 = galaxie principale, 1.. = galaxies extérieures).
-    #[serde(default)]                     pub galaxy_id:      u32,
-    #[serde(default = "default_stars")]   pub stars:          Vec<StarConfig>,
-    #[serde(default = "default_planets")] pub planets:        Vec<PlanetConfig>,
-    #[serde(default)]                     pub asteroid_belts: Vec<AsteroidBeltConfig>,
+    pub galaxy_id:      u32,
+    pub stars:          Vec<StarConfig>,
+    pub asteroid_belts: Vec<AsteroidBeltConfig>,
+    /// Graines des planètes ; `None` : planètes données explicitement (éditeur), jamais recalculées.
+    genome: Option<SystemGenome>,
+    /// Planètes recalculées (cache), ou planètes explicites si `genome` est `None`.
+    planets: OnceLock<Vec<PlanetConfig>>,
 }
 
 impl Default for StarSystemConfig {
@@ -294,13 +506,70 @@ impl Default for StarSystemConfig {
             position: [0.0, 0.0, 0.0],
             galaxy_id: 0,
             stars: default_stars(),
-            planets: default_planets(),
             asteroid_belts: Vec::new(),
+            genome: None,
+            planets: OnceLock::from(default_planets()),
         }
     }
 }
 
 impl StarSystemConfig {
+    fn generated(name: String, position: [f32; 3], galaxy_id: u32, star: StarConfig, genome: SystemGenome) -> Self {
+        Self { name, position, galaxy_id, stars: vec![star], asteroid_belts: Vec::new(), genome: Some(genome), planets: OnceLock::new() }
+    }
+
+    fn generate_planets(&self) -> Vec<PlanetConfig> {
+        let (Some(genome), Some(star), Some(physics)) = (self.genome, self.stars.first(), self.star_physics()) else {
+            return Vec::new();
+        };
+        genome.planets(&physics, star.scale(), star.radius)
+    }
+
+    /// Planètes du système (et leurs lunes), recalculées à la première demande.
+    pub fn planets(&self) -> &[PlanetConfig] {
+        self.planets.get_or_init(|| self.generate_planets())
+    }
+
+    /// Planètes sans remplir le cache (pour parcourir tous les systèmes d'un coup).
+    pub fn planets_uncached(&self) -> std::borrow::Cow<'_, [PlanetConfig]> {
+        match self.planets.get() {
+            Some(p) => std::borrow::Cow::Borrowed(p),
+            None => std::borrow::Cow::Owned(self.generate_planets()),
+        }
+    }
+
+    /// Planètes modifiables (éditeur) : elles deviennent explicites et ne sont plus recalculées.
+    pub fn planets_mut(&mut self) -> &mut Vec<PlanetConfig> {
+        self.planets();
+        self.genome = None;
+        self.planets.get_mut().expect("planetes calculees juste avant")
+    }
+
+    /// Les planètes sont actuellement en mémoire.
+    pub fn planets_cached(&self) -> bool {
+        self.genome.is_some() && self.planets.get().is_some()
+    }
+
+    /// Libère les planètes recalculables (elles seront recalculées à la prochaine demande).
+    pub fn forget_planets(&mut self) {
+        if self.genome.is_some() {
+            self.planets.take();
+        }
+    }
+
+    /// Physique complète de l'étoile principale, recalculée depuis la graine (`None` : étoile
+    /// donnée à la main, sans génome).
+    pub fn star_physics(&self) -> Option<StarPhysics> {
+        let seed = self.genome?.seed;
+        let rank = pseudo_rand(seed.wrapping_mul(5).wrapping_add(31));
+        Some(StarPhysics::generate(seed as u64, rank as f64, None))
+    }
+
+    /// Graine du système (sert aux sous-graines de l'étoile).
+    pub fn body_seed(&self) -> u64 {
+        self.genome.map_or(0, |g| g.seed as u64)
+    }
+
     /// Position absolue (immuable) du centre du système.
     pub fn abs_center(&self) -> Vec3 {
         Vec3::new(self.position[0], self.position[1], self.position[2])
@@ -326,8 +595,10 @@ pub const SYSTEM_GRID_SIZE: usize = 100;
 /// Échelle de la galaxie : toutes les distances entre étoiles (et entre galaxies) sont multipliées
 /// par ce facteur, les systèmes eux-mêmes (étoile, planètes, lunes) gardent leur taille. Sans
 /// limite de précision grâce à l'origine flottante (voir plus haut et `origin.rs`) : la galaxie
-/// principale fait 900 millions de rayon, ses étoiles sont à ~28 millions l'une de l'autre.
-pub const GALAXY_SCALE: f32 = 100.0;
+/// principale fait 2,7 milliards de rayon ; la voisine la plus proche d'une étoile est à ~15 M en
+/// médiane (~4,5 M dans les autres galaxies), plus qu'un système avec ses 1 à 8 planètes (~4 M en
+/// médiane, 11 M pour 99 % d'entre eux). 300 depuis la phase 2 (100 avant).
+pub const GALAXY_SCALE: f32 = 300.0;
 pub const SYSTEM_CELL_SIZE: f32 = 100_000.0 * GALAXY_SCALE;
 pub const STREAM_RADIUS: f32 = 3.0;
 /// Graine du monde par défaut (partagée par tous les joueurs).
@@ -462,16 +733,7 @@ pub fn default_galaxies(world_seed: u64) -> Vec<GalaxyConfig> {
     galaxies
 }
 
-fn star_color(seed: u32) -> [f32; 3] {
-    let c = pseudo_rand(seed);
-    if c < 0.2 { [1.0, 0.5, 0.3] }
-    else if c < 0.4 { [1.0, 0.7, 0.4] }
-    else if c < 0.6 { [1.0, 0.92, 0.65] }
-    else if c < 0.8 { [0.8, 0.85, 1.0] }
-    else { [0.6, 0.7, 1.0] }
-}
-
-fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystemConfig> {
+pub(crate) fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystemConfig> {
     const NUM_ARMS: usize = 5;
     // Galaxie principale : 5 000 à 10 000 étoiles d'après la graine du monde
     let (arm_stars, scatter_stars) = star_budget(((world_seed as u32) ^ ((world_seed >> 32) as u32)).wrapping_mul(0x9E37_79B1) ^ 0x4D41_494E);
@@ -506,69 +768,21 @@ fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystem
     let sd = ((world_seed as u32) ^ ((world_seed >> 32) as u32)).wrapping_mul(0x9E37_79B1);
     let mixed = |x: u32| x.wrapping_add(sd);
 
-    // Une étoile fait 600 000 à 1 500 000 de rayon : au moins 100 fois ses planètes (4 200 à 14 000),
-    // et reste un point à l'échelle de la galaxie (les étoiles voisines sont à ~28 000 000)
-    let make_star = |seed: u32| -> (f32, f32, [f32; 3]) {
+    // Échelle G du système : 600 000 à 1 500 000, au moins 100 fois ses planètes (4 200 à 14 000).
+    // L'étoile elle-même a un type tiré au sort (naine rouge, G, géante… voir `planetgen::star`) :
+    // une G garde ce rayon, les autres ont les proportions réelles. Son rang dans son type (masse)
+    // reprend le même tirage.
+    // Aucun type imposé : le système de départ est tiré comme les autres
+    let make_star = |seed: u32| -> StarConfig {
         let seed = mixed(seed);
         let r_f = pseudo_rand(seed.wrapping_mul(5).wrapping_add(31));
-        let radius = 600_000.0 + r_f * 900_000.0;
-        let intensity = 8.0 + r_f * 27.0;
-        let sc = star_color(seed.wrapping_mul(5).wrapping_add(37));
-        (radius, intensity, sc)
+        let g_radius = 600_000.0 + r_f * 900_000.0;
+        StarConfig::from_physics(&StarPhysics::generate(seed as u64, r_f as f64, None), g_radius)
     };
 
-    // Proportions (R = rayon de l'étoile) : planète ≤ R/100, lune ≤ planète/3 ; première orbite
-    // à 2,4 R, puis 1 à 1,6 R d'écart ; 1 à 3 planètes, 1 à 2 lunes chacune. Les planètes sont
-    // assez petites pour tenir loin de l'étoile et rester explorables à pied (voir `surface.rs`).
-    // `sb` : base des graines de planètes (doit rester loin de u32::MAX).
-    let make_planets = |seed: u32, sb: u32, star_radius: f32| -> Vec<PlanetConfig> {
-        let (seed, sb) = (mixed(seed), mixed(sb));
-        let n = 1 + (pseudo_rand(seed.wrapping_mul(3).wrapping_add(41)) * 2.999) as usize;
-        let mut orbit = 0.0_f32;
-        let mut planets = Vec::with_capacity(n);
-        for pi in 0..n {
-            let pu = pi as u32;
-            let r = |k: u32| pseudo_rand(sb.wrapping_add(pu).wrapping_add(k));
-            orbit = if pi == 0 {
-                star_radius * (2.4 + 1.2 * r(60))
-            } else {
-                orbit + star_radius * (1.0 + 0.6 * r(60))
-            };
-            let radius = star_radius / 100.0 * (0.7 + 0.25 * r(50));
-            let atmosphere = pseudo_rand(seed.wrapping_mul(11).wrapping_add(pu).wrapping_add(71)) < 0.35;
-
-            let moons = (0..1 + (r(90) * 1.999) as usize)
-                .map(|mi| {
-                    let mu = mi as u32;
-                    let m = |k: u32| pseudo_rand(sb.wrapping_add(200 + pu * 16 + mu * 4 + k));
-                    let moon_radius = radius / 3.0 * (0.7 + 0.3 * m(0));
-                    MoonConfig {
-                        orbit_distance: radius * 2.4 + moon_radius * 3.0 + mi as f32 * radius * 1.7 + m(1) * radius * 0.5,
-                        radius: moon_radius,
-                        seed: sb.wrapping_add(500 + pu * 8 + mu),
-                        mean_anomaly_0: m(2) * std::f32::consts::TAU,
-                        ..Default::default()
-                    }
-                })
-                .collect();
-
-            planets.push(PlanetConfig {
-                orbit_distance: orbit,
-                radius,
-                sea_level: if atmosphere { 0.2 + r(83) * 0.4 } else { r(83) * 0.1 },
-                terrain_height: radius * (0.025 + r(80) * 0.025),
-                seed: sb.wrapping_add(pu),
-                noise_scale: 1.5 + r(81) * 2.0,
-                detail_scale: 3.0 + r(82) * 3.0,
-                atmosphere,
-                cloud_altitude: 80.0 + radius * 0.05 * (1.0 + r(84)),
-                star_radius,
-                moons,
-                ..Default::default()
-            });
-        }
-        planets
-    };
+    // Planètes et lunes : seulement leur génome, elles sont recalculées à la demande
+    // (`planetgen::genome`). `sb` : base des graines de planètes (doit rester loin de u32::MAX).
+    let genome = |seed: u32, sb: u32| SystemGenome { seed: mixed(seed), planet_base: mixed(sb) };
 
     let distant_count: usize = galaxies.iter().skip(1).map(|g| g.arm_stars + g.scatter_stars).sum();
     let mut systems = Vec::with_capacity(arm_stars + scatter_stars + distant_count);
@@ -594,20 +808,7 @@ fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystem
         let thickness = 60000.0 * GALAXY_SCALE * (1.0 - r / gr * 0.7);
         let y = (pseudo_rand(s * 7 + 7) - 0.5) * thickness;
 
-        let (sr, si, sc) = make_star(s);
-        systems.push(StarSystemConfig {
-            name: gen_name(i),
-            position: [x, y, z],
-            galaxy_id: 0,
-            stars: vec![StarConfig {
-                radius: sr, intensity: si,
-                light_color_r: sc[0], light_color_g: sc[1], light_color_b: sc[2],
-                light_range: StarConfig::light_range_for(sr),
-                ..Default::default()
-            }],
-            planets: make_planets(s, (s + 1) * 100, sr),
-            asteroid_belts: Vec::new(),
-        });
+        systems.push(StarSystemConfig::generated(gen_name(i), [x, y, z], 0, make_star(s), genome(s, (s + 1) * 100)));
     }
 
     // ── Étoiles dispersées entre les bras ─────────────────────────────
@@ -621,20 +822,9 @@ fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystem
         let z = r * theta.sin();
         let y = (pseudo_rand(s * 7 + 7) - 0.5) * 3000.0 * GALAXY_SCALE;
 
-        let (sr, si, sc) = make_star(s);
-        systems.push(StarSystemConfig {
-            name: gen_name(arm_stars + i),
-            position: [x, y, z],
-            galaxy_id: 0,
-            stars: vec![StarConfig {
-                radius: sr, intensity: si,
-                light_color_r: sc[0], light_color_g: sc[1], light_color_b: sc[2],
-                light_range: StarConfig::light_range_for(sr),
-                ..Default::default()
-            }],
-            planets: make_planets(s, (s + 1) * 100, sr),
-            asteroid_belts: Vec::new(),
-        });
+        systems.push(StarSystemConfig::generated(
+            gen_name(arm_stars + i), [x, y, z], 0, make_star(s), genome(s, (s + 1) * 100),
+        ));
     }
 
     // ── Galaxies extérieures : mêmes systèmes (étoile + planètes) ─────
@@ -655,22 +845,15 @@ fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystem
             if local.length() < CORE_EXCLUSION { continue; }
             let world = gal.abs_center + gal.tilt * local;
 
-            let (sr, si, sc) = make_star(s);
             let global_idx = systems.len() as u32;
             let pi = local_idx % prefixes.len();
-            systems.push(StarSystemConfig {
-                name: format!("G{}-{}-{}", gid, prefixes[pi], local_idx * 7 + 1031),
-                position: [world.x, world.y, world.z],
-                galaxy_id: gid as u32,
-                stars: vec![StarConfig {
-                    radius: sr, intensity: si,
-                    light_color_r: sc[0], light_color_g: sc[1], light_color_b: sc[2],
-                    light_range: StarConfig::light_range_for(sr),
-                    ..Default::default()
-                }],
-                planets: make_planets(s, (global_idx + 1) * 100, sr),
-                asteroid_belts: Vec::new(),
-            });
+            systems.push(StarSystemConfig::generated(
+                format!("G{}-{}-{}", gid, prefixes[pi], local_idx * 7 + 1031),
+                [world.x, world.y, world.z],
+                gid as u32,
+                make_star(s),
+                genome(s, (global_idx + 1) * 100),
+            ));
             local_idx += 1;
         }
     }
@@ -719,6 +902,8 @@ pub struct GameSettings {
     pub invert_y:               bool,
     #[serde(default)] pub show_light_indicator: bool,
     #[serde(default)] pub show_orbits:          bool,
+    /// Zones chaude, habitable et froide du système chargé (`zones.rs`).
+    #[serde(default)] pub show_zones:           bool,
     #[serde(default)] pub show_systems:         bool,
     pub planet_chunk_divisions: usize,
 
@@ -752,6 +937,9 @@ pub struct GameSettings {
     /// Ma guilde (fiche complète), et fiches gardées après un départ ou une dissolution.
     #[serde(default)]                         pub guild: Option<crate::guild::GuildRecord>,
     #[serde(default)]                         pub guild_archive: Vec<crate::guild::GuildRecord>,
+    /// Modifications des astres depuis leur génération (règle 7, minage en 0.14) : sauvées dans
+    /// `world.json`, vides pour l'instant.
+    #[serde(skip)]                            pub body_deltas: WorldDeltas,
     /// Ce jeu a pris une identité de secours (un autre jeu utilisait la même sauvegarde) :
     /// il ne réécrit plus `settings.json`, pour ne pas écraser le compte de l'autre.
     #[serde(skip)]                            pub temp_identity: bool,
@@ -793,7 +981,7 @@ impl Default for GameSettings {
             save_version: SAVE_VERSION,
             mouse_sensitivity: 0.5, scroll_speed: 10.0,
             keyboard_speed: 2.0, invert_y: true,
-            show_light_indicator: false, show_orbits: false, show_systems: false,
+            show_light_indicator: false, show_orbits: false, show_zones: false, show_systems: false,
             planet_chunk_divisions: 6,
             vsync: true, fps_limit: 0, msaa_samples: 4, shadows: true,
             lod_quality: 1.0, show_clouds: true, show_flares: true, render_scale: 1.0,
@@ -809,6 +997,7 @@ impl Default for GameSettings {
             known_wormholes: Vec::new(),
             guild: None,
             guild_archive: Vec::new(),
+            body_deltas: WorldDeltas::new(),
             temp_identity: false,
             systems: default_systems(&default_galaxies(DEFAULT_WORLD_SEED), DEFAULT_WORLD_SEED),
             galaxies: default_galaxies(DEFAULT_WORLD_SEED),
@@ -933,6 +1122,7 @@ impl GameSettings {
         self.clan_tag = world.clan_tag;
         self.guild = world.guild;
         self.guild_archive = world.guild_archive;
+        self.body_deltas = world.body_deltas;
     }
 }
 
@@ -948,6 +1138,8 @@ struct WorldSave {
     #[serde(default)] clan_tag: String,
     #[serde(default)] guild: Option<crate::guild::GuildRecord>,
     #[serde(default)] guild_archive: Vec<crate::guild::GuildRecord>,
+    /// Deltas des astres (minage, destruction) : départ + delta, voir `planetgen::live`.
+    #[serde(default, skip_serializing_if = "WorldDeltas::is_empty")] body_deltas: WorldDeltas,
 }
 
 impl From<&GameSettings> for WorldSave {
@@ -962,6 +1154,7 @@ impl From<&GameSettings> for WorldSave {
             clan_tag: s.clan_tag.clone(),
             guild: s.guild.clone(),
             guild_archive: s.guild_archive.clone(),
+            body_deltas: s.body_deltas.clone(),
         }
     }
 }
@@ -1088,40 +1281,65 @@ mod tests {
     }
 
     #[test]
-    fn stars_dwarf_planets_and_planets_dwarf_moons() {
+    fn planets_follow_their_star_and_never_touch() {
+        use crate::planetgen::system::PlanetKind;
         let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
         let systems = default_systems(&galaxies, DEFAULT_WORLD_SEED);
         let (mut hot, mut temperate, mut cold) = (0, 0, 0);
+        let mut kinds = std::collections::HashMap::new();
         for sys in systems.iter().take(3000) {
             let star = &sys.stars[0];
-            assert!((600_000.0..=1_500_000.0).contains(&star.radius), "etoile de rayon {}", star.radius);
-            assert!((1..=3).contains(&sys.planets.len()), "{} planetes", sys.planets.len());
+            // Échelle G du système (rayon d'une G) : la taille réelle de l'étoile dépend de son type
+            let scale = star.scale();
+            assert!((600_000.0..=1_500_000.0).contains(&scale), "echelle {scale}");
+            if star.class == crate::planetgen::star::StarClass::G {
+                assert!((star.radius - scale).abs() <= 5.0, "une G garde l'echelle d'avant");
+            }
+            let planets = sys.planets();
+            assert!((1..=8).contains(&planets.len()), "{} planetes", planets.len());
+            let earth = scale / 109.0;
             let mut previous_edge = star.radius;
-            for p in &sys.planets {
-                // Étoile au moins 100 fois plus grande que la planète, lune au moins 3 fois plus petite
-                assert!(p.radius * 100.0 <= star.radius, "planete {} pour une etoile de {}", p.radius, star.radius);
-                assert!(p.radius >= star.radius / 100.0 * 0.7 - 1.0 && p.radius >= 4_000.0);
-                assert!(p.orbit_distance - p.radius > previous_edge, "planete dans l'etoile ou dans la precedente");
-                previous_edge = p.orbit_distance + p.radius;
-                assert!(p.orbit_distance + p.radius < star.radius * 8.0, "systeme trop etendu");
-                assert!(p.terrain_height > 0.0 && p.terrain_height < p.radius * 0.06);
-                assert_eq!(p.star_radius, star.radius);
-                assert!((1..=2).contains(&p.moons.len()), "{} lunes", p.moons.len());
+            let mut previous_au = 0.0;
+            for p in planets {
+                *kinds.entry(p.kind).or_insert(0usize) += 1;
+                // Proportions réelles : 1 R⊕ = échelle / 109
+                assert!((p.radius / earth / p.radius_earth - 1.0).abs() < 0.01, "{} {}", p.radius, p.radius_earth);
+                assert!(p.radius_earth > 0.2 && p.radius_earth < 16.0, "{}", p.radius_earth);
+                assert!(p.semi_major_au > previous_au, "orbites dans l'ordre");
+                previous_au = p.semi_major_au;
+                // Ni dans l'étoile ni dans la précédente (lunes comprises), même au périastre
+                let reach = p.moons.iter().map(|m| m.orbit_distance + m.radius).fold(p.radius, f32::max);
+                let periapsis = p.orbit_distance * (1.0 - p.eccentricity);
+                assert!(periapsis - reach > previous_edge, "planete dans l'etoile ou dans la precedente");
+                previous_edge = p.orbit_distance * (1.0 + p.eccentricity) + reach;
+                assert!(p.gravity_g > 0.0 && p.mass_earth > 0.0);
+                if p.gaseous() {
+                    assert!(!p.atmosphere && p.terrain_height == 0.0);
+                } else {
+                    assert!(p.terrain_height > 0.0 && p.terrain_height < p.radius * 0.06);
+                }
+                assert_eq!(p.star_radius, scale);
                 let mut moon_edge = p.radius + p.terrain_height;
                 for m in &p.moons {
-                    assert!(m.radius * 3.0 <= p.radius * 1.0001, "lune {} pour une planete de {}", m.radius, p.radius);
+                    assert!(m.radius * 3.0 <= p.radius * 1.01, "lune {} pour une planete de {}", m.radius, p.radius);
                     assert!(m.orbit_distance - m.radius > moon_edge, "lune dans la planete ou dans la lune precedente");
                     moon_edge = m.orbit_distance + m.radius;
+                    assert!(m.gravity_g > 0.0 && m.gravity_g < 0.6, "{}", m.gravity_g);
                 }
-                match p.temperature() {
-                    t if t > 100.0 => hot += 1,
-                    t if t > -20.0 => temperate += 1,
-                    _ => cold += 1,
+                if p.kind == PlanetKind::Rocky {
+                    match p.temperature() {
+                        t if t > 100.0 => hot += 1,
+                        t if t > -20.0 => temperate += 1,
+                        _ => cold += 1,
+                    }
                 }
             }
         }
         // Des mondes brulants, temperes et glaces : de quoi varier les paysages
         assert!(hot > 100 && temperate > 100 && cold > 100, "chaud {hot}, tempere {temperate}, froid {cold}");
+        for kind in [PlanetKind::Rocky, PlanetKind::MiniNeptune, PlanetKind::IceGiant, PlanetKind::GasGiant] {
+            assert!(kinds.get(&kind).copied().unwrap_or(0) > 300, "{kinds:?}");
+        }
     }
 
     #[test]
@@ -1131,8 +1349,8 @@ mod tests {
         let b = default_systems(&galaxies, 43);
         let different = a.iter().zip(&b).take(300).filter(|(x, y)| {
             x.stars[0].radius.to_bits() != y.stars[0].radius.to_bits()
-                || x.planets.len() != y.planets.len()
-                || x.planets[0].radius.to_bits() != y.planets[0].radius.to_bits()
+                || x.planets().len() != y.planets().len()
+                || x.planets()[0].radius.to_bits() != y.planets()[0].radius.to_bits()
         });
         assert!(different.count() > 250);
     }
@@ -1173,8 +1391,8 @@ mod tests {
         let b = default_systems(&galaxies, DEFAULT_WORLD_SEED);
         assert_eq!(a.len(), b.len());
         for (x, y) in a.iter().zip(&b).take(500) {
-            assert_eq!(x.planets.len(), y.planets.len());
-            for (p, q) in x.planets.iter().zip(&y.planets) {
+            assert_eq!(x.planets().len(), y.planets().len());
+            for (p, q) in x.planets().iter().zip(y.planets()) {
                 assert_eq!(p.radius.to_bits(), q.radius.to_bits());
                 assert_eq!(p.orbit_distance.to_bits(), q.orbit_distance.to_bits());
                 assert_eq!(p.moons.len(), q.moons.len());

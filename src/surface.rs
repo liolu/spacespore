@@ -19,13 +19,13 @@ use crate::net_ui::NetPanel;
 use crate::planet::{MoonId, MoonRoot, PlanetId, PlanetRoot, StarRoot};
 use crate::settings::GameSettings;
 use crate::ship::Ship;
-use crate::terrain::{build_tile_mesh, select_tiles, BodyParams, Terrain, TileKey};
+use crate::terrain::{build_tile_mesh, select_tiles, BodyParams, Terrain, TileKey, build_tile_mesh_with};
+use crate::decor::{tile_decor, DecorAssets, DecorInstance};
 use crate::ui::{CameraTarget, MenuState, TargetKind};
 use crate::{CameraController, ZoomLevel};
 
 /// Couleur du ciel dans l'espace (celle de `setup_scene`).
-const SPACE_SKY: Color = Color::srgb(0.005, 0.005, 0.02);
-const DAY_SKY: [f32; 3] = [0.36, 0.58, 0.92];
+pub(crate) const SPACE_SKY: Color = Color::srgb(0.005, 0.005, 0.02);
 
 /// La lumière vient uniquement de l'étoile (lumière ponctuelle réelle : sa position, sa couleur et
 /// sa chute en 1/d²), jamais d'un « soleil » ajouté : une planète lointaine reçoit moins de lumière,
@@ -34,7 +34,6 @@ const AMBIENT_SPACE: f32 = 300.0;
 /// Lumière diffuse du ciel en plein jour sous une atmosphère.
 const AMBIENT_DAY: f32 = 1_500.0;
 /// Teinte de la lumière diffuse du ciel (plus claire que celle de l'espace).
-const AMBIENT_TINT: Color = Color::srgb(0.55, 0.6, 0.75);
 const AMBIENT_SPACE_TINT: Color = Color::srgb(0.25, 0.25, 0.35);
 
 /// Nombre maximum de tuiles construites en même temps en arrière-plan.
@@ -58,13 +57,17 @@ impl Plugin for SurfacePlugin {
             .add_systems(Update, update_galaxy_dim)
             .add_systems(
                 Update,
-                (surface_control, surface_light, update_tiles, update_hud)
+                (surface_control.in_set(SurfaceControl), surface_light, update_tiles, update_hud)
                     .chain()
                     .after(crate::planet::orbit_planets)
                     .after(crate::planet::orbit_moons),
             );
     }
 }
+
+/// Pilotage du vaisseau et de la caméra près d'un astre (les géantes gazeuses passent après).
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SurfaceControl;
 
 /// Maillage lointain d'un astre (remplacé par les tuiles pendant un atterrissage).
 #[derive(Component)]
@@ -83,9 +86,9 @@ struct SurfaceHud;
 /// Paramètres de terrain de l'astre ciblé (planète ou lune), `None` pour tout autre astre.
 pub fn body_params(settings: &GameSettings, kind: &TargetKind) -> Option<BodyParams> {
     match *kind {
-        TargetKind::Planet(id) => settings.systems.get(id / 1000)?.planets.get(id % 1000).map(BodyParams::planet),
+        TargetKind::Planet(id) => settings.systems.get(id / 1000)?.planets().get(id % 1000).map(BodyParams::planet),
         TargetKind::Moon(planet_id, moon) => {
-            let planet = settings.systems.get(planet_id / 1000)?.planets.get(planet_id % 1000)?;
+            let planet = settings.systems.get(planet_id / 1000)?.planets().get(planet_id % 1000)?;
             Some(BodyParams::moon(planet.moons.get(moon)?, planet))
         }
         _ => None,
@@ -97,9 +100,33 @@ pub fn hover_radius(p: &BodyParams) -> f32 {
     p.radius + p.terrain_height * 0.6 + p.radius * 0.15 + 150.0
 }
 
-/// Épaisseur d'air visible depuis le sol : le ciel bleu s'efface avec l'altitude.
+/// Épaisseur d'air visible depuis le sol : le ciel s'efface avec l'altitude (plus vite sous une
+/// atmosphère ténue).
 fn atmosphere_depth(p: &BodyParams) -> f32 {
-    (p.radius * 0.12).max(300.0)
+    (p.radius * 0.12).max(300.0) * (0.5 + 0.5 * p.pressure.clamp(0.0, 10.0).powf(0.3))
+}
+
+/// Couleur du ciel vue d'un astre. `sun_height` : sinus de la hauteur de l'étoile au-dessus de
+/// l'horizon ; `air` : part de l'atmosphère au-dessus de la caméra (1 au sol, 0 dans l'espace).
+/// Le jour, couleur calculée de l'atmosphère (`planetgen::atmosphere`) ; quand l'étoile est basse,
+/// celle du coucher de soleil ; la nuit, le noir de l'espace.
+pub fn sky_color(p: &BodyParams, sun_height: f32, air: f32, space: [f32; 3]) -> [f32; 3] {
+    if !p.atmosphere || p.pressure < 0.01 {
+        return space;
+    }
+    let day = smoothstep((sun_height + 0.15) / 0.35) * air;
+    // Coucher : l'étoile à moins de ~15° de l'horizon
+    let low = (1.0 - (sun_height.abs() / 0.28)).clamp(0.0, 1.0) * 0.75;
+    let lit = [
+        p.sky[0] + (p.sunset[0] - p.sky[0]) * low,
+        p.sky[1] + (p.sunset[1] - p.sky[1]) * low,
+        p.sky[2] + (p.sunset[2] - p.sky[2]) * low,
+    ];
+    [
+        space[0] + (lit[0] - space[0]) * day,
+        space[1] + (lit[1] - space[1]) * day,
+        space[2] + (lit[2] - space[2]) * day,
+    ]
 }
 
 /// Repousse la caméra hors de l'astre pour qu'elle ne passe jamais sous sa surface.
@@ -131,6 +158,8 @@ pub struct Walker {
     pub pitch: f32,
     pub on_ground: bool,
     pub in_water: bool,
+    /// Liquide où l'on nage (eau, méthane, ammoniac, lave).
+    pub liquid: crate::planet::VoxelType,
     /// Rayon de l'œil, lissé pour adoucir les marches.
     pub eye_r: f32,
 }
@@ -145,6 +174,7 @@ impl Default for Walker {
             pitch: 0.0,
             on_ground: false,
             in_water: false,
+            liquid: crate::planet::VoxelType::Air,
             eye_r: 1.0,
         }
     }
@@ -240,8 +270,10 @@ impl Walker {
         let up = self.up();
         let mut r = self.pos.length();
         let ground = t.ground(up);
-        self.in_water = ground.kind == crate::planet::VoxelType::Water;
-        let gravity = (if t.params.airless { MOON_GRAVITY } else { GRAVITY }) * v;
+        self.in_water = ground.kind.is_liquid();
+        self.liquid = ground.kind;
+        // Vraie gravité de l'astre : sur une lune à 0,16 g, on saute six fois plus haut
+        let gravity = GRAVITY * t.params.gravity.clamp(MIN_GRAVITY, 4.0) * v;
         if self.on_ground && inp.jump {
             self.vr = JUMP_VOXELS * v;
             self.on_ground = false;
@@ -286,8 +318,10 @@ const WALK_VOXELS: f32 = 7.0;
 const SPRINT_VOXELS: f32 = 21.0;
 const STEP_VOXELS: f32 = 1.05;
 const JUMP_VOXELS: f32 = 7.5;
+/// Pesanteur à 1 g, en voxels par seconde².
 const GRAVITY: f32 = 22.0;
-const MOON_GRAVITY: f32 = 7.0;
+/// Sous cette gravité (g), on garde un minimum de poids : sinon un saut ne retomberait jamais.
+const MIN_GRAVITY: f32 = 0.05;
 
 // ─────────────────────────────────────────────────────────────────────────
 //  État de l'atterrissage
@@ -397,8 +431,12 @@ impl Surface {
         self.hover.filter(|(k, _)| k == kind).map(|(_, d)| d)
     }
 
-    /// Identifiant de la planète dont le maillage lointain est remplacé par les tuiles.
+    /// Identifiant de la planète dont le maillage lointain est remplacé par les tuiles (jamais une
+    /// géante gazeuse : pas de terrain, on vole dans sa sphère).
     pub fn active_planet(&self) -> Option<usize> {
+        if self.gaseous() {
+            return None;
+        }
         match (self.phase, self.body) {
             (Phase::Orbit, _) => None,
             (_, Some(TargetKind::Planet(id))) => Some(id),
@@ -408,6 +446,25 @@ impl Surface {
 
     fn params(&self) -> Option<BodyParams> {
         self.terrain.as_ref().map(|t| t.params)
+    }
+
+    /// Brume de l'horizon pendant un séjour sous une atmosphère : (couleur, pression en bar).
+    pub fn haze(&self) -> Option<([f32; 3], f32)> {
+        let p = self.params().filter(|p| self.active() && p.atmosphere && !p.gaseous && p.pressure >= 0.01)?;
+        Some((p.haze, p.pressure))
+    }
+
+    /// Séjour dans une géante gazeuse.
+    pub fn gaseous(&self) -> bool {
+        self.params().is_some_and(|p| p.gaseous)
+    }
+
+    /// Vaisseau détruit : retour en orbite, au-dessus de l'endroit survolé (hors de l'astre).
+    pub fn eject(&mut self) {
+        if let (Some(kind), true) = (self.body, self.active()) {
+            self.hover = Some((kind, self.fpos.normalize_or(Vec3::Y)));
+        }
+        self.abort();
     }
 
     fn abort(&mut self) {
@@ -623,10 +680,15 @@ fn surface_control(
                     surface.fdist = ctrl.distance.clamp(60.0, FLIGHT_ZOOM * 0.95);
                     surface.fyaw = 0.0;
                     surface.fpitch = 0.35;
-                    surface.fdescend = true;
+                    // Une géante n'a pas de sol : on ne plonge pas d'office vers son cœur
+                    surface.fdescend = !params.gaseous;
                     surface.phase = Phase::Flying;
                     *ship_vis = Visibility::Inherited;
-                    net.notify("Navigation : ZQSD/WASD voler, Maj accelerer, Espace/Ctrl monter/descendre, V atterrir, molette pour revenir.", now);
+                    if params.gaseous {
+                        net.notify("Geante gazeuse : Ctrl pour descendre dans l'atmosphere. Attention, la pression y abime la coque !", now);
+                    } else {
+                        net.notify("Navigation : ZQSD/WASD voler, Maj accelerer, Espace/Ctrl monter/descendre, V atterrir, molette pour revenir.", now);
+                    }
                     return;
                 }
             }
@@ -642,6 +704,10 @@ fn surface_control(
             net.notify("Cet astre est trop loin : approchez-vous de son systeme.", now);
             return;
         };
+        if params.gaseous {
+            net.notify("Pas de sol : une geante gazeuse n'a pas de surface. Zoomez sous 1000 pour entrer dans son atmosphere (la pression abime la coque).", now);
+            return;
+        }
         let terrain = Terrain::new(params);
         let dir1 = ctx.aimed_dir(camera, cam_gt, center, &params);
         let local0 = ship_tf.translation - center;
@@ -810,7 +876,10 @@ fn surface_control(
             heading = (Quat::from_axis_angle(up, turn * 1.3 * dt) * heading).normalize();
             let top_speed = (terrain.params.radius * 0.15).clamp(120.0, 4000.0) * if boost { 4.0 } else { 1.0 };
             surface.fspeed += (forward * top_speed - surface.fspeed) * (1.0 - (-2.0 * dt).exp());
-            surface.fvert += (vertical * 400.0 - surface.fvert) * (1.0 - (-4.0 * dt).exp());
+            // Dans une géante (des dizaines de milliers d'unités d'atmosphère), on monte et
+            // descend plus vite
+            let climb = if terrain.params.gaseous { 400.0 * (terrain.params.radius / 8000.0).max(1.0) } else { 400.0 };
+            surface.fvert += (vertical * climb - surface.fvert) * (1.0 - (-4.0 * dt).exp());
             let next = (surface.fpos + heading * surface.fspeed * dt).normalize();
             let ground = terrain.ground(next).top;
             let ceiling = hover_radius(&params);
@@ -854,6 +923,8 @@ fn surface_control(
                 ctrl.last_target_pos = center;
                 surface.abort();
                 clear.0 = SPACE_SKY;
+            } else if enter && params.gaseous {
+                net.notify("Pas de sol : une geante gazeuse n'a pas de surface. Zoomez sous 1000 pour entrer dans son atmosphere (la pression abime la coque).", now);
             } else if enter {
                 // Atterrir juste devant le vaisseau
                 let terrain = surface.terrain.take().unwrap();
@@ -867,7 +938,7 @@ fn surface_control(
         Phase::Orbit => {}
     }
 
-    // Ciel : bleu le jour près d'une atmosphère, noir dans l'espace
+    // Ciel : couleur de l'atmosphère le jour (coucher de soleil près de l'horizon), noir dans l'espace
     if surface.active() {
         let cam_local = cam_tf.translation - center;
         let up = cam_local.normalize_or(Vec3::Y);
@@ -878,19 +949,11 @@ fn surface_control(
             .map(|t| t.translation - center)
             .min_by(|a, b| a.length_squared().total_cmp(&b.length_squared()))
             .map(|d| d.normalize_or(Vec3::Y));
-        let blue = if params.atmosphere {
-            let day = sun.map_or(0.0, |s| smoothstep((up.dot(s) + 0.15) / 0.35));
-            let air = (1.0 - altitude / atmosphere_depth(&params)).clamp(0.0, 1.0);
-            day * air
-        } else {
-            0.0
-        };
+        let height = sun.map_or(-1.0, |s| up.dot(s));
+        let air = (1.0 - altitude / atmosphere_depth(&params)).clamp(0.0, 1.0);
         let space = SPACE_SKY.to_srgba();
-        clear.0 = Color::srgb(
-            space.red + (DAY_SKY[0] - space.red) * blue,
-            space.green + (DAY_SKY[1] - space.green) * blue,
-            space.blue + (DAY_SKY[2] - space.blue) * blue,
-        );
+        let c = sky_color(&params, height, air, [space.red, space.green, space.blue]);
+        clear.0 = Color::srgb(c[0], c[1], c[2]);
     }
 }
 
@@ -993,8 +1056,14 @@ fn surface_light(
     } else {
         0.0
     };
-    ambient.brightness = AMBIENT_SPACE + (AMBIENT_DAY - AMBIENT_SPACE) * day;
-    ambient.color = if day > 0.0 { AMBIENT_TINT } else { AMBIENT_SPACE_TINT };
+    // Une atmosphère épaisse diffuse plus de lumière ; la teinte est celle du ciel
+    ambient.brightness = AMBIENT_SPACE + (AMBIENT_DAY - AMBIENT_SPACE) * day * params.pressure.clamp(0.05, 4.0).powf(0.25);
+    ambient.color = if day > 0.0 {
+        let s = params.sky;
+        Color::srgb(0.4 + 0.3 * s[0], 0.4 + 0.3 * s[1], 0.4 + 0.3 * s[2])
+    } else {
+        AMBIENT_SPACE_TINT
+    };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1010,7 +1079,7 @@ struct TileEntry {
 struct TileStore {
     body: Option<TargetKind>,
     built: HashMap<TileKey, TileEntry>,
-    tasks: HashMap<TileKey, Task<Mesh>>,
+    tasks: HashMap<TileKey, Task<(Mesh, Vec<DecorInstance>)>>,
     material: Option<Handle<StandardMaterial>>,
     far_hidden: bool,
 }
@@ -1043,6 +1112,7 @@ fn update_tiles(
     mut store: ResMut<TileStore>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    decor: Res<DecorAssets>,
     cam_q: Query<&Transform, With<Camera3d>>,
     planets: Query<(Entity, &PlanetId, &Transform), (With<PlanetRoot>, Without<Camera3d>)>,
     moons: Query<(Entity, &MoonId, &Transform), (With<MoonRoot>, Without<Camera3d>)>,
@@ -1050,7 +1120,8 @@ fn update_tiles(
     far: Query<(), With<FarMesh>>,
     mut vis: Query<&mut Visibility>,
 ) {
-    let wanted = if surface.active() { surface.body } else { None };
+    // Pas de tuiles dans une géante gazeuse : sa sphère reste affichée
+    let wanted = if surface.active() && !surface.gaseous() { surface.body } else { None };
 
     // Changement (ou fin) de séjour : on jette les tuiles et on rend le maillage lointain
     if store.body != wanted {
@@ -1114,9 +1185,11 @@ fn update_tiles(
     let finished: Vec<TileKey> = store.tasks.keys().copied().collect();
     for key in finished {
         let Some(task) = store.tasks.get_mut(&key) else { continue };
-        if let Some(mesh) = block_on(future::poll_once(task)) {
+        if let Some((mesh, objects)) = block_on(future::poll_once(task)) {
             store.tasks.remove(&key);
             let entity = spawn_tile(&mut commands, &mut meshes, &material, root, mesh);
+            // Décor de la tuile (tuiles proches seulement) : il disparaît avec elle
+            decor.spawn(&mut commands, entity, &objects);
             store.built.insert(key, TileEntry { entity, last_needed: now });
         }
     }
@@ -1134,7 +1207,13 @@ fn update_tiles(
             break;
         }
         let p = params;
-        store.tasks.insert(key, pool.spawn(async move { build_tile_mesh(&p, key) }));
+        store.tasks.insert(
+            key,
+            pool.spawn(async move {
+                let terrain = Terrain::new(p);
+                (build_tile_mesh_with(&terrain, key), tile_decor(&terrain, key))
+            }),
+        );
     }
 
     // Tuiles à afficher : la feuille si elle est prête, sinon son plus proche ancêtre prêt
@@ -1270,10 +1349,12 @@ fn update_hud(
 ) {
     let label = match surface.phase {
         Phase::Orbit => match body_params(&settings, &target.0) {
+            Some(p) if p.gaseous => "Geante gazeuse (pas de sol)   Zoomez sous 1000 pour entrer dans son atmosphere   P : planete suivante   M : lune".to_string(),
             Some(_) => "Zoomez sous 1000 pour naviguer autour de l'astre   V : atterrir   P : planete suivante   M : lune".to_string(),
             None if matches!(target.0, TargetKind::Star(_)) => "P : aller a la planete suivante du systeme".to_string(),
             None => String::new(),
         },
+        Phase::Flying if surface.gaseous() => "ZQSD/WASD : voler   A/D : tourner   Maj : accelerer   Espace/Ctrl : monter/descendre\nClic droit : orbiter   Molette : zoom (>1000 : orbite)   Pas de sol : la pression abime la coque".to_string(),
         Phase::Flying => "ZQSD/WASD : voler   A/D : tourner   Maj : accelerer   Espace/Ctrl : monter/descendre\nClic droit : orbiter   Molette : zoom (>1000 : orbite)   V : atterrir".to_string(),
         Phase::Descending => "Atterrissage en cours...".to_string(),
         Phase::Ascending => "Decollage en cours...".to_string(),
@@ -1284,11 +1365,21 @@ fn update_hud(
             let lon = up.z.atan2(up.x).to_degrees();
             let params = surface.params();
             let radius = params.map_or(0.0, |p| p.radius);
-            let temp = params.map_or(0.0, |p| p.temperature);
             let alt = w.pos.length() - radius;
+            // Température locale : latitude et altitude (le sommet des montagnes est plus froid)
+            let temp = match (&surface.terrain, params) {
+                (Some(t), Some(p)) => t.temperature_at(up, alt / p.terrain_height.max(1.0)),
+                _ => 0.0,
+            };
             format!(
                 "ZQSD/WASD : marcher   Maj : courir   Espace : sauter   V : decoller\nLat {lat:.1}  Lon {lon:.1}  Alt {alt:.0}  Temp. {temp:.0} C{}",
-                if w.in_water { "  (a l'eau)" } else { "" }
+                match (w.in_water, w.liquid) {
+                    (false, _) => "",
+                    (_, crate::planet::VoxelType::Methane) => "  (dans le methane)",
+                    (_, crate::planet::VoxelType::Ammonia) => "  (dans l'ammoniac)",
+                    (_, crate::planet::VoxelType::Lava) => "  (dans la lave !)",
+                    _ => "  (a l'eau)",
+                }
             )
         }
     };
@@ -1302,6 +1393,8 @@ fn update_hud(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::planetgen::climate::Climate;
+    use crate::terrain::{EARTH_SKY, EARTH_SUNSET};
 
     fn world() -> Terrain {
         Terrain::new(BodyParams {
@@ -1314,6 +1407,16 @@ mod tests {
             noise_scale: 2.0,
             detail_scale: 4.0,
             temperature: 15.0,
+            gravity: 1.0,
+            gaseous: false,
+            climate: Climate::default(),
+            sky: EARTH_SKY,
+            sunset: EARTH_SUNSET,
+            haze: EARTH_SKY,
+            pressure: 1.0,
+            hydro: crate::planetgen::hydrology::Hydro::default(),
+            relief: crate::planetgen::geology::Relief::default(),
+            biomes: crate::planetgen::biome::BiomeParams::default(),
         })
     }
 
@@ -1421,6 +1524,7 @@ mod tests {
         p.airless = true;
         p.atmosphere = false;
         p.radius = 3000.0;
+        p.gravity = 0.16;
         let t = Terrain::new(p);
         let dir = Vec3::new(0.3, 0.8, 0.2).normalize();
         let mut w = Walker::spawn(&t, dir, Vec3::X);
@@ -1453,8 +1557,11 @@ mod tests {
         let settings = GameSettings::default();
         let mut bodies = Vec::new();
         for sys in settings.systems.iter().take(150) {
-            for p in &sys.planets {
-                bodies.push(BodyParams::planet(p));
+            for p in sys.planets() {
+                // Pas de sol sur une géante gazeuse : on n'y marche pas
+                if !p.gaseous() {
+                    bodies.push(BodyParams::planet(p));
+                }
                 for m in &p.moons {
                     bodies.push(BodyParams::moon(m, p));
                 }

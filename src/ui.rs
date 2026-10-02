@@ -201,6 +201,7 @@ impl Plugin for UiPlugin {
                     handle_toggle_button,
                     handle_toggle_show_light,
                     handle_toggle_show_orbits,
+                    handle_toggle_show_zones,
                     handle_toggle_show_systems,
                     handle_toggle_atmosphere,
                     handle_apply_button,
@@ -367,6 +368,9 @@ struct ToggleShowLight;
 struct ToggleShowOrbits;
 
 #[derive(Component)]
+struct ToggleShowZones;
+
+#[derive(Component)]
 struct ToggleShowSystems;
 
 #[derive(Component)]
@@ -478,16 +482,16 @@ impl SettingKey {
             Self::MouseSensitivity => s.mouse_sensitivity,
             Self::ScrollSpeed => s.scroll_speed,
             Self::KeyboardSpeed => s.keyboard_speed,
-            Self::PlanetOrbitDistance(i) => s.systems.first().and_then(|sys| sys.planets.get(i)).map(|p| p.orbit_distance).unwrap_or(0.0),
-            Self::PlanetRadius(i) => s.systems.first().and_then(|sys| sys.planets.get(i)).map(|p| p.radius).unwrap_or(50.0),
-            Self::PlanetSeaLevel(i) => s.systems.first().and_then(|sys| sys.planets.get(i)).map(|p| p.sea_level).unwrap_or(0.4),
-            Self::PlanetTerrainHeight(i) => s.systems.first().and_then(|sys| sys.planets.get(i)).map(|p| p.terrain_height).unwrap_or(22.0),
-            Self::PlanetSeed(i) => s.systems.first().and_then(|sys| sys.planets.get(i)).map(|p| p.seed as f32).unwrap_or(42.0),
-            Self::PlanetNoiseScale(i) => s.systems.first().and_then(|sys| sys.planets.get(i)).map(|p| p.noise_scale).unwrap_or(2.0),
-            Self::PlanetDetailScale(i) => s.systems.first().and_then(|sys| sys.planets.get(i)).map(|p| p.detail_scale).unwrap_or(4.0),
-            Self::PlanetCloudDensity(i) => s.systems.first().and_then(|sys| sys.planets.get(i)).map(|p| p.cloud_density).unwrap_or(0.5),
-            Self::PlanetCloudAltitude(i) => s.systems.first().and_then(|sys| sys.planets.get(i)).map(|p| p.cloud_altitude).unwrap_or(8.0),
-            Self::PlanetCloudSpeed(i) => s.systems.first().and_then(|sys| sys.planets.get(i)).map(|p| p.cloud_speed).unwrap_or(0.02),
+            Self::PlanetOrbitDistance(i) => s.systems.first().and_then(|sys| sys.planets().get(i)).map(|p| p.orbit_distance).unwrap_or(0.0),
+            Self::PlanetRadius(i) => s.systems.first().and_then(|sys| sys.planets().get(i)).map(|p| p.radius).unwrap_or(50.0),
+            Self::PlanetSeaLevel(i) => s.systems.first().and_then(|sys| sys.planets().get(i)).map(|p| p.sea_level).unwrap_or(0.4),
+            Self::PlanetTerrainHeight(i) => s.systems.first().and_then(|sys| sys.planets().get(i)).map(|p| p.terrain_height).unwrap_or(22.0),
+            Self::PlanetSeed(i) => s.systems.first().and_then(|sys| sys.planets().get(i)).map(|p| p.seed as f32).unwrap_or(42.0),
+            Self::PlanetNoiseScale(i) => s.systems.first().and_then(|sys| sys.planets().get(i)).map(|p| p.noise_scale).unwrap_or(2.0),
+            Self::PlanetDetailScale(i) => s.systems.first().and_then(|sys| sys.planets().get(i)).map(|p| p.detail_scale).unwrap_or(4.0),
+            Self::PlanetCloudDensity(i) => s.systems.first().and_then(|sys| sys.planets().get(i)).map(|p| p.cloud_density).unwrap_or(0.5),
+            Self::PlanetCloudAltitude(i) => s.systems.first().and_then(|sys| sys.planets().get(i)).map(|p| p.cloud_altitude).unwrap_or(8.0),
+            Self::PlanetCloudSpeed(i) => s.systems.first().and_then(|sys| sys.planets().get(i)).map(|p| p.cloud_speed).unwrap_or(0.02),
             Self::StarOrbitDistance(i) => s.systems.first().and_then(|sys| sys.stars.get(i)).map(|st| st.orbit_distance).unwrap_or(0.0),
             Self::StarRadius(i) => s.systems.first().and_then(|sys| sys.stars.get(i)).map(|st| st.radius).unwrap_or(200.0),
             Self::StarIntensity(i) => s.systems.first().and_then(|sys| sys.stars.get(i)).map(|st| st.intensity).unwrap_or(20.0),
@@ -505,9 +509,9 @@ impl SettingKey {
             Self::BeltMinSize(i) => s.systems.first().and_then(|sys| sys.asteroid_belts.get(i)).map(|b| b.min_size).unwrap_or(1.0),
             Self::BeltMaxSize(i) => s.systems.first().and_then(|sys| sys.asteroid_belts.get(i)).map(|b| b.max_size).unwrap_or(5.0),
             Self::BeltCount(i) => s.systems.first().and_then(|sys| sys.asteroid_belts.get(i)).map(|b| b.count as f32).unwrap_or(100.0),
-            Self::MoonOrbitDistance(pi, mi) => s.systems.first().and_then(|sys| sys.planets.get(pi)).and_then(|p| p.moons.get(mi)).map(|m| m.orbit_distance).unwrap_or(80.0),
-            Self::MoonRadius(pi, mi) => s.systems.first().and_then(|sys| sys.planets.get(pi)).and_then(|p| p.moons.get(mi)).map(|m| m.radius).unwrap_or(12.0),
-            Self::MoonSeed(pi, mi) => s.systems.first().and_then(|sys| sys.planets.get(pi)).and_then(|p| p.moons.get(mi)).map(|m| m.seed as f32).unwrap_or(77.0),
+            Self::MoonOrbitDistance(pi, mi) => s.systems.first().and_then(|sys| sys.planets().get(pi)).and_then(|p| p.moons.get(mi)).map(|m| m.orbit_distance).unwrap_or(80.0),
+            Self::MoonRadius(pi, mi) => s.systems.first().and_then(|sys| sys.planets().get(pi)).and_then(|p| p.moons.get(mi)).map(|m| m.radius).unwrap_or(12.0),
+            Self::MoonSeed(pi, mi) => s.systems.first().and_then(|sys| sys.planets().get(pi)).and_then(|p| p.moons.get(mi)).map(|m| m.seed as f32).unwrap_or(77.0),
         }
     }
 
@@ -517,34 +521,34 @@ impl SettingKey {
             Self::ScrollSpeed => s.scroll_speed = val,
             Self::KeyboardSpeed => s.keyboard_speed = val,
             Self::PlanetOrbitDistance(i) => {
-                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(i)) { p.orbit_distance = val; }
+                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets_mut().get_mut(i)) { p.orbit_distance = val; }
             }
             Self::PlanetRadius(i) => {
-                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(i)) { p.radius = val; }
+                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets_mut().get_mut(i)) { p.radius = val; }
             }
             Self::PlanetSeaLevel(i) => {
-                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(i)) { p.sea_level = val; }
+                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets_mut().get_mut(i)) { p.sea_level = val; }
             }
             Self::PlanetTerrainHeight(i) => {
-                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(i)) { p.terrain_height = val; }
+                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets_mut().get_mut(i)) { p.terrain_height = val; }
             }
             Self::PlanetSeed(i) => {
-                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(i)) { p.seed = val as u32; }
+                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets_mut().get_mut(i)) { p.seed = val as u32; }
             }
             Self::PlanetNoiseScale(i) => {
-                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(i)) { p.noise_scale = val; }
+                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets_mut().get_mut(i)) { p.noise_scale = val; }
             }
             Self::PlanetDetailScale(i) => {
-                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(i)) { p.detail_scale = val; }
+                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets_mut().get_mut(i)) { p.detail_scale = val; }
             }
             Self::PlanetCloudDensity(i) => {
-                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(i)) { p.cloud_density = val; }
+                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets_mut().get_mut(i)) { p.cloud_density = val; }
             }
             Self::PlanetCloudAltitude(i) => {
-                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(i)) { p.cloud_altitude = val; }
+                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets_mut().get_mut(i)) { p.cloud_altitude = val; }
             }
             Self::PlanetCloudSpeed(i) => {
-                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(i)) { p.cloud_speed = val; }
+                if let Some(p) = s.systems.first_mut().and_then(|sys| sys.planets_mut().get_mut(i)) { p.cloud_speed = val; }
             }
             Self::StarOrbitDistance(i) => {
                 if let Some(st) = s.systems.first_mut().and_then(|sys| sys.stars.get_mut(i)) { st.orbit_distance = val; }
@@ -598,13 +602,13 @@ impl SettingKey {
                 if let Some(b) = s.systems.first_mut().and_then(|sys| sys.asteroid_belts.get_mut(i)) { b.count = val as u32; }
             }
             Self::MoonOrbitDistance(pi, mi) => {
-                if let Some(m) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(pi)).and_then(|p| p.moons.get_mut(mi)) { m.orbit_distance = val; }
+                if let Some(m) = s.systems.first_mut().and_then(|sys| sys.planets_mut().get_mut(pi)).and_then(|p| p.moons.get_mut(mi)) { m.orbit_distance = val; }
             }
             Self::MoonRadius(pi, mi) => {
-                if let Some(m) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(pi)).and_then(|p| p.moons.get_mut(mi)) { m.radius = val; }
+                if let Some(m) = s.systems.first_mut().and_then(|sys| sys.planets_mut().get_mut(pi)).and_then(|p| p.moons.get_mut(mi)) { m.radius = val; }
             }
             Self::MoonSeed(pi, mi) => {
-                if let Some(m) = s.systems.first_mut().and_then(|sys| sys.planets.get_mut(pi)).and_then(|p| p.moons.get_mut(mi)) { m.seed = val as u32; }
+                if let Some(m) = s.systems.first_mut().and_then(|sys| sys.planets_mut().get_mut(pi)).and_then(|p| p.moons.get_mut(mi)) { m.seed = val as u32; }
             }
         }
     }
@@ -968,7 +972,13 @@ fn setup_game_ui(mut commands: Commands, settings: Res<GameSettings>) {
         settings.show_systems,
         ToggleShowSystems,
     );
-    commands.entity(content).add_children(&[camera_header, s1, s2, s3, invert, show_light, show_orbits, show_systems]);
+    let show_zones = spawn_toggle(
+        &mut commands,
+        "Afficher zones chaude / habitable / froide",
+        settings.show_zones,
+        ToggleShowZones,
+    );
+    commands.entity(content).add_children(&[camera_header, s1, s2, s3, invert, show_light, show_orbits, show_systems, show_zones]);
 
     // ── Graphismes / performances ──
     let gfx_rows = [
@@ -1560,6 +1570,24 @@ fn handle_toggle_show_orbits(
     }
 }
 
+fn handle_toggle_show_zones(
+    interactions: Query<&Interaction, (Changed<Interaction>, With<ToggleShowZones>)>,
+    mut settings: ResMut<GameSettings>,
+    mut toggle_q: Query<(&mut BackgroundColor, &mut BorderColor, &mut Node), With<ToggleShowZones>>,
+) {
+    for interaction in &interactions {
+        if *interaction == Interaction::Pressed {
+            settings.show_zones = !settings.show_zones;
+            settings.save();
+            for (mut bg, mut border, mut node) in &mut toggle_q {
+                *bg = BackgroundColor(if settings.show_zones { ACCENT } else { BG_SLIDER });
+                *border = BorderColor(if settings.show_zones { ACCENT } else { TEXT_DIM });
+                node.justify_content = if settings.show_zones { JustifyContent::End } else { JustifyContent::Start };
+            }
+        }
+    }
+}
+
 fn handle_toggle_show_systems(
     interactions: Query<&Interaction, (Changed<Interaction>, With<ToggleShowSystems>)>,
     mut settings: ResMut<GameSettings>,
@@ -1663,7 +1691,7 @@ fn handle_toggle_atmosphere(
 ) {
     for (interaction, toggle) in &interactions {
         if *interaction == Interaction::Pressed {
-            if let Some(p) = settings.systems.first_mut().and_then(|sys| sys.planets.get_mut(toggle.0)) {
+            if let Some(p) = settings.systems.first_mut().and_then(|sys| sys.planets_mut().get_mut(toggle.0)) {
                 p.atmosphere = !p.atmosphere;
                 settings.save();
                 rebuild.send(RebuildUi);
@@ -1756,8 +1784,8 @@ fn handle_body_actions(
         match *action {
             BodyAction::AddPlanet => {
                 if let Some(sys) = settings.systems.first_mut() {
-                    let n = sys.planets.len();
-                    sys.planets.push(PlanetConfig {
+                    let n = sys.planets().len();
+                    sys.planets_mut().push(PlanetConfig {
                         orbit_distance: 450.0 + n as f32 * 200.0,
                         seed: 42 + n as u32 * 13,
                         ..PlanetConfig::default()
@@ -1766,8 +1794,8 @@ fn handle_body_actions(
             }
             BodyAction::RemovePlanet(i) => {
                 if let Some(sys) = settings.systems.first_mut() {
-                    if sys.planets.len() > 1 && i < sys.planets.len() {
-                        sys.planets.remove(i);
+                    if sys.planets().len() > 1 && i < sys.planets().len() {
+                        sys.planets_mut().remove(i);
                     }
                 }
             }
@@ -1804,7 +1832,7 @@ fn handle_body_actions(
                 }
             }
             BodyAction::AddMoon(pi) => {
-                if let Some(planet) = settings.systems.first_mut().and_then(|sys| sys.planets.get_mut(pi)) {
+                if let Some(planet) = settings.systems.first_mut().and_then(|sys| sys.planets_mut().get_mut(pi)) {
                     let n = planet.moons.len();
                     planet.moons.push(crate::settings::MoonConfig {
                         orbit_distance: 80.0 + n as f32 * 30.0,
@@ -1815,7 +1843,7 @@ fn handle_body_actions(
                 }
             }
             BodyAction::RemoveMoon(pi, mi) => {
-                if let Some(planet) = settings.systems.first_mut().and_then(|sys| sys.planets.get_mut(pi)) {
+                if let Some(planet) = settings.systems.first_mut().and_then(|sys| sys.planets_mut().get_mut(pi)) {
                     if mi < planet.moons.len() {
                         planet.moons.remove(mi);
                     }
@@ -2052,10 +2080,10 @@ fn build_liste_tab(
     // Planetes rocheuses (settings)
     let sys = settings.systems.first();
     if let Some(sys) = sys {
-        if !sys.planets.is_empty() {
+        if !sys.planets().is_empty() {
             let cat = spawn_category_header(commands, "PLANETES", PLANET_COLOR);
             commands.entity(content).add_child(cat);
-            for (i, p) in sys.planets.iter().enumerate() {
+            for (i, p) in sys.planets().iter().enumerate() {
                 let info = format!("R {:.0}  Orb {:.0}", p.radius, p.orbit_distance);
                 let item = spawn_list_item(commands, &format!("Planete {}", i+1), &info, TargetKind::Planet(i), PLANET_COLOR, selected == Some(TargetKind::Planet(i)));
                 commands.entity(content).add_child(item);
@@ -2277,7 +2305,7 @@ fn build_editer_tab(
                 (SettingKey::PlanetNoiseScale(i), 0.5, 5.0),
                 (SettingKey::PlanetDetailScale(i), 1.0, 10.0),
             ]);
-            let has_atmo = settings.systems.first().and_then(|s| s.planets.get(i)).map(|p| p.atmosphere).unwrap_or(false);
+            let has_atmo = settings.systems.first().and_then(|s| s.planets().get(i)).map(|p| p.atmosphere).unwrap_or(false);
             let atmo_toggle = spawn_toggle(commands, "Atmosphere", has_atmo, ToggleAtmosphere(i));
             commands.entity(body).add_child(atmo_toggle);
             if has_atmo {
@@ -2293,7 +2321,7 @@ fn build_editer_tab(
             commands.entity(content).add_child(card);
             // Moons
             let moon_color = Color::srgb(0.6, 0.6, 0.7);
-            if let Some(p) = settings.systems.first().and_then(|s| s.planets.get(i)) {
+            if let Some(p) = settings.systems.first().and_then(|s| s.planets().get(i)) {
                 for (mi, _) in p.moons.iter().enumerate() {
                     let (mc, _) = spawn_body_card(commands, settings, &format!("Lune {}", mi+1), moon_color, BodyAction::RemoveMoon(i, mi), &[
                         (SettingKey::MoonOrbitDistance(i, mi), 30.0, 10000.0),

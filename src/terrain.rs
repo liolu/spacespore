@@ -14,6 +14,10 @@ use noise::{Fbm, NoiseFn, Perlin};
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
 
 use crate::planet::VoxelType;
+use crate::planetgen::biome::{Biome, BiomeField, BiomeParams};
+use crate::planetgen::climate::{relative_altitude, sea_material, Climate};
+use crate::planetgen::geology::{moon_relief, Relief, ReliefField};
+use crate::planetgen::hydrology::Hydro;
 use crate::settings::{MoonConfig, PlanetConfig};
 
 /// Colonnes par côté d'une tuile.
@@ -46,7 +50,31 @@ pub struct BodyParams {
     pub noise_scale: f32,
     pub detail_scale: f32,
     pub temperature: f32,
+    /// Gravité de surface (g) : la marche et le saut en dépendent.
+    pub gravity: f32,
+    /// Géante gazeuse ou neptunienne : pas de sol, on y vole jusqu'au cœur (`GAS_CORE`).
+    pub gaseous: bool,
+    /// Température selon la latitude et l'altitude (phase 3) : neige, déserts, mers gelées.
+    pub climate: Climate,
+    /// Ciel de jour, coucher de soleil et brume de l'horizon (sRGB), pression au sol (bar).
+    pub sky: [f32; 3],
+    pub sunset: [f32; 3],
+    pub haze: [f32; 3],
+    pub pressure: f32,
+    /// Liquide des mers et glaces possibles (phase 4).
+    pub hydro: Hydro,
+    /// Formes du relief issues de la géologie (phase 5).
+    pub relief: Relief,
+    /// Sols et biomes (phase 6).
+    pub biomes: BiomeParams,
 }
+
+/// Ciel d'une planète faite à la main (sans atmosphère calculée) : celui de la Terre.
+pub const EARTH_SKY: [f32; 3] = [0.36, 0.58, 0.92];
+pub const EARTH_SUNSET: [f32; 3] = [1.0, 0.5, 0.2];
+
+/// Une géante gazeuse n'a pas de sol : le vol s'arrête à cette fraction de son rayon (le cœur).
+pub const GAS_CORE: f32 = 0.3;
 
 impl BodyParams {
     pub fn planet(p: &PlanetConfig) -> Self {
@@ -60,10 +88,24 @@ impl BodyParams {
             noise_scale: p.noise_scale,
             detail_scale: p.detail_scale,
             temperature: p.temperature(),
+            gravity: p.gravity_g,
+            gaseous: p.gaseous(),
+            climate: p.climate(),
+            sky: if p.air.present() { p.air.sky } else { EARTH_SKY },
+            sunset: if p.air.present() { p.air.sunset } else { EARTH_SUNSET },
+            haze: if p.air.present() { p.air.haze } else { EARTH_SKY },
+            pressure: if p.air.present() { p.air.pressure_bar } else if p.atmosphere { 1.0 } else { 0.0 },
+            hydro: if p.gaseous() { Hydro::DRY } else { p.hydrology.hydro },
+            relief: p.geology.relief,
+            biomes: p.biomes,
         }
     }
 
     pub fn moon(m: &MoonConfig, parent: &PlanetConfig) -> Self {
+        // Lune générée (phase 9) : un monde comme une planète (air, mers, biomes possibles)
+        if m.generated() {
+            return Self::planet(&m.as_planet(parent));
+        }
         Self {
             airless: true,
             atmosphere: false,
@@ -73,7 +115,17 @@ impl BodyParams {
             seed: m.seed,
             noise_scale: 2.0,
             detail_scale: 4.0,
-            temperature: parent.temperature(),
+            temperature: m.climate.map_or_else(|| parent.temperature(), |c| c.mean_c),
+            gravity: m.gravity_g,
+            gaseous: false,
+            climate: m.climate.unwrap_or_else(|| Climate::from_mean(parent.temperature(), false)),
+            sky: [0.0; 3],
+            sunset: [0.0; 3],
+            haze: [0.0; 3],
+            pressure: 0.0,
+            hydro: Hydro::DRY,
+            relief: m.relief.unwrap_or_else(|| moon_relief(m.seed)),
+            biomes: BiomeParams::default(),
         }
     }
 
@@ -229,6 +281,8 @@ pub struct Terrain {
     mid: Fbm<Perlin>,
     fine: Fbm<Perlin>,
     color: Perlin,
+    relief: ReliefField,
+    biomes: BiomeField,
 }
 
 impl Terrain {
@@ -249,6 +303,8 @@ impl Terrain {
             mid,
             fine,
             color: Perlin::new(params.seed.wrapping_add(200)),
+            relief: ReliefField::new(params.relief),
+            biomes: BiomeField::new(params.biomes),
         }
     }
 
@@ -263,9 +319,12 @@ impl Terrain {
         let continent = self.continent.get([s.x as f64, s.y as f64, s.z as f64]) as f32;
         let ds = p.detail_scale as f64;
         let det = self.detail.get([s.x as f64 * ds, s.y as f64 * ds, s.z as f64 * ds]) as f32 * 0.15;
-        let hv = ((continent + det + 1.0) * 0.5).clamp(0.0, 1.0);
+        let base = ((continent + det + 1.0) * 0.5).clamp(0.0, 1.0);
+        // Montagnes, rifts, volcans, canyons, plateaux, cratères (`planetgen::geology`)
+        let hv = (base + self.relief.offset(dir, base)).clamp(0.0, 1.2);
 
-        let rugged = if p.airless { 1.5 } else { 1.0 };
+        // L'érosion adoucit aussi les collines et le relief fin
+        let rugged = (if p.airless { 1.5 } else { 1.0 }) * (1.0 - 0.5 * p.relief.erosion);
         let mid_amp = (p.terrain_height * 0.5).clamp(self.layout.voxel * 3.0, self.layout.voxel * 36.0) * rugged;
         let fine_amp = self.layout.voxel * 2.5 * rugged;
         let mf = (p.radius / (p.radius * 0.3).clamp(250.0, MID_WAVE)) as f64;
@@ -277,52 +336,48 @@ impl Terrain {
         (h, hv)
     }
 
-    fn surface_type(&self, rh: f32, lat: f32) -> VoxelType {
-        let t = self.params.temperature;
-        let snow_lat = if t > 200.0 {
-            2.0
-        } else if t > 60.0 {
-            0.95
-        } else if t > 20.0 {
-            0.78
-        } else if t > -20.0 {
-            0.50
-        } else {
-            0.15
-        };
-        if self.params.airless {
-            return VoxelType::Stone;
+    /// Matière du sol : d'après la température locale (latitude, altitude), voir `planetgen::climate`.
+    fn surface_type(&self, rh: f32, dir: Vec3) -> VoxelType {
+        let p = &self.params;
+        self.biomes.material(&p.climate, &p.hydro, p.airless, p.atmosphere, rh, dir)
+    }
+
+    /// Biome dans la direction `dir` (`None` : sous la mer, ou planète sans biomes calculés).
+    pub fn biome_at(&self, dir: Vec3) -> Option<Biome> {
+        let p = &self.params;
+        if !p.biomes.defined || p.gaseous {
+            return None;
         }
-        if t > 300.0 {
-            if rh < 0.0 { VoxelType::Stone } else { VoxelType::Sand }
-        } else if t > 100.0 {
-            if rh < 0.30 { VoxelType::Sand } else { VoxelType::Stone }
-        } else if rh < 0.02 {
-            VoxelType::Sand
-        } else if rh < 0.12 {
-            if lat > snow_lat { VoxelType::Snow } else { VoxelType::Grass }
-        } else if rh < 0.28 {
-            if lat > snow_lat - 0.04 { VoxelType::Snow } else { VoxelType::Grass }
-        } else if rh < 0.42 {
-            if lat > snow_lat { VoxelType::Snow } else { VoxelType::Stone }
-        } else {
-            VoxelType::Snow
+        let (h, _) = self.raw_height(dir);
+        if h < p.radius && sea_material(&p.climate, &p.hydro, p.airless, dir.y.abs()).is_some() {
+            return None;
         }
+        Some(self.biomes.biome(&p.climate, &p.hydro, p.airless, p.atmosphere, (h - p.radius) / p.terrain_height.max(1.0), dir))
+    }
+
+    /// Température (°C) dans la direction `dir`, à la hauteur relative `rh`.
+    pub fn temperature_at(&self, dir: Vec3, rh: f32) -> f32 {
+        self.params.climate.temperature(dir.y.clamp(-1.0, 1.0).asin(), relative_altitude(rh), None)
     }
 
     /// Colonne dans la direction `dir`, hauteur arrondie au multiple de `quantum` au-dessus du niveau de la mer.
     pub fn column(&self, dir: Vec3, quantum: f32) -> Column {
         let p = &self.params;
+        // Géante gazeuse : pas de relief, seulement le cœur où le vol s'arrête
+        if p.gaseous {
+            return Column { dir, top: p.radius * GAS_CORE, kind: VoxelType::Stone, color: [0.3, 0.25, 0.2, 1.0] };
+        }
         let (h, hv) = self.raw_height(dir);
         let rel = ((h - p.radius) / quantum).round();
-        let water = !p.airless && rel < 0.0;
-        let frozen = p.temperature < -50.0;
+        // Sous le niveau de la mer : eau, banquise, ou bassin à sec (trop chaud, ou sans air)
+        let sea = if rel < 0.0 { sea_material(&p.climate, &p.hydro, p.airless, dir.y.abs()) } else { None };
+        let water = sea.is_some();
 
         let var = self.color.get([dir.x as f64 * 12.0, dir.y as f64 * 12.0, dir.z as f64 * 12.0]) as f32 * 0.10;
         let jitter = ((dir.x * 127.1 + dir.y * 311.7 + dir.z * 74.7).sin() * 43758.547).fract().abs() * 0.05 - 0.025;
 
         let (top, kind, color) = if water {
-            let kind = if frozen { VoxelType::Snow } else { VoxelType::Water };
+            let kind = sea.unwrap_or(VoxelType::Water);
             let base = kind.color();
             let depth = ((p.radius - h) / (p.terrain_height * 0.5)).clamp(0.0, 0.45);
             let color = [
@@ -333,7 +388,8 @@ impl Terrain {
             ];
             (p.radius, kind, color)
         } else {
-            let kind = self.surface_type(hv - p.sea_level, dir.y.abs());
+            // Hauteur réelle (collines comprises) : une colline au bord de l'eau n'est pas une plage
+            let kind = self.surface_type((h - p.radius) / p.terrain_height.max(1.0), dir);
             let color = if p.airless {
                 let (lo, hi) = ([0.45, 0.44, 0.42], [0.70, 0.68, 0.65]);
                 [
@@ -423,7 +479,11 @@ const MAX_STEP_DOUBLINGS: u32 = 2;
 /// haute dessine la paroi qui les sépare. Une « jupe » descend le long des bords de la tuile pour
 /// cacher les fentes avec les tuiles voisines de profondeur différente.
 pub fn build_tile_mesh(params: &BodyParams, key: TileKey) -> Mesh {
-    let terrain = Terrain::new(*params);
+    build_tile_mesh_with(&Terrain::new(*params), key)
+}
+
+/// Comme `build_tile_mesh`, avec un `Terrain` déjà construit (partagé avec le décor).
+pub fn build_tile_mesh_with(terrain: &Terrain, key: TileKey) -> Mesh {
     let layout = terrain.layout;
     let depth = (key.depth as u32).min(layout.max_depth);
     let lattice = (TILE_CELLS as u32) << depth;
@@ -521,6 +581,16 @@ mod tests {
             noise_scale: 2.0,
             detail_scale: 4.0,
             temperature: 15.0,
+            gravity: 1.0,
+            gaseous: false,
+            climate: Climate::default(),
+            sky: EARTH_SKY,
+            sunset: EARTH_SUNSET,
+            haze: EARTH_SKY,
+            pressure: 1.0,
+            hydro: Hydro::default(),
+            relief: Relief::default(),
+            biomes: BiomeParams::default(),
         }
     }
 
@@ -649,6 +719,17 @@ mod tests {
     }
 
     #[test]
+    fn gas_giants_have_no_ground_until_the_core() {
+        let mut p = earth_like();
+        p.gaseous = true;
+        p.radius = 80_000.0;
+        let t = Terrain::new(p);
+        for dir in [Vec3::Y, Vec3::X, Vec3::new(1.0, -2.0, 0.5).normalize()] {
+            assert_eq!(t.ground(dir).top, 80_000.0 * GAS_CORE);
+        }
+    }
+
+    #[test]
     fn moons_are_gray_and_dry() {
         let mut p = earth_like();
         p.airless = true;
@@ -662,5 +743,113 @@ mod tests {
             assert_ne!(c.kind, VoxelType::Water);
             assert!((c.color[0] - c.color[2]).abs() < 0.2, "pas gris : {:?}", c.color);
         }
+    }
+}
+
+#[cfg(test)]
+mod sea_level_tests {
+    use super::*;
+    use crate::planetgen::hydrology::sea_level_for;
+
+    /// Le relief suit N(0,5 ; 0,09) : le niveau de la mer de `hydrology` donne bien la couverture
+    /// océanique voulue, quelle que soit la graine ou l'échelle du bruit.
+    #[test]
+    fn the_sea_level_gives_the_wanted_ocean_fraction() {
+        for (k, ns) in [1.5f32, 2.5, 3.5].into_iter().enumerate() {
+            let mut heights = Vec::new();
+            for seed in 0..6u32 {
+                let t = Terrain::new(BodyParams { seed: seed * 7919 + k as u32, noise_scale: ns, ..params() });
+                for i in 0..1500 {
+                    let z = 1.0 - 2.0 * (i as f32 + 0.5) / 1500.0;
+                    let a = i as f32 * 2.399_963;
+                    let r = (1.0 - z * z).sqrt();
+                    heights.push(t.raw_height(Vec3::new(r * a.cos(), z, r * a.sin())).1);
+                }
+            }
+            for f in [0.1f32, 0.3, 0.5, 0.71, 0.9] {
+                let level = sea_level_for(f as f64);
+                let under = heights.iter().filter(|&&h| h < level).count() as f32 / heights.len() as f32;
+                assert!((under - f).abs() < 0.05, "echelle {ns} : {f} voulu, {under} obtenu");
+            }
+        }
+    }
+
+    fn params() -> BodyParams {
+        BodyParams {
+            airless: false, atmosphere: true, radius: 9000.0, sea_level: 0.4, terrain_height: 360.0, seed: 1,
+            noise_scale: 2.0, detail_scale: 4.0, temperature: 15.0, gravity: 1.0, gaseous: false,
+            climate: crate::planetgen::climate::Climate::default(), sky: EARTH_SKY, sunset: EARTH_SUNSET, haze: EARTH_SKY, pressure: 1.0,
+            hydro: Hydro::default(),
+            relief: Relief::default(),
+            biomes: BiomeParams::default(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod bench {
+    use super::*;
+
+    /// Temps de construction des tuiles (ignoré : `cargo test --release bench_tiles -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn bench_tiles() {
+        let settings = crate::settings::GameSettings::default();
+        let mut bodies = Vec::new();
+        for sys in settings.systems.iter().take(40) {
+            for p in sys.planets() {
+                if !p.gaseous() {
+                    bodies.push(BodyParams::planet(p));
+                }
+            }
+        }
+        let start = std::time::Instant::now();
+        let mut tiles = 0;
+        for p in bodies.iter().take(30) {
+            let t = Terrain::new(*p);
+            let dir = Vec3::new(0.3, 0.7, -0.4).normalize();
+            let mut keys = Vec::new();
+            select_tiles(t.layout, p.radius, dir * (t.ground(dir).top + 20.0), &mut keys);
+            for key in keys.iter().take(40) {
+                std::hint::black_box(build_tile_mesh(p, *key));
+                tiles += 1;
+            }
+        }
+        let ms = start.elapsed().as_secs_f64() * 1000.0;
+        println!("BENCH {tiles} tuiles en {ms:.0} ms : {:.2} ms par tuile", ms / tiles as f64);
+    }
+}
+
+#[cfg(test)]
+mod geology_tests {
+    use super::*;
+
+    /// Le relief géologique (montagnes, rifts, cratères) ne déplace guère la couverture océanique
+    /// voulue par l'hydrologie.
+    #[test]
+    fn relief_keeps_the_ocean_fraction() {
+        let settings = crate::settings::GameSettings::default();
+        let mut checked = 0;
+        for sys in settings.systems.iter().take(3000) {
+            for p in sys.planets_uncached().iter().filter(|p| !p.gaseous() && p.hydrology.ocean_fraction > 0.05) {
+                if checked >= 40 {
+                    return;
+                }
+                checked += 1;
+                let t = Terrain::new(BodyParams::planet(p));
+                let n = 2000;
+                let under = (0..n)
+                    .filter(|&i| {
+                        let z = 1.0 - 2.0 * (i as f32 + 0.5) / n as f32;
+                        let a = i as f32 * 2.399_963;
+                        let r = (1.0 - z * z).sqrt();
+                        t.raw_height(Vec3::new(r * a.cos(), z, r * a.sin())).1 < p.sea_level
+                    })
+                    .count() as f32
+                    / n as f32;
+                assert!((under - p.hydrology.ocean_fraction).abs() < 0.1, "{under} au lieu de {}", p.hydrology.ocean_fraction);
+            }
+        }
+        assert!(checked > 10);
     }
 }
