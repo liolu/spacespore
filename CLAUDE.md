@@ -101,6 +101,13 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   `atmosphere::diurnal_amplitude`. Tuiles reconstruites quand la saison arrondie change (`TileStore::generation`,
   `surface::update_season`), maillage lointain aussi (`PlanetChunk::season`). `world_clock::LocalWeather` :
   heure, saison, temperature, min/max du jour et de l'annee (HUD, scanner, `/heure`). PROTOCOL 17.
+  B1 = voxels 3D (`terrain.rs`) : cellules = colonnes de la sphere-cube au niveau le plus fin x couches radiales
+  d'un voxel (k = 0 au niveau de la mer). Une seule fonction `Terrain::kind_at` = delta, puis champ de hauteur
+  (`base_column`), puis formes 3D (arche de test `Overhang`, `/surplomb`). Tuiles du niveau le plus fin maillees en
+  3D (`build_voxel_tile_mesh`), les autres en champ de hauteur (`build_height_tile_mesh`) ; `column` = vue de dessus.
+  Collisions 3D : `Terrain::floor(dir, r)` (sol sous un point) et `ceiling` (marcheur, vol bas, camera).
+  Deltas : `voxel.rs` (`BlockKey` 32^3, `BodyVoxels`, `VoxelDeltas` dans `world.json`, message `VoxelEdit`, minage
+  0.14). Banc : `cargo test --release bench_voxel_tiles -- --ignored --nocapture`. PROTOCOL 18.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

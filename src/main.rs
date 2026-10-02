@@ -29,6 +29,7 @@ mod test_cmd;
 mod system_gen;
 mod terrain;
 mod ui;
+mod voxel;
 mod wormhole;
 mod world_clock;
 mod zones;

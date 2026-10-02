@@ -37,7 +37,7 @@ impl Plugin for ChatCmdPlugin {
 #[derive(Event)]
 pub struct ChatCommand(pub String);
 
-const COMMANDS: [&str; 15] = ["/tp", "/galaxie", "/profil", "/profile", "/graine", "/seed", "/aller", "/go", "/stats", "/aide", "/help", "/heure", "/time", "/temps", "/speed"];
+const COMMANDS: [&str; 16] = ["/surplomb", "/tp", "/galaxie", "/profil", "/profile", "/graine", "/seed", "/aller", "/go", "/stats", "/aide", "/help", "/heure", "/time", "/temps", "/speed"];
 
 /// La ligne est une commande du jeu (et non un message à envoyer).
 pub fn is_local(line: &str) -> bool {
@@ -96,12 +96,13 @@ fn find_galaxy(arg: &str, settings: &GameSettings, current: usize) -> Result<usi
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Commandes : (nom, arguments, description). Ordre d'affichage des propositions.
-pub const COMMAND_HELP: [(&str, &str, &str); 9] = [
+pub const COMMAND_HELP: [(&str, &str, &str); 10] = [
     ("/aide", "[commande]", "la liste des commandes, ou l'aide d'une commande"),
     ("/aller", "etoile|planete|lune <type> | suivant", "tests : aller a un type d'etoile, de planete ou de lune"),
     ("/stats", "[n | tout]", "statistiques de tous les astres d'une galaxie (F3 : masquer)"),
     ("/heure", "", "heure locale, hauteur du soleil et saison de l'astre ou l'on est (ou cible)"),
     ("/temps", "<facteur>", "tests : accelerer le temps (1 = normal, 60 = une heure de la planete par seconde)"),
+    ("/surplomb", "", "tests : aller a l'arche de test en voxels 3D de l'astre (pose ou en vol bas)"),
     ("/tp", "<n | type de galaxie | liste>", "aller au trou noir d'une galaxie (0 = la notre)"),
     ("/profil", "", "exporter en JSON le profil de l'astre cible"),
     ("/graine", "[code]", "le code court du monde, ou la graine d'un code"),
@@ -279,6 +280,7 @@ fn run_chat_commands(
     mut go: EventWriter<crate::test_cmd::GoCommand>,
     mut stats: EventWriter<crate::stats::StatsCommand>,
     mut clock: EventWriter<crate::world_clock::ClockCommand>,
+    mut overhang: EventWriter<crate::surface::OverhangCommand>,
     profiles: Res<ProfileCache>,
     star_q: Query<&StarId, With<StarRoot>>,
 ) {
@@ -315,6 +317,10 @@ fn run_chat_commands(
             }
             "/temps" | "/speed" => {
                 clock.send(crate::world_clock::ClockCommand::Speed(arg.to_string()));
+            }
+            // Voxels 3D : l'arche de test (`terrain.rs`)
+            "/surplomb" => {
+                overhang.send(crate::surface::OverhangCommand);
             }
             "/profil" | "/profile" => {
                 let loaded = matches!(target.0, TargetKind::Star(id) if star_q.iter().any(|s| s.0 == id));
