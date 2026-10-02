@@ -886,7 +886,7 @@ pub struct CameraController {
 /// Limite du zoom 1 : en dessous, on reste verrouillé dans le système courant.
 /// Un système s'étend sur ~4 millions d'unités en médiane, 11 millions pour 99 % d'entre eux (1 à 8
 /// planètes, voir `planetgen::system`) : le niveau « Planète » les contient en entier.
-pub const ZOOM_PLANET_MAX: f32 = 18_000_000.0;
+pub const ZOOM_PLANET_MAX: f32 = 18_000_000.0 * settings::SPACE_STRETCH;
 
 /// Distance de caméra pour voir une galaxie entière (reste au zoom 4 pour
 /// pouvoir cliquer ses étoiles).
@@ -927,7 +927,7 @@ impl ZoomLevel {
     fn from_distance(d: f32) -> Self {
         if d < ZOOM_PLANET_MAX {
             ZoomLevel::Planet
-        } else if d < 30_000_000.0 {
+        } else if d < 30_000_000.0 * settings::SPACE_STRETCH {
             ZoomLevel::System
         } else if d < 2_000_000.0 * settings::GALAXY_SCALE {
             ZoomLevel::Sector
@@ -1068,7 +1068,7 @@ fn steer_ship(ship_tf: &mut Transform, hover_pos: Vec3, snap: bool, dt: f32) {
     if snap || dist > HYPERJUMP_DIST || dist <= (1500.0 * dt).max(30.0) {
         ship_tf.translation = hover_pos;
     } else {
-        let cruise = (dist * 0.8).max(3000.0).min(50_000_000.0);
+        let cruise = (dist * 0.8).max(3000.0).min(50_000_000.0 * settings::SPACE_STRETCH);
         let step = (cruise * dt).min(dist);
         ship_tf.translation += to_hover.normalize() * step;
         ship_tf.look_to(to_hover.normalize(), Vec3::Y);
@@ -1529,9 +1529,9 @@ fn camera_distance_range(
 
         // Ouverture de trou de ver : le vaisseau se pose juste au-dessus (hover = moitié du minimum)
         TargetKind::WormholeMouth(_) => (5_000.0, MAX_ZOOM),
-        TargetKind::GalacticCore => (50_000.0 * settings::GALAXY_SCALE, MAX_ZOOM * 10.0),
+        TargetKind::GalacticCore => (50_000.0 * settings::GALAXY_SIZE_SCALE, MAX_ZOOM * 10.0),
         // Comme le trou noir principal : on peut zoomer dans la galaxie extérieure
-        TargetKind::DistantGalaxyCore(_) => (50_000.0 * settings::GALAXY_SCALE, MAX_ZOOM * 10.0),
+        TargetKind::DistantGalaxyCore(_) => (50_000.0 * settings::GALAXY_SIZE_SCALE, MAX_ZOOM * 10.0),
     }
 }
 

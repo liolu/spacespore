@@ -268,7 +268,7 @@ fn start_travel(
     target.0 = TargetKind::Star(si);
     if let Ok(mut ship) = ship_q.get_single_mut() {
         let scale = sys.stars.first().map_or(1_000_000.0, |s| s.scale());
-        ship.translation = sys.center() + Vec3::new(scale * 2.0, scale * 0.3, 0.0);
+        ship.translation = sys.center() + Vec3::new(scale * 2.0, scale * 0.3, 0.0) * crate::settings::SPACE_STRETCH;
     }
     net.local.siege = None;
     net.notify(&format!("Test : {} \"{kind}\" trouvee dans {} ({}). Arrivee...", describe(family), sys.name, id.key()), now);

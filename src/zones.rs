@@ -55,7 +55,7 @@ pub fn display_for(sys: &StarSystemConfig, au: f64, hz: f64) -> f32 {
         .collect();
     pts.sort_by(|a, b| a.0.total_cmp(&b.0));
     let x = au.max(1e-6).ln();
-    let fallback = |a: f64| display_distance(a, hz) * scale;
+    let fallback = |a: f64| display_distance(a, hz) * scale * crate::settings::SPACE_STRETCH as f64;
     let d = match (pts.first(), pts.last()) {
         (Some(&(x0, d0)), _) if x <= x0 => d0 * fallback(au) / fallback(x0.exp()),
         (_, Some(&(x1, d1))) if x >= x1 => d1 * fallback(au) / fallback(x1.exp()),
