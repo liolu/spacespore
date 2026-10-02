@@ -71,7 +71,8 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   sous-graines par couche (`seeds.rs`, numeros figes), conversions dans `units.rs` uniquement, valeurs
   vivantes = depart + delta (`live.rs`, `body_deltas` de `world.json`). Tests du monde : `planetgen::tests`
   (reproductible, types d'etoiles) et `settings::tests::planets_follow_their_star_and_never_touch` ; changer la
-  generation = augmenter `PROTOCOL` (`net.rs`). Chat : `/profil` exporte l'astre cible en JSON, `/graine` = code court.
+  generation = augmenter `PROTOCOL` (`net.rs`). Chat : `/profil` exporte l'astre cible en JSON, `/graine` = code court. Tests : `/aller etoile|planete|lune <type>` et `/aller suivant`
+  (`test_cmd.rs` : teleporte au bord du systeme trouve, cible l'astre une fois charge).
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

@@ -24,6 +24,7 @@ mod scanner;
 mod settings;
 mod ship;
 mod surface;
+mod test_cmd;
 mod system_gen;
 mod terrain;
 mod ui;
@@ -210,6 +211,7 @@ fn main() {
         .add_plugins(gas::GasPlugin)
         .add_plugins(scanner::ScannerPlugin)
         .add_plugins(decor::DecorPlugin)
+        .add_plugins(test_cmd::TestCmdPlugin)
 
         // ── Legacy astre plugins désactivés — la galaxie gère tout ──
         // Ressources + events vides pour l'UI (pas de Startup spawn)
