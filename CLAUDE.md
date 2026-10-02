@@ -91,6 +91,10 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   vers leur planete). La racine de l'astre porte la rotation (tuiles, anneaux, aurores, nuages suivent).
   Repere fixe de l'astre (regle 10) : `surface::Frame` (`to_world`/`to_local`) ; tout ce qui est pose ou vole bas
   (marcheur, vaisseau, camera, `hover_dir`) est stocke dans ce repere. Chat : `/heure`, `/temps <facteur>` (hote).
+  A2 = jour / nuit (`surface.rs`) : `daylight` (ciel), nuit au sol `AMBIENT_NIGHT` + clair de lune (`moonlight` :
+  phase et taille apparente des autres astres), brume moins opaque la nuit (`haze_opacity`, lunes et etoiles
+  visibles), galaxie visible la nuit (`NIGHT_GALAXY`), lampe du marcheur / phares du vaisseau (touche N, allumes
+  dans le noir, puissance calee sur la lumiere de l'etoile : `update_lamps`). Ligne jour/nuit = lumiere de l'etoile.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

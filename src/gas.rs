@@ -151,6 +151,8 @@ fn gas_atmosphere(
                     sky.blue * 0.5 + haze[2] * l * 0.5,
                 );
                 let visibility = (40_000.0 / pressure.max(0.01).sqrt()).clamp(3_000.0, 120_000.0);
+                // La nuit, la brume ne cache plus les lunes, les planètes ni les étoiles
+                let c = c.with_alpha(surface.haze_opacity());
                 commands.entity(cam).insert(DistanceFog { color: c, falloff: FogFalloff::from_visibility(visibility), ..default() });
             }
             None if has_fog => {
