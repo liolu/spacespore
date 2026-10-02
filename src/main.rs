@@ -811,7 +811,7 @@ fn draw_body_markers(
     cam_q: Query<&GlobalTransform, With<Camera3d>>,
     planets: Query<(&GlobalTransform, &PlanetId), With<PlanetRoot>>,
     moons: Query<(&GlobalTransform, &MoonId), With<MoonRoot>>,
-    mut gizmos: Gizmos,
+    mut gizmos: Gizmos<surface::IndicatorGizmos>,
 ) {
     if !matches!(*zoom, ZoomLevel::Planet | ZoomLevel::System) {
         return;
@@ -2071,7 +2071,7 @@ fn update_system_hud(
 fn draw_travel_range(
     zoom: Res<ZoomLevel>,
     ship_q: Query<&GlobalTransform, With<Ship>>,
-    mut gizmos: Gizmos,
+    mut gizmos: Gizmos<surface::IndicatorGizmos>,
 ) {
     if !matches!(*zoom, ZoomLevel::System | ZoomLevel::Sector | ZoomLevel::Galaxy | ZoomLevel::Cosmos) {
         return;
@@ -2096,7 +2096,7 @@ fn draw_planet_trails(
     mut trails: Local<std::collections::HashMap<usize, std::collections::VecDeque<Vec3>>>,
     epoch: Res<origin::OriginEpoch>,
     mut seen_epoch: Local<u32>,
-    mut gizmos: Gizmos,
+    mut gizmos: Gizmos<surface::IndicatorGizmos>,
 ) {
     // L'origine flottante a bougé : les anciennes positions ne sont plus dans le même repère
     if *seen_epoch != epoch.0 {
@@ -2172,7 +2172,7 @@ fn update_zoom_hud(
 // ─────────────────────────────────────────────────────────────────────────
 
 fn draw_light_indicator(
-    mut gizmos: Gizmos,
+    mut gizmos: Gizmos<surface::IndicatorGizmos>,
     settings: Res<GameSettings>,
 
     planet_q:
@@ -2324,7 +2324,7 @@ fn draw_light_indicator(
 // ─────────────────────────────────────────────────────────────────────────
 
 fn draw_orbits(
-    mut gizmos: Gizmos,
+    mut gizmos: Gizmos<surface::IndicatorGizmos>,
     settings: Res<GameSettings>,
     cam_q: Query<&GlobalTransform, With<Camera3d>>,
     spatial: Res<settings::SystemSpatialIndex>,
@@ -2384,7 +2384,7 @@ fn draw_orbits(
     let seg = 128;
 
     let draw_ring =
-        |gizmos: &mut Gizmos,
+        |gizmos: &mut Gizmos<surface::IndicatorGizmos>,
          r: f32,
          color: Color,
          center: Vec3| {
@@ -2482,7 +2482,7 @@ fn draw_orbits(
     // Les autres systèmes ne sont pas chargés : tracer leurs ~12 500 orbites
     // coûtait des millions de segments par image pour rien.
 
-    let draw_ellipse = |gizmos: &mut Gizmos, elems: &OrbitalElements, color: Color, center: Vec3| {
+    let draw_ellipse = |gizmos: &mut Gizmos<surface::IndicatorGizmos>, elems: &OrbitalElements, color: Color, center: Vec3| {
         let mut prev = center + elems.point_at(0.0);
         for i in 1..=seg {
             let e_anom = i as f32 / seg as f32 * std::f32::consts::TAU;
