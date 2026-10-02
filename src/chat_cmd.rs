@@ -8,6 +8,7 @@
 //    /graine         : la graine du monde en code court (copiée dans le presse-papiers)
 //    /graine <code>  : la graine qui correspond à un code
 //    /aller ...      : tests, aller à un type d'étoile, de planète ou de lune (`test_cmd.rs`)
+//    /stats [n|tout] : statistiques de tous les astres d'une galaxie (`stats.rs`), F3 : masquer
 //    /aide           : la liste des commandes
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -36,7 +37,7 @@ impl Plugin for ChatCmdPlugin {
 #[derive(Event)]
 pub struct ChatCommand(pub String);
 
-const COMMANDS: [&str; 10] = ["/tp", "/galaxie", "/profil", "/profile", "/graine", "/seed", "/aller", "/go", "/aide", "/help"];
+const COMMANDS: [&str; 11] = ["/tp", "/galaxie", "/profil", "/profile", "/graine", "/seed", "/aller", "/go", "/stats", "/aide", "/help"];
 
 /// La ligne est une commande du jeu (et non un message à envoyer).
 pub fn is_local(line: &str) -> bool {
@@ -91,7 +92,7 @@ fn find_galaxy(arg: &str, settings: &GameSettings, current: usize) -> Result<usi
 }
 
 fn help() -> &'static str {
-    "Commandes : /tp <n> (trou noir de la galaxie n, 0 = la notre), /tp <type> (ex. /tp annulaire), /tp liste, /profil (exporte l'astre cible en JSON), /graine (code du monde), /aller (tests : /aller planete ocean, /aller etoile geante...), /aide. /g message : chat de guilde."
+    "Commandes : /tp <n> (trou noir de la galaxie n, 0 = la notre), /tp <type> (ex. /tp annulaire), /tp liste, /profil (exporte l'astre cible en JSON), /graine (code du monde), /aller (tests : /aller planete ocean, /aller etoile geante...), /stats (statistiques de la galaxie, /stats tout, F3), /aide. /g message : chat de guilde."
 }
 
 fn list_kinds(settings: &GameSettings) -> String {
@@ -160,6 +161,7 @@ fn run_chat_commands(
     mut cam_q: Query<&mut CameraController>,
     mut net: ResMut<Net>,
     mut go: EventWriter<crate::test_cmd::GoCommand>,
+    mut stats: EventWriter<crate::stats::StatsCommand>,
     profiles: Res<ProfileCache>,
     star_q: Query<&StarId, With<StarRoot>>,
 ) {
@@ -181,6 +183,10 @@ fn run_chat_commands(
             // Tests : aller à un type d'étoile, de planète ou de lune (`test_cmd.rs`)
             "/aller" | "/go" => {
                 go.send(crate::test_cmd::GoCommand(arg.to_string()));
+            }
+            // Statistiques de tous les astres d'une galaxie (`stats.rs`)
+            "/stats" => {
+                stats.send(crate::stats::StatsCommand(arg.to_string()));
             }
             "/profil" | "/profile" => {
                 let loaded = matches!(target.0, TargetKind::Star(id) if star_q.iter().any(|s| s.0 == id));
@@ -243,6 +249,7 @@ mod tests {
         assert!(is_local("/profil"));
         assert!(is_local("/graine"));
         assert!(is_local("/aller planete lave"));
+        assert!(is_local("/stats tout"));
         assert!(!is_local("/g salut"));
         assert!(!is_local("bonjour /tp"));
     }

@@ -23,6 +23,7 @@ mod planetgen;
 mod scanner;
 mod settings;
 mod ship;
+mod stats;
 mod surface;
 mod test_cmd;
 mod system_gen;
@@ -212,6 +213,7 @@ fn main() {
         .add_plugins(scanner::ScannerPlugin)
         .add_plugins(decor::DecorPlugin)
         .add_plugins(test_cmd::TestCmdPlugin)
+        .add_plugins(stats::StatsPlugin)
 
         // ── Legacy astre plugins désactivés — la galaxie gère tout ──
         // Ressources + events vides pour l'UI (pas de Startup spawn)
