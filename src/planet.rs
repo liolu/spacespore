@@ -1,6 +1,6 @@
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
-use crate::net::UniverseClock;
+use crate::world_clock::{Spin, WorldClock};
 use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use rand::Rng;
@@ -63,7 +63,7 @@ impl Plugin for PlanetPlugin {
             .add_systems(Startup, (build_spatial_index, generate_all).chain())
             .add_systems(
                 Update,
-                (orbit_planets, orbit_stars, orbit_moons, orbit_asteroid_belts, update_flare_voxels, rotate_clouds, shimmer_auroras, regenerate_all, update_lod, update_star_visibility, update_far_star_scale, update_arm_capsule_lod, stream_system_bodies, reload_stars, reload_planets, reload_moons, reload_asteroid_belts, cleanup_hidden_toplevel, rotate_accretion_disk),
+                (orbit_planets, orbit_stars, orbit_moons.after(orbit_planets), orbit_asteroid_belts, update_flare_voxels, rotate_clouds.after(orbit_planets), shimmer_auroras, regenerate_all, update_lod, update_star_visibility, update_far_star_scale, update_arm_capsule_lod, stream_system_bodies, reload_stars, reload_planets, reload_moons, reload_asteroid_belts, cleanup_hidden_toplevel, rotate_accretion_disk),
             );
     }
 }
@@ -1100,7 +1100,9 @@ fn spawn_ring_and_aurora(
     pcfg: &PlanetConfig,
     root: Entity,
 ) {
-    let tilt = Quat::from_rotation_x(pcfg.axial_tilt.to_radians());
+    // La racine de la planète porte déjà l'inclinaison de l'axe (et la rotation) : anneaux et
+    // aurores sont dans son plan équatorial
+    let tilt = Quat::IDENTITY;
     if let Some(ring) = pcfg.ring {
         let c = ring.color;
         let material = materials.add(StandardMaterial {
@@ -1467,12 +1469,11 @@ fn spawn_system_bodies(
 }
 
 pub(crate) fn orbit_planets(
-    time: Res<Time>,
-    clock: Res<UniverseClock>,
+    clock: Res<WorldClock>,
     settings: Res<GameSettings>,
     mut planet_q: Query<(&mut Transform, &PlanetId, &SystemIdx), With<PlanetRoot>>,
 ) {
-    let t = clock.secs(&time);
+    let t = clock.secs;
     for (mut tf, pid, si) in &mut planet_q {
         let Some(sys) = settings.systems.get(si.0) else { continue };
         let local_idx = pid.0 - si.0 * 1000;
@@ -1488,16 +1489,17 @@ pub(crate) fn orbit_planets(
         };
         let pos = elems.position(t, DEFAULT_MU * PLANET_MU_SCALE);
         tf.translation = sc + pos;
+        // Rotation autour de l'axe incliné (repère fixe de l'astre, règle 10)
+        tf.rotation = Spin::planet(cfg).rotation(t, -pos);
     }
 }
 
 fn orbit_stars(
-    time: Res<Time>,
-    clock: Res<UniverseClock>,
+    clock: Res<WorldClock>,
     settings: Res<GameSettings>,
     mut star_q: Query<(&mut Transform, &StarId, &SystemIdx), With<StarRoot>>,
 ) {
-    let t = clock.secs(&time);
+    let t = clock.secs;
     for (mut tf, sid, si) in &mut star_q {
         let Some(sys) = settings.systems.get(si.0) else { continue };
         let local_idx = sid.0 - si.0 * 1000;
@@ -1516,19 +1518,18 @@ fn orbit_stars(
 }
 
 pub(crate) fn orbit_moons(
-    time: Res<Time>,
-    clock: Res<UniverseClock>,
+    clock: Res<WorldClock>,
     settings: Res<GameSettings>,
-    planet_q: Query<(&GlobalTransform, &PlanetId), With<PlanetRoot>>,
+    planet_q: Query<(&Transform, &PlanetId), (With<PlanetRoot>, Without<MoonRoot>)>,
     mut moon_q: Query<(&mut Transform, &MoonId, &SystemIdx), With<MoonRoot>>,
 ) {
-    let t = clock.secs(&time);
+    let t = clock.secs;
     let moon_mu = DEFAULT_MU * 0.001;
     for (mut tf, mid, si) in &mut moon_q {
         let planet_pos = planet_q
             .iter()
             .find(|(_, pid)| pid.0 == mid.planet_idx)
-            .map(|(gt, _)| gt.translation())
+            .map(|(tf, _)| tf.translation)
             .unwrap_or_default();
 
         let local_planet = mid.planet_idx - si.0 * 1000;
@@ -1547,6 +1548,10 @@ pub(crate) fn orbit_moons(
             };
             let pos = elems.position(t, moon_mu);
             tf.translation = planet_pos + pos;
+            // Rotation synchrone : toujours la même face vers sa planète
+            if let Some(p) = settings.systems.get(si.0).and_then(|sys| sys.planets().get(local_planet)) {
+                tf.rotation = Spin::moon(mcfg, p).rotation(t, -pos);
+            }
         }
     }
 }
@@ -1735,9 +1740,9 @@ fn update_flare_voxels(
 }
 
 fn rotate_clouds(
-    time: Res<Time>,
+    clock: Res<WorldClock>,
     settings: Res<GameSettings>,
-    planet_q: Query<(&GlobalTransform, &PlanetId), With<PlanetRoot>>,
+    planet_q: Query<(&Transform, &PlanetId), (With<PlanetRoot>, Without<CloudVoxel>)>,
     mut cloud_q: Query<(&CloudVoxel, &mut Transform, &mut Visibility)>,
 ) {
     if !settings.show_clouds {
@@ -1747,9 +1752,10 @@ fn rotate_clouds(
         return;
     }
 
-    let t = time.elapsed_secs();
-    let planet_positions: HashMap<usize, Vec3> =
-        planet_q.iter().map(|(gt, pid)| (pid.0, gt.translation())).collect();
+    // Les nuages dérivent par rapport au sol (un tour en ~5 min de jeu à la vitesse 0,02)
+    let t = (clock.secs % 1.0e6) as f32;
+    let planet_positions: HashMap<usize, (Vec3, Quat)> =
+        planet_q.iter().map(|(tf, pid)| (pid.0, (tf.translation, tf.rotation))).collect();
 
     for (cloud, mut tf, mut vis) in &mut cloud_q {
         if *vis == Visibility::Hidden { *vis = Visibility::Inherited; }
@@ -1758,11 +1764,11 @@ fn rotate_clouds(
         let Some(pcfg) = settings.systems.get(sys_i).and_then(|s| s.planets().get(local_i)) else {
             continue;
         };
-        let Some(&planet_pos) = planet_positions.get(&cloud.planet_idx) else { continue };
+        let Some(&(planet_pos, spin)) = planet_positions.get(&cloud.planet_idx) else { continue };
 
-        // Toute la couche tourne d'un bloc autour de l'axe Y de la planète
+        // Toute la couche tourne avec la planète, et dérive d'un bloc autour de son axe
         tf.translation = planet_pos;
-        tf.rotation = Quat::from_rotation_y(-t * pcfg.cloud_speed);
+        tf.rotation = spin * Quat::from_rotation_y(-t * pcfg.cloud_speed);
     }
 }
 
@@ -1845,8 +1851,13 @@ fn update_lod(
 ) {
     let cam_world = camera_q.single().translation;
     let divs = settings.planet_chunk_divisions;
-    let planet_positions: HashMap<usize, Vec3> =
-        planet_q.iter().map(|(gt, pid)| (pid.0, gt.translation())).collect();
+    let planet_positions: HashMap<usize, (Vec3, Quat)> = planet_q
+        .iter()
+        .map(|(gt, pid)| {
+            let (_, r, t) = gt.to_scale_rotation_translation();
+            (pid.0, (t, r))
+        })
+        .collect();
 
     // 1. Récupère les maillages terminés (sans jamais bloquer l'image)
     let mut in_flight = 0;
@@ -1882,9 +1893,10 @@ fn update_lod(
         let Some(pcfg) = settings.systems.get(sys_i).and_then(|s| s.planets().get(local_i)) else {
             continue;
         };
-        let planet_pos = planet_positions.get(&chunk.planet_id).copied().unwrap_or_default();
+        let (planet_pos, spin) = planet_positions.get(&chunk.planet_id).copied().unwrap_or((Vec3::ZERO, Quat::IDENTITY));
 
-        let cam_local = cam_world - planet_pos;
+        // Caméra dans le repère fixe de la planète (qui tourne)
+        let cam_local = spin.inverse() * (cam_world - planet_pos);
         let u = (chunk.grid_x as f32 + 0.5) / divs as f32;
         let v = (chunk.grid_y as f32 + 0.5) / divs as f32;
         let center = chunk.face.to_sphere_pos(u, v) * pcfg.radius;

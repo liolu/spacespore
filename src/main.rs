@@ -30,6 +30,7 @@ mod system_gen;
 mod terrain;
 mod ui;
 mod wormhole;
+mod world_clock;
 mod zones;
 mod update_checker;
 
@@ -256,6 +257,7 @@ fn main() {
         .add_plugins(ShipPlugin)
         .add_plugins(surface::SurfacePlugin)
         .add_plugins(origin::OriginPlugin)
+        .add_plugins(world_clock::WorldClockPlugin)
 
         // ── UI ──────────────────────────────────────────────────────────
         .add_plugins(UiPlugin)
@@ -1013,8 +1015,19 @@ fn hover_height_for(target: &CameraTarget, settings: &GameSettings, star_r: Opti
     (min_distance * 0.5).max(80.0)
 }
 
+/// Orientation (rotation propre) d'une planète ou d'une lune chargée ; identité sinon.
+fn body_spin(q: &TargetQueries, kind: &TargetKind) -> Quat {
+    let gt = match *kind {
+        TargetKind::Planet(id) => q.planet_q.iter().find(|(_, p)| p.0 == id).map(|(gt, _)| gt),
+        TargetKind::Moon(planet_idx, moon_idx) => q.moon_q.iter().find(|(_, m)| m.planet_idx == planet_idx && m.moon_idx == moon_idx).map(|(gt, _)| gt),
+        _ => None,
+    };
+    gt.map_or(Quat::IDENTITY, |gt| gt.to_scale_rotation_translation().1)
+}
+
 /// Point de stationnement du vaisseau : au-dessus de l'astre ciblé (de son dernier point
 /// d'atterrissage s'il y en a un, sinon au pôle nord).
+#[allow(clippy::too_many_arguments)]
 fn hover_position(
     target_pos: Vec3,
     target: &CameraTarget,
@@ -1023,8 +1036,10 @@ fn hover_position(
     net: &Net,
     zoom_distance: f32,
     star_r: Option<f32>,
+    spin: Quat,
 ) -> Vec3 {
-    let up = surface.hover_dir(&target.0).unwrap_or(Vec3::Y);
+    // Le point de stationnement est fixe dans le repère de l'astre : il tourne avec lui (règle 10)
+    let up = spin * surface.hover_dir(&target.0).unwrap_or(Vec3::Y);
     target_pos + up * hover_height_for(target, settings, star_r) + hover_offset(&target.0, net, zoom_distance)
 }
 
@@ -1162,7 +1177,7 @@ fn camera_controller(
 
         let sp = if let Ok((mut ship_tf, mut ship_vis)) = ship_q.get_single_mut() {
             let hide_ship = matches!(*zoom_level, ZoomLevel::Galaxy | ZoomLevel::Cosmos | ZoomLevel::DeepSpace);
-            let hover_pos = hover_position(target_pos, &camera_target, &settings, &queries.surface, &net, ctrl.distance, star_r);
+            let hover_pos = hover_position(target_pos, &camera_target, &settings, &queries.surface, &net, ctrl.distance, star_r, body_spin(&queries, &camera_target.0));
             if !travel.active() {
                 // Caché (vue galaxie) : le vaisseau se place quand même sur son astre, sans croisière
                 let (before, forward) = (ship_tf.translation, *ship_tf.forward());
@@ -1258,7 +1273,7 @@ fn camera_controller(
     // ── Vaisseau : croisière puis posé au-dessus de l'astre ────────
     let ship_pos = if let Ok((mut ship_tf, mut ship_vis)) = ship_q.get_single_mut() {
         let hide_ship = matches!(*zoom_level, ZoomLevel::Galaxy | ZoomLevel::Cosmos | ZoomLevel::DeepSpace);
-        let hover_pos = hover_position(target_pos, &camera_target, &settings, &queries.surface, &net, ctrl.distance, star_r);
+        let hover_pos = hover_position(target_pos, &camera_target, &settings, &queries.surface, &net, ctrl.distance, star_r, body_spin(&queries, &camera_target.0));
         if !travel.active() {
             // Caché (vue galaxie) : le vaisseau se place quand même sur son astre, sans croisière
             let (before, forward) = (ship_tf.translation, *ship_tf.forward());
