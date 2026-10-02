@@ -489,7 +489,7 @@ fn border_with(settings: &GameSettings, sys: usize, at: fn(&StarSystemConfig) ->
     Some(Border { center: at(sys), u: tilt * Vec3::X, v: tilt * Vec3::Z, normal: tilt * Vec3::Y })
 }
 
-fn draw_claims(time: Res<Time>, net: Res<Net>, settings: Res<GameSettings>, guilds: Res<Guilds>, mut gizmos: Gizmos) {
+fn draw_claims(time: Res<Time>, net: Res<Net>, settings: Res<GameSettings>, guilds: Res<Guilds>, mut gizmos: Gizmos<crate::surface::IndicatorGizmos>) {
     let claims = all_claims(&net, &settings, &guilds);
     if claims.is_empty() {
         return;

@@ -299,7 +299,7 @@ fn draw_links(
     net: Res<Net>,
     guilds: Res<Guilds>,
     cam_q: Query<(&GlobalTransform, &CameraController)>,
-    mut gizmos: Gizmos,
+    mut gizmos: Gizmos<crate::surface::IndicatorGizmos>,
 ) {
     // Vue planète : trop près pour lire un territoire
     if !show.0 || *zoom == ZoomLevel::Planet {
@@ -342,7 +342,7 @@ const CLOUD_PALETTE: [[f32; 3]; CLOUD_COLORS] = [
 /// Niveaux d'opacité (fondu) : un matériau par couleur et par niveau.
 const CLOUD_STEPS: usize = 8;
 /// (adouci : les nuages trop vifs gâchaient le ciel des planètes)
-const CLOUD_MAX_ALPHA: f32 = 0.032;
+const CLOUD_MAX_ALPHA: f32 = 0.016;
 const CLOUD_TEXTURE: u32 = 128;
 /// Nuages de la galaxie principale ; les autres en ont selon leur taille.
 const CLOUDS_MAIN: usize = 220;
