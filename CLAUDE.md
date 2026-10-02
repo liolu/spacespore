@@ -74,7 +74,8 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   generation = augmenter `PROTOCOL` (`net.rs`). Chat : `/profil` exporte l'astre cible en JSON, `/graine` = code court. Tests : `/aller etoile|planete|lune <type>` et `/aller suivant`
   (`test_cmd.rs` : teleporte au bord du systeme trouve, cible l'astre une fois charge). `/stats [n|tout]` :
   comptes et pourcentages de tous les astres d'une galaxie (`stats.rs`, calcul en arriere-plan, panneau F3,
-  fichier `saves/vX.Y.Z/stats/`).
+  fichier `saves/vX.Y.Z/stats/`). Option « Afficher zones » (menu Options) : zones chaude / habitable / froide du
+  systeme charge (`zones.rs`, limites interpolees entre les vraies planetes).
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 
