@@ -249,6 +249,10 @@ pub struct ReliefSample {
     pub lava: bool,
     /// Bord de falaise (mesas, canyons) : 0 à 1.
     pub cliff: f32,
+    /// Éjectas et rayons clairs d'un cratère récent (0 à 1).
+    pub bright: f32,
+    /// Fond de cratère rempli (lave figée, ou glace sur un monde froid).
+    pub flooded: bool,
 }
 
 /// Bruit en crêtes (0 à 1, pointu en haut) : 1 − |bruit|, au carré, sur trois octaves.
@@ -283,6 +287,8 @@ pub struct ReliefField {
     canyons: Perlin,
     /// Niveau de la mer (hauteur relative) : les marches des mesas s'y alignent.
     sea: f32,
+    /// Plus petit cratère calculé (rayon angulaire).
+    min_crater: f32,
 }
 
 fn hash3(x: i32, y: i32, z: i32, k: u32) -> u32 {
@@ -308,8 +314,86 @@ fn sphere_point(u: f32, v: f32) -> Vec3 {
 
 /// Largeur (en produit scalaire) de la bande d'une frontière de plaques.
 const BOUNDARY: f32 = 0.06;
-/// Cratères : deux tailles, cellules par unité de rayon.
-const CRATER_SCALES: [(f32, f32); 2] = [(5.0, 1.0), (16.0, 0.45)];
+/// Cratères (B4) : classes de taille, en cellules par unité de rayon. Chaque classe a ~4 fois
+/// plus de cratères que la précédente, deux fois plus grands : N(>D) ∝ D^-2 (loi de puissance).
+const CRATER_CLASSES: [f32; 7] = [1.5, 3.0, 6.0, 12.0, 24.0, 48.0, 96.0];
+/// Rayon angulaire (radians) au-delà duquel un cratère est complexe (pic central, terrasses),
+/// puis un bassin à anneaux (Lune : ~15 km et ~300 km de diamètre).
+const COMPLEX_CRATER: f32 = 0.012;
+/// Portée d'un cratère (cellules) : rayon maximal 0,45 × 1,6 (rebord, éjectas, rayons).
+const CRATER_REACH: f32 = 0.45 * 1.6;
+const BASIN_CRATER: f32 = 0.08;
+
+/// Forme d'un cratère.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CraterKind {
+    /// Cuvette simple.
+    Simple,
+    /// Fond plat, parois en terrasses, pic central.
+    Complex,
+    /// Bassin à anneaux.
+    Basin,
+}
+
+impl CraterKind {
+    pub fn of(angular_radius: f32) -> Self {
+        if angular_radius >= BASIN_CRATER {
+            CraterKind::Basin
+        } else if angular_radius >= COMPLEX_CRATER {
+            CraterKind::Complex
+        } else {
+            CraterKind::Simple
+        }
+    }
+
+    /// Profil (hauteur relative à la profondeur) à la distance `x` du centre, en rayons du
+    /// cratère : creux au fond, rebord au bord, rien au loin. `filled` : fond aplani (lave, glace).
+    pub fn profile(self, x: f32, filled: bool) -> f32 {
+        // Rebord : bosse étroite autour de x = 1 (polynôme, plus rapide qu'une exponentielle)
+        let u = ((x - 1.0) / 0.22).abs();
+        let rim = if u < 1.0 { 0.35 * (1.0 - u * u) * (1.0 - u * u) } else { 0.0 };
+        let h = match self {
+            CraterKind::Simple => {
+                if x < 1.0 {
+                    -(1.0 - x * x)
+                } else {
+                    0.0
+                }
+            }
+            CraterKind::Complex => {
+                if x < 0.55 {
+                    // Fond plat, pic central
+                    let peak = if x < 0.18 { 0.55 * (1.0 - x / 0.18).powi(2) } else { 0.0 };
+                    -0.7 + if filled { 0.0 } else { peak }
+                } else if x < 1.0 {
+                    // Parois en trois terrasses
+                    let t = (x - 0.55) / 0.45;
+                    let steps = 3.0;
+                    let stepped = ((t * steps).floor() + smooth01(((t * steps).fract() - 0.7) / 0.3)) / steps;
+                    -0.7 * (1.0 - stepped)
+                } else {
+                    0.0
+                }
+            }
+            CraterKind::Basin => {
+                if x < 1.0 {
+                    // Fond plat et anneaux concentriques (rides)
+                    let ring = |c: f32, w: f32| {
+                        let u = ((x - c) / (w * 1.7)).abs();
+                        if u < 1.0 { 0.18 * (1.0 - u * u) * (1.0 - u * u) } else { 0.0 }
+                    };
+                    -0.5 + ring(0.45, 0.05) + ring(0.7, 0.05) + 0.5 * x.powi(6)
+                } else {
+                    0.0
+                }
+            }
+        };
+        if filled && x < 0.85 && self != CraterKind::Simple {
+            return -0.45 + rim;
+        }
+        h + rim
+    }
+}
 
 impl ReliefField {
     pub fn new(relief: Relief) -> Self {
@@ -340,13 +424,96 @@ impl ReliefField {
                 }
             })
             .collect();
-        Self { relief, plates, volcanoes, ridges: Perlin::new(s.wrapping_add(400)), canyons: Perlin::new(s.wrapping_add(500)), sea: 0.5 }
+        Self { relief, plates, volcanoes, ridges: Perlin::new(s.wrapping_add(400)), canyons: Perlin::new(s.wrapping_add(500)), sea: 0.5, min_crater: 0.004 }
     }
 
     /// Le même relief pour une mer au niveau `sea`.
     pub fn with_sea(mut self, sea: f32) -> Self {
         self.sea = sea;
         self
+    }
+
+    /// Les cratères plus petits que `rel` (rayon angulaire) ne sont pas calculés : on ne les
+    /// verrait pas à cette finesse (deux voxels au moins).
+    pub fn with_min_crater(mut self, rel: f32) -> Self {
+        self.min_crater = rel;
+        self
+    }
+
+    /// Cratères dans la direction `dir` : hauteur ajoutée ; éclat des éjectas et des rayons
+    /// (cratères récents) et fond rempli (lave, glace) dans `out`.
+    fn craters(&self, dir: Vec3, min_crater: f32, out: &mut ReliefSample) -> f32 {
+        let r = &self.relief;
+        let mut h = 0.0;
+        // L'érosion efface d'abord les petits cratères, et use les autres
+        let fade = 1.0 - 0.9 * r.erosion;
+        for (k, &scale) in CRATER_CLASSES.iter().enumerate() {
+            if 0.45 / scale < min_crater.max(0.02 * r.erosion) {
+                break;
+            }
+            // Les très grands bassins sont rares
+            let chance = r.craters * if k == 0 { 0.3 } else { 0.6 };
+            let p = dir * scale;
+            let (cx, cy, cz) = (p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
+            let f = p - Vec3::new(cx as f32, cy as f32, cz as f32);
+            // Distance (au carré) du point à une cellule voisine, par axe
+            let gap = |o: i32, f: f32| match o {
+                -1 => f * f,
+                1 => (1.0 - f) * (1.0 - f),
+                _ => 0.0,
+            };
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    for dz in -1..=1 {
+                        // Un cratère (rayon 0,45 au plus) ne porte pas plus loin que 1,6 rayon
+                        if gap(dx, f.x) + gap(dy, f.y) + gap(dz, f.z) > CRATER_REACH * CRATER_REACH {
+                            continue;
+                        }
+                        let (x, y, z) = (cx + dx, cy + dy, cz + dz);
+                        let hash = hash3(x, y, z, r.seed ^ (k as u32).wrapping_mul(0x9E37_79B9));
+                        if unit(hash) >= chance {
+                            continue;
+                        }
+                        let center = Vec3::new(x as f32 + unit(hash.rotate_left(8)), y as f32 + unit(hash.rotate_left(16)), z as f32 + unit(hash.rotate_left(24)));
+                        let radius = 0.15 + 0.3 * unit(hash.wrapping_mul(0x9E37_79B9));
+                        let d = p.distance(center);
+                        let x = d / radius;
+                        if x > 1.6 {
+                            continue;
+                        }
+                        let angular = radius / scale;
+                        let kind = CraterKind::of(angular);
+                        // Âge : les récents gardent leurs éjectas et leurs rayons clairs, les vieux
+                        // sont usés (plus plats, rebord émoussé)
+                        let age = unit(hash.rotate_left(5));
+                        let fresh = (1.0 - age / 0.2).max(0.0);
+                        let worn = 1.0 - 0.6 * age;
+                        // Profondeur : croît avec la taille, moins vite que le diamètre
+                        let depth = r.crater_depth * (angular / 0.02).sqrt().clamp(0.3, 4.0) * fade * worn;
+                        let filled = kind != CraterKind::Simple && unit(hash.rotate_left(13)) < 0.35;
+                        if x < 1.4 {
+                            h += depth * kind.profile(x, filled);
+                            if filled && x < 0.85 {
+                                out.flooded = true;
+                            }
+                        }
+                        if fresh > 0.0 && x > 0.9 {
+                            // Éjectas : couverture claire et un peu surélevée autour du rebord
+                            let blanket = (1.0 - (x - 1.0) / 0.6).clamp(0.0, 1.0);
+                            h += depth * 0.08 * blanket;
+                            // Rayons : traînées claires qui partent du cratère
+                            let c = center.normalize();
+                            let (u, w) = c.any_orthonormal_pair();
+                            let rel = p - center;
+                            let theta = rel.dot(w).atan2(rel.dot(u));
+                            let rays = (theta * (5.0 + 6.0 * unit(hash.rotate_left(19)))).sin().abs().powi(6);
+                            out.bright = out.bright.max(fresh * (blanket * 0.7).max(rays * (1.0 - (x - 1.0) / 0.6).max(0.0)));
+                        }
+                    }
+                }
+            }
+        }
+        h
     }
 
     /// Rien à ajouter (planète faite à la main, géante).
@@ -362,6 +529,12 @@ impl ReliefField {
 
     /// Hauteur ajoutée et nature du relief dans la direction `dir`.
     pub fn sample(&self, dir: Vec3, base: f32) -> ReliefSample {
+        self.sample_min(dir, base, self.min_crater)
+    }
+
+    /// Comme `sample`, sans les cratères plus petits que `min_crater` (rayon angulaire) : une
+    /// tuile lointaine ne les verrait pas.
+    pub fn sample_min(&self, dir: Vec3, base: f32, min_crater: f32) -> ReliefSample {
         let r = &self.relief;
         let mut out = ReliefSample::default();
         if self.is_flat() {
@@ -466,37 +639,9 @@ impl ReliefField {
             }
         }
 
-        // Cratères : bol creusé et rebord surélevé
+        // Cratères (B4) : classes de taille en loi de puissance, formes selon la taille
         if r.craters > 0.0 {
-            let fade = 1.0 - 0.9 * r.erosion;
-            for (k, &(scale, depth_scale)) in CRATER_SCALES.iter().enumerate() {
-                let p = dir * scale;
-                let (cx, cy, cz) = (p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
-                for dx in -1..=1 {
-                    for dy in -1..=1 {
-                        for dz in -1..=1 {
-                            let (x, y, z) = (cx + dx, cy + dy, cz + dz);
-                            let hash = hash3(x, y, z, r.seed ^ (k as u32 * 0x9E37_79B9));
-                            if unit(hash) >= r.craters * 0.6 {
-                                continue;
-                            }
-                            let center = Vec3::new(
-                                x as f32 + unit(hash.rotate_left(8)),
-                                y as f32 + unit(hash.rotate_left(16)),
-                                z as f32 + unit(hash.rotate_left(24)),
-                            );
-                            let radius = 0.15 + 0.3 * unit(hash.wrapping_mul(0x9E37_79B9));
-                            let x = p.distance(center) / radius;
-                            if x < 1.4 {
-                                let depth = r.crater_depth * depth_scale * fade;
-                                let bowl = if x < 1.0 { -(1.0 - x * x) } else { 0.0 };
-                                let rim = 0.35 * (-((x - 1.0) / 0.2).powi(2)).exp();
-                                h += depth * (bowl + rim);
-                            }
-                        }
-                    }
-                }
-            }
+            h += self.craters(dir, min_crater, &mut out);
         }
         out.h = h;
         out
@@ -639,6 +784,80 @@ mod tests {
         }
         assert!(flat > n / 2, "plateaux : {flat}");
         assert!(cliffs > 10, "falaises : {cliffs}");
+    }
+
+    /// B4 : formes selon la taille (cuvette, pic central et fond plat, anneaux), fond rempli plat.
+    #[test]
+    fn crater_shapes_follow_their_size() {
+        assert_eq!(CraterKind::of(0.005), CraterKind::Simple);
+        assert_eq!(CraterKind::of(0.03), CraterKind::Complex);
+        assert_eq!(CraterKind::of(0.15), CraterKind::Basin);
+        let simple = |x| CraterKind::Simple.profile(x, false);
+        assert!(simple(0.0) < simple(0.5) && simple(0.5) < simple(1.0) && simple(1.0) > simple(1.4), "cuvette et rebord");
+        let complex = |x| CraterKind::Complex.profile(x, false);
+        assert!(complex(0.0) > complex(0.35) + 0.3, "pic central");
+        assert!((complex(0.3) - complex(0.45)).abs() < 1e-3, "fond plat");
+        let basin = |x| CraterKind::Basin.profile(x, false);
+        assert!(basin(0.7) > basin(0.6) && basin(0.7) > basin(0.8), "anneau");
+        // Rempli : fond plat, sans pic
+        let filled = |x| CraterKind::Complex.profile(x, true);
+        assert!((filled(0.0) - filled(0.5)).abs() < 1e-3);
+    }
+
+    /// B4 : loi de puissance (bien plus de petits cratères que de grands), éjectas et rayons
+    /// clairs autour des récents, fonds remplis ; rien sur une surface jeune.
+    #[test]
+    fn craters_follow_a_power_law_with_rays_and_filled_floors() {
+        let field = ReliefField::new(Relief { seed: 4, craters: 0.9, crater_depth: 0.07, ..Default::default() }).with_min_crater(0.0);
+        let mut per_class = [0usize; 7];
+        for (k, &scale) in CRATER_CLASSES.iter().enumerate() {
+            // Cratères qui touchent la sphère, comptés par cellule de leur classe
+            let n = (scale * 2.0) as i32 + 1;
+            for x in -n..n {
+                for y in -n..n {
+                    for z in -n..n {
+                        let hash = hash3(x, y, z, 4u32 ^ (k as u32).wrapping_mul(0x9E37_79B9));
+                        let center = Vec3::new(x as f32 + unit(hash.rotate_left(8)), y as f32 + unit(hash.rotate_left(16)), z as f32 + unit(hash.rotate_left(24)));
+                        if unit(hash) < 0.54 && (center.length() - scale).abs() < 0.3 {
+                            per_class[k] += 1;
+                        }
+                    }
+                }
+            }
+        }
+        for k in 1..4 {
+            let ratio = per_class[k] as f32 / per_class[k - 1].max(1) as f32;
+            assert!((2.5..6.0).contains(&ratio), "classe {k} : {per_class:?}");
+        }
+        let (mut bright, mut flooded) = (0, 0);
+        for i in 0..20_000 {
+            let z = 1.0 - 2.0 * (i as f32 + 0.5) / 20_000.0;
+            let a = i as f32 * 2.399_963;
+            let rr = (1.0 - z * z).sqrt();
+            let s = field.sample(Vec3::new(rr * a.cos(), z, rr * a.sin()), 0.5);
+            bright += (s.bright > 0.3) as usize;
+            flooded += s.flooded as usize;
+        }
+        assert!(bright > 100 && flooded > 100, "eclat {bright}, remplis {flooded}");
+        let young = ReliefField::new(Relief { seed: 4, craters: 0.0, ..Default::default() });
+        assert!(sample(&young, 2000).iter().all(|&h| h == 0.0));
+    }
+
+    /// B4 : la Lune est criblée de cratères, Mars en a beaucoup, la Terre presque aucun.
+    #[test]
+    fn the_moon_mars_and_the_earth_have_their_craters() {
+        let cratered = |relief: Relief| {
+            let field = ReliefField::new(Relief { plates: 0, volcanoes: 0, canyons: 0.0, terraces: 0.0, ..relief });
+            sample(&field, 20_000).iter().filter(|h| h.abs() > 0.004).count() as f32 / 20_000.0
+        };
+        let moon = cratered(moon_relief(1));
+        let mut rng = LayerRng::new(1, Layer::Geology);
+        let mars = cratered(generate(&GeoInput { liquid_water: false, ..input(0.107, 4.6, false, 0.006) }, 1, &mut rng).relief);
+        let mut rng = LayerRng::new(1, Layer::Geology);
+        let earth = cratered(generate(&input(1.0, 4.6, true, 1.0), 1, &mut rng).relief);
+        assert!(moon > 0.3, "lune {moon}");
+        assert!(mars > 0.1, "mars {mars}");
+        assert!(earth < 0.02, "terre {earth}");
     }
 
     /// B3 : une chaîne jeune a des sommets plus pointus qu'une chaîne érodée.
