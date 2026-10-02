@@ -41,10 +41,12 @@ pub enum DecorKind {
     GiantMushroom,
     SporePod,
     IceSpike,
+    /// Champignon lumineux des grottes (B2, s'il y a de la vie).
+    GlowShroom,
 }
 
 impl DecorKind {
-    pub const ALL: [DecorKind; 17] = [
+    pub const ALL: [DecorKind; 18] = [
         DecorKind::Conifer,
         DecorKind::Broadleaf,
         DecorKind::JungleTree,
@@ -62,6 +64,7 @@ impl DecorKind {
         DecorKind::GiantMushroom,
         DecorKind::SporePod,
         DecorKind::IceSpike,
+        DecorKind::GlowShroom,
     ];
 
     /// Plante (n'apparaît qu'avec de la vie).
@@ -77,12 +80,13 @@ impl DecorKind {
                 | DecorKind::Cactus
                 | DecorKind::GiantMushroom
                 | DecorKind::SporePod
+                | DecorKind::GlowShroom
         )
     }
 
     /// Lumineux (cristaux, spores).
     pub fn glows(self) -> bool {
-        matches!(self, DecorKind::Crystal | DecorKind::SporePod | DecorKind::SulfurVent)
+        matches!(self, DecorKind::Crystal | DecorKind::SporePod | DecorKind::SulfurVent | DecorKind::GlowShroom)
     }
 
     /// Cubes (centre, demi-taille, couleur), en voxels, base au sol (y = 0).
@@ -135,6 +139,12 @@ impl DecorKind {
                 ([-0.4, 0.7, -0.4], [0.2, 0.7, 0.2], [0.75, 0.6, 1.0]),
             ],
             DecorKind::GlassShard => vec![([0.0, 0.9, 0.0], [0.25, 0.9, 0.5], [0.12, 0.2, 0.17]), ([0.5, 0.5, 0.3], [0.4, 0.5, 0.2], [0.15, 0.24, 0.2])],
+            DecorKind::GlowShroom => vec![
+                ([0.0, 0.5, 0.0], [0.12, 0.5, 0.12], [0.75, 0.85, 0.8]),
+                ([0.0, 1.05, 0.0], [0.55, 0.15, 0.55], [0.3, 0.95, 0.8]),
+                ([0.5, 0.35, 0.3], [0.08, 0.35, 0.08], [0.75, 0.85, 0.8]),
+                ([0.5, 0.75, 0.3], [0.3, 0.1, 0.3], [0.35, 0.85, 1.0]),
+            ],
             DecorKind::GiantMushroom => vec![
                 ([0.0, 2.0, 0.0], [0.35, 2.0, 0.35], [0.85, 0.8, 0.7]),
                 ([0.0, 4.2, 0.0], [2.0, 0.5, 2.0], [0.85, 0.35, 0.25]),
@@ -249,11 +259,11 @@ pub fn tile_decor(terrain: &Terrain, key: TileKey) -> Vec<DecorInstance> {
     if depth + 1 < layout.max_depth || !terrain.params.biomes.defined || terrain.params.gaseous {
         return Vec::new();
     }
+    let mut out = cave_decor(terrain, key);
     let quantum = tile_quantum(layout, depth);
     let voxel = terrain.voxel();
     let lattice = (TILE_CELLS as u32) << depth;
     let seed = terrain.params.seed ^ ((key.face as u32) << 28);
-    let mut out = Vec::new();
     for cj in 0..TILE_CELLS as u32 {
         for ci in 0..TILE_CELLS as u32 {
             let (i, j) = (key.x * TILE_CELLS as u32 + ci, key.y * TILE_CELLS as u32 + cj);
@@ -268,6 +278,10 @@ pub fn tile_decor(terrain: &Terrain, key: TileKey) -> Vec<DecorInstance> {
             let dir = face_dir(key.face, s, t);
             let column = terrain.column(dir, quantum);
             if column.kind.is_liquid() || column.kind == crate::planet::VoxelType::Ice {
+                continue;
+            }
+            // Rien au-dessus de l'entrée d'une grotte (le sol y manque)
+            if depth == layout.max_depth && terrain.floor(dir, column.top + voxel).top < column.top - voxel {
                 continue;
             }
             let Some(biome) = terrain.biome_at(dir) else { continue };
@@ -288,6 +302,48 @@ pub fn tile_decor(terrain: &Terrain, key: TileKey) -> Vec<DecorInstance> {
             out.push(DecorInstance {
                 kind,
                 transform: Transform { translation: dir * column.top, rotation, scale: Vec3::splat(size) },
+            });
+        }
+    }
+    out
+}
+
+/// Champignons lumineux sur le sol des salles de grottes dont le centre est sous la tuile
+/// (tuiles du niveau le plus fin, astres avec de la vie).
+fn cave_decor(terrain: &Terrain, key: TileKey) -> Vec<DecorInstance> {
+    let mut out = Vec::new();
+    let Some(caves) = terrain.caves.as_ref().filter(|c| c.style.glow) else { return out };
+    if key.depth as u32 != terrain.layout.max_depth {
+        return out;
+    }
+    let v = terrain.voxel();
+    let n = (TILE_CELLS as i64) << terrain.layout.max_depth;
+    let _ = n;
+    let (x0, y0) = (key.x as i64 * TILE_CELLS as i64, key.y as i64 * TILE_CELLS as i64);
+    let dirs = [key.center_dir()];
+    for region in caves.for_tile(&dirs, &|d| terrain.surface_r(d)) {
+        let Some((rc, rr)) = region.room else { continue };
+        let (face, i, j) = terrain.cell_of(rc.normalize());
+        if face != key.face || !(x0..x0 + TILE_CELLS as i64).contains(&i) || !(y0..y0 + TILE_CELLS as i64).contains(&j) {
+            continue;
+        }
+        let up = rc.normalize();
+        let east = Vec3::Y.cross(up).normalize_or(Vec3::X);
+        let north = up.cross(east);
+        let h = hash(i as u32, j as u32, terrain.params.seed);
+        for s in 0..8u32 {
+            let hs = hash(h, s, 7);
+            let a = unit(hs) * std::f32::consts::TAU;
+            let d = unit(hs.rotate_left(9)) * rr * 0.7;
+            let dir = (rc + (east * a.cos() + north * a.sin()) * d).normalize();
+            let floor = terrain.floor(dir, rc.length());
+            if floor.top >= rc.length() || floor.kind.is_liquid() || floor.top < rc.length() - rr * 1.2 {
+                continue;
+            }
+            let rotation = Quat::from_rotation_arc(Vec3::Y, dir) * Quat::from_rotation_y(unit(hs.rotate_left(17)) * std::f32::consts::TAU);
+            out.push(DecorInstance {
+                kind: DecorKind::GlowShroom,
+                transform: Transform { translation: dir * floor.top, rotation, scale: Vec3::splat(v * (0.6 + 0.6 * unit(hs.rotate_left(5)))) },
             });
         }
     }
@@ -381,6 +437,32 @@ mod tests {
     }
 
     #[test]
+    fn glowing_mushrooms_grow_in_cave_rooms_where_there_is_life() {
+        let t = Terrain::new(earth_like());
+        let caves = t.caves.clone().expect("grottes");
+        assert!(caves.style.glow);
+        let surf = |d: Vec3| t.surface_r(d);
+        let mut shrooms = 0;
+        'search: for x in -12..12 {
+            for z in -12..12 {
+                let d = Vec3::new(x as f32 * 0.03, 1.0, z as f32 * 0.03).normalize();
+                for depth in [1.0, 2.0, 4.0] {
+                    let p = d * (surf(d) - depth * caves.size);
+                    let Some(r) = caves.region(caves.key_of(p), &surf) else { continue };
+                    let Some((rc, _)) = r.room else { continue };
+                    let (face, i, j) = t.cell_of(rc.normalize());
+                    let key = TileKey { face, depth: t.layout.max_depth as u8, x: (i / TILE_CELLS as i64) as u32, y: (j / TILE_CELLS as i64) as u32 };
+                    shrooms += tile_decor(&t, key).iter().filter(|d| d.kind == DecorKind::GlowShroom).count();
+                    if shrooms > 3 {
+                        break 'search;
+                    }
+                }
+            }
+        }
+        assert!(shrooms > 3, "{shrooms} champignons");
+    }
+
+    #[test]
     fn close_tiles_get_decor_on_land_far_tiles_none() {
         let p = earth_like();
         let t = Terrain::new(p);
@@ -399,7 +481,12 @@ mod tests {
                     // Posé sur le sol, jamais dans l'eau
                     let dir = d.transform.translation.normalize();
                     let ground = t.column(dir, tile_quantum(t.layout, max)).top;
-                    assert!((d.transform.translation.length() - ground).abs() < 1.0);
+                    if d.kind == DecorKind::GlowShroom {
+                        // Dans une grotte : sous la surface, posé sur le sol de la salle
+                        assert!(d.transform.translation.length() <= ground + 0.01);
+                    } else {
+                        assert!((d.transform.translation.length() - ground).abs() < 1.0);
+                    }
                 }
                 assert!(decor.len() <= (TILE_CELLS * TILE_CELLS) / 8);
             }

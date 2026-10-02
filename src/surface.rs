@@ -19,7 +19,7 @@ use crate::net_ui::NetPanel;
 use crate::planet::{MoonId, MoonRoot, PlanetId, PlanetRoot, StarRoot};
 use crate::settings::GameSettings;
 use crate::ship::Ship;
-use crate::terrain::{build_tile_mesh, select_tiles, BodyParams, Terrain, TileKey, build_tile_mesh_with};
+use crate::terrain::{select_tiles, BodyParams, Terrain, TileKey, build_tile_mesh_with};
 use crate::decor::{tile_decor, DecorAssets, DecorInstance};
 use crate::ui::{CameraTarget, MenuState, TargetKind};
 use crate::{CameraController, ZoomLevel};
@@ -68,11 +68,17 @@ impl Plugin for SurfacePlugin {
         app.init_resource::<Surface>()
             .init_resource::<GalaxyDim>()
             .init_resource::<TileStore>()
+            .add_event::<OverhangCommand>()
+            .init_resource::<VoxelsChanged>()
+            .add_event::<CaveCommand>()
+            .init_resource::<NearestCave>()
+            .add_systems(Update, (go_cave.before(SurfaceControl), find_nearest_cave))
             .add_systems(Startup, (setup_hud, spawn_lamps))
+            .add_systems(Update, go_overhang.before(SurfaceControl))
             .add_systems(Update, update_galaxy_dim)
             .add_systems(
                 Update,
-                (surface_control.in_set(SurfaceControl), surface_light, update_lamps, update_season, update_tiles, update_hud)
+                (surface_control.in_set(SurfaceControl), update_underground, dim_star_light, surface_light, update_lamps, update_season, refresh_voxels, update_tiles, update_hud)
                     .chain()
                     .after(crate::planet::orbit_planets)
                     .after(crate::planet::orbit_moons),
@@ -264,9 +270,18 @@ impl Walker {
         if delta.length_squared() > 0.0 {
             let allow = if self.on_ground { STEP_VOXELS * v } else { 0.0 };
             let r = self.pos.length();
+            // Voxels 3D : le sol d'arrivée est au plus une marche plus haut, et la place pour le
+            // corps est libre (un mur ou un surplomb trop bas arrête)
+            // Le corps a une épaisseur : on vérifie aussi un point un tiers de voxel devant lui,
+            // sinon il pourrait s'arrêter pile à la limite d'un mur et y basculer à l'arrondi près
+            let fits = |dir: Vec3| -> bool {
+                let floor = t.floor(dir, r + allow).top;
+                floor <= r + allow + 0.05 * v && t.ceiling(dir, floor) >= floor.max(r) + BODY_VOXELS * v
+            };
             let try_move = |pos: Vec3, d: Vec3| -> Option<Vec3> {
                 let next = (pos + d).normalize() * r;
-                (t.ground(next.normalize()).top <= r + allow + 1e-3).then_some(next)
+                let ahead = (next + d.normalize_or_zero() * BODY_RADIUS_VOXELS * v).normalize();
+                (fits(next.normalize()) && fits(ahead)).then_some(next)
             };
             if let Some(next) = try_move(self.pos, delta) {
                 self.pos = next;
@@ -284,7 +299,9 @@ impl Walker {
         // Vertical
         let up = self.up();
         let mut r = self.pos.length();
-        let ground = t.ground(up);
+        // Le sol sous les pieds (une marche au-dessus au plus) : sous un surplomb, c'est le sol
+        // d'en bas ; dessus, c'est le surplomb
+        let ground = t.floor(up, r + STEP_VOXELS * v);
         self.in_water = ground.kind.is_liquid();
         self.liquid = ground.kind;
         // Vraie gravité de l'astre : sur une lune à 0,16 g, on saute six fois plus haut
@@ -293,7 +310,8 @@ impl Walker {
             self.vr = JUMP_VOXELS * v;
             self.on_ground = false;
         } else if self.on_ground {
-            if ground.top >= r - STEP_VOXELS * v {
+            // On monte une marche seulement s'il y a la place pour la tête
+            if ground.top >= r - STEP_VOXELS * v && (ground.top <= r || t.ceiling(up, ground.top) >= ground.top + BODY_VOXELS * v) {
                 r = ground.top;
                 self.vr = 0.0;
             } else {
@@ -307,6 +325,12 @@ impl Walker {
                 r = ground.top;
                 self.vr = 0.0;
                 self.on_ground = true;
+            }
+            // La tête cogne le plafond (dessous d'un surplomb)
+            let roof = t.ceiling(up, ground.top);
+            if r + BODY_VOXELS * v > roof {
+                r = (roof - BODY_VOXELS * v).max(ground.top);
+                self.vr = self.vr.min(0.0);
             }
         }
         self.pos = up * r;
@@ -332,6 +356,10 @@ const EYE_VOXELS: f32 = 1.8;
 const WALK_VOXELS: f32 = 7.0;
 const SPRINT_VOXELS: f32 = 21.0;
 const STEP_VOXELS: f32 = 1.05;
+/// Hauteur du corps : il faut cette place libre pour passer sous un surplomb.
+const BODY_VOXELS: f32 = 1.9;
+/// Demi-largeur du corps (voxels).
+const BODY_RADIUS_VOXELS: f32 = 0.3;
 const JUMP_VOXELS: f32 = 7.5;
 /// Pesanteur à 1 g, en voxels par seconde².
 const GRAVITY: f32 = 22.0;
@@ -401,6 +429,8 @@ pub struct Surface {
     lamps: bool,
     /// La nuit a déjà été signalée pendant ce séjour.
     night_told: bool,
+    /// Sous terre (0 : à l'air libre, 1 : dans une grotte) : la lumière de l'étoile n'arrive pas.
+    underground: f32,
 }
 
 impl Default for Surface {
@@ -438,6 +468,7 @@ impl Default for Surface {
             sun_height: 1.0,
             lamps: true,
             night_told: false,
+            underground: 0.0,
         }
     }
 }
@@ -451,6 +482,11 @@ impl Surface {
     /// Atterrissage, séjour ou décollage en cours : la caméra n'est plus pilotée par l'orbite.
     pub fn active(&self) -> bool {
         self.phase != Phase::Orbit
+    }
+
+    /// Terrain de l'astre où l'on séjourne.
+    pub fn terrain(&self) -> Option<&Terrain> {
+        self.terrain.as_ref().filter(|_| self.active())
     }
 
     /// Astre où l'on séjourne (vol bas, atterrissage, marche).
@@ -522,7 +558,12 @@ impl Surface {
 
     /// Il fait sombre là où l'on est : l'étoile est sous l'horizon (ou à peine levée).
     pub fn dark(&self) -> bool {
-        self.active() && self.sun_height < 0.06
+        self.active() && (self.sun_height < 0.06 || self.underground > 0.5)
+    }
+
+    /// Sous terre (0 à 1).
+    pub fn underground(&self) -> f32 {
+        if self.active() { self.underground } else { 0.0 }
     }
 
     /// Séjour dans une géante gazeuse.
@@ -545,6 +586,7 @@ impl Surface {
         self.daylight = 1.0;
         self.sun_height = 1.0;
         self.night_told = false;
+        self.underground = 0.0;
     }
 }
 
@@ -779,7 +821,7 @@ fn surface_control(
                 let local = frame.point(ship_tf.translation);
                 if (local.length() - hover_radius(&params)).abs() < params.radius * 0.1 + 250.0 {
                     let up = local.normalize_or(Vec3::Y);
-                    surface.terrain = Some(Terrain::new(params));
+                    surface.terrain = Some(Terrain::new(params).with_voxels(crate::voxel::body_voxels(&ctx.settings, &kind)));
                     surface.body = Some(kind);
                     surface.fpos = local;
                     surface.heading = tangent(frame.vector(*ship_tf.forward()), up);
@@ -816,7 +858,7 @@ fn surface_control(
             net.notify("Pas de sol : une geante gazeuse n'a pas de surface. Zoomez sous 1000 pour entrer dans son atmosphere (la pression abime la coque).", now);
             return;
         }
-        let terrain = Terrain::new(params);
+        let terrain = Terrain::new(params).with_voxels(crate::voxel::body_voxels(&ctx.settings, &kind));
         let dir1 = ctx.aimed_dir(camera, cam_gt, &frame, &params);
         let local0 = frame.point(ship_tf.translation);
         let dir0 = local0.normalize_or(dir1);
@@ -994,7 +1036,9 @@ fn surface_control(
             let climb = if terrain.params.gaseous { 400.0 * (terrain.params.radius / 8000.0).max(1.0) } else { 400.0 };
             surface.fvert += (vertical * climb - surface.fvert) * (1.0 - (-4.0 * dt).exp());
             let next = (surface.fpos + heading * surface.fspeed * dt).normalize();
-            let ground = terrain.ground(next).top;
+            // Voxels 3D : le sol sous le vaisseau (on peut passer sous une arche) et le plafond
+            let ground = terrain.floor(next, r).top;
+            let roof = terrain.ceiling(next, ground + 1.0);
             let ceiling = hover_radius(&params);
             // Entrée en navigation : on descend d'abord à 150 au-dessus du relief
             let mut r = r + surface.fvert * dt;
@@ -1006,7 +1050,7 @@ fn surface_control(
                     surface.fdescend = false;
                 }
             }
-            let r = r.clamp(ground + 25.0, ceiling.max(ground + 100.0));
+            let r = r.clamp(ground + 25.0, ceiling.max(ground + 100.0)).min((roof - 25.0).max(ground + 25.0));
             surface.fpos = next * r;
             surface.heading = tangent(heading, next);
 
@@ -1019,7 +1063,7 @@ fn surface_control(
             let back = Quat::from_axis_angle(next, surface.fyaw) * -surface.heading;
             let offset = (back * surface.fpitch.cos() + next * surface.fpitch.sin()) * surface.fdist;
             let mut cam_local = surface.fpos + offset;
-            let floor = terrain.ground(cam_local.normalize()).top + 10.0;
+            let floor = terrain.floor(cam_local.normalize(), cam_local.length()).top + 10.0;
             if cam_local.length() < floor {
                 cam_local = cam_local.normalize() * floor;
             }
@@ -1071,7 +1115,9 @@ fn surface_control(
         let air = (1.0 - altitude / atmosphere_depth(&params)).clamp(0.0, 1.0);
         let space = SPACE_SKY.to_srgba();
         let c = sky_color(&params, height, air, [space.red, space.green, space.blue]);
-        clear.0 = Color::srgb(c[0], c[1], c[2]);
+        // Sous terre : noir (on ne voit plus le ciel)
+        let dark = 1.0 - surface.underground;
+        clear.0 = Color::srgb(c[0] * dark, c[1] * dark, c[2] * dark);
         surface.daylight = daylight(&params, height, air);
         surface.sun_height = height;
         if surface.dark() && !surface.night_told && !params.gaseous {
@@ -1252,7 +1298,7 @@ fn surface_light(
     let moon = moonlight(cam.translation, up, star, &bodies) * (1.0 - day);
     // Une atmosphère épaisse diffuse plus de lumière ; la teinte est celle du ciel
     let sky_light = (AMBIENT_DAY - night) * day * params.pressure.clamp(0.05, 4.0).powf(0.25);
-    ambient.brightness = night + sky_light + MOONLIGHT_MAX * moon;
+    ambient.brightness = (night + sky_light + MOONLIGHT_MAX * moon) * (1.0 - 0.95 * surface.underground());
     ambient.color = if day > 0.05 {
         let s = params.sky;
         Color::srgb(0.4 + 0.3 * s[0], 0.4 + 0.3 * s[1], 0.4 + 0.3 * s[2])
@@ -1337,6 +1383,181 @@ fn update_lamps(
     }
 }
 
+/// Sous terre : de la roche au-dessus de la tête et sous la surface du relief. La lumière de
+/// l'étoile (sans ombres) traverserait la roche : on l'éteint sous terre.
+fn update_underground(time: Res<Time>, mut surface: ResMut<Surface>) {
+    let dt = time.delta_secs().min(0.1);
+    let target = match (&surface.terrain, surface.phase) {
+        (Some(t), Phase::Walking | Phase::Flying) => {
+            let p = if surface.phase == Phase::Walking { surface.walker.pos } else { surface.fpos };
+            let up = p.normalize_or(Vec3::Y);
+            let r = p.length();
+            let v = t.voxel();
+            let below = t.base_column(up, v).top - r;
+            if below > 2.0 * v && t.ceiling(up, r).is_finite() { 1.0 } else { 0.0 }
+        }
+        _ => 0.0,
+    };
+    let u = surface.underground + (target - surface.underground) * (1.0 - (-3.0 * dt).exp());
+    if (u - surface.underground).abs() > 1e-4 {
+        surface.underground = u;
+    }
+}
+
+/// Intensité de départ d'une lumière d'étoile (pour l'éteindre sous terre et la rallumer).
+#[derive(Component)]
+struct StarLightBase(f32);
+
+fn dim_star_light(mut commands: Commands, surface: Res<Surface>, mut lights: Query<(Entity, &mut PointLight, Option<&StarLightBase>)>) {
+    let k = 1.0 - 0.985 * surface.underground();
+    for (e, mut light, base) in &mut lights {
+        let Some(base) = base else {
+            commands.entity(e).try_insert(StarLightBase(light.intensity));
+            continue;
+        };
+        let wanted = base.0 * k;
+        if (light.intensity - wanted).abs() > base.0 * 1e-4 {
+            light.intensity = wanted;
+        }
+    }
+}
+
+/// Grotte la plus proche (scanner) : entrée, sorte, distance et direction.
+#[derive(Resource, Default)]
+pub struct NearestCave {
+    pub text: String,
+    entrance: Option<Vec3>,
+    last: f64,
+}
+
+fn find_nearest_cave(time: Res<Time>, surface: Res<Surface>, mut nearest: ResMut<NearestCave>) {
+    let now = time.elapsed_secs_f64();
+    if now - nearest.last < 2.0 {
+        return;
+    }
+    nearest.last = now;
+    let (Some(t), Some(p)) = (surface.terrain.as_ref(), surface.local_point()) else {
+        if !nearest.text.is_empty() {
+            *nearest = NearestCave { last: now, ..default() };
+        }
+        return;
+    };
+    let Some(caves) = t.caves.as_ref() else { return };
+    let p = p.normalize_or(Vec3::Y) * t.surface_r(p.normalize_or(Vec3::Y));
+    let found = caves.nearest_entrance(p, 6, &|d| t.surface_r(d));
+    nearest.entrance = found.map(|(e, _)| e);
+    nearest.text = match found {
+        Some((e, kind)) => {
+            let up = p.normalize();
+            let north = (Vec3::Y - up * up.y).normalize_or(Vec3::Z);
+            let east = north.cross(up);
+            let d = e - p;
+            let angle = d.dot(east).atan2(d.dot(north)).to_degrees().rem_euclid(360.0);
+            let names = ["nord", "nord-est", "est", "sud-est", "sud", "sud-ouest", "ouest", "nord-ouest"];
+            let side = names[((angle / 45.0).round() as usize) % 8];
+            format!("Grotte la plus proche : {} a {:.0} ({side})  /grotte : y aller", kind.name(), d.length())
+        }
+        None => "Aucune grotte connue a proximite.".into(),
+    };
+}
+
+/// `/grotte` : aller au bord de l'entrée de grotte la plus proche.
+#[derive(Event)]
+pub struct CaveCommand;
+
+fn go_cave(time: Res<Time>, mut events: EventReader<CaveCommand>, mut surface: ResMut<Surface>, mut nearest: ResMut<NearestCave>, mut net: ResMut<Net>) {
+    let now = time.elapsed_secs_f64();
+    for _ in events.read() {
+        let found = match (surface.terrain.as_ref(), surface.local_point()) {
+            (Some(t), Some(p)) => t.caves.as_ref().and_then(|c| {
+                let p = p.normalize_or(Vec3::Y) * t.surface_r(p.normalize_or(Vec3::Y));
+                c.nearest_entrance(p, 10, &|d| t.surface_r(d))
+            }),
+            _ => None,
+        };
+        let (Some((e, kind)), Some(t)) = (found, surface.terrain.as_ref()) else {
+            net.notify("Pas de grotte trouvee : posez-vous ou volez bas sur un astre solide (zoom sous 1000).", now);
+            continue;
+        };
+        let v = t.voxel();
+        let up = e.normalize();
+        let side = Vec3::Y.cross(up).normalize_or(Vec3::X);
+        // Au bord du puits, en le regardant
+        let rim = (e + side * 7.0 * v).normalize();
+        match surface.phase {
+            Phase::Walking => {
+                let w = Walker::spawn(t, rim, -side);
+                surface.walker = w;
+                net.notify(&format!("Au bord d'une entree ({}). Lampe : N.", kind.name()), now);
+            }
+            Phase::Flying => {
+                surface.fpos = up * (t.ground(up).top.max(e.length()) + 60.0 * v);
+                surface.fdescend = false;
+                net.notify(&format!("Une entree ({}) est sous le vaisseau (V pour se poser).", kind.name()), now);
+            }
+            _ => net.notify("Attendez la fin de l'atterrissage.", now),
+        }
+        nearest.last = 0.0;
+    }
+}
+
+/// Les cellules modifiées ont changé (impact de météorite, delta reçu d'un autre joueur).
+#[derive(Resource, Default)]
+pub struct VoxelsChanged(pub bool);
+
+/// Prend en compte des cellules modifiées : le sol (collisions) et les tuiles, reconstruites une
+/// à une (les anciennes restent affichées en attendant).
+fn refresh_voxels(settings: Res<GameSettings>, mut changed: ResMut<VoxelsChanged>, mut surface: ResMut<Surface>, mut store: ResMut<TileStore>) {
+    if !changed.0 {
+        return;
+    }
+    changed.0 = false;
+    let Some(kind) = surface.body else { return };
+    let voxels = crate::voxel::body_voxels(&settings, &kind);
+    if let Some(t) = surface.terrain.as_mut() {
+        t.set_voxels(voxels.clone());
+    }
+    if store.body == Some(kind) {
+        store.voxels = voxels;
+        store.generation = store.generation.wrapping_add(1);
+    }
+}
+
+/// `/surplomb` : aller à l'arche de test (voxels 3D) de l'astre où l'on se trouve.
+#[derive(Event)]
+pub struct OverhangCommand;
+
+fn go_overhang(time: Res<Time>, mut events: EventReader<OverhangCommand>, mut surface: ResMut<Surface>, mut net: ResMut<Net>) {
+    let now = time.elapsed_secs_f64();
+    for _ in events.read() {
+        let Some(o) = surface.terrain.as_ref().and_then(|t| t.overhang) else {
+            net.notify("Posez-vous ou volez bas sur une planete ou une lune solide d'abord (zoom sous 1000).", now);
+            continue;
+        };
+        let Some(t) = surface.terrain.as_ref() else { continue };
+        let v = t.voxel();
+        match surface.phase {
+            Phase::Walking => {
+                // Sous l'auvent, regardant vers l'arche
+                let dir = o.visit_dir();
+                let floor = t.floor(dir, o.base + 3.0 * v).top;
+                let heading = (o.dir - dir).normalize_or(Vec3::X);
+                let mut w = Walker::spawn(t, dir, heading);
+                w.pos = dir * floor;
+                w.eye_r = floor + v * EYE_VOXELS;
+                surface.walker = w;
+                net.notify("Vous etes sous l'auvent de l'arche de test (voxels 3D).", now);
+            }
+            Phase::Flying => {
+                surface.fpos = o.dir * (o.base + 30.0 * v);
+                surface.fdescend = false;
+                net.notify("L'arche de test est juste sous le vaisseau (V pour s'y poser).", now);
+            }
+            _ => net.notify("Attendez la fin de l'atterrissage.", now),
+        }
+    }
+}
+
 /// Saison (et heure, pour le givre du matin) du terrain où l'on séjourne : neige et calottes
 /// avancent et reculent ; les tuiles sont reconstruites quand elle change vraiment.
 fn update_season(
@@ -1390,6 +1611,8 @@ struct TileStore {
     /// une à une, en gardant les anciennes affichées en attendant.
     climate: Option<crate::planetgen::climate::Climate>,
     generation: u32,
+    /// Cellules modifiées de l'astre (minage, 0.14).
+    voxels: Option<std::sync::Arc<crate::voxel::BodyVoxels>>,
 }
 
 fn set_far_visibility(
@@ -1416,6 +1639,7 @@ fn set_far_visibility(
 fn update_tiles(
     mut commands: Commands,
     time: Res<Time>,
+    settings: Res<GameSettings>,
     surface: Res<Surface>,
     mut store: ResMut<TileStore>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -1446,6 +1670,7 @@ fn update_tiles(
         store.far_hidden = false;
         store.body = wanted;
         store.climate = None;
+        store.voxels = wanted.and_then(|k| crate::voxel::body_voxels(&settings, &k));
     }
     let Some(kind) = store.body else { return };
     let (Some(terrain), Ok(cam)) = (surface.terrain.as_ref(), cam_q.get_single()) else { return };
@@ -1463,6 +1688,10 @@ fn update_tiles(
     }
     let generation = store.generation;
     let params = BodyParams { climate: store.climate.unwrap_or(params.climate), ..params };
+    let voxels = store.voxels.clone();
+    // Les grottes de l'astre (et leur cache) sont partagées par toutes les tuiles
+    let caves = terrain.caves.clone();
+    let rocks = terrain.rocks.clone();
 
     let material = store
         .material
@@ -1496,7 +1725,8 @@ fn update_tiles(
     if store.built.is_empty() && store.tasks.is_empty() {
         for face in 0..6 {
             let key = TileKey::root(face);
-            let entity = spawn_tile(&mut commands, &mut meshes, &material, root, build_tile_mesh(&params, key));
+            let first = Terrain::new(params).with_voxels(voxels.clone()).with_caves(caves.clone()).with_rocks(rocks.clone());
+            let entity = spawn_tile(&mut commands, &mut meshes, &material, root, build_tile_mesh_with(&first, key));
             store.built.insert(key, TileEntry { entity, last_needed: now, generation });
         }
     }
@@ -1536,11 +1766,14 @@ fn update_tiles(
             break;
         }
         let p = params;
+        let vx = voxels.clone();
+        let cv = caves.clone();
+        let rk = rocks.clone();
         store.tasks.insert(
             key,
             (
                 pool.spawn(async move {
-                    let terrain = Terrain::new(p);
+                    let terrain = Terrain::new(p).with_voxels(vx).with_caves(cv).with_rocks(rk);
                     (build_tile_mesh_with(&terrain, key), tile_decor(&terrain, key))
                 }),
                 generation,
@@ -1834,6 +2067,38 @@ mod tests {
         assert_eq!(daylight(&p, 0.8, 1.0), 0.0);
     }
 
+    /// Voxels 3D : on passe à pied sous l'arche de test (sans traverser la roche), et on tient
+    /// debout sur son tablier.
+    #[test]
+    fn walking_under_and_on_the_test_arch() {
+        let t = world();
+        let o = t.overhang.expect("arche");
+        let v = t.voxel();
+        // Sous l'auvent, on marche vers l'est puis on revient vers l'arche
+        let under = o.visit_dir();
+        let mut w = Walker::spawn(&t, under, o.dir - under);
+        w.pos = under * t.floor(under, o.base + 3.0 * v).top;
+        settle(&mut w, &t, 1.0);
+        let start = w.pos.length();
+        let roof = t.ceiling(w.up(), start + 0.01);
+        assert!(roof.is_finite(), "pas de plafond sous l'auvent");
+        for _ in 0..240 {
+            w.step(&t, &WalkInput { forward: 1.0, ..default() }, 1.0 / 60.0);
+            let r = w.pos.length();
+            let up = w.up();
+            // Jamais dans la roche : la tête reste sous le plafond, les pieds sur un sol
+            assert!(r + BODY_VOXELS * v <= t.ceiling(up, r + 0.01) + 1e-2, "tete dans la roche");
+            assert!(r >= t.floor(up, r + 0.01).top - 1e-2, "pieds dans la roche");
+        }
+        // Lâché au-dessus du tablier : on s'y pose (pas au sol, dessous)
+        let top = t.ground(under);
+        let mut w = Walker::spawn(&t, under, Vec3::X);
+        w.pos = under * (top.top + 30.0 * v);
+        w.on_ground = false;
+        settle(&mut w, &t, 4.0);
+        assert!(w.on_ground && (w.pos.length() - top.top).abs() < 1e-2, "{} vs {}", w.pos.length(), top.top);
+    }
+
     #[test]
     fn a_player_dropped_from_the_sky_lands() {
         let t = world();
@@ -1870,7 +2135,10 @@ mod tests {
 
     #[test]
     fn sprinting_is_faster_than_walking() {
-        let t = world();
+        // Terrain plat de grottes : seule la vitesse compte ici
+        let mut t = world();
+        t.caves = None;
+        t.overhang = None;
         let dir = Vec3::new(0.0, 1.0, 0.1).normalize();
         let run = |sprint: bool| {
             let mut w = Walker::spawn(&t, dir, Vec3::X);
@@ -1989,7 +2257,14 @@ mod tests {
                         assert!(w.pos.is_finite() && w.heading.is_finite());
                         // À la couture entre deux faces du cube, les deux grilles de colonnes se recouvrent : la
                         // hauteur peut différer d'un voxel pour un même point (corrigé à l'image suivante)
-                        assert!(w.pos.length() >= t.ground(w.up()).top - t.voxel() * 1.5, "sous le sol (rayon {})", params.radius);
+                        // Jamais dans la roche (sous une arche ou dans une grotte, le dessus de la
+                        // colonne n'est pas le sol) : dans sa colonne, aucun sol plein entre les pieds
+                        // et un voxel au-dessus
+                        let r = w.pos.length();
+                        // (à la couture de deux faces du cube, les grilles diffèrent d'un voxel :
+                        // corrigé à l'image suivante, d'où 1,5 voxel de tolérance)
+                        let above = t.floor(w.up(), r + t.voxel() * 2.0);
+                        assert!(above.top <= r + t.voxel() * 1.5 || above.kind.is_liquid(), "dans la roche (rayon {}) : sol {} au-dessus des pieds {r}", params.radius, above.top);
                     }
                 }
                 // Le quadtree reste borné et ses tuiles sont valides

@@ -3,6 +3,7 @@ mod claims;
 mod combat;
 mod decor;
 mod diplomacy;
+mod caves;
 mod chat_cmd;
 mod galaxy_fx;
 mod gas;
@@ -14,12 +15,14 @@ mod guild;
 mod guild_ui;
 mod kepler;
 mod lod;
+mod meteors;
 mod mesher;
 mod net;
 mod net_ui;
 mod origin;
 mod planet;
 mod planetgen;
+mod rocks;
 mod scanner;
 mod settings;
 mod ship;
@@ -29,6 +32,7 @@ mod test_cmd;
 mod system_gen;
 mod terrain;
 mod ui;
+mod voxel;
 mod wormhole;
 mod world_clock;
 mod zones;
@@ -258,6 +262,7 @@ fn main() {
         .add_plugins(surface::SurfacePlugin)
         .add_plugins(origin::OriginPlugin)
         .add_plugins(world_clock::WorldClockPlugin)
+        .add_plugins(meteors::MeteorsPlugin)
 
         // ── UI ──────────────────────────────────────────────────────────
         .add_plugins(UiPlugin)

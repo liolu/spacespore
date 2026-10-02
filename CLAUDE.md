@@ -101,6 +101,35 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   `atmosphere::diurnal_amplitude`. Tuiles reconstruites quand la saison arrondie change (`TileStore::generation`,
   `surface::update_season`), maillage lointain aussi (`PlanetChunk::season`). `world_clock::LocalWeather` :
   heure, saison, temperature, min/max du jour et de l'annee (HUD, scanner, `/heure`). PROTOCOL 17.
+  B1 = voxels 3D (`terrain.rs`) : cellules = colonnes de la sphere-cube au niveau le plus fin x couches radiales
+  d'un voxel (k = 0 au niveau de la mer). Une seule fonction `Terrain::kind_at` = delta, puis champ de hauteur
+  (`base_column`), puis formes 3D (arche de test `Overhang`, `/surplomb`). Tuiles du niveau le plus fin maillees en
+  3D (`build_voxel_tile_mesh`), les autres en champ de hauteur (`build_height_tile_mesh`) ; `column` = vue de dessus.
+  Collisions 3D : `Terrain::floor(dir, r)` (sol sous un point) et `ceiling` (marcheur, vol bas, camera).
+  Deltas : `voxel.rs` (`BlockKey` 32^3, `BodyVoxels`, `VoxelDeltas` dans `world.json`, message `VoxelEdit`, minage
+  0.14). Banc : `cargo test --release bench_voxel_tiles -- --ignored --nocapture`. PROTOCOL 18.
+  B2 = grottes (`caves.rs`) : regions cubiques de 40 voxels hachees (regle 12, cache partage `Arc<Caves>` entre
+  les tuiles : `Terrain::with_caves`), salle + tunnels vers des portes partagees avec les voisines, puits d'entree
+  pres de la surface ; sortes selon la geologie (`CaveStyle::of`) : tube de lave, karst (lacs, stalactites), glace,
+  geode, faille ; jusqu'a 2 000 unites (`MAX_DEPTH`). `Terrain::kind_in` : roche profonde (`style.rock`) et
+  filons `VoxelType::Ore` (`ore_chance`, plus riches en profondeur). Maillage : pieces filtrees par colonne + memo.
+  Sous terre (`Surface::underground`) : lumiere de l'etoile eteinte (`dim_star_light`), lampe allumee.
+  Champignons lumineux (`DecorKind::GlowShroom`, vie). Scanner : grotte la plus proche ; `/grotte`. PROTOCOL 19.
+  B3 = montagnes (`geology.rs::ReliefField::sample`) : chaines en bruit de cretes (`ridged`), cols, erosion qui
+  arrondit ; mesas symetriques alignees sur la mer (`with_sea` : la cote ne bouge pas) ; canyons a fond plat ;
+  volcans avec cratere au sommet et coulees figees (basalte) ; eboulis au pied (`ReliefSample` -> matiere dans
+  `base_column`). Arches et cheminees de fee (`rocks.rs`, cellules de 60 voxels hachees, `Piece::Add`, mondes avec
+  air), partagees entre tuiles (`Terrain::with_rocks`). PROTOCOL 20.
+  B4 = crateres (`geology.rs::ReliefField::craters`) : 7 classes `CRATER_CLASSES` (loi de puissance, cellules
+  hachees), `CraterKind` simple / complexe (fond plat, terrasses, pic central) / bassin a anneaux selon le rayon
+  angulaire, age (recents : ejectas et rayons clairs `ReliefSample::bright`, vieux : uses), fonds remplis
+  (`flooded` : lave figee, glace sur monde froid), erosion qui efface les petits. Tuiles lointaines : pas de
+  cratere plus petit qu'1,5 colonne (`Terrain::min_crater`). PROTOCOL 21.
+  B5 = meteores (`meteors.rs`) : etoiles filantes et bolides = f(graine de l'astre, horloge) (`meteor_in_bin`,
+  tranches d'une demi-seconde), la nuit avec de l'air ; 3 pluies par annee (`shower_strength`) ; impacts rares pres
+  du joueur ou `/impact` : cratere en deltas voxel (`impact_crater`), sauve (`world.json`) et envoye
+  (`net::Msg::Voxels`, l'hote relaie a tous ; `voxel_outbox`/`voxel_inbox`) ; `surface::VoxelsChanged` fait
+  reconstruire tuiles et sol. Sans air : pas de trainee. PROTOCOL 22.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

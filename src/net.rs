@@ -52,7 +52,9 @@ pub const MAX_NAME_LEN: usize = 16;
 pub const MAX_TAG_LEN: usize = 5;
 /// Étoiles revendiquées au plus par joueur.
 pub const MAX_CLAIMS: usize = 5;
-const PROTOCOL: u32 = 17;
+const PROTOCOL: u32 = 22;
+/// Modifications de voxels gardées en attente au plus (protection contre un flot).
+const VOXEL_EDITS_MAX: usize = 512;
 pub const MAX_CHAT_LEN: usize = 120;
 /// Messages gardés à l'écran / dans l'historique de l'hôte.
 const CHAT_HISTORY: usize = 50;
@@ -264,6 +266,8 @@ enum Msg {
     },
     /// Fiche de guilde, envoyée quand elle change ou quand elle est demandée.
     Guild { guild: crate::guild::GuildRecord },
+    /// Cellules voxel modifiées (cratère d'impact, minage) : l'hôte les relaie à tous.
+    Voxels { edits: Vec<crate::voxel::VoxelEdit> },
     Bye,
 }
 
@@ -954,6 +958,11 @@ pub struct Net {
     /// Fiches de guilde à annoncer / reçues (traitées par `guild::guild_sync`).
     pub guild_outbox: Vec<crate::guild::GuildRecord>,
     pub guild_inbox: Vec<crate::guild::GuildRecord>,
+    /// Cellules voxel modifiées ici, à envoyer ; reçues d'ailleurs, à appliquer (`meteors.rs`).
+    pub voxel_outbox: Vec<crate::voxel::VoxelEdit>,
+    pub voxel_inbox: Vec<crate::voxel::VoxelEdit>,
+    /// (hôte) Modifications reçues d'un client, à renvoyer à tous.
+    voxel_relay: Vec<crate::voxel::VoxelEdit>,
     /// Fiches de guilde qui me manquent (une version plus récente est annoncée).
     pub guild_want: Vec<u64>,
     /// Fiches de guilde qu'un autre joueur me demande.
@@ -994,6 +1003,9 @@ impl Default for Net {
             epoch: 0,
             guild_outbox: Vec::new(),
             guild_inbox: Vec::new(),
+            voxel_outbox: Vec::new(),
+            voxel_inbox: Vec::new(),
+            voxel_relay: Vec::new(),
             guild_want: Vec::new(),
             guild_asked: Vec::new(),
             profiles: ProfileCache::default(),
@@ -1507,6 +1519,17 @@ pub(crate) fn net_update(
                             net.guild_inbox.push(guild);
                         }
                     }
+                    // Un client a modifié des voxels : on les applique et on les relaie à tous
+                    Msg::Voxels { edits } => {
+                        if clients.contains_key(&addr) {
+                            for e in edits.into_iter().take(VOXEL_EDITS_MAX) {
+                                if net.voxel_inbox.len() < VOXEL_EDITS_MAX {
+                                    net.voxel_inbox.push(e.clone());
+                                    net.voxel_relay.push(e);
+                                }
+                            }
+                        }
+                    }
                     Msg::Bye => {
                         if let Some(slot) = clients.remove(&addr) {
                             net.peers.remove(&slot.id);
@@ -1524,6 +1547,17 @@ pub(crate) fn net_update(
                 alive
             });
 
+            // Voxels modifiés par moi ou par un client : à tous les clients
+            if tick && (!net.voxel_outbox.is_empty() || !net.voxel_relay.is_empty()) {
+                let mut edits: Vec<crate::voxel::VoxelEdit> = net.voxel_outbox.drain(..).collect();
+                edits.extend(net.voxel_relay.drain(..));
+                for chunk in edits.chunks(8) {
+                    let msg = Msg::Voxels { edits: chunk.to_vec() };
+                    for addr in clients.keys() {
+                        send(socket, *addr, &msg);
+                    }
+                }
+            }
             // Fiches de guilde modifiées par moi ou demandées par un client
             if tick {
                 for guild in net.guild_outbox.drain(..) {
@@ -1704,6 +1738,13 @@ pub(crate) fn net_update(
                             net.guild_inbox.push(guild);
                         }
                     }
+                    Msg::Voxels { edits } => {
+                        for e in edits.into_iter().take(VOXEL_EDITS_MAX) {
+                            if net.voxel_inbox.len() < VOXEL_EDITS_MAX {
+                                net.voxel_inbox.push(e);
+                            }
+                        }
+                    }
                     Msg::Bye => {
                         next = Some((Session::Offline, "L'hote a quitte la partie.".into(), false, None));
                         break;
@@ -1727,6 +1768,10 @@ pub(crate) fn net_update(
                     send(socket, *host, &Msg::State { state: me.clone(), chat, seen: net.chat.seen, profile, want, gwant });
                     for guild in net.guild_outbox.drain(..) {
                         send(socket, *host, &Msg::Guild { guild });
+                    }
+                    let edits: Vec<crate::voxel::VoxelEdit> = net.voxel_outbox.drain(..).collect();
+                    for chunk in edits.chunks(8) {
+                        send(socket, *host, &Msg::Voxels { edits: chunk.to_vec() });
                     }
                 }
             }
@@ -2189,6 +2234,19 @@ mod tests {
         let hote = cnet.peers.values().find(|p| p.name == "Hote").unwrap();
         assert_eq!(hote.color, [1.0, 0.0, 0.0]);
         assert!(hote.pos().distance(Vec3::new(100.0, 0.0, 0.0)) < 0.01);
+
+        // Voxels (cratère d'impact) : le client les envoie, l'hôte les reçoit et les renvoie à tous
+        let edit = crate::voxel::VoxelEdit { body: "p:1:2".into(), block: "2.10.20.0".into(), cells: vec![(5, 0), (6, 17)] };
+        client.world_mut().resource_mut::<Net>().voxel_outbox.push(edit.clone());
+        let start = std::time::Instant::now();
+        while host.world().resource::<Net>().voxel_inbox.is_empty() || client.world().resource::<Net>().voxel_inbox.is_empty() {
+            host.update();
+            client.update();
+            assert!(start.elapsed().as_secs() < 8, "voxels timeout");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(host.world().resource::<Net>().voxel_inbox[0], edit);
+        assert_eq!(client.world().resource::<Net>().voxel_inbox[0], edit);
 
         // Chat : chacun écrit, les deux voient les deux messages une seule fois
         host.world_mut().send_event(NetCommand::Chat("salut".into()));
