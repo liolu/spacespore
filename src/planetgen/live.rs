@@ -88,11 +88,14 @@ pub struct BodyDelta {
     /// Fraction de masse ajoutée par matière (ex. "fer": -0.01).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub composition: BTreeMap<String, f64>,
+    /// Tonnes extraites par minerai (minage, 0.14) : le gisement restant = départ − extrait.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub ores: BTreeMap<String, f64>,
 }
 
 impl BodyDelta {
     pub fn is_empty(&self) -> bool {
-        self.mass_earth == 0.0 && self.radius_earth == 0.0 && self.orbit_au == 0.0 && self.composition.is_empty()
+        self.mass_earth == 0.0 && self.radius_earth == 0.0 && self.orbit_au == 0.0 && self.composition.is_empty() && self.ores.is_empty()
     }
 }
 

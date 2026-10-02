@@ -260,6 +260,7 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
                 habitability,
                 traits,
                 life: ml.life,
+                resources: ml.resources,
             });
         }
 
@@ -294,7 +295,7 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
             &mut LayerRng::new(seed as u64, Layer::Traits),
         );
 
-        let Layers { air, climate, hydrology, sea_level, geology, biomes, atmosphere, life } = layers;
+        let Layers { air, climate, hydrology, sea_level, geology, biomes, atmosphere, life, resources } = layers;
         planets.push(PlanetConfig {
             orbit_distance: 0.0, // placée plus bas
             radius,
@@ -335,6 +336,7 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
             habitability,
             traits,
             life,
+            resources,
             ..Default::default()
         });
     }
@@ -393,6 +395,7 @@ struct Layers {
     biomes: BiomeParams,
     atmosphere: bool,
     life: Life,
+    resources: super::resources::Resources,
 }
 
 /// Chauffage par les marées (0..1) d'une lune à `ratio` rayons (affichés) de sa planète de
@@ -503,7 +506,32 @@ fn world_layers(w: &WorldInput, seed: u32) -> Layers {
             flora: life.flora,
         })
     };
-    Layers { air, climate, hydrology, sea_level, geology, biomes, atmosphere, life }
+    // Ressources (phase 8) : composition globale et gisements
+    let resources = super::resources::generate(
+        &super::resources::ResourceInput {
+            gaseous,
+            mass: w.mass,
+            radius: w.radius,
+            density: super::units::density(w.mass, w.radius),
+            icy: w.au > w.snow,
+            gravity: w.mass / (w.radius * w.radius),
+            mean_c: climate.mean_c as f64,
+            pressure: air.pressure_bar as f64,
+            atmosphere,
+            volcanism: geology.volcanism as f64,
+            plates: geology.tectonics == super::geology::Tectonics::Plates,
+            surface_age: geology.surface_age_gyr as f64,
+            craters: geology.relief.craters as f64,
+            liquid_water,
+            ocean_fraction: hydrology.ocean_fraction as f64,
+            methane_seas: hydrology.hydro.liquid == Liquid::Methane && hydrology.ocean_fraction > 0.0,
+            stellar_wind: star.stellar_wind / (w.au * w.au),
+            fictional_gas: air.gases.iter().any(|(f, x)| *x > 0.01 && matches!(f.as_str(), "Ae" | "Sp" | "Cx")),
+            exotic_biomes: biomes.alien,
+        },
+        &mut LayerRng::new(seed as u64, Layer::Resources),
+    );
+    Layers { air, climate, hydrology, sea_level, geology, biomes, atmosphere, life, resources }
 }
 
 /// Aurores : un champ magnétique, de l'air (ou une géante) et le vent de l'étoile. Couleur selon

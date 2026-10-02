@@ -44,7 +44,8 @@ pub type GoodId = usize;
 pub const GROUPS: [&str; 7] = ["Armes", "Boucliers", "Modules de vaisseau", "Carburant", "Ressources", "Cartes stellaires", "Donnees"];
 
 /// (nom, groupe, prix de base en crédits). L'index est l'identifiant stable de la marchandise.
-pub const GOODS: [(&str, usize, i64); 19] = [
+/// Biens : (nom, rayon, prix de base). On n'ajoute qu'à la fin (les sauvegardes gardent les numéros).
+pub const GOODS: [(&str, usize, i64); 34] = [
     ("Laser leger", 0, 1200),
     ("Canon a plasma", 0, 4800),
     ("Lance-missiles", 0, 7500),
@@ -64,13 +65,46 @@ pub const GOODS: [(&str, usize, i64); 19] = [
     ("Route de trou de ver", 5, 5200),
     ("Position de pirates", 6, 800),
     ("Archives anciennes", 6, 3000),
+    // Minerais des astres (phase 8, `planetgen/resources.rs`)
+    ("Nickel", 4, 45),
+    ("Cuivre", 4, 70),
+    ("Aluminium", 4, 40),
+    ("Titane", 4, 120),
+    ("Or", 4, 900),
+    ("Platine", 4, 1100),
+    ("Uranium", 4, 600),
+    ("Terres rares", 4, 350),
+    ("Silicium", 4, 30),
+    ("Glace d'eau", 4, 12),
+    ("Helium-3", 4, 1500),
+    ("Hydrocarbures", 4, 35),
+    ("Xenium (fictif)", 4, 2500),
+    ("Aetherite (fictif)", 4, 4000),
+    ("Chronite (fictif)", 4, 9000),
 ];
+
+/// Premier bien de minerai ajouté en phase 8.
+pub const FIRST_ORE_GOOD: GoodId = 19;
 
 pub const FUEL: GoodId = 9;
 pub const IRON: GoodId = 11;
 
 pub fn goods_of_group(group: usize) -> impl Iterator<Item = GoodId> {
     (0..GOODS.len()).filter(move |&g| GOODS[g].1 == group)
+}
+
+/// Une faction ne vend pas tous les minerais : les biens d'origine partout, ~1 minerai sur 3,
+/// et les minerais fictifs (très chers) rarement. Elle les rachète tous.
+pub fn sold_by(faction: usize, good: GoodId) -> bool {
+    if good < FIRST_ORE_GOOD {
+        return true;
+    }
+    let roll = hash(faction, good, 11) % 100;
+    if GOODS[good].2 >= 2500 {
+        roll < 10
+    } else {
+        roll < 35
+    }
 }
 
 fn hash(a: usize, b: usize, c: usize) -> u32 {
@@ -480,5 +514,21 @@ mod tests {
         let back: Economy = serde_json::from_str(&serde_json::to_string(&e).unwrap()).unwrap();
         assert_eq!(back.credits, e.credits);
         assert_eq!(back.inventory, e.inventory);
+    }
+
+    #[test]
+    fn ore_goods_match_the_ores() {
+        use crate::planetgen::resources::Ore;
+        for ore in Ore::ALL {
+            let g = ore.good();
+            assert_eq!(GOODS[g].1, 4, "{ore:?} dans le rayon Ressources");
+            assert!(GOODS[g].0.to_lowercase().starts_with(&ore.name()[..ore.name().len().min(3)]) || g < FIRST_ORE_GOOD, "{ore:?} -> {}", GOODS[g].0);
+        }
+        // Chaque faction vend au moins quelques minerais, jamais tous
+        for f in 0..20 {
+            let n = (FIRST_ORE_GOOD..GOODS.len()).filter(|&g| sold_by(f, g)).count();
+            assert!(n < GOODS.len() - FIRST_ORE_GOOD);
+        }
+        assert!((0..20).map(|f| (FIRST_ORE_GOOD..GOODS.len()).filter(|&g| sold_by(f, g)).count()).sum::<usize>() > 40);
     }
 }

@@ -211,6 +211,16 @@ fn body_text(p: &PlanetProfile) -> (String, u8) {
     if !extra.is_empty() {
         lines.push(extra.join("   "));
     }
+    if !p.resources.ores.is_empty() {
+        let list: Vec<String> = p
+            .resources
+            .ores
+            .iter()
+            .take(5)
+            .map(|o| format!("{}{} ({})", o.ore, realism_mark(o.realism), crate::planetgen::profile::difficulty_label(o.difficulty)))
+            .collect();
+        lines.push(format!("Ressources : {}", list.join(", ")));
+    }
     let traits: Vec<String> = p.traits.iter().map(|t| format!("{}{}", t.name, realism_mark(t.realism))).collect();
     if !traits.is_empty() {
         lines.push(format!("Traits : {}", traits.join(", ")));

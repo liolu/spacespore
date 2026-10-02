@@ -96,6 +96,9 @@ pub fn report(title: &str, systems: &[StarSystemConfig]) -> String {
     let (mut kinds, mut sizes, mut liquids, mut life, mut tecto, mut hab, mut temps, mut traits) =
         (Tally::default(), Tally::default(), Tally::default(), Tally::default(), Tally::default(), Tally::default(), Tally::default(), Tally::default());
     let (mut moon_flags, mut planet_flags) = (Tally::default(), Tally::default());
+    // Ressources (phase 8) : astres (planètes et lunes) ayant un gisement de chaque minerai
+    let mut ores = Tally::default();
+    ores.order = crate::planetgen::resources::Ore::ALL.iter().map(|o| o.name().to_string()).collect();
     let (mut planets, mut rocky, mut moons, mut per_system) = (0usize, 0usize, 0usize, [0usize; 9]);
     // Ordre d'affichage logique (du plus chaud au plus froid, du plus petit au plus grand...)
     stars.order = StarClass::ALL.iter().map(|c| c.name().to_string()).collect();
@@ -178,6 +181,11 @@ pub fn report(title: &str, systems: &[StarSystemConfig]) -> String {
             hab.add(&p.habitability.label);
         }
         for p in list.iter() {
+            for r in std::iter::once(&p.resources).chain(p.moons.iter().map(|m| &m.resources)) {
+                for d in &r.deposits {
+                    ores.add(d.ore.name());
+                }
+            }
             for m in &p.moons {
                 moons += 1;
                 for (flag, on) in [
@@ -216,6 +224,8 @@ pub fn report(title: &str, systems: &[StarSystemConfig]) -> String {
         hab.line("Habitabilite", rocky),
         String::new(),
         moon_flags.line(&format!("LUNES ({moons})"), moons),
+        String::new(),
+        ores.line(&format!("GISEMENTS (astres sur {})", planets + moons), planets + moons),
     ];
     lines.retain(|l| !l.ends_with(" : "));
     lines.join("\n")

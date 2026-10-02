@@ -26,6 +26,7 @@ pub mod hydrology;
 pub mod life;
 pub mod live;
 pub mod profile;
+pub mod resources;
 pub mod seed_code;
 pub mod seeds;
 pub mod star;
@@ -123,6 +124,34 @@ mod tests {
         assert_ne!(world_digest(&a, 3000), world_digest(&c, 3000));
         // Le parcours n'a rien gardé en mémoire
         assert!(a.iter().all(|s| !s.planets_cached()));
+    }
+
+    /// Ressources (phase 8) : tous les astres en ont, l'or est courant, les minerais fictifs rares.
+    #[test]
+    fn resources_are_spread_over_the_world() {
+        use crate::planetgen::resources::Ore;
+        let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
+        let systems = default_systems(&galaxies, DEFAULT_WORLD_SEED);
+        let (mut bodies, mut rocky, mut gold, mut he3, mut fictional) = (0, 0, 0, 0, 0);
+        for sys in systems.iter().take(1500) {
+            for p in sys.planets_uncached().iter() {
+                for r in std::iter::once(&p.resources).chain(p.moons.iter().map(|m| &m.resources)) {
+                    bodies += 1;
+                    assert!(!r.deposits.is_empty() && !r.bulk.is_empty());
+                    let total: f32 = r.bulk.values().sum();
+                    assert!((total - 1.0).abs() < 0.02, "{:?}", r.bulk);
+                    if r.deposit(Ore::Iron).is_some() {
+                        rocky += 1;
+                    }
+                    gold += r.deposit(Ore::Gold).is_some() as usize;
+                    he3 += r.deposit(Ore::Helium3).is_some() as usize;
+                    fictional += r.deposits.iter().any(|d| d.ore.realism() == super::profile::Realism::Fictional) as usize;
+                }
+            }
+        }
+        eprintln!("{bodies} astres : {rocky} rocheux, or {gold}, he3 {he3}, fictifs {fictional}");
+        assert!(gold * 4 > rocky && gold < rocky);
+        assert!(he3 > 0 && fictional > 0 && fictional * 10 < bodies);
     }
 
     /// Chaque étoile suit son type ; aucune ne dépasse 6,5 M de rayon affiché.
