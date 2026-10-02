@@ -431,6 +431,8 @@ pub struct Surface {
     night_told: bool,
     /// Sous terre (0 : à l'air libre, 1 : dans une grotte) : la lumière de l'étoile n'arrive pas.
     underground: f32,
+    /// Le marcheur a perdu connaissance : retour automatique au vaisseau (A4).
+    rescue: bool,
 }
 
 impl Default for Surface {
@@ -469,6 +471,7 @@ impl Default for Surface {
             lamps: true,
             night_told: false,
             underground: 0.0,
+            rescue: false,
         }
     }
 }
@@ -482,6 +485,18 @@ impl Surface {
     /// Atterrissage, séjour ou décollage en cours : la caméra n'est plus pilotée par l'orbite.
     pub fn active(&self) -> bool {
         self.phase != Phase::Orbit
+    }
+
+    /// Le marcheur, s'il est à pied hors du vaisseau.
+    pub fn walking(&self) -> Option<&Walker> {
+        (self.phase == Phase::Walking).then_some(&self.walker)
+    }
+
+    /// Ramène le marcheur au vaisseau et décolle (il a perdu connaissance).
+    pub fn request_rescue(&mut self) {
+        if self.phase == Phase::Walking {
+            self.rescue = true;
+        }
     }
 
     /// Terrain de l'astre où l'on séjourne.
@@ -979,7 +994,8 @@ fn surface_control(
             surface.cam_blend = (surface.cam_blend + dt / 0.8).min(1.0);
             cam_local_tf = blend_pose(&surface.cam_from, fps, smoothstep(surface.cam_blend));
 
-            if enter {
+            if enter || surface.rescue {
+                surface.rescue = false;
                 let dir = surface.ship_local.normalize();
                 surface.dir0 = dir;
                 surface.dir1 = dir;
@@ -1911,6 +1927,7 @@ fn update_hud(
     target: Res<CameraTarget>,
     settings: Res<GameSettings>,
     weather: Res<crate::world_clock::LocalWeather>,
+    suit: Res<crate::suit::Suit>,
     mut hud: Query<&mut Text, With<SurfaceHud>>,
 ) {
     let label = match surface.phase {
@@ -1937,6 +1954,9 @@ fn update_hud(
             let alt = w.pos.length() - radius;
             // Heure, saison et température locales (latitude, altitude, heure, saison)
             let now = if weather.body.is_some() { weather.short() } else { String::new() };
+            // Combinaison : oxygène, vie, alertes (A4)
+            let now = if suit.hud.is_empty() { now } else { format!("{now}
+{}", suit.hud) };
             format!(
                 "ZQSD/WASD : marcher   Maj : courir   Espace : sauter   V : decoller   N : lampe\nLat {lat:.1}  Lon {lon:.1}  Alt {alt:.0}   {now}{}",
                 match (w.in_water, w.liquid) {
