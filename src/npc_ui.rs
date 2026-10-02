@@ -599,7 +599,7 @@ fn rebuild_dialog(
                 let open = dialog.shop_group == Some(g);
                 kids.push(opt(&mut commands, &format!("{} {}", if open { "v" } else { ">" }, name), NpcAction::Group(g)));
                 if open {
-                    for good in economy::goods_of_group(g) {
+                    for good in economy::goods_of_group(g).filter(|&good| economy::sold_by(fi, good)) {
                         let price = eco.buy_price(fi, good, dialog.haggle);
                         let b = opt(&mut commands, &format!("Acheter x{qty} ({} cr)", price * qty as i64), NpcAction::Buy(good));
                         let owned = eco.count(good);

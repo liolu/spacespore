@@ -284,8 +284,64 @@ pub struct BiomeShare {
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct ResourcesSection {
-    /// Minerais (abondance, profondeur, difficulté) : phase 8.
+    /// Résumé des gisements (« or : filons, 1 600 m, difficile »).
     pub deposits: Vec<String>,
+    /// Gisements détaillés (phase 8) : la quantité est vivante (départ − extrait).
+    pub ores: Vec<OreProfile>,
+    /// Valeur indicative de tous les gisements (crédits).
+    pub total_worth: f64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct OreProfile {
+    pub ore: String,
+    pub realism: Realism,
+    pub abundance: f64,
+    pub depth_m: f64,
+    pub distribution: &'static str,
+    pub rarity: f64,
+    pub difficulty: f64,
+    pub amount_t: Live,
+    /// Bien de l'économie correspondant (« Ressources »).
+    pub good: &'static str,
+}
+
+/// Mots de la difficulté d'extraction.
+pub fn difficulty_label(d: f64) -> &'static str {
+    match d {
+        d if d < 0.25 => "facile",
+        d if d < 0.45 => "moyenne",
+        d if d < 0.65 => "difficile",
+        _ => "extreme",
+    }
+}
+
+fn resources_section(r: &super::resources::Resources, id: BodyId, deltas: &WorldDeltas) -> ResourcesSection {
+    let delta = delta_of(deltas, id);
+    let ores: Vec<OreProfile> = r
+        .deposits
+        .iter()
+        .map(|d| OreProfile {
+            ore: d.ore.name().to_string(),
+            realism: d.ore.realism(),
+            abundance: f(d.abundance),
+            depth_m: f(d.depth_m),
+            distribution: d.distribution.name(),
+            rarity: f(d.rarity),
+            difficulty: f(d.difficulty),
+            amount_t: Live::new(d.amount_t, -delta.ores.get(d.ore.name()).copied().unwrap_or(0.0)),
+            good: crate::economy::GOODS[d.ore.good()].0,
+        })
+        .collect();
+    ResourcesSection {
+        deposits: r
+            .deposits
+            .iter()
+            .map(|d| format!("{} : {}, {:.0} m, {}", d.ore.name(), d.distribution.name(), d.depth_m, difficulty_label(d.difficulty as f64)))
+            .collect(),
+        total_worth: r.deposits.iter().map(|d| d.worth()).sum::<f64>().round(),
+        ores,
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -527,9 +583,13 @@ fn biology_section(p: &PlanetConfig) -> BiologySection {
     }
 }
 
-fn composition(id: BodyId, deltas: &WorldDeltas) -> CompositionSection {
+fn composition(base: &BTreeMap<String, f32>, id: BodyId, deltas: &WorldDeltas) -> CompositionSection {
     let delta = delta_of(deltas, id);
-    CompositionSection { bulk: delta.composition.iter().map(|(k, v)| (k.clone(), Live::new(0.0, *v))).collect() }
+    let mut bulk: BTreeMap<String, Live> = base.iter().map(|(k, v)| (k.clone(), Live::new(f(*v), 0.0))).collect();
+    for (k, v) in &delta.composition {
+        bulk.entry(k.clone()).or_insert(Live::new(0.0, 0.0)).delta = *v;
+    }
+    CompositionSection { bulk }
 }
 
 impl PlanetProfile {
@@ -560,7 +620,7 @@ impl PlanetProfile {
                 tidally_locked: (p.semi_major_au > 0.0).then_some(p.tidally_locked),
             },
             physics: physics(f(p.radius), f(p.radius_earth), f(p.mass_earth), (p.radius_earth > 0.0).then_some(size), id, deltas),
-            composition: composition(id, deltas),
+            composition: composition(&p.resources.bulk, id, deltas),
             atmosphere: atmosphere_section(p),
             climate: climate_section(p),
             hydrology: {
@@ -584,7 +644,7 @@ impl PlanetProfile {
                 features: p.geology.features(),
             },
             biology: biology_section(p),
-            resources: ResourcesSection::default(),
+            resources: resources_section(&p.resources, id, deltas),
             gameplay: gameplay_section(p),
             traits: p.traits.clone(),
         }
@@ -615,7 +675,8 @@ impl PlanetProfile {
             prof.orbit.axial_tilt_deg = None;
             prof.orbit.semi_major_axis_au = Live::new(prof.orbit.semi_major_axis_au.base, delta_of(deltas, id).orbit_au);
             prof.physics = physics(f(m.radius), f(m.radius_earth), f(m.mass_earth), Some("lune"), id, deltas);
-            prof.composition = composition(id, deltas);
+            prof.composition = composition(&m.resources.bulk, id, deltas);
+            prof.resources = resources_section(&m.resources, id, deltas);
             prof.gameplay.tidal_heating = Some(f(m.tidal_heat));
             return prof;
         }
@@ -645,7 +706,7 @@ impl PlanetProfile {
                 ..Default::default()
             },
             physics: physics(f(m.radius), f(m.radius_earth), f(m.mass_earth), (m.radius_earth > 0.0).then_some("lune"), id, deltas),
-            composition: composition(id, deltas),
+            composition: composition(&BTreeMap::new(), id, deltas),
             atmosphere: AtmosphereSection::default(),
             climate: {
                 let (equator, pole) = body.climate.range();
