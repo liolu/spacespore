@@ -120,6 +120,11 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   volcans avec cratere au sommet et coulees figees (basalte) ; eboulis au pied (`ReliefSample` -> matiere dans
   `base_column`). Arches et cheminees de fee (`rocks.rs`, cellules de 60 voxels hachees, `Piece::Add`, mondes avec
   air), partagees entre tuiles (`Terrain::with_rocks`). PROTOCOL 20.
+  B4 = crateres (`geology.rs::ReliefField::craters`) : 7 classes `CRATER_CLASSES` (loi de puissance, cellules
+  hachees), `CraterKind` simple / complexe (fond plat, terrasses, pic central) / bassin a anneaux selon le rayon
+  angulaire, age (recents : ejectas et rayons clairs `ReliefSample::bright`, vieux : uses), fonds remplis
+  (`flooded` : lave figee, glace sur monde froid), erosion qui efface les petits. Tuiles lointaines : pas de
+  cratere plus petit qu'1,5 colonne (`Terrain::min_crater`). PROTOCOL 21.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

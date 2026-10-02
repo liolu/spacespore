@@ -302,6 +302,9 @@ pub struct Terrain {
     pub caves: Option<Arc<Caves>>,
     /// Arches et cheminées de fée (B3), partagées de même.
     pub rocks: Option<Arc<Rocks>>,
+    /// Plus petit cratère calculé (rayon angulaire, bits d'un f32) : plus grand pendant la
+    /// construction d'une tuile lointaine (chaque tâche a son propre terrain).
+    min_crater: std::sync::atomic::AtomicU32,
 }
 
 impl Terrain {
@@ -322,12 +325,13 @@ impl Terrain {
             mid,
             fine,
             color: Perlin::new(params.seed.wrapping_add(200)),
-            relief: ReliefField::new(params.relief).with_sea(params.sea_level),
+            relief: ReliefField::new(params.relief).with_sea(params.sea_level).with_min_crater(2.0 * params.layout().voxel / params.radius.max(1.0)),
             biomes: BiomeField::new(params.biomes),
             overhang: None,
             voxels: None,
             caves: CaveStyle::of(&params).map(|s| Arc::new(Caves::new(s, params.seed, params.layout().voxel))),
             // Seulement là où le vent et l'eau sculptent la roche
+            min_crater: std::sync::atomic::AtomicU32::new((2.0 * params.layout().voxel / params.radius.max(1.0)).to_bits()),
             rocks: (params.atmosphere && !params.airless && !params.gaseous && params.pressure >= 0.05)
                 .then(|| Arc::new(Rocks::new(params.seed, params.radius, params.layout().voxel))),
         }
@@ -392,7 +396,8 @@ impl Terrain {
         let det = self.detail.get([s.x as f64 * ds, s.y as f64 * ds, s.z as f64 * ds]) as f32 * 0.15;
         let base = ((continent + det + 1.0) * 0.5).clamp(0.0, 1.0);
         // Montagnes, rifts, volcans, canyons, plateaux, cratères (`planetgen::geology`)
-        let sample = self.relief.sample(dir, base);
+        let min = f32::from_bits(self.min_crater.load(std::sync::atomic::Ordering::Relaxed));
+        let sample = self.relief.sample_min(dir, base, min);
         let hv = (base + sample.h).clamp(0.0, 1.2);
 
         // L'érosion adoucit aussi les collines et le relief fin
@@ -474,6 +479,10 @@ impl Terrain {
             let mut kind = self.surface_type((h - p.radius) / p.terrain_height.max(1.0), dir);
             // Coulées de lave figées (basalte), éboulis au pied des pentes et des falaises (sauf
             // sous la neige éternelle des sommets)
+            // Fond de cratère rempli : glace sur un monde froid et humide, lave figée ailleurs
+            if relief.flooded && !kind.is_liquid() {
+                kind = if p.hydro.snow && p.climate.mean_c < -20.0 { VoxelType::Ice } else { VoxelType::Basalt };
+            }
             if !p.airless && kind != VoxelType::Snow && kind != VoxelType::Ice {
                 if relief.lava {
                     kind = VoxelType::Basalt;
@@ -498,6 +507,17 @@ impl Terrain {
                     1.0,
                 ]
             };
+            // Éjectas et rayons clairs des cratères récents ; mers de lave des bassins remplis
+            let b = relief.bright;
+            let mut color = [
+                color[0] + (0.86 - color[0]) * b * 0.6,
+                color[1] + (0.85 - color[1]) * b * 0.6,
+                color[2] + (0.82 - color[2]) * b * 0.6,
+                1.0,
+            ];
+            if relief.flooded && p.airless {
+                color = [color[0] * 0.55, color[1] * 0.55, color[2] * 0.58, 1.0];
+            }
             (p.radius + rel * quantum, kind, color)
         };
         Column { dir, top, kind, color }
@@ -867,6 +887,17 @@ pub fn build_tile_mesh_with(terrain: &Terrain, key: TileKey) -> Mesh {
 
 /// Tuile en champ de hauteur (tuiles lointaines).
 pub fn build_height_tile_mesh(terrain: &Terrain, key: TileKey) -> Mesh {
+    // Pas de cratère plus petit qu'une colonne et demie de cette tuile (on ne le verrait pas)
+    use std::sync::atomic::Ordering;
+    let before = terrain.min_crater.load(Ordering::Relaxed);
+    let column = FRAC_PI_2 / ((TILE_CELLS as u32) << key.depth.min(30)) as f32;
+    terrain.min_crater.store(f32::from_bits(before).max(1.5 * column).to_bits(), Ordering::Relaxed);
+    let mesh = build_height_tile_inner(terrain, key);
+    terrain.min_crater.store(before, Ordering::Relaxed);
+    mesh
+}
+
+fn build_height_tile_inner(terrain: &Terrain, key: TileKey) -> Mesh {
     let layout = terrain.layout;
     let depth = (key.depth as u32).min(layout.max_depth);
     let lattice = (TILE_CELLS as u32) << depth;
