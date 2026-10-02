@@ -130,6 +130,9 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   du joueur ou `/impact` : cratere en deltas voxel (`impact_crater`), sauve (`world.json`) et envoye
   (`net::Msg::Voxels`, l'hote relaie a tous ; `voxel_outbox`/`voxel_inbox`) ; `surface::VoxelsChanged` fait
   reconstruire tuiles et sol. Sans air : pas de trainee. PROTOCOL 22.
+  A4 = survie a pied (`suit.rs`) : `Environment` (pression, O2, CO2, temperature locale de `LocalWeather` ou de
+  la roche sous terre, radiation du sol, lave) -> `rates` (reserve d'O2 ~8 min, degats lents, alertes), `Suit`
+  (O2, vie) : a 0, `Surface::request_rescue` ramene au vaisseau (abri : recharge et soins). HUD a pied.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

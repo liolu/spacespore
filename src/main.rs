@@ -27,6 +27,7 @@ mod scanner;
 mod settings;
 mod ship;
 mod stats;
+mod suit;
 mod surface;
 mod test_cmd;
 mod system_gen;
@@ -263,6 +264,7 @@ fn main() {
         .add_plugins(origin::OriginPlugin)
         .add_plugins(world_clock::WorldClockPlugin)
         .add_plugins(meteors::MeteorsPlugin)
+        .add_plugins(suit::SuitPlugin)
 
         // ── UI ──────────────────────────────────────────────────────────
         .add_plugins(UiPlugin)
