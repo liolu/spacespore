@@ -19,7 +19,10 @@ pub struct ZonesPlugin;
 
 impl Plugin for ZonesPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ZonesState>().add_systems(Update, (update_zones, draw_zone_edges));
+        // Après le chargement / déchargement des systèmes : jamais d'anneau rattaché à une étoile
+        // en train de disparaître
+        app.init_resource::<ZonesState>()
+            .add_systems(Update, (update_zones, draw_zone_edges).after(crate::planet::stream_system_bodies));
     }
 }
 

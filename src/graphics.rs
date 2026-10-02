@@ -177,7 +177,7 @@ fn apply_shadows(
     for (e, mut light, capable) in &mut lights {
         if light.is_added() {
             if light.shadows_enabled {
-                commands.entity(e).insert(ShadowCapable);
+                commands.entity(e).try_insert(ShadowCapable);
                 if !settings.shadows {
                     light.shadows_enabled = false;
                 }

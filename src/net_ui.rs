@@ -100,6 +100,127 @@ pub struct NetPanel {
     /// Nom et tag saisis pour créer une guilde.
     pub guild_name: String,
     pub guild_tag: String,
+    /// Messages et commandes envoyés (flèches haut / bas), gardés d'une partie à l'autre.
+    history: Vec<String>,
+    history_loaded: bool,
+    /// Position dans l'historique pendant qu'on le parcourt, et la ligne en cours mise de côté.
+    history_pos: Option<usize>,
+    draft: String,
+    /// Propositions de Tab en cours de parcours, et celle affichée.
+    tab: Option<(Vec<String>, usize)>,
+}
+
+/// Messages gardés dans l'historique du chat.
+const HISTORY_MAX: usize = 100;
+
+fn history_path() -> std::path::PathBuf {
+    crate::settings::data_dir().join("chat_history.txt")
+}
+
+impl NetPanel {
+    fn load_history(&mut self) {
+        if self.history_loaded {
+            return;
+        }
+        self.history_loaded = true;
+        if let Ok(text) = std::fs::read_to_string(history_path()) {
+            self.history = text.lines().filter(|l| !l.trim().is_empty()).map(String::from).collect();
+            let extra = self.history.len().saturating_sub(HISTORY_MAX);
+            self.history.drain(..extra);
+        }
+    }
+
+    /// Garde un message envoyé (sans doublon consécutif).
+    fn remember(&mut self, msg: &str) {
+        let msg = msg.trim();
+        if msg.is_empty() || self.history.last().is_some_and(|l| l == msg) {
+            return;
+        }
+        self.history.push(msg.to_string());
+        let extra = self.history.len().saturating_sub(HISTORY_MAX);
+        self.history.drain(..extra);
+        if !cfg!(test) {
+            let _ = std::fs::write(history_path(), self.history.join("\n"));
+        }
+    }
+
+    /// Flèche haut (`up`) ou bas : message précédent / suivant de l'historique.
+    fn browse(&mut self, up: bool) {
+        self.load_history();
+        if self.history.is_empty() {
+            return;
+        }
+        let last = self.history.len() - 1;
+        let next = match (self.history_pos, up) {
+            (None, true) => {
+                self.draft = self.chat.clone();
+                Some(last)
+            }
+            (None, false) => None,
+            (Some(p), true) => Some(p.saturating_sub(1)),
+            (Some(p), false) if p >= last => None,
+            (Some(p), false) => Some(p + 1),
+        };
+        self.history_pos = next;
+        self.chat = match next {
+            Some(p) => self.history[p].clone(),
+            None => std::mem::take(&mut self.draft),
+        };
+    }
+
+    /// Tab : complète la commande ; plusieurs propositions → préfixe commun, puis on les fait défiler.
+    fn complete(&mut self, galaxy_kinds: &[String], galaxies: usize, backwards: bool) {
+        if let Some((list, i)) = &mut self.tab {
+            if !list.is_empty() && self.chat == list[*i] {
+                *i = if backwards { (*i + list.len() - 1) % list.len() } else { (*i + 1) % list.len() };
+                self.chat = list[*i].clone();
+                return;
+            }
+        }
+        let list = crate::chat_cmd::suggestions(&self.chat, galaxy_kinds, galaxies);
+        match list.len() {
+            0 => {}
+            1 => {
+                self.chat = format!("{} ", list[0]);
+                self.tab = None;
+            }
+            _ => {
+                let common = list.iter().skip(1).fold(list[0].clone(), |acc, s| {
+                    acc.chars().zip(s.chars()).take_while(|(a, b)| a == b).map(|(a, _)| a).collect()
+                });
+                if common.chars().count() > self.chat.trim_end().chars().count() {
+                    self.chat = common;
+                    self.tab = None;
+                } else {
+                    self.chat = list[0].clone();
+                    self.tab = Some((list, 0));
+                }
+            }
+        }
+    }
+}
+
+/// Types de galaxies, en minuscules sans accents (propositions de `/tp`).
+fn galaxy_kind_names(settings: &GameSettings) -> Vec<String> {
+    let mut names: Vec<String> = settings.galaxies.iter().map(|g| plain_name(g.kind.name())).collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn plain_name(s: &str) -> String {
+    s.to_lowercase()
+        .chars()
+        .map(|c| match c {
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'à' | 'â' | 'ä' => 'a',
+            'î' | 'ï' => 'i',
+            'ô' | 'ö' => 'o',
+            'ù' | 'û' | 'ü' => 'u',
+            'ç' => 'c',
+            _ => c,
+        })
+        .collect()
 }
 
 #[derive(Component)]
@@ -543,10 +664,17 @@ fn handle_text_input(
             }
             continue;
         };
+        if !matches!(ev.logical_key, Key::Tab | Key::Shift) {
+            panel.tab = None;
+        }
         match &ev.logical_key {
             Key::Enter => {
                 if focus == Field::Chat {
                     let msg = std::mem::take(&mut panel.chat);
+                    panel.load_history();
+                    panel.remember(&msg);
+                    panel.history_pos = None;
+                    panel.tab = None;
                     // Les commandes du jeu (/tp, /aide…) restent locales ; hors multijoueur, le chat aussi
                     if crate::chat_cmd::is_local(&msg) || !net.is_enabled() {
                         local_cmds.send(crate::chat_cmd::ChatCommand(msg));
@@ -561,8 +689,35 @@ fn handle_text_input(
                 return;
             }
             Key::Escape => {
+                panel.history_pos = None;
+                panel.tab = None;
                 commit_focus(&mut panel, &mut settings);
                 return;
+            }
+            // Tab : propositions de commandes (Maj+Tab : en arrière)
+            Key::Tab if focus == Field::Chat => {
+                let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+                let kinds = galaxy_kind_names(&settings);
+                let count = settings.galaxies.len();
+                panel.complete(&kinds, count, shift);
+                continue;
+            }
+            // Flèches : messages envoyés avant / après
+            Key::ArrowUp if focus == Field::Chat => {
+                panel.browse(true);
+                continue;
+            }
+            Key::ArrowDown if focus == Field::Chat => {
+                panel.browse(false);
+                continue;
+            }
+            // Ctrl+Retour arrière : efface le dernier mot
+            Key::Backspace if ctrl && focus == Field::Chat => {
+                let trimmed = panel.chat.trim_end().to_string();
+                let cut = trimmed.rfind(' ').map_or(0, |i| i + 1);
+                panel.chat.truncate(cut);
+                panel.tab = None;
+                continue;
             }
             Key::Backspace => match focus {
                 Field::Name => { settings.player_name.pop(); }
@@ -1075,6 +1230,7 @@ fn update_chat(
     time: Res<Time>,
     net: Res<Net>,
     panel: Res<NetPanel>,
+    settings: Res<GameSettings>,
     lines_q: Query<Entity, With<ChatLines>>,
     mut input_box: Query<&mut Node, With<ChatInputBox>>,
     mut input_text: Query<&mut Text, With<ChatInputText>>,
@@ -1092,7 +1248,21 @@ fn update_chat(
     if open {
         let caret = if (time.elapsed_secs() * 2.0) as u32 % 2 == 0 { "|" } else { "" };
         let prompt = if panel.chat.trim_start().starts_with("/g ") { "Guilde >" } else { ">" };
-        let shown = format!("{prompt} {}{caret}", panel.chat);
+        let mut shown = format!("{prompt} {}{caret}", panel.chat);
+        // Sous la ligne : l'aide de la commande et les propositions (Tab)
+        if panel.chat.trim_start().starts_with('/') {
+            let list = crate::chat_cmd::suggestions(&panel.chat, &galaxy_kind_names(&settings), settings.galaxies.len());
+            if let Some(u) = crate::chat_cmd::usage(&panel.chat) {
+                shown.push_str(&format!("\n   {u}"));
+            }
+            if !list.is_empty() && !(list.len() == 1 && list[0].trim() == panel.chat.trim()) {
+                let words: Vec<String> = list.iter().take(8).map(|l| l.rsplit(' ').next().unwrap_or(l).to_string()).collect();
+                let more = if list.len() > 8 { format!("  (+{})", list.len() - 8) } else { String::new() };
+                shown.push_str(&format!("\n   Tab : {}{more}", words.join("  ")));
+            }
+        } else if panel.chat.is_empty() {
+            shown.push_str("\n   / : commandes (Tab pour completer)   Fleches : messages precedents");
+        }
         for mut t in &mut input_text {
             if t.0 != shown {
                 t.0 = shown.clone();
@@ -1159,5 +1329,46 @@ fn update_chat(
         if (c.0.alpha() - a).abs() > 0.01 {
             c.0 = f.base.with_alpha(a);
         }
+    }
+}
+
+#[cfg(test)]
+mod chat_input_tests {
+    use super::*;
+
+    #[test]
+    fn arrows_browse_history_and_restore_the_draft() {
+        let mut p = NetPanel { history_loaded: true, ..Default::default() };
+        p.remember("/stats");
+        p.remember("bonjour");
+        p.remember("bonjour");
+        p.chat = "en cours".into();
+        p.browse(true);
+        assert_eq!(p.chat, "bonjour");
+        p.browse(true);
+        assert_eq!(p.chat, "/stats");
+        p.browse(true);
+        assert_eq!(p.chat, "/stats", "reste sur le plus ancien");
+        p.browse(false);
+        assert_eq!(p.chat, "bonjour");
+        p.browse(false);
+        assert_eq!(p.chat, "en cours", "la ligne en cours revient");
+    }
+
+    #[test]
+    fn tab_completes_then_cycles() {
+        let mut p = NetPanel::default();
+        p.chat = "/st".into();
+        p.complete(&[], 21, false);
+        assert_eq!(p.chat, "/stats ");
+        p.chat = "/aller planete m".into();
+        p.complete(&[], 21, false);
+        // mini-neptune, methane, mars : pas de préfixe commun plus long -> on parcourt
+        let first = p.chat.clone();
+        p.complete(&[], 21, false);
+        assert_ne!(p.chat, first);
+        assert!(p.chat.starts_with("/aller planete m"));
+        p.complete(&[], 21, true);
+        assert_eq!(p.chat, first, "Maj+Tab revient en arriere");
     }
 }

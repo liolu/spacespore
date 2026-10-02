@@ -72,7 +72,9 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   vivantes = depart + delta (`live.rs`, `body_deltas` de `world.json`). Tests du monde : `planetgen::tests`
   (reproductible, types d'etoiles) et `settings::tests::planets_follow_their_star_and_never_touch` ; changer la
   generation = augmenter `PROTOCOL` (`net.rs`). Chat : `/profil` exporte l'astre cible en JSON, `/graine` = code court. Tests : `/aller etoile|planete|lune <type>` et `/aller suivant`
-  (`test_cmd.rs` : teleporte au bord du systeme trouve, cible l'astre une fois charge). `/stats [n|tout]` :
+  (`test_cmd.rs` : recherche en arriere-plan, teleporte au bord du systeme trouve, cible l'astre une fois charge).
+  Chat : Tab complete (`chat_cmd::suggestions`, liste `COMMAND_HELP`), fleches = historique (`saves/.../chat_history.txt`),
+  Ctrl+Retour arriere = efface un mot. Entites qui peuvent disparaitre dans la meme image (teleportation) : `try_insert`. `/stats [n|tout]` :
   comptes et pourcentages de tous les astres d'une galaxie (`stats.rs`, calcul en arriere-plan, panneau F3,
   fichier `saves/vX.Y.Z/stats/`). Option « Afficher zones » (menu Options) : zones chaude / habitable / froide du
   systeme charge (`zones.rs`, limites interpolees entre les vraies planetes).
