@@ -942,6 +942,8 @@ pub struct GameSettings {
     #[serde(skip)]                            pub body_deltas: WorldDeltas,
     /// Horloge du monde au chargement (secondes de jeu, `world.json`) : ensuite `WorldClock`.
     #[serde(skip)]                            pub world_clock: f64,
+    /// Cellules voxel modifiées, par astre (minage en 0.14 ; vide pour l'instant) : `world.json`.
+    #[serde(skip)]                            pub voxel_deltas: crate::voxel::VoxelDeltas,
     /// Ce jeu a pris une identité de secours (un autre jeu utilisait la même sauvegarde) :
     /// il ne réécrit plus `settings.json`, pour ne pas écraser le compte de l'autre.
     #[serde(skip)]                            pub temp_identity: bool,
@@ -1001,6 +1003,7 @@ impl Default for GameSettings {
             guild_archive: Vec::new(),
             body_deltas: WorldDeltas::new(),
             world_clock: 0.0,
+            voxel_deltas: Default::default(),
             temp_identity: false,
             systems: default_systems(&default_galaxies(DEFAULT_WORLD_SEED), DEFAULT_WORLD_SEED),
             galaxies: default_galaxies(DEFAULT_WORLD_SEED),
@@ -1135,6 +1138,7 @@ impl GameSettings {
         self.guild_archive = world.guild_archive;
         self.body_deltas = world.body_deltas;
         self.world_clock = world.clock;
+        self.voxel_deltas = world.voxel_deltas;
     }
 }
 
@@ -1154,6 +1158,8 @@ struct WorldSave {
     #[serde(default, skip_serializing_if = "WorldDeltas::is_empty")] body_deltas: WorldDeltas,
     /// Horloge du monde (secondes de jeu depuis sa création, règle 9).
     #[serde(default)] clock: f64,
+    /// Cellules voxel modifiées (0.11 B1 : format prêt, minage en 0.14).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")] voxel_deltas: crate::voxel::VoxelDeltas,
 }
 
 impl From<&GameSettings> for WorldSave {
@@ -1170,6 +1176,7 @@ impl From<&GameSettings> for WorldSave {
             guild_archive: s.guild_archive.clone(),
             body_deltas: s.body_deltas.clone(),
             clock: crate::world_clock::saved_secs().max(s.world_clock),
+            voxel_deltas: s.voxel_deltas.clone(),
         }
     }
 }

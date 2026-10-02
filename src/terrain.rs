@@ -5,6 +5,11 @@
 //! voxel le plus fin (une colonne d'environ 5 à 11 unités). La hauteur d'une colonne ne dépend que
 //! de sa direction : le maillage affiché et le sol sous les pieds du joueur sont donc identiques.
 //!
+//! Près du joueur (tuiles du niveau le plus fin), le terrain est en voxels 3D (0.11, B1) : une
+//! cellule est pleine selon une seule fonction (`Terrain::kind_at`) = champ de hauteur + formes 3D
+//! (surplomb de test) + deltas (`voxel.rs`, minage en 0.14). Le champ de hauteur lointain en est la
+//! vue de dessus (`Terrain::column`) : pas de saut entre loin et près.
+//!
 //! Tout ce fichier est du calcul pur (aucune ressource Bevy), ce qui permet de le tester.
 
 use bevy::math::Vec3;
@@ -12,6 +17,7 @@ use bevy::render::mesh::{Indices, Mesh, PrimitiveTopology};
 use bevy::render::render_asset::RenderAssetUsages;
 use noise::{Fbm, NoiseFn, Perlin};
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
+use std::sync::Arc;
 
 use crate::planet::VoxelType;
 use crate::planetgen::biome::{Biome, BiomeField, BiomeParams};
@@ -19,6 +25,7 @@ use crate::planetgen::climate::{sea_material, Climate};
 use crate::planetgen::geology::{moon_relief, Relief, ReliefField};
 use crate::planetgen::hydrology::Hydro;
 use crate::settings::{MoonConfig, PlanetConfig};
+use crate::voxel::{BodyVoxels, Cell, BLOCK};
 
 /// Colonnes par côté d'une tuile.
 pub const TILE_CELLS: usize = 32;
@@ -283,6 +290,10 @@ pub struct Terrain {
     color: Perlin,
     relief: ReliefField,
     biomes: BiomeField,
+    /// Surplomb de test (B1), s'il a trouvé une terre ferme où se poser.
+    pub overhang: Option<Overhang>,
+    /// Cellules modifiées (minage, 0.14) : vides pour l'instant.
+    voxels: Option<Arc<BodyVoxels>>,
 }
 
 impl Terrain {
@@ -305,7 +316,21 @@ impl Terrain {
             color: Perlin::new(params.seed.wrapping_add(200)),
             relief: ReliefField::new(params.relief),
             biomes: BiomeField::new(params.biomes),
+            overhang: None,
+            voxels: None,
         }
+        .with_overhang()
+    }
+
+    /// Le même terrain avec les cellules modifiées de l'astre.
+    pub fn with_voxels(mut self, voxels: Option<Arc<BodyVoxels>>) -> Self {
+        self.voxels = voxels.filter(|v| !v.blocks.is_empty());
+        self
+    }
+
+    fn with_overhang(mut self) -> Self {
+        self.overhang = Overhang::find(&self);
+        self
     }
 
     pub fn voxel(&self) -> f32 {
@@ -355,8 +380,23 @@ impl Terrain {
         Some(self.biomes.biome(&p.climate, &p.hydro, p.airless, p.atmosphere, (h - p.radius) / p.terrain_height.max(1.0), dir))
     }
 
-    /// Colonne dans la direction `dir`, hauteur arrondie au multiple de `quantum` au-dessus du niveau de la mer.
+    /// Colonne vue de dessus dans la direction `dir` (champ de hauteur des tuiles lointaines et
+    /// du décor) : le sol, ou le dessus d'une forme 3D (surplomb) s'il y en a une.
     pub fn column(&self, dir: Vec3, quantum: f32) -> Column {
+        let mut c = self.base_column(dir, quantum);
+        if let Some(top) = self.overhang.as_ref().and_then(|o| o.top(dir)) {
+            if top > c.top {
+                c.top = self.params.radius + ((top - self.params.radius) / quantum).round() * quantum;
+                c.kind = VoxelType::Stone;
+                c.color = OVERHANG_COLOR;
+            }
+        }
+        c
+    }
+
+    /// Colonne du champ de hauteur seul (sans les formes 3D), hauteur arrondie au multiple de
+    /// `quantum` au-dessus du niveau de la mer.
+    pub fn base_column(&self, dir: Vec3, quantum: f32) -> Column {
         let p = &self.params;
         // Géante gazeuse : pas de relief, seulement le cœur où le vol s'arrête
         if p.gaseous {
@@ -407,14 +447,229 @@ impl Terrain {
         Column { dir, top, kind, color }
     }
 
-    /// Colonne du niveau le plus fin qui contient la direction `dir` (sol marchable).
+    /// Surface la plus haute de la colonne du niveau le plus fin qui contient `dir` (dessus d'un
+    /// surplomb compris).
     pub fn ground(&self, dir: Vec3) -> Column {
-        let n = (TILE_CELLS << self.layout.max_depth) as f32;
+        self.floor(dir, f32::INFINITY)
+    }
+
+    // ── Voxels 3D ────────────────────────────────────────────────────────
+
+    /// Colonnes par côté d'une face au niveau le plus fin.
+    fn lattice(&self) -> i64 {
+        (TILE_CELLS as i64) << self.layout.max_depth
+    }
+
+    /// Colonne (face, i, j) du niveau le plus fin qui contient `dir`.
+    pub fn cell_of(&self, dir: Vec3) -> (u8, i64, i64) {
+        let n = self.lattice();
         let (face, s, t) = dir_to_face(dir);
-        let i = (((s + 1.0) * 0.5 * n).floor()).clamp(0.0, n - 1.0);
-        let j = (((t + 1.0) * 0.5 * n).floor()).clamp(0.0, n - 1.0);
-        let center = face_dir(face, -1.0 + 2.0 * (i + 0.5) / n, -1.0 + 2.0 * (j + 0.5) / n);
-        self.column(center, self.layout.voxel)
+        let i = ((((s + 1.0) * 0.5) as f64 * n as f64).floor() as i64).clamp(0, n - 1);
+        let j = ((((t + 1.0) * 0.5) as f64 * n as f64).floor() as i64).clamp(0, n - 1);
+        (face, i, j)
+    }
+
+    /// Direction du centre de la colonne (i, j) de la face `face` (i, j peuvent déborder d'une
+    /// colonne au bord de la face).
+    pub fn cell_dir(&self, face: u8, i: i64, j: i64) -> Vec3 {
+        // Même calcul (f32) que les tuiles en champ de hauteur : mêmes colonnes au bit près
+        let n = self.lattice() as f32;
+        face_dir(face, -1.0 + 2.0 * (i as f32 + 0.5) / n, -1.0 + 2.0 * (j as f32 + 0.5) / n)
+    }
+
+    /// Couche radiale qui contient le rayon `r` (0 = juste au-dessus du niveau de la mer).
+    pub fn layer(&self, r: f32) -> i32 {
+        ((r - self.params.radius) / self.layout.voxel).floor() as i32
+    }
+
+    /// Rayon du bas de la couche `k`.
+    pub fn layer_radius(&self, k: i32) -> f32 {
+        self.params.radius + k as f32 * self.layout.voxel
+    }
+
+    /// Colonne de base au niveau le plus fin et sa première couche vide.
+    fn base_cell_column(&self, dir: Vec3) -> (Column, i32) {
+        let c = self.base_column(dir, self.layout.voxel);
+        let top_k = ((c.top - self.params.radius) / self.layout.voxel).round() as i32;
+        (c, top_k)
+    }
+
+    /// Formes 3D ou cellules modifiées près de cette colonne : sinon le champ de hauteur suffit.
+    fn has_3d(&self, face: u8, i: i64, j: i64, dir: Vec3) -> bool {
+        self.overhang.as_ref().is_some_and(|o| o.near(dir))
+            || self.voxels.as_ref().is_some_and(|v| v.layers_in(face, i.div_euclid(BLOCK), j.div_euclid(BLOCK)).is_some())
+    }
+
+    /// LA fonction des voxels (règle 11) : matière de la cellule (couche `k`) de la colonne
+    /// (face, i, j), dont la colonne de base est `base` (première couche vide `top_k`).
+    /// Delta d'abord, puis le champ de hauteur, puis les formes 3D.
+    pub fn kind_at(&self, face: u8, i: i64, j: i64, k: i32, dir: Vec3, base: &Column, top_k: i32) -> VoxelType {
+        if let Some(v) = &self.voxels {
+            if let Some(kind) = v.get(Cell { face, i, j, k }) {
+                return kind;
+            }
+        }
+        if k < top_k {
+            return base.kind;
+        }
+        if let Some(o) = &self.overhang {
+            if o.solid(dir * (self.layer_radius(k) + self.layout.voxel * 0.5)) {
+                return VoxelType::Stone;
+            }
+        }
+        VoxelType::Air
+    }
+
+    /// Sol sous le point (`dir`, `r`) : la plus haute surface pleine dont le dessus est au plus à
+    /// `r` (le dessus d'un surplomb si l'on est dessus, le sol si l'on est dessous).
+    pub fn floor(&self, dir: Vec3, r: f32) -> Column {
+        let p = &self.params;
+        if p.gaseous {
+            return Column { dir, top: p.radius * GAS_CORE, kind: VoxelType::Stone, color: [0.3, 0.25, 0.2, 1.0] };
+        }
+        let (face, i, j) = self.cell_of(dir);
+        let center = self.cell_dir(face, i, j);
+        let (base, top_k) = self.base_cell_column(center);
+        if !self.has_3d(face, i, j, center) {
+            return base;
+        }
+        let highest = self.highest_layer(face, i, j, top_k);
+        let start = if r.is_finite() { (self.layer(r + 1e-3) - 1).min(highest) } else { highest };
+        for k in (start - 512..=start).rev() {
+            let kind = self.kind_at(face, i, j, k, center, &base, top_k);
+            if kind != VoxelType::Air {
+                let color = if k < top_k { base.color } else { OVERHANG_COLOR };
+                return Column { dir: center, top: self.layer_radius(k + 1), kind, color };
+            }
+        }
+        base
+    }
+
+    /// Plafond au-dessus du point (`dir`, `r`) : bas de la première cellule pleine au-dessus de
+    /// `r` (l'infini s'il n'y en a pas).
+    pub fn ceiling(&self, dir: Vec3, r: f32) -> f32 {
+        let (face, i, j) = self.cell_of(dir);
+        let center = self.cell_dir(face, i, j);
+        if self.params.gaseous || !self.has_3d(face, i, j, center) {
+            return f32::INFINITY;
+        }
+        let (base, top_k) = self.base_cell_column(center);
+        let highest = self.highest_layer(face, i, j, top_k);
+        let k0 = ((r - self.params.radius) / self.layout.voxel).ceil() as i32;
+        for k in k0..=highest {
+            if self.kind_at(face, i, j, k, center, &base, top_k) != VoxelType::Air {
+                return self.layer_radius(k);
+            }
+        }
+        f32::INFINITY
+    }
+
+    /// Plus haute couche qui peut être pleine dans cette colonne.
+    fn highest_layer(&self, face: u8, i: i64, j: i64, top_k: i32) -> i32 {
+        let mut k = top_k;
+        if let Some(o) = &self.overhang {
+            k = k.max(o.layers(self).1);
+        }
+        if let Some((_, hi)) = self.voxels.as_ref().and_then(|v| v.layers_in(face, i.div_euclid(BLOCK), j.div_euclid(BLOCK))) {
+            k = k.max(hi);
+        }
+        k
+    }
+}
+
+/// Couleur des formes 3D de test (roche claire).
+const OVERHANG_COLOR: [f32; 4] = [0.62, 0.58, 0.54, 1.0];
+
+/// Surplomb artificiel de test (B1) : une arche dont le tablier s'avance en auvent, sur la terre
+/// ferme, à un endroit fixé par la graine de l'astre (commande `/surplomb` pour y aller).
+#[derive(Clone, Copy, Debug)]
+pub struct Overhang {
+    pub dir: Vec3,
+    east: Vec3,
+    north: Vec3,
+    /// Rayon du sol au pied de l'arche, taille d'un voxel.
+    pub base: f32,
+    v: f32,
+}
+
+/// Boîtes de l'arche (min, max) en voxels : vers l'est, vers le nord, vers le haut.
+const ARCH: [([f32; 3], [f32; 3]); 3] = [
+    ([-12.0, -3.0, -6.0], [-8.0, 3.0, 9.0]),
+    ([8.0, -3.0, -6.0], [12.0, 3.0, 9.0]),
+    ([-12.0, -3.0, 9.0], [22.0, 3.0, 12.0]),
+];
+
+impl Overhang {
+    /// Cherche une terre ferme (pas sous la mer) dans des directions tirées de la graine.
+    fn find(t: &Terrain) -> Option<Self> {
+        let p = &t.params;
+        if p.gaseous {
+            return None;
+        }
+        let v = t.layout.voxel;
+        let mut x = (p.seed as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0x5851_F42D_4C95_7F2D;
+        let mut next = || {
+            x ^= x >> 33;
+            x = x.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
+            x ^= x >> 29;
+            (x >> 11) as f32 / (1u64 << 53) as f32
+        };
+        for _ in 0..48 {
+            let z = 1.6 * next() - 0.8;
+            let a = std::f32::consts::TAU * next();
+            let r = (1.0 - z * z).sqrt();
+            let dir = Vec3::new(r * a.cos(), z, r * a.sin());
+            let c = t.base_column(dir, v);
+            if c.kind.is_liquid() {
+                continue;
+            }
+            let east = Vec3::Y.cross(dir).normalize_or(Vec3::X);
+            let north = dir.cross(east).normalize();
+            return Some(Self { dir, east, north, base: c.top, v });
+        }
+        None
+    }
+
+    /// Coordonnées locales (voxels) d'un point du repère de l'astre.
+    fn local(&self, p: Vec3) -> [f32; 3] {
+        let d = p - self.dir * self.base;
+        [d.dot(self.east) / self.v, d.dot(self.north) / self.v, (p.length() - self.base) / self.v]
+    }
+
+    pub fn solid(&self, p: Vec3) -> bool {
+        // Seulement près de l'arche (à l'antipode, les coordonnées locales retomberaient dedans)
+        if (p - self.dir * self.base).length_squared() > (40.0 * self.v).powi(2) {
+            return false;
+        }
+        let l = self.local(p);
+        ARCH.iter().any(|(lo, hi)| (0..3).all(|a| l[a] >= lo[a] && l[a] < hi[a]))
+    }
+
+    /// La colonne `dir` passe près de l'arche.
+    pub fn near(&self, dir: Vec3) -> bool {
+        dir.dot(self.dir) > (40.0 * self.v / self.base).cos()
+    }
+
+    /// Dessus de l'arche dans la direction `dir` (vue de dessus), s'il y en a.
+    pub fn top(&self, dir: Vec3) -> Option<f32> {
+        if !self.near(dir) {
+            return None;
+        }
+        let l = self.local(dir * self.base);
+        ARCH.iter()
+            .filter(|(lo, hi)| l[0] >= lo[0] && l[0] < hi[0] && l[1] >= lo[1] && l[1] < hi[1])
+            .map(|(_, hi)| self.base + hi[2] * self.v)
+            .reduce(f32::max)
+    }
+
+    /// Couches (k) occupées par l'arche.
+    pub fn layers(&self, t: &Terrain) -> (i32, i32) {
+        (t.layer(self.base - 7.0 * self.v), t.layer(self.base + 13.0 * self.v))
+    }
+
+    /// Un point sous l'auvent, au sol (pour `/surplomb`) : à l'est des piliers.
+    pub fn visit_dir(&self) -> Vec3 {
+        (self.dir * self.base + self.east * 17.0 * self.v).normalize()
     }
 }
 
@@ -473,12 +728,22 @@ const MAX_STEP_DOUBLINGS: u32 = 2;
 /// Chaque colonne donne une face supérieure ; entre deux colonnes de hauteurs différentes, la plus
 /// haute dessine la paroi qui les sépare. Une « jupe » descend le long des bords de la tuile pour
 /// cacher les fentes avec les tuiles voisines de profondeur différente.
+#[cfg(test)]
 pub fn build_tile_mesh(params: &BodyParams, key: TileKey) -> Mesh {
     build_tile_mesh_with(&Terrain::new(*params), key)
 }
 
-/// Comme `build_tile_mesh`, avec un `Terrain` déjà construit (partagé avec le décor).
+/// Comme `build_tile_mesh`, avec un `Terrain` déjà construit (partagé avec le décor). Au niveau le
+/// plus fin (près du joueur), la tuile est en voxels 3D.
 pub fn build_tile_mesh_with(terrain: &Terrain, key: TileKey) -> Mesh {
+    if key.depth as u32 >= terrain.layout.max_depth && !terrain.params.gaseous {
+        return build_voxel_tile_mesh(terrain, key);
+    }
+    build_height_tile_mesh(terrain, key)
+}
+
+/// Tuile en champ de hauteur (tuiles lointaines).
+pub fn build_height_tile_mesh(terrain: &Terrain, key: TileKey) -> Mesh {
     let layout = terrain.layout;
     let depth = (key.depth as u32).min(layout.max_depth);
     let lattice = (TILE_CELLS as u32) << depth;
@@ -554,6 +819,152 @@ pub fn build_tile_mesh_with(terrain: &Terrain, key: TileKey) -> Mesh {
                 }
                 let shade = [c.color[0] * 0.82, c.color[1] * 0.82, c.color[2] * 0.82, 1.0];
                 buf.quad([a * lo, b * lo, b * hi, a * hi], n, shade);
+            }
+        }
+    }
+    buf.into_mesh()
+}
+
+/// Colonne d'une tuile 3D (avec une rangée de voisines tout autour).
+struct Col3 {
+    base: Column,
+    top_k: i32,
+    /// Colonne canonique (une voisine au-delà du bord de la face est rapportée à sa vraie face).
+    face: u8,
+    i: i64,
+    j: i64,
+}
+
+/// Tuile en voxels 3D (niveau le plus fin) : chaque cellule pleine montre ses faces tournées vers
+/// une cellule vide (dessus, dessous des surplombs, côtés). Sans forme 3D, le résultat a les mêmes
+/// dessus que le champ de hauteur. Une jupe descend le long des bords (raccord avec les tuiles
+/// plus grossières voisines).
+pub fn build_voxel_tile_mesh(t: &Terrain, key: TileKey) -> Mesh {
+    let layout = t.layout;
+    let v = layout.voxel;
+    let n = t.lattice();
+    let (i0, j0) = (key.x as i64 * TILE_CELLS as i64, key.y as i64 * TILE_CELLS as i64);
+    let line = |i: i64| -> f32 { -1.0 + 2.0 * i as f32 / n as f32 };
+
+    let n1 = TILE_CELLS + 1;
+    let mut corners = Vec::with_capacity(n1 * n1);
+    for cj in 0..n1 as i64 {
+        for ci in 0..n1 as i64 {
+            corners.push(face_dir(key.face, line(i0 + ci), line(j0 + cj)));
+        }
+    }
+    let corner = |ci: usize, cj: usize| corners[cj * n1 + ci];
+
+    let nc = TILE_CELLS + 2;
+    let mut cols: Vec<Col3> = Vec::with_capacity(nc * nc);
+    for cj in -1..=TILE_CELLS as i64 {
+        for ci in -1..=TILE_CELLS as i64 {
+            let (gi, gj) = (i0 + ci, j0 + cj);
+            let dir = t.cell_dir(key.face, gi, gj);
+            let (face, i, j) = if (0..n).contains(&gi) && (0..n).contains(&gj) { (key.face, gi, gj) } else { t.cell_of(dir) };
+            let center = t.cell_dir(face, i, j);
+            let (base, top_k) = t.base_cell_column(center);
+            cols.push(Col3 { base, top_k, face, i, j });
+        }
+    }
+    let col = |ci: i32, cj: i32| &cols[(cj + 1) as usize * nc + (ci + 1) as usize];
+
+    // Couches à examiner : autour du sol, plus les formes 3D et les cellules modifiées
+    let tile_dir = key.center_dir();
+    let any_3d = t.overhang.as_ref().is_some_and(|o| tile_dir.dot(o.dir) > (key.arc(t.params.radius) * 0.8 / o.base + 40.0 * v / o.base).cos())
+        || t.voxels.as_ref().is_some_and(|vx| cols.iter().any(|c| vx.layers_in(c.face, c.i.div_euclid(BLOCK), c.j.div_euclid(BLOCK)).is_some()));
+    let mut kmin = cols.iter().map(|c| c.top_k).min().unwrap_or(0) - 1;
+    let mut kmax = cols.iter().map(|c| c.top_k).max().unwrap_or(0) + 1;
+    if any_3d {
+        if let Some(o) = &t.overhang {
+            let (lo, hi) = o.layers(t);
+            kmin = kmin.min(lo - 1);
+            kmax = kmax.max(hi + 1);
+        }
+        if let Some(vx) = &t.voxels {
+            for c in &cols {
+                if let Some((lo, hi)) = vx.layers_in(c.face, c.i.div_euclid(BLOCK), c.j.div_euclid(BLOCK)) {
+                    kmin = kmin.min(lo - 1);
+                    kmax = kmax.max(hi + 1);
+                }
+            }
+        }
+    }
+    let kind = |ci: i32, cj: i32, k: i32| -> VoxelType {
+        let c = col(ci, cj);
+        if k < kmin {
+            return c.base.kind;
+        }
+        if !any_3d {
+            return if k < c.top_k { c.base.kind } else { VoxelType::Air };
+        }
+        t.kind_at(c.face, c.i, c.j, k, c.base.dir, &c.base, c.top_k)
+    };
+
+    let mut buf = MeshBuf::default();
+    buf.pos.reserve(TILE_CELLS * TILE_CELLS * 8);
+    let last = TILE_CELLS as i32 - 1;
+    let skirt = v * 8.0;
+    let shade = |c: [f32; 4], k: f32| [c[0] * k, c[1] * k, c[2] * k, 1.0];
+
+    for cj in 0..TILE_CELLS as i32 {
+        for ci in 0..TILE_CELLS as i32 {
+            let c = col(ci, cj);
+            let (u, w) = (ci as usize, cj as usize);
+            let up = c.base.dir;
+            for k in kmin..=kmax {
+                let here = kind(ci, cj, k);
+                if here == VoxelType::Air {
+                    continue;
+                }
+                let color = if k < c.top_k { c.base.color } else { OVERHANG_COLOR };
+                let (r0, r1) = (t.layer_radius(k), t.layer_radius(k + 1));
+                if kind(ci, cj, k + 1) == VoxelType::Air {
+                    buf.quad([corner(u, w) * r1, corner(u + 1, w) * r1, corner(u + 1, w + 1) * r1, corner(u, w + 1) * r1], up, color);
+                }
+                if k > kmin && kind(ci, cj, k - 1) == VoxelType::Air {
+                    buf.quad([corner(u, w) * r0, corner(u + 1, w) * r0, corner(u + 1, w + 1) * r0, corner(u, w + 1) * r0], -up, shade(color, 0.55));
+                }
+                let sides: [((i32, i32), (usize, usize), (usize, usize)); 4] = [
+                    ((1, 0), (u + 1, w), (u + 1, w + 1)),
+                    ((-1, 0), (u, w), (u, w + 1)),
+                    ((0, 1), (u, w + 1), (u + 1, w + 1)),
+                    ((0, -1), (u, w), (u + 1, w)),
+                ];
+                for ((dx, dy), ea, eb) in sides {
+                    if kind(ci + dx, cj + dy, k) != VoxelType::Air {
+                        continue;
+                    }
+                    let (a, b) = (corner(ea.0, ea.1), corner(eb.0, eb.1));
+                    let nb = col(ci + dx, cj + dy);
+                    let mut nrm = (b - a).cross(up).normalize_or_zero();
+                    if nrm.dot(nb.base.dir - up) < 0.0 {
+                        nrm = -nrm;
+                    }
+                    buf.quad([a * r0, b * r0, b * r1, a * r1], nrm, shade(color, 0.82));
+                }
+            }
+            // Jupes au bord de la tuile (raccord avec une voisine plus grossière)
+            let sides: [((i32, i32), (usize, usize), (usize, usize)); 4] = [
+                ((1, 0), (u + 1, w), (u + 1, w + 1)),
+                ((-1, 0), (u, w), (u, w + 1)),
+                ((0, 1), (u, w + 1), (u + 1, w + 1)),
+                ((0, -1), (u, w), (u + 1, w)),
+            ];
+            for ((dx, dy), ea, eb) in sides {
+                let (ni, nj) = (ci + dx, cj + dy);
+                if !(ni < 0 || ni > last || nj < 0 || nj > last) {
+                    continue;
+                }
+                let nb = col(ni, nj);
+                let hi = c.base.top.min(nb.base.top);
+                let lo = hi - skirt;
+                let (a, b) = (corner(ea.0, ea.1), corner(eb.0, eb.1));
+                let mut nrm = (b - a).cross(up).normalize_or_zero();
+                if nrm.dot(nb.base.dir - up) < 0.0 {
+                    nrm = -nrm;
+                }
+                buf.quad([a * lo, b * lo, b * hi, a * hi], nrm, shade(c.base.color, 0.82));
             }
         }
     }
@@ -713,6 +1124,136 @@ mod tests {
         assert!(ground > p.radius - 1.0 && ground < p.radius + p.terrain_height * 3.0);
     }
 
+    /// Feuille la plus fine qui contient `dir`.
+    fn finest(t: &Terrain, dir: Vec3) -> TileKey {
+        let (face, s, tt) = dir_to_face(dir);
+        let n = (1u32 << t.layout.max_depth) as f32;
+        TileKey {
+            face,
+            depth: t.layout.max_depth as u8,
+            x: (((s + 1.0) * 0.5 * n) as u32).min(n as u32 - 1),
+            y: (((tt + 1.0) * 0.5 * n) as u32).min(n as u32 - 1),
+        }
+    }
+
+    /// Dessus (rayons des sommets tournés vers le haut, arrondis) d'un maillage.
+    fn tops(mesh: &Mesh) -> Vec<i64> {
+        let Some(VertexAttributeValues::Float32x3(pos)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else { panic!() };
+        let Some(VertexAttributeValues::Float32x3(nor)) = mesh.attribute(Mesh::ATTRIBUTE_NORMAL) else { panic!() };
+        let mut out: Vec<i64> = pos
+            .iter()
+            .zip(nor)
+            .filter(|(p, n)| Vec3::from_array(**n).dot(Vec3::from_array(**p).normalize()) > 0.999)
+            .map(|(p, _)| (Vec3::from_array(*p).length() * 100.0).round() as i64)
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// Règle 11, raccord sur les 6 faces : sans forme 3D, une tuile en voxels 3D a exactement les
+    /// mêmes dessus que le champ de hauteur (tuiles lointaines), et ses triangles sont à l'endroit.
+    #[test]
+    fn voxel_tiles_match_the_height_field_on_all_six_faces() {
+        let mut p = earth_like();
+        p.seed = 77;
+        let mut t = Terrain::new(p);
+        t.overhang = None;
+        for face in 0..6u8 {
+            for (s, tt) in [(0.1, -0.2), (0.999, 0.3), (-0.999, -0.999)] {
+                let key = finest(&t, face_dir(face, s, tt));
+                let height = build_height_tile_mesh(&t, key);
+                let voxel = build_voxel_tile_mesh(&t, key);
+                assert_eq!(tops(&height), tops(&voxel), "face {face} ({s}, {tt})");
+                let Some(VertexAttributeValues::Float32x3(pos)) = voxel.attribute(Mesh::ATTRIBUTE_POSITION) else { panic!() };
+                let Some(VertexAttributeValues::Float32x3(nor)) = voxel.attribute(Mesh::ATTRIBUTE_NORMAL) else { panic!() };
+                let Some(Indices::U32(idx)) = voxel.indices() else { panic!() };
+                for tri in idx.chunks(3) {
+                    let v = |i: u32| Vec3::from_array(pos[i as usize]);
+                    let geo = (v(tri[1]) - v(tri[0])).cross(v(tri[2]) - v(tri[0]));
+                    assert!(geo.dot(Vec3::from_array(nor[tri[0] as usize])) > 0.0, "triangle a l'envers");
+                }
+            }
+        }
+    }
+
+    /// Les colonnes de part et d'autre d'une arête du cube sont les mêmes pour les deux faces
+    /// (une voisine au-delà du bord est rapportée à sa vraie face) : pas de fissure entre faces.
+    #[test]
+    fn cells_agree_across_the_cube_edges() {
+        let t = Terrain::new(earth_like());
+        let n = t.lattice();
+        for face in 0..6u8 {
+            for &(gi, gj) in &[(-1i64, n / 3), (n, n / 2), (n / 4, -1), (n / 5, n)] {
+                let dir = t.cell_dir(face, gi, gj);
+                let (f2, i2, j2) = t.cell_of(dir);
+                assert_ne!(f2, face, "face {face} ({gi}, {gj})");
+                // La colonne voisine canonique est bien à un voxel du bord
+                let back = t.cell_dir(f2, i2, j2);
+                assert!(back.angle_between(dir) * t.params.radius < t.voxel() * 0.75, "face {face} ({gi}, {gj})");
+            }
+        }
+    }
+
+    /// La même graine donne les mêmes voxels (deux machines, deux constructions).
+    #[test]
+    fn the_density_is_deterministic() {
+        let a = Terrain::new(earth_like());
+        let b = Terrain::new(earth_like());
+        let o = a.overhang.expect("une arche sur la terre ferme");
+        let key = finest(&a, o.dir);
+        assert_eq!(tops(&build_voxel_tile_mesh(&a, key)), tops(&build_voxel_tile_mesh(&b, key)));
+        let mut h = 0u64;
+        let (face, i, j) = a.cell_of(o.dir);
+        for di in -15..15 {
+            for k in -10..30 {
+                let dir = a.cell_dir(face, i + di, j);
+                let (base, top_k) = a.base_cell_column(dir);
+                let ka = a.kind_at(face, i + di, j, k, dir, &base, top_k);
+                let kb = b.kind_at(face, i + di, j, k, dir, &base, top_k);
+                assert_eq!(ka, kb);
+                h = h.wrapping_mul(31).wrapping_add(ka as u64);
+            }
+        }
+        assert_ne!(h, 0);
+    }
+
+    /// Le surplomb : de l'air sous une roche (vraie 3D), un plafond pour qui est dessous, un sol
+    /// pour qui est dessus, et une face du dessous dans le maillage.
+    #[test]
+    fn the_test_overhang_has_air_under_rock() {
+        let t = Terrain::new(earth_like());
+        let o = t.overhang.expect("arche");
+        let under = o.visit_dir();
+        let floor = t.floor(under, o.base + t.voxel() * 3.0);
+        let roof = t.ceiling(under, floor.top + 0.01);
+        assert!(roof.is_finite() && roof > floor.top + t.voxel() * 5.0, "plafond {roof}, sol {}", floor.top);
+        // Dessus de l'auvent : on y tient debout
+        let top = t.ground(under);
+        assert!(top.top > roof, "dessus {} plafond {roof}", top.top);
+        assert_eq!(top.kind, VoxelType::Stone);
+        // Le maillage a des faces tournées vers le bas (dessous de l'auvent)
+        let mesh = build_voxel_tile_mesh(&t, finest(&t, under));
+        let Some(VertexAttributeValues::Float32x3(pos)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else { panic!() };
+        let Some(VertexAttributeValues::Float32x3(nor)) = mesh.attribute(Mesh::ATTRIBUTE_NORMAL) else { panic!() };
+        let down = pos.iter().zip(nor).filter(|(p, n)| Vec3::from_array(**n).dot(Vec3::from_array(**p).normalize()) < -0.999).count();
+        assert!(down > 0, "pas de dessous");
+        // Loin de l'arche, pas de plafond
+        assert_eq!(t.ceiling(-o.dir, t.ground(-o.dir).top + 1.0), f32::INFINITY);
+    }
+
+    /// Un delta (minage, 0.14) creuse bien une cellule : le sol descend d'un voxel.
+    #[test]
+    fn a_delta_digs_a_cell() {
+        let t = Terrain::new(earth_like());
+        let dir = -t.overhang.unwrap().dir;
+        let g = t.ground(dir);
+        let (face, i, j) = t.cell_of(dir);
+        let mut body = BodyVoxels::default();
+        body.set(Cell { face, i, j, k: t.layer(g.top) - 1 }, VoxelType::Air);
+        let dug = Terrain::new(earth_like()).with_voxels(Some(Arc::new(body)));
+        assert!((dug.ground(dir).top - (g.top - t.voxel())).abs() < 1e-3, "{} vs {}", dug.ground(dir).top, g.top);
+    }
+
     #[test]
     fn gas_giants_have_no_ground_until_the_core() {
         let mut p = earth_like();
@@ -812,6 +1353,31 @@ mod bench {
         }
         let ms = start.elapsed().as_secs_f64() * 1000.0;
         println!("BENCH {tiles} tuiles en {ms:.0} ms : {:.2} ms par tuile", ms / tiles as f64);
+    }
+
+    /// Tuiles du niveau le plus fin : champ de hauteur contre voxels 3D (`bench_tiles` aussi).
+    #[test]
+    #[ignore]
+    fn bench_voxel_tiles() {
+        let settings = crate::settings::GameSettings::default();
+        let bodies: Vec<BodyParams> = settings.systems.iter().take(40).flat_map(|s| s.planets().iter().filter(|p| !p.gaseous()).map(BodyParams::planet).collect::<Vec<_>>()).take(20).collect();
+        let mut keys = Vec::new();
+        for p in &bodies {
+            let t = Terrain::new(*p);
+            let dir = t.overhang.map_or(Vec3::Y, |o| o.dir);
+            let mut sel = Vec::new();
+            select_tiles(t.layout, p.radius, dir * (t.ground(dir).top + 20.0), &mut sel);
+            keys.extend(sel.into_iter().filter(|k| k.depth as u32 == t.layout.max_depth).take(20).map(|k| (t.params, k)));
+        }
+        for (name, voxel) in [("champ de hauteur", false), ("voxels 3D", true)] {
+            let start = std::time::Instant::now();
+            for (p, key) in &keys {
+                let t = Terrain::new(*p);
+                std::hint::black_box(if voxel { build_voxel_tile_mesh(&t, *key) } else { build_height_tile_mesh(&t, *key) });
+            }
+            let ms = start.elapsed().as_secs_f64() * 1000.0;
+            println!("BENCH {name} : {} tuiles fines, {:.2} ms par tuile", keys.len(), ms / keys.len() as f64);
+        }
     }
 }
 

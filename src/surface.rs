@@ -19,7 +19,7 @@ use crate::net_ui::NetPanel;
 use crate::planet::{MoonId, MoonRoot, PlanetId, PlanetRoot, StarRoot};
 use crate::settings::GameSettings;
 use crate::ship::Ship;
-use crate::terrain::{build_tile_mesh, select_tiles, BodyParams, Terrain, TileKey, build_tile_mesh_with};
+use crate::terrain::{select_tiles, BodyParams, Terrain, TileKey, build_tile_mesh_with};
 use crate::decor::{tile_decor, DecorAssets, DecorInstance};
 use crate::ui::{CameraTarget, MenuState, TargetKind};
 use crate::{CameraController, ZoomLevel};
@@ -68,7 +68,9 @@ impl Plugin for SurfacePlugin {
         app.init_resource::<Surface>()
             .init_resource::<GalaxyDim>()
             .init_resource::<TileStore>()
+            .add_event::<OverhangCommand>()
             .add_systems(Startup, (setup_hud, spawn_lamps))
+            .add_systems(Update, go_overhang.before(SurfaceControl))
             .add_systems(Update, update_galaxy_dim)
             .add_systems(
                 Update,
@@ -264,9 +266,15 @@ impl Walker {
         if delta.length_squared() > 0.0 {
             let allow = if self.on_ground { STEP_VOXELS * v } else { 0.0 };
             let r = self.pos.length();
+            // Voxels 3D : le sol d'arrivée est au plus une marche plus haut, et la place pour le
+            // corps est libre (un mur ou un surplomb trop bas arrête)
             let try_move = |pos: Vec3, d: Vec3| -> Option<Vec3> {
                 let next = (pos + d).normalize() * r;
-                (t.ground(next.normalize()).top <= r + allow + 1e-3).then_some(next)
+                let dir = next.normalize();
+                let floor = t.floor(dir, r + allow).top;
+                let feet = floor.max(r);
+                let clear = t.ceiling(dir, feet + 1e-3) >= feet + BODY_VOXELS * v;
+                (floor <= r + allow + 1e-3 && clear).then_some(next)
             };
             if let Some(next) = try_move(self.pos, delta) {
                 self.pos = next;
@@ -284,7 +292,9 @@ impl Walker {
         // Vertical
         let up = self.up();
         let mut r = self.pos.length();
-        let ground = t.ground(up);
+        // Le sol sous les pieds (une marche au-dessus au plus) : sous un surplomb, c'est le sol
+        // d'en bas ; dessus, c'est le surplomb
+        let ground = t.floor(up, r + STEP_VOXELS * v);
         self.in_water = ground.kind.is_liquid();
         self.liquid = ground.kind;
         // Vraie gravité de l'astre : sur une lune à 0,16 g, on saute six fois plus haut
@@ -307,6 +317,12 @@ impl Walker {
                 r = ground.top;
                 self.vr = 0.0;
                 self.on_ground = true;
+            }
+            // La tête cogne le plafond (dessous d'un surplomb)
+            let roof = t.ceiling(up, ground.top.max(r - v) + 1e-3);
+            if r + BODY_VOXELS * v > roof {
+                r = (roof - BODY_VOXELS * v).max(ground.top);
+                self.vr = self.vr.min(0.0);
             }
         }
         self.pos = up * r;
@@ -332,6 +348,8 @@ const EYE_VOXELS: f32 = 1.8;
 const WALK_VOXELS: f32 = 7.0;
 const SPRINT_VOXELS: f32 = 21.0;
 const STEP_VOXELS: f32 = 1.05;
+/// Hauteur du corps : il faut cette place libre pour passer sous un surplomb.
+const BODY_VOXELS: f32 = 1.9;
 const JUMP_VOXELS: f32 = 7.5;
 /// Pesanteur à 1 g, en voxels par seconde².
 const GRAVITY: f32 = 22.0;
@@ -779,7 +797,7 @@ fn surface_control(
                 let local = frame.point(ship_tf.translation);
                 if (local.length() - hover_radius(&params)).abs() < params.radius * 0.1 + 250.0 {
                     let up = local.normalize_or(Vec3::Y);
-                    surface.terrain = Some(Terrain::new(params));
+                    surface.terrain = Some(Terrain::new(params).with_voxels(crate::voxel::body_voxels(&ctx.settings, &kind)));
                     surface.body = Some(kind);
                     surface.fpos = local;
                     surface.heading = tangent(frame.vector(*ship_tf.forward()), up);
@@ -816,7 +834,7 @@ fn surface_control(
             net.notify("Pas de sol : une geante gazeuse n'a pas de surface. Zoomez sous 1000 pour entrer dans son atmosphere (la pression abime la coque).", now);
             return;
         }
-        let terrain = Terrain::new(params);
+        let terrain = Terrain::new(params).with_voxels(crate::voxel::body_voxels(&ctx.settings, &kind));
         let dir1 = ctx.aimed_dir(camera, cam_gt, &frame, &params);
         let local0 = frame.point(ship_tf.translation);
         let dir0 = local0.normalize_or(dir1);
@@ -994,7 +1012,9 @@ fn surface_control(
             let climb = if terrain.params.gaseous { 400.0 * (terrain.params.radius / 8000.0).max(1.0) } else { 400.0 };
             surface.fvert += (vertical * climb - surface.fvert) * (1.0 - (-4.0 * dt).exp());
             let next = (surface.fpos + heading * surface.fspeed * dt).normalize();
-            let ground = terrain.ground(next).top;
+            // Voxels 3D : le sol sous le vaisseau (on peut passer sous une arche) et le plafond
+            let ground = terrain.floor(next, r).top;
+            let roof = terrain.ceiling(next, ground + 1.0);
             let ceiling = hover_radius(&params);
             // Entrée en navigation : on descend d'abord à 150 au-dessus du relief
             let mut r = r + surface.fvert * dt;
@@ -1006,7 +1026,7 @@ fn surface_control(
                     surface.fdescend = false;
                 }
             }
-            let r = r.clamp(ground + 25.0, ceiling.max(ground + 100.0));
+            let r = r.clamp(ground + 25.0, ceiling.max(ground + 100.0)).min((roof - 25.0).max(ground + 25.0));
             surface.fpos = next * r;
             surface.heading = tangent(heading, next);
 
@@ -1019,7 +1039,7 @@ fn surface_control(
             let back = Quat::from_axis_angle(next, surface.fyaw) * -surface.heading;
             let offset = (back * surface.fpitch.cos() + next * surface.fpitch.sin()) * surface.fdist;
             let mut cam_local = surface.fpos + offset;
-            let floor = terrain.ground(cam_local.normalize()).top + 10.0;
+            let floor = terrain.floor(cam_local.normalize(), cam_local.length()).top + 10.0;
             if cam_local.length() < floor {
                 cam_local = cam_local.normalize() * floor;
             }
@@ -1337,6 +1357,41 @@ fn update_lamps(
     }
 }
 
+/// `/surplomb` : aller à l'arche de test (voxels 3D) de l'astre où l'on se trouve.
+#[derive(Event)]
+pub struct OverhangCommand;
+
+fn go_overhang(time: Res<Time>, mut events: EventReader<OverhangCommand>, mut surface: ResMut<Surface>, mut net: ResMut<Net>) {
+    let now = time.elapsed_secs_f64();
+    for _ in events.read() {
+        let Some(o) = surface.terrain.as_ref().and_then(|t| t.overhang) else {
+            net.notify("Posez-vous ou volez bas sur une planete ou une lune solide d'abord (zoom sous 1000).", now);
+            continue;
+        };
+        let Some(t) = surface.terrain.as_ref() else { continue };
+        let v = t.voxel();
+        match surface.phase {
+            Phase::Walking => {
+                // Sous l'auvent, regardant vers l'arche
+                let dir = o.visit_dir();
+                let floor = t.floor(dir, o.base + 3.0 * v).top;
+                let heading = (o.dir - dir).normalize_or(Vec3::X);
+                let mut w = Walker::spawn(t, dir, heading);
+                w.pos = dir * floor;
+                w.eye_r = floor + v * EYE_VOXELS;
+                surface.walker = w;
+                net.notify("Vous etes sous l'auvent de l'arche de test (voxels 3D).", now);
+            }
+            Phase::Flying => {
+                surface.fpos = o.dir * (o.base + 30.0 * v);
+                surface.fdescend = false;
+                net.notify("L'arche de test est juste sous le vaisseau (V pour s'y poser).", now);
+            }
+            _ => net.notify("Attendez la fin de l'atterrissage.", now),
+        }
+    }
+}
+
 /// Saison (et heure, pour le givre du matin) du terrain où l'on séjourne : neige et calottes
 /// avancent et reculent ; les tuiles sont reconstruites quand elle change vraiment.
 fn update_season(
@@ -1390,6 +1445,8 @@ struct TileStore {
     /// une à une, en gardant les anciennes affichées en attendant.
     climate: Option<crate::planetgen::climate::Climate>,
     generation: u32,
+    /// Cellules modifiées de l'astre (minage, 0.14).
+    voxels: Option<std::sync::Arc<crate::voxel::BodyVoxels>>,
 }
 
 fn set_far_visibility(
@@ -1416,6 +1473,7 @@ fn set_far_visibility(
 fn update_tiles(
     mut commands: Commands,
     time: Res<Time>,
+    settings: Res<GameSettings>,
     surface: Res<Surface>,
     mut store: ResMut<TileStore>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -1446,6 +1504,7 @@ fn update_tiles(
         store.far_hidden = false;
         store.body = wanted;
         store.climate = None;
+        store.voxels = wanted.and_then(|k| crate::voxel::body_voxels(&settings, &k));
     }
     let Some(kind) = store.body else { return };
     let (Some(terrain), Ok(cam)) = (surface.terrain.as_ref(), cam_q.get_single()) else { return };
@@ -1463,6 +1522,7 @@ fn update_tiles(
     }
     let generation = store.generation;
     let params = BodyParams { climate: store.climate.unwrap_or(params.climate), ..params };
+    let voxels = store.voxels.clone();
 
     let material = store
         .material
@@ -1496,7 +1556,8 @@ fn update_tiles(
     if store.built.is_empty() && store.tasks.is_empty() {
         for face in 0..6 {
             let key = TileKey::root(face);
-            let entity = spawn_tile(&mut commands, &mut meshes, &material, root, build_tile_mesh(&params, key));
+            let first = Terrain::new(params).with_voxels(voxels.clone());
+            let entity = spawn_tile(&mut commands, &mut meshes, &material, root, build_tile_mesh_with(&first, key));
             store.built.insert(key, TileEntry { entity, last_needed: now, generation });
         }
     }
@@ -1536,11 +1597,12 @@ fn update_tiles(
             break;
         }
         let p = params;
+        let vx = voxels.clone();
         store.tasks.insert(
             key,
             (
                 pool.spawn(async move {
-                    let terrain = Terrain::new(p);
+                    let terrain = Terrain::new(p).with_voxels(vx);
                     (build_tile_mesh_with(&terrain, key), tile_decor(&terrain, key))
                 }),
                 generation,
@@ -1834,6 +1896,38 @@ mod tests {
         assert_eq!(daylight(&p, 0.8, 1.0), 0.0);
     }
 
+    /// Voxels 3D : on passe à pied sous l'arche de test (sans traverser la roche), et on tient
+    /// debout sur son tablier.
+    #[test]
+    fn walking_under_and_on_the_test_arch() {
+        let t = world();
+        let o = t.overhang.expect("arche");
+        let v = t.voxel();
+        // Sous l'auvent, on marche vers l'est puis on revient vers l'arche
+        let under = o.visit_dir();
+        let mut w = Walker::spawn(&t, under, o.dir - under);
+        w.pos = under * t.floor(under, o.base + 3.0 * v).top;
+        settle(&mut w, &t, 1.0);
+        let start = w.pos.length();
+        let roof = t.ceiling(w.up(), start + 0.01);
+        assert!(roof.is_finite(), "pas de plafond sous l'auvent");
+        for _ in 0..240 {
+            w.step(&t, &WalkInput { forward: 1.0, ..default() }, 1.0 / 60.0);
+            let r = w.pos.length();
+            let up = w.up();
+            // Jamais dans la roche : la tête reste sous le plafond, les pieds sur un sol
+            assert!(r + BODY_VOXELS * v <= t.ceiling(up, r + 0.01) + 1e-2, "tete dans la roche");
+            assert!(r >= t.floor(up, r + 0.01).top - 1e-2, "pieds dans la roche");
+        }
+        // Lâché au-dessus du tablier : on s'y pose (pas au sol, dessous)
+        let top = t.ground(under);
+        let mut w = Walker::spawn(&t, under, Vec3::X);
+        w.pos = under * (top.top + 30.0 * v);
+        w.on_ground = false;
+        settle(&mut w, &t, 4.0);
+        assert!(w.on_ground && (w.pos.length() - top.top).abs() < 1e-2, "{} vs {}", w.pos.length(), top.top);
+    }
+
     #[test]
     fn a_player_dropped_from_the_sky_lands() {
         let t = world();
@@ -1989,7 +2083,10 @@ mod tests {
                         assert!(w.pos.is_finite() && w.heading.is_finite());
                         // À la couture entre deux faces du cube, les deux grilles de colonnes se recouvrent : la
                         // hauteur peut différer d'un voxel pour un même point (corrigé à l'image suivante)
-                        assert!(w.pos.length() >= t.ground(w.up()).top - t.voxel() * 1.5, "sous le sol (rayon {})", params.radius);
+                        // (sous l'arche de test, le dessus de la colonne est le tablier : test à part)
+                        if !t.overhang.is_some_and(|o| o.near(w.up())) {
+                            assert!(w.pos.length() >= t.ground(w.up()).top - t.voxel() * 1.5, "sous le sol (rayon {})", params.radius);
+                        }
                     }
                 }
                 // Le quadtree reste borné et ses tuiles sont valides
