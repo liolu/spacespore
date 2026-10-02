@@ -201,6 +201,7 @@ impl Plugin for UiPlugin {
                     handle_toggle_button,
                     handle_toggle_show_light,
                     handle_toggle_show_orbits,
+                    handle_toggle_show_zones,
                     handle_toggle_show_systems,
                     handle_toggle_atmosphere,
                     handle_apply_button,
@@ -365,6 +366,9 @@ struct ToggleShowLight;
 
 #[derive(Component)]
 struct ToggleShowOrbits;
+
+#[derive(Component)]
+struct ToggleShowZones;
 
 #[derive(Component)]
 struct ToggleShowSystems;
@@ -968,7 +972,13 @@ fn setup_game_ui(mut commands: Commands, settings: Res<GameSettings>) {
         settings.show_systems,
         ToggleShowSystems,
     );
-    commands.entity(content).add_children(&[camera_header, s1, s2, s3, invert, show_light, show_orbits, show_systems]);
+    let show_zones = spawn_toggle(
+        &mut commands,
+        "Afficher zones chaude / habitable / froide",
+        settings.show_zones,
+        ToggleShowZones,
+    );
+    commands.entity(content).add_children(&[camera_header, s1, s2, s3, invert, show_light, show_orbits, show_systems, show_zones]);
 
     // ── Graphismes / performances ──
     let gfx_rows = [
@@ -1555,6 +1565,24 @@ fn handle_toggle_show_orbits(
                 } else {
                     JustifyContent::Start
                 };
+            }
+        }
+    }
+}
+
+fn handle_toggle_show_zones(
+    interactions: Query<&Interaction, (Changed<Interaction>, With<ToggleShowZones>)>,
+    mut settings: ResMut<GameSettings>,
+    mut toggle_q: Query<(&mut BackgroundColor, &mut BorderColor, &mut Node), With<ToggleShowZones>>,
+) {
+    for interaction in &interactions {
+        if *interaction == Interaction::Pressed {
+            settings.show_zones = !settings.show_zones;
+            settings.save();
+            for (mut bg, mut border, mut node) in &mut toggle_q {
+                *bg = BackgroundColor(if settings.show_zones { ACCENT } else { BG_SLIDER });
+                *border = BorderColor(if settings.show_zones { ACCENT } else { TEXT_DIM });
+                node.justify_content = if settings.show_zones { JustifyContent::End } else { JustifyContent::Start };
             }
         }
     }

@@ -30,6 +30,7 @@ mod system_gen;
 mod terrain;
 mod ui;
 mod wormhole;
+mod zones;
 mod update_checker;
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
@@ -214,6 +215,7 @@ fn main() {
         .add_plugins(decor::DecorPlugin)
         .add_plugins(test_cmd::TestCmdPlugin)
         .add_plugins(stats::StatsPlugin)
+        .add_plugins(zones::ZonesPlugin)
 
         // ── Legacy astre plugins désactivés — la galaxie gère tout ──
         // Ressources + events vides pour l'UI (pas de Startup spawn)

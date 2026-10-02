@@ -896,6 +896,8 @@ pub struct GameSettings {
     pub invert_y:               bool,
     #[serde(default)] pub show_light_indicator: bool,
     #[serde(default)] pub show_orbits:          bool,
+    /// Zones chaude, habitable et froide du système chargé (`zones.rs`).
+    #[serde(default)] pub show_zones:           bool,
     #[serde(default)] pub show_systems:         bool,
     pub planet_chunk_divisions: usize,
 
@@ -973,7 +975,7 @@ impl Default for GameSettings {
             save_version: SAVE_VERSION,
             mouse_sensitivity: 0.5, scroll_speed: 10.0,
             keyboard_speed: 2.0, invert_y: true,
-            show_light_indicator: false, show_orbits: false, show_systems: false,
+            show_light_indicator: false, show_orbits: false, show_zones: false, show_systems: false,
             planet_chunk_divisions: 6,
             vsync: true, fps_limit: 0, msaa_samples: 4, shadows: true,
             lod_quality: 1.0, show_clouds: true, show_flares: true, render_scale: 1.0,
