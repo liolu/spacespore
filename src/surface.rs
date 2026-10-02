@@ -69,6 +69,7 @@ impl Plugin for SurfacePlugin {
             .init_resource::<GalaxyDim>()
             .init_resource::<TileStore>()
             .add_event::<OverhangCommand>()
+            .init_resource::<VoxelsChanged>()
             .add_event::<CaveCommand>()
             .init_resource::<NearestCave>()
             .add_systems(Update, (go_cave.before(SurfaceControl), find_nearest_cave))
@@ -77,7 +78,7 @@ impl Plugin for SurfacePlugin {
             .add_systems(Update, update_galaxy_dim)
             .add_systems(
                 Update,
-                (surface_control.in_set(SurfaceControl), update_underground, dim_star_light, surface_light, update_lamps, update_season, update_tiles, update_hud)
+                (surface_control.in_set(SurfaceControl), update_underground, dim_star_light, surface_light, update_lamps, update_season, refresh_voxels, update_tiles, update_hud)
                     .chain()
                     .after(crate::planet::orbit_planets)
                     .after(crate::planet::orbit_moons),
@@ -481,6 +482,11 @@ impl Surface {
     /// Atterrissage, séjour ou décollage en cours : la caméra n'est plus pilotée par l'orbite.
     pub fn active(&self) -> bool {
         self.phase != Phase::Orbit
+    }
+
+    /// Terrain de l'astre où l'on séjourne.
+    pub fn terrain(&self) -> Option<&Terrain> {
+        self.terrain.as_ref().filter(|_| self.active())
     }
 
     /// Astre où l'on séjourne (vol bas, atterrissage, marche).
@@ -1492,6 +1498,28 @@ fn go_cave(time: Res<Time>, mut events: EventReader<CaveCommand>, mut surface: R
             _ => net.notify("Attendez la fin de l'atterrissage.", now),
         }
         nearest.last = 0.0;
+    }
+}
+
+/// Les cellules modifiées ont changé (impact de météorite, delta reçu d'un autre joueur).
+#[derive(Resource, Default)]
+pub struct VoxelsChanged(pub bool);
+
+/// Prend en compte des cellules modifiées : le sol (collisions) et les tuiles, reconstruites une
+/// à une (les anciennes restent affichées en attendant).
+fn refresh_voxels(settings: Res<GameSettings>, mut changed: ResMut<VoxelsChanged>, mut surface: ResMut<Surface>, mut store: ResMut<TileStore>) {
+    if !changed.0 {
+        return;
+    }
+    changed.0 = false;
+    let Some(kind) = surface.body else { return };
+    let voxels = crate::voxel::body_voxels(&settings, &kind);
+    if let Some(t) = surface.terrain.as_mut() {
+        t.set_voxels(voxels.clone());
+    }
+    if store.body == Some(kind) {
+        store.voxels = voxels;
+        store.generation = store.generation.wrapping_add(1);
     }
 }
 

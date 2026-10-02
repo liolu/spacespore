@@ -160,8 +160,7 @@ pub fn body_voxels(settings: &crate::settings::GameSettings, kind: &crate::ui::T
 }
 
 /// Message réseau des modifications d'un bloc (minage, 0.14) : l'astre, le bloc et ses cellules.
-// Envoyé et appliqué par le minage (0.14) : seul le format existe pour l'instant.
-#[allow(dead_code)]
+// Envoyé par les impacts de météorites (B5), et par le minage (0.14).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct VoxelEdit {
     pub body: String,
@@ -169,7 +168,6 @@ pub struct VoxelEdit {
     pub cells: Vec<(u16, u8)>,
 }
 
-#[allow(dead_code)]
 impl VoxelEdit {
     /// Applique le message aux deltas du monde.
     pub fn apply(&self, deltas: &mut VoxelDeltas) -> bool {
