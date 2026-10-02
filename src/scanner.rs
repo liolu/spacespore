@@ -243,6 +243,7 @@ fn update_scanner(
     cache: Res<ProfileCache>,
     target: Res<CameraTarget>,
     weather: Res<crate::world_clock::LocalWeather>,
+    cave: Res<crate::surface::NearestCave>,
     star_q: Query<&StarId, With<StarRoot>>,
     mut scanner: ResMut<Scanner>,
     mut panel: Query<&mut Visibility, With<ScannerPanel>>,
@@ -264,7 +265,10 @@ fn update_scanner(
         };
     }
     // Heure, saison et températures du jour et de l'année, en direct (0.11)
-    let live = if weather.body.is_some() && weather.body == Some(target.0) { weather.scanner_line() } else { String::new() };
+    let mut live = if weather.body.is_some() && weather.body == Some(target.0) { weather.scanner_line() } else { String::new() };
+    if !live.is_empty() && !cave.text.is_empty() {
+        live = format!("{live}\n{}", cave.text);
+    }
     let full = match scanner.text.rsplit_once('\n') {
         Some((head, tail)) if !live.is_empty() => format!("{head}\n{live}\n{tail}"),
         _ => scanner.text.clone(),
