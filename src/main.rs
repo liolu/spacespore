@@ -15,6 +15,7 @@ mod guild;
 mod guild_ui;
 mod kepler;
 mod lod;
+mod meteors;
 mod mesher;
 mod net;
 mod net_ui;
@@ -261,6 +262,7 @@ fn main() {
         .add_plugins(surface::SurfacePlugin)
         .add_plugins(origin::OriginPlugin)
         .add_plugins(world_clock::WorldClockPlugin)
+        .add_plugins(meteors::MeteorsPlugin)
 
         // ── UI ──────────────────────────────────────────────────────────
         .add_plugins(UiPlugin)

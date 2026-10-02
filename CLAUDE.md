@@ -125,6 +125,11 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   angulaire, age (recents : ejectas et rayons clairs `ReliefSample::bright`, vieux : uses), fonds remplis
   (`flooded` : lave figee, glace sur monde froid), erosion qui efface les petits. Tuiles lointaines : pas de
   cratere plus petit qu'1,5 colonne (`Terrain::min_crater`). PROTOCOL 21.
+  B5 = meteores (`meteors.rs`) : etoiles filantes et bolides = f(graine de l'astre, horloge) (`meteor_in_bin`,
+  tranches d'une demi-seconde), la nuit avec de l'air ; 3 pluies par annee (`shower_strength`) ; impacts rares pres
+  du joueur ou `/impact` : cratere en deltas voxel (`impact_crater`), sauve (`world.json`) et envoye
+  (`net::Msg::Voxels`, l'hote relaie a tous ; `voxel_outbox`/`voxel_inbox`) ; `surface::VoxelsChanged` fait
+  reconstruire tuiles et sol. Sans air : pas de trainee. PROTOCOL 22.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

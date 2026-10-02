@@ -366,6 +366,11 @@ impl Terrain {
         self.raw_height(dir).0.max(self.params.radius)
     }
 
+    /// Remplace les cellules modifiées (un impact, un autre joueur a creusé).
+    pub fn set_voxels(&mut self, voxels: Option<Arc<BodyVoxels>>) {
+        self.voxels = voxels.filter(|v| !v.blocks.is_empty());
+    }
+
     /// Le même terrain avec les cellules modifiées de l'astre.
     pub fn with_voxels(mut self, voxels: Option<Arc<BodyVoxels>>) -> Self {
         self.voxels = voxels.filter(|v| !v.blocks.is_empty());
