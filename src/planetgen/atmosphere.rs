@@ -241,6 +241,12 @@ pub fn sky_colors(star: [f32; 3], gases: &[(String, f32)], pressure: f64, dusty:
 }
 
 /// Atmosphère et climat d'une planète.
+/// Écart jour / nuit (demi-amplitude, K) : grand sans air (Lune ~ ±150 K, Mars ~ ±40 K), amorti
+/// par l'atmosphère (Terre ~ ±5 K, Vénus ~ rien), plus fort quand les jours sont longs.
+pub fn diurnal_amplitude(t_surface_k: f32, pressure_bar: f32, rotation_h: f32) -> f32 {
+    t_surface_k * 0.24 * (rotation_h.max(0.24) / 24.0).powf(0.25).clamp(0.6, 3.0) / (1.0 + 11.6 * pressure_bar.max(0.0).powf(0.75))
+}
+
 pub fn generate(input: &AirInput, rng: &mut LayerRng) -> (Air, Climate) {
     let v_esc = escape_velocity(input.mass, input.radius);
     let au = input.au.max(1e-4);
@@ -387,8 +393,9 @@ pub fn generate(input: &AirInput, rng: &mut LayerRng) -> (Air, Climate) {
         mean_c,
         span,
         lapse: if p >= 0.01 && !gaseous { 50.0 * (p.min(1.0)).powf(0.3) * (input.mass / input.radius.powi(2)).sqrt() as f32 } else { 0.0 },
-        diurnal: t_surface as f32 * 0.3 / (1.0 + 4.0 * p),
+        diurnal: diurnal_amplitude(t_surface as f32, p, input.rotation_h as f32),
         tilt: input.axial_tilt as f32,
+        season: Default::default(),
     };
     let wind_ms = if pressure < 0.001 {
         0.0

@@ -311,7 +311,7 @@ impl BiomeField {
         if self.params.flora || !b.vegetated() {
             return b;
         }
-        let t = climate.temperature(dir.y.abs().clamp(0.0, 1.0).asin(), relative_altitude(rh), None);
+        let t = climate.temperature(dir.y.clamp(-1.0, 1.0).asin(), relative_altitude(rh), None);
         match self.soil(dir, climate, hydro, rh, t) {
             Soil::Volcanic => Biome::BasaltField,
             Soil::Metal => Biome::RustPlain,
@@ -329,8 +329,7 @@ impl BiomeField {
         if airless {
             return Biome::Regolith;
         }
-        let sin_lat = dir.y.abs();
-        let t = climate.temperature(sin_lat.clamp(0.0, 1.0).asin(), relative_altitude(rh), None);
+        let t = climate.temperature(dir.y.clamp(-1.0, 1.0).asin(), relative_altitude(rh), None);
         let barren = |soil: Soil| match soil {
             Soil::Volcanic => Biome::BasaltField,
             Soil::Metal => Biome::RustPlain,
@@ -420,8 +419,12 @@ impl BiomeField {
 
     /// Matière voxel du sol émergé.
     pub fn material(&self, climate: &Climate, hydro: &Hydro, airless: bool, atmosphere: bool, rh: f32, dir: Vec3) -> VoxelType {
+        // Givre du matin (0.11) : il blanchit le sol là où il y a de l'eau et de l'air
+        if !airless && atmosphere && hydro.snow && climate.frost_at(dir, relative_altitude(rh)) {
+            return VoxelType::Snow;
+        }
         if !self.params.defined {
-            return land_material(climate, hydro, airless, atmosphere, rh, dir.y.abs());
+            return land_material(climate, hydro, airless, atmosphere, rh, dir.y);
         }
         self.biome(climate, hydro, airless, atmosphere, rh, dir).voxel()
     }
@@ -454,7 +457,7 @@ mod tests {
     #[test]
     fn earth_gets_varied_terrestrial_biomes_and_never_jungle_in_the_cold() {
         let field = BiomeField::new(earth_params(false));
-        let climate = Climate { mean_c: 25.0, span: 50.0, lapse: 50.0, diurnal: 10.0, tilt: 23.0 };
+        let climate = Climate { mean_c: 25.0, span: 50.0, lapse: 50.0, diurnal: 10.0, tilt: 23.0, ..Default::default() };
         let hydro = Hydro::default();
         let mut seen = std::collections::HashSet::new();
         for dir in sphere(6000) {
@@ -480,7 +483,7 @@ mod tests {
     #[test]
     fn worlds_without_oxygen_grow_alien_biomes() {
         let field = BiomeField::new(earth_params(true));
-        let climate = Climate { mean_c: 15.0, span: 50.0, lapse: 50.0, diurnal: 10.0, tilt: 23.0 };
+        let climate = Climate { mean_c: 15.0, span: 50.0, lapse: 50.0, diurnal: 10.0, tilt: 23.0, ..Default::default() };
         let mut seen = std::collections::HashSet::new();
         for dir in sphere(4000) {
             let b = field.biome(&climate, &Hydro::default(), false, true, 0.15, dir);
@@ -499,7 +502,7 @@ mod tests {
         p.regolith = true;
         p.salt = true;
         let field = BiomeField::new(p);
-        let climate = Climate { mean_c: -20.0, span: 60.0, lapse: 0.0, diurnal: 40.0, tilt: 0.0 };
+        let climate = Climate { mean_c: -20.0, span: 60.0, lapse: 0.0, diurnal: 40.0, tilt: 0.0, ..Default::default() };
         let mut seen = std::collections::HashSet::new();
         for dir in sphere(4000) {
             for rh in [-0.05, 0.1, 0.3] {
@@ -517,7 +520,7 @@ mod tests {
     #[test]
     fn without_plants_green_biomes_are_bare() {
         let field = BiomeField::new(BiomeParams { flora: false, ..earth_params(false) });
-        let climate = Climate { mean_c: 20.0, span: 50.0, lapse: 50.0, diurnal: 10.0, tilt: 23.0 };
+        let climate = Climate { mean_c: 20.0, span: 50.0, lapse: 50.0, diurnal: 10.0, tilt: 23.0, ..Default::default() };
         for dir in sphere(3000) {
             assert!(!field.biome(&climate, &Hydro::default(), false, true, 0.15, dir).vegetated());
         }

@@ -52,7 +52,7 @@ pub const MAX_NAME_LEN: usize = 16;
 pub const MAX_TAG_LEN: usize = 5;
 /// Étoiles revendiquées au plus par joueur.
 pub const MAX_CLAIMS: usize = 5;
-const PROTOCOL: u32 = 15;
+const PROTOCOL: u32 = 17;
 pub const MAX_CHAT_LEN: usize = 120;
 /// Messages gardés à l'écran / dans l'historique de l'hôte.
 const CHAT_HISTORY: usize = 50;
@@ -78,13 +78,12 @@ const HOST_RETRY: f64 = 3.0;
 const AVOID_DURATION: f64 = 30.0;
 const HOST_ID: u32 = 0;
 /// Écart d'horloge toléré entre deux joueurs d'un même système (secondes).
-const CLOCK_TOLERANCE: f64 = 0.5;
 
 pub struct NetPlugin;
 
 impl Plugin for NetPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<UniverseClock>()
+        app.init_resource::<crate::world_clock::WorldClock>()
             .init_resource::<Net>()
             .add_event::<NetCommand>()
             .add_systems(
@@ -99,25 +98,6 @@ impl Plugin for NetPlugin {
                     .chain(),
             )
             .add_systems(Last, cleanup_on_exit);
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-//  Horloge d'univers partagée (orbites synchronisées)
-// ─────────────────────────────────────────────────────────────────────────
-
-#[derive(Resource, Default)]
-pub struct UniverseClock {
-    offset: f64,
-}
-
-impl UniverseClock {
-    pub fn secs(&self, time: &Time) -> f32 {
-        self.secs_f64(time) as f32
-    }
-
-    fn secs_f64(&self, time: &Time) -> f64 {
-        time.elapsed_secs_f64() + self.offset
     }
 }
 
@@ -140,8 +120,10 @@ struct PlayerState {
     sys: Option<u32>,
     /// Depuis combien de secondes il est dans ce système.
     stay: f64,
-    /// Son horloge d'univers.
+    /// Son horloge du monde (`WorldClock`) et sa vitesse : celles de l'hôte font foi.
     clock: f64,
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    speed: f64,
     /// Coque du vaisseau (absente du paquet quand elle est intacte).
     #[serde(default = "full_hp", skip_serializing_if = "is_full_hp")]
     hp: u8,
@@ -891,6 +873,15 @@ pub struct Peer {
     sys: Option<u32>,
     stay: f64,
     clock: f64,
+    speed: f64,
+}
+
+fn one() -> f64 {
+    1.0
+}
+
+fn is_one(x: &f64) -> bool {
+    *x == 1.0
 }
 
 impl Peer {
@@ -909,7 +900,8 @@ impl Peer {
             rot: self.rot.to_array(),
             sys: self.sys,
             stay: self.stay + age,
-            clock: self.clock + age,
+            clock: self.clock + age * self.speed,
+            speed: self.speed,
             hp: self.status.hp,
             hits: self.status.hits.clone(),
             siege: self.status.siege,
@@ -1014,6 +1006,11 @@ impl Default for Net {
 }
 
 impl Net {
+    /// Seul l'hôte (ou un joueur seul) règle la vitesse du temps.
+    pub fn may_set_clock(&self) -> bool {
+        matches!(self.session, Session::Offline | Session::Hosting { .. })
+    }
+
     pub fn mode(&self) -> NetMode {
         match self.session {
             Session::Offline => NetMode::Offline,
@@ -1216,7 +1213,7 @@ fn update_peer(peers: &mut HashMap<u32, Peer>, profiles: &ProfileCache, st: Play
     let pos = DVec3::from_array(st.pos);
     let q = Quat::from_array(st.rot);
     let rot = if q.length_squared() > 1.0e-6 { q.normalize() } else { Quat::IDENTITY };
-    if !st.clock.is_finite() || !st.stay.is_finite() {
+    if !st.clock.is_finite() || !st.stay.is_finite() || !st.speed.is_finite() {
         return;
     }
     let profile = profiles.get(st.ph);
@@ -1227,7 +1224,7 @@ fn update_peer(peers: &mut HashMap<u32, Peer>, profiles: &ProfileCache, st: Play
         peers.insert(st.id, Peer {
             name: String::new(), tag: String::new(), gid: 0, ph: 0, claims: Vec::new(),
             status: PlayerStatus::default(), color: [1.0; 3],
-            abs: pos, rot, vel: Vec3::ZERO, last_update: now, sys: st.sys, stay: 0.0, clock: 0.0,
+            abs: pos, rot, vel: Vec3::ZERO, last_update: now, sys: st.sys, stay: 0.0, clock: 0.0, speed: 1.0,
         });
     }
     let Some(p) = peers.get_mut(&st.id) else { return };
@@ -1242,6 +1239,7 @@ fn update_peer(peers: &mut HashMap<u32, Peer>, profiles: &ProfileCache, st: Play
     p.sys = st.sys;
     p.stay = st.stay.max(0.0);
     p.clock = st.clock;
+    p.speed = st.speed;
     p.status.hp = st.hp.min(MAX_HP);
     p.status.hits = st.hits.into_iter().take(MAX_PLAYERS).collect();
     p.status.siege = st.siege;
@@ -1316,7 +1314,7 @@ pub(crate) fn net_update(
     settings: Res<GameSettings>,
     ship_q: Query<&GlobalTransform, With<Ship>>,
     spawned: Option<Res<SpawnedSystems>>,
-    mut clock: ResMut<UniverseClock>,
+    mut clock: ResMut<crate::world_clock::WorldClock>,
     mut net: ResMut<Net>,
 ) {
     if !net.enabled {
@@ -1373,7 +1371,8 @@ pub(crate) fn net_update(
         rot: rot.to_array(),
         sys,
         stay: now - net.sys_since,
-        clock: clock.secs_f64(&time),
+        clock: clock.secs,
+        speed: clock.speed,
     };
     if !net.upnp_started {
         net.upnp_started = true;
@@ -1754,31 +1753,18 @@ pub(crate) fn net_update(
         }
     }
 
-    sync_clock_with_system(net, &mut clock, &me, now, time.elapsed_secs_f64());
+    follow_host_clock(net, &mut clock, now);
 }
 
-/// Aligne l'horloge d'univers sur celle du joueur présent depuis le plus
-/// longtemps dans notre système stellaire. Aucun effet si l'on est seul
-/// dans son système (les autres joueurs sont ailleurs).
-fn sync_clock_with_system(net: &Net, clock: &mut UniverseClock, me: &PlayerState, now: f64, elapsed: f64) {
-    let Some(sys) = me.sys else { return };
-    let reference = net
-        .peers
-        .iter()
-        .filter(|(_, p)| p.sys == Some(sys))
-        .map(|(id, p)| p.state_now(*id, now))
-        .chain(std::iter::once(me.clone()))
-        .max_by(|a, b| {
-            // Le plus ancien dans le système ; à quasi-égalité, le plus petit identifiant.
-            if (a.stay - b.stay).abs() > 1.0 {
-                a.stay.total_cmp(&b.stay)
-            } else {
-                b.id.cmp(&a.id)
-            }
-        });
-    let Some(reference) = reference else { return };
-    if reference.id != me.id && (reference.clock - me.clock).abs() > CLOCK_TOLERANCE {
-        clock.offset = reference.clock - elapsed;
+/// Règle 9 : l'horloge du monde est celle de l'hôte (orbites, rotation, saisons identiques chez
+/// tous). L'hôte et le joueur seul gardent la leur.
+fn follow_host_clock(net: &Net, clock: &mut crate::world_clock::WorldClock, now: f64) {
+    if net.mode() != NetMode::Connected {
+        return;
+    }
+    if let Some(host) = net.peers.get(&HOST_ID) {
+        let st = host.state_now(HOST_ID, now);
+        clock.follow(st.clock, st.speed);
     }
 }
 
@@ -2102,7 +2088,7 @@ mod tests {
 
     fn state(id: u32, sys: Option<u32>, stay: f64, clock: f64) -> PlayerState {
         let ph = Profile { name: "x".into(), ..Profile::default() }.sanitized().fingerprint();
-        PlayerState { id, ph, pos: [0.0; 3], rot: [0.0, 0.0, 0.0, 1.0], sys, stay, clock, hp: MAX_HP, hits: Vec::new(), siege: None, taken: Vec::new() }
+        PlayerState { id, ph, pos: [0.0; 3], rot: [0.0, 0.0, 0.0, 1.0], sys, stay, clock, speed: 1.0, hp: MAX_HP, hits: Vec::new(), siege: None, taken: Vec::new() }
     }
 
     #[test]
@@ -2153,28 +2139,28 @@ mod tests {
     }
 
     #[test]
-    fn orbits_sync_only_inside_the_same_system() {
-        let mut net = Net::default();
-        // Un ami est dans le système 7 depuis 100 s, son horloge vaut 5000 s.
-        net.profiles.insert(Profile { name: "x".into(), ..Profile::default() });
-        update_peer(&mut net.peers, &net.profiles, state(1, Some(7), 100.0, 5000.0), 0.0);
-
-        // Moi dans un autre système : aucune synchro.
-        let mut clock = UniverseClock::default();
-        sync_clock_with_system(&net, &mut clock, &state(2, Some(3), 1.0, 10.0), 0.0, 10.0);
-        assert_eq!(clock.offset, 0.0);
-
-        // J'arrive dans son système : je prends son horloge.
-        sync_clock_with_system(&net, &mut clock, &state(2, Some(7), 1.0, 10.0), 0.0, 10.0);
-        assert_eq!(clock.offset, 5000.0 - 10.0);
-
-        // S'il arrive dans mon système où je suis depuis longtemps : je ne bouge pas.
+    fn clients_take_the_host_clock() {
         let mut net = Net::default();
         net.profiles.insert(Profile { name: "x".into(), ..Profile::default() });
-        update_peer(&mut net.peers, &net.profiles, state(1, Some(7), 1.0, 5000.0), 0.0);
-        let mut clock = UniverseClock::default();
-        sync_clock_with_system(&net, &mut clock, &state(2, Some(7), 300.0, 10.0), 0.0, 10.0);
-        assert_eq!(clock.offset, 0.0);
+        let host = PlayerState { speed: 10.0, ..state(HOST_ID, Some(7), 100.0, 5000.0) };
+        update_peer(&mut net.peers, &net.profiles, host, 0.0);
+        let mut clock = crate::world_clock::WorldClock::default();
+        // Seul (ou hôte) : on garde son horloge
+        follow_host_clock(&net, &mut clock, 1.0);
+        assert_eq!(clock.secs, 0.0);
+        // Connecté : l'horloge de l'hôte, avancée de 1 s × sa vitesse
+        net.session = Session::Connected {
+            socket: UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap(),
+            host: "127.0.0.1:1".parse().unwrap(),
+            my_id: 3,
+            last_recv: 0.0,
+            manual: false,
+            host_code: None,
+            host_pack: 0,
+        };
+        follow_host_clock(&net, &mut clock, 1.0);
+        assert_eq!((clock.secs, clock.speed), (5010.0, 10.0));
+        assert!(!net.may_set_clock());
     }
 
     #[test]

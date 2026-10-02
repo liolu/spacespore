@@ -345,9 +345,8 @@ pub fn build_chunk_mesh(
 
             // Même climat que le terrain voxel (`planetgen::climate`) : la vue de l'espace et le sol concordent
             let rh = height_val - sl;
-            let lat = dir.y.abs();
             surface_types[ix][iy] = biomes.material(&climate, &hydro, false, atmosphere, rh, dir.normalize());
-            seas[ix][iy] = sea_material(&climate, &hydro, false, lat);
+            seas[ix][iy] = sea_material(&climate, &hydro, false, dir.normalize().y);
         }
     }
 

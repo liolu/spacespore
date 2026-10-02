@@ -83,6 +83,24 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   comptes et pourcentages de tous les astres d'une galaxie (`stats.rs`, calcul en arriere-plan, panneau F3,
   fichier `saves/vX.Y.Z/stats/`). Option « Afficher zones » (menu Options) : zones chaude / habitable / froide du
   systeme charge (`zones.rs`, limites interpolees entre les vraies planetes).
+- 0.11 (`ROADMAP-0.11.md`) : A1 = horloge du monde `world_clock.rs` (`WorldClock`, secondes de jeu f64, `clock` de
+  `world.json` ecrit toutes les 30 s, donnee par l'hote : `net::follow_host_clock`, PROTOCOL 16). Orbites
+  (`kepler::position(t: f64)`) et rotation = f(horloge). 1 h de la planete = 1 min de jeu (jour <= 3 h), saisons
+  1 h en moyenne (`season_secs`, `SEASON_REF_DAYS`). `Spin` : rotation autour de l'axe incline (l'axe penche vers
+  l'etoile a l'ete du nord, il fait le tour en une annee des saisons), synchrone = face +X vers l'etoile (lunes :
+  vers leur planete). La racine de l'astre porte la rotation (tuiles, anneaux, aurores, nuages suivent).
+  Repere fixe de l'astre (regle 10) : `surface::Frame` (`to_world`/`to_local`) ; tout ce qui est pose ou vole bas
+  (marcheur, vaisseau, camera, `hover_dir`) est stocke dans ce repere. Chat : `/heure`, `/temps <facteur>` (hote).
+  A2 = jour / nuit (`surface.rs`) : `daylight` (ciel), nuit au sol `AMBIENT_NIGHT` + clair de lune (`moonlight` :
+  phase et taille apparente des autres astres), brume moins opaque la nuit (`haze_opacity`, lunes et etoiles
+  visibles), galaxie visible la nuit (`NIGHT_GALAXY`), lampe du marcheur / phares du vaisseau (touche N, allumes
+  dans le noir, puissance calee sur la lumiere de l'etoile : `update_lamps`). Ligne jour/nuit = lumiere de l'etoile.
+  A3 = temperature vivante : `Climate::season` (`Season` : declinaison avec retard, excentricite, longitude du
+  soleil ; jamais sauvee), `Climate::at(season)`, `temperature(lat signee, alt, Some(Moment { hour }))` (max a
+  14 h 30, `DAY_PEAK`), givre du matin (`Climate::frost_at`, biomes). `Spin::season` ; amplitude jour/nuit
+  `atmosphere::diurnal_amplitude`. Tuiles reconstruites quand la saison arrondie change (`TileStore::generation`,
+  `surface::update_season`), maillage lointain aussi (`PlanetChunk::season`). `world_clock::LocalWeather` :
+  heure, saison, temperature, min/max du jour et de l'annee (HUD, scanner, `/heure`). PROTOCOL 17.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

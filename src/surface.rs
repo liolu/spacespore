@@ -35,6 +35,21 @@ const AMBIENT_SPACE: f32 = 300.0;
 const AMBIENT_DAY: f32 = 1_500.0;
 /// Teinte de la lumière diffuse du ciel (plus claire que celle de l'espace).
 const AMBIENT_SPACE_TINT: Color = Color::srgb(0.25, 0.25, 0.35);
+/// La nuit au sol : presque rien (lueur des étoiles), plus le clair de lune.
+const AMBIENT_NIGHT: f32 = 35.0;
+/// Clair de lune maximal (pleine lune très proche).
+const MOONLIGHT_MAX: f32 = 260.0;
+/// Teinte du clair de lune (lumière de l'étoile renvoyée, un peu bleutée à l'œil).
+const MOONLIGHT_TINT: Color = Color::srgb(0.55, 0.62, 0.8);
+/// Brume la nuit : on voit les lunes, les planètes et les étoiles à travers l'air.
+const NIGHT_HAZE: f32 = 0.35;
+/// Brume le jour : les lunes restent pâles, les étoiles disparaissent.
+const DAY_HAZE: f32 = 0.93;
+/// Éclat de la galaxie gardé la nuit au sol (le jour : `DIM_FLOOR`).
+const NIGHT_GALAXY: f32 = 0.75;
+
+/// Lampe du marcheur et phares du vaisseau (allumés quand il fait sombre).
+pub const LAMP_KEY: KeyCode = KeyCode::KeyN;
 
 /// Nombre maximum de tuiles construites en même temps en arrière-plan.
 const MAX_TILE_TASKS: usize = 10;
@@ -43,7 +58,7 @@ const MAX_TILES: usize = 520;
 const TILE_KEEP_SECS: f64 = 8.0;
 
 /// Touche pour sortir du vaisseau (atterrir) et y rentrer (décoller) : une touche que le reste
-/// du jeu n'utilise pas (C, E, F, G, L, M, P et T servent déjà).
+/// du jeu n'utilise pas (C, E, F, G, L, M, N, P et T servent déjà).
 pub const ENTER_SHIP_KEY: KeyCode = KeyCode::KeyV;
 
 pub struct SurfacePlugin;
@@ -53,11 +68,11 @@ impl Plugin for SurfacePlugin {
         app.init_resource::<Surface>()
             .init_resource::<GalaxyDim>()
             .init_resource::<TileStore>()
-            .add_systems(Startup, setup_hud)
+            .add_systems(Startup, (setup_hud, spawn_lamps))
             .add_systems(Update, update_galaxy_dim)
             .add_systems(
                 Update,
-                (surface_control.in_set(SurfaceControl), surface_light, update_tiles, update_hud)
+                (surface_control.in_set(SurfaceControl), surface_light, update_lamps, update_season, update_tiles, update_hud)
                     .chain()
                     .after(crate::planet::orbit_planets)
                     .after(crate::planet::orbit_moons),
@@ -378,6 +393,14 @@ pub struct Surface {
     fdescend: bool,
     /// Instant jusqu'auquel un zoom avant récent compte comme « je veux approcher ».
     zoom_in_until: f64,
+    /// Jour du ciel à la caméra (0 : nuit ou pas d'air, 1 : plein jour), et hauteur de l'étoile
+    /// (sinus) au-dessus de l'horizon local.
+    daylight: f32,
+    sun_height: f32,
+    /// Lampe et phares autorisés (touche N) ; ils ne s'allument que dans le noir.
+    lamps: bool,
+    /// La nuit a déjà été signalée pendant ce séjour.
+    night_told: bool,
 }
 
 impl Default for Surface {
@@ -411,6 +434,10 @@ impl Default for Surface {
             fpitch: 0.35,
             fdescend: false,
             zoom_in_until: 0.0,
+            daylight: 1.0,
+            sun_height: 1.0,
+            lamps: true,
+            night_told: false,
         }
     }
 }
@@ -426,7 +453,36 @@ impl Surface {
         self.phase != Phase::Orbit
     }
 
-    /// Direction (depuis le centre de l'astre) au-dessus de laquelle le vaisseau stationne.
+    /// Astre où l'on séjourne (vol bas, atterrissage, marche).
+    pub fn body(&self) -> Option<TargetKind> {
+        self.body.filter(|_| self.active())
+    }
+
+    /// Point survolé ou foulé, dans le repère fixe de l'astre (règle 10).
+    pub fn local_point(&self) -> Option<Vec3> {
+        match self.phase {
+            Phase::Orbit => None,
+            Phase::Walking => Some(self.walker.pos),
+            Phase::Flying => Some(self.fpos),
+            Phase::Descending | Phase::Ascending => Some(self.dir1),
+        }
+    }
+
+    /// Altitude relative du sol (0 = niveau de la mer, 1 = sommets) sous le marcheur ou le
+    /// vaisseau en vol bas : les sommets sont plus froids.
+    pub fn ground_altitude(&self) -> Option<f32> {
+        let t = self.terrain.as_ref()?;
+        let p = &t.params;
+        let r = match self.phase {
+            Phase::Walking => self.walker.pos.length(),
+            Phase::Flying => t.ground(self.fpos.normalize_or(Vec3::Y)).top,
+            _ => return None,
+        };
+        Some(crate::planetgen::climate::relative_altitude((r - p.radius) / p.terrain_height.max(1.0)))
+    }
+
+    /// Direction (repère fixe de l'astre, depuis son centre) au-dessus de laquelle le vaisseau
+    /// stationne.
     pub fn hover_dir(&self, kind: &TargetKind) -> Option<Vec3> {
         self.hover.filter(|(k, _)| k == kind).map(|(_, d)| d)
     }
@@ -454,6 +510,21 @@ impl Surface {
         Some((p.haze, p.pressure))
     }
 
+    /// Jour du ciel (0 : nuit, 1 : plein jour) pendant un séjour sous une atmosphère.
+    pub fn daylight(&self) -> f32 {
+        self.daylight
+    }
+
+    /// Opacité maximale de la brume : forte le jour, faible la nuit (lunes et étoiles visibles).
+    pub fn haze_opacity(&self) -> f32 {
+        NIGHT_HAZE + (DAY_HAZE - NIGHT_HAZE) * self.daylight
+    }
+
+    /// Il fait sombre là où l'on est : l'étoile est sous l'horizon (ou à peine levée).
+    pub fn dark(&self) -> bool {
+        self.active() && self.sun_height < 0.06
+    }
+
     /// Séjour dans une géante gazeuse.
     pub fn gaseous(&self) -> bool {
         self.params().is_some_and(|p| p.gaseous)
@@ -471,6 +542,9 @@ impl Surface {
         self.phase = Phase::Orbit;
         self.body = None;
         self.terrain = None;
+        self.daylight = 1.0;
+        self.sun_height = 1.0;
+        self.night_told = false;
     }
 }
 
@@ -595,31 +669,65 @@ struct Ctx<'w, 's> {
 }
 
 impl Ctx<'_, '_> {
-    /// Centre (monde) d'un astre chargé.
-    fn center(&self, kind: &TargetKind) -> Option<Vec3> {
-        match *kind {
-            TargetKind::Planet(id) => self.planets.iter().find(|(_, p)| p.0 == id).map(|(t, _)| t.translation),
+    /// Centre (monde) et orientation d'un astre chargé : son repère fixe tourne avec lui.
+    fn pose(&self, kind: &TargetKind) -> Option<Frame> {
+        let tf = match *kind {
+            TargetKind::Planet(id) => self.planets.iter().find(|(_, p)| p.0 == id).map(|(t, _)| t),
             TargetKind::Moon(planet_idx, moon_idx) => self
                 .moons
                 .iter()
                 .find(|(_, m)| m.planet_idx == planet_idx && m.moon_idx == moon_idx)
-                .map(|(t, _)| t.translation),
+                .map(|(t, _)| t),
             _ => None,
-        }
+        }?;
+        Some(Frame { center: tf.translation, rot: tf.rotation })
     }
 
-    /// Point de la surface pointé par la souris (sinon, le côté tourné vers la caméra).
-    fn aimed_dir(&self, camera: &Camera, cam_gt: &GlobalTransform, center: Vec3, p: &BodyParams) -> Vec3 {
+    /// Point de la surface pointé par la souris (sinon, le côté tourné vers la caméra), dans le
+    /// repère fixe de l'astre.
+    fn aimed_dir(&self, camera: &Camera, cam_gt: &GlobalTransform, frame: &Frame, p: &BodyParams) -> Vec3 {
         let sphere = p.radius + p.terrain_height * 0.2;
         if let Some(cursor) = self.windows.get_single().ok().and_then(|w| w.cursor_position()) {
             if let Ok(ray) = camera.viewport_to_world(cam_gt, self.viewport.to_viewport(cursor)) {
-                let origin = ray.origin - center;
-                if let Some(t) = ray_sphere(origin, *ray.direction, sphere) {
-                    return (origin + *ray.direction * t).normalize();
+                let origin = frame.point(ray.origin);
+                let dir = frame.vector(*ray.direction);
+                if let Some(t) = ray_sphere(origin, dir, sphere) {
+                    return (origin + dir * t).normalize();
                 }
             }
         }
-        (cam_gt.translation() - center).normalize_or(Vec3::Y)
+        frame.point(cam_gt.translation()).normalize_or(Vec3::Y)
+    }
+}
+
+/// Repère fixe d'un astre (règle 10) : centre et orientation dans le monde. Tout ce qui est posé
+/// sur l'astre (vaisseau, marcheur, caméra au sol) est calculé dans ce repère, puis placé dans le
+/// monde au rendu ; la rotation de l'astre l'emporte sans glissement.
+#[derive(Clone, Copy, Debug)]
+pub struct Frame {
+    pub center: Vec3,
+    pub rot: Quat,
+}
+
+impl Frame {
+    /// Point du monde -> repère de l'astre.
+    pub fn point(&self, world: Vec3) -> Vec3 {
+        self.rot.inverse() * (world - self.center)
+    }
+
+    /// Direction du monde -> repère de l'astre.
+    pub fn vector(&self, world: Vec3) -> Vec3 {
+        self.rot.inverse() * world
+    }
+
+    /// Pose dans le repère de l'astre -> monde.
+    pub fn to_world(&self, local: Transform) -> Transform {
+        Transform { translation: self.center + self.rot * local.translation, rotation: self.rot * local.rotation, scale: local.scale }
+    }
+
+    /// Pose du monde -> repère de l'astre.
+    pub fn to_local(&self, world: Transform) -> Transform {
+        Transform { translation: self.point(world.translation), rotation: self.rot.inverse() * world.rotation, scale: world.scale }
     }
 }
 
@@ -667,14 +775,14 @@ fn surface_control(
             surface.zoom_in_until = now + 0.7;
         }
         if ctrl.distance < FLIGHT_ZOOM && now < surface.zoom_in_until {
-            if let (Some(params), Some(center)) = (body_params(&ctx.settings, &kind), ctx.center(&kind)) {
-                let local = ship_tf.translation - center;
+            if let (Some(params), Some(frame)) = (body_params(&ctx.settings, &kind), ctx.pose(&kind)) {
+                let local = frame.point(ship_tf.translation);
                 if (local.length() - hover_radius(&params)).abs() < params.radius * 0.1 + 250.0 {
                     let up = local.normalize_or(Vec3::Y);
                     surface.terrain = Some(Terrain::new(params));
                     surface.body = Some(kind);
                     surface.fpos = local;
-                    surface.heading = tangent(*ship_tf.forward(), up);
+                    surface.heading = tangent(frame.vector(*ship_tf.forward()), up);
                     surface.fspeed = 0.0;
                     surface.fvert = 0.0;
                     surface.fdist = ctrl.distance.clamp(60.0, FLIGHT_ZOOM * 0.95);
@@ -700,7 +808,7 @@ fn surface_control(
             net.notify("Selectionnez une planete ou une lune pour atterrir.", now);
             return;
         };
-        let Some(center) = ctx.center(&kind) else {
+        let Some(frame) = ctx.pose(&kind) else {
             net.notify("Cet astre est trop loin : approchez-vous de son systeme.", now);
             return;
         };
@@ -709,11 +817,11 @@ fn surface_control(
             return;
         }
         let terrain = Terrain::new(params);
-        let dir1 = ctx.aimed_dir(camera, cam_gt, center, &params);
-        let local0 = ship_tf.translation - center;
+        let dir1 = ctx.aimed_dir(camera, cam_gt, &frame, &params);
+        let local0 = frame.point(ship_tf.translation);
         let dir0 = local0.normalize_or(dir1);
         let heading = dir1 - dir0 * dir0.dot(dir1);
-        begin_descent(&mut surface, kind, terrain, dir0, local0.length(), dir1, heading, ship_tf.scale.x, *cam_tf);
+        begin_descent(&mut surface, kind, terrain, dir0, local0.length(), dir1, heading, ship_tf.scale.x, frame.to_local(*cam_tf));
         *ship_vis = Visibility::Inherited;
         net.notify("Atterrissage... (V pour redecoller une fois au sol)", now);
         return;
@@ -724,7 +832,7 @@ fn surface_control(
         surface.abort();
         return;
     };
-    let (Some(center), Some(params)) = (ctx.center(&kind), surface.params()) else {
+    let (Some(frame), Some(params)) = (ctx.pose(&kind), surface.params()) else {
         surface.abort();
         clear.0 = SPACE_SKY;
         set_cursor(&mut ctx.windows, false);
@@ -733,6 +841,11 @@ fn surface_control(
     };
     *zoom = ZoomLevel::Planet;
     *ship_vis = Visibility::Inherited;
+    let center = frame.center;
+    // Tout ce qui suit est calculé dans le repère fixe de l'astre (centre à l'origine), puis placé
+    // dans le monde à la fin ; la pose de départ des fondus (`cam_from`) est aussi dans ce repère
+    let mut ship_local = frame.to_local(*ship_tf);
+    let mut cam_local_tf = frame.to_local(*cam_tf);
 
     match surface.phase {
         // ── Descente vers le point choisi ────────────────────────────────
@@ -752,13 +865,13 @@ fn surface_control(
                 r = r.max(floor);
             }
             surface.heading = tangent(surface.heading, dir);
-            let ship_pos = center + dir * r;
+            let ship_pos = dir * r;
             let ship_rot = look(Vec3::ZERO, surface.heading, dir).rotation;
-            *ship_tf = Transform { translation: ship_pos, rotation: ship_rot, scale: Vec3::splat(scale) };
+            ship_local = Transform { translation: ship_pos, rotation: ship_rot, scale: Vec3::splat(scale) };
 
             surface.cam_blend = (surface.cam_blend + dt / 0.8).min(1.0);
             let chase = chase_pose(ship_pos, dir, surface.heading, scale);
-            *cam_tf = blend_pose(&surface.cam_from, chase, smoothstep(surface.cam_blend));
+            cam_local_tf = blend_pose(&surface.cam_from, chase, smoothstep(surface.cam_blend));
 
             if u >= 1.0 {
                 if descending {
@@ -769,7 +882,7 @@ fn surface_control(
                     surface.ship_rot = ship_rot;
                     surface.ship_scale = scale;
                     surface.walker = walker;
-                    surface.cam_from = *cam_tf;
+                    surface.cam_from = cam_local_tf;
                     surface.cam_blend = 0.0;
                     surface.phase = Phase::Walking;
                     net.notify("ZQSD/WASD : marcher  Maj : courir  Espace : sauter  V : decoller", now);
@@ -811,18 +924,18 @@ fn surface_control(
             surface.walker = walker;
             surface.terrain = Some(terrain);
 
-            // Le vaisseau reste posé là où il a atterri
-            *ship_tf = Transform {
-                translation: center + surface.ship_local,
+            // Le vaisseau reste posé là où il a atterri (et tourne avec l'astre)
+            ship_local = Transform {
+                translation: surface.ship_local,
                 rotation: surface.ship_rot,
                 scale: Vec3::splat(surface.ship_scale),
             };
 
             let up = walker.up();
-            let eye = center + up * walker.eye_r;
+            let eye = up * walker.eye_r;
             let fps = look(eye, walker.view_dir(), up);
             surface.cam_blend = (surface.cam_blend + dt / 0.8).min(1.0);
-            *cam_tf = blend_pose(&surface.cam_from, fps, smoothstep(surface.cam_blend));
+            cam_local_tf = blend_pose(&surface.cam_from, fps, smoothstep(surface.cam_blend));
 
             if enter {
                 let dir = surface.ship_local.normalize();
@@ -835,7 +948,7 @@ fn surface_control(
                 surface.heading = tangent(surface.ship_rot * Vec3::NEG_Z, dir);
                 surface.t = 0.0;
                 surface.dur = (2.5 + (surface.r1 - surface.r0) / 8000.0).clamp(2.5, 6.0);
-                surface.cam_from = *cam_tf;
+                surface.cam_from = cam_local_tf;
                 surface.cam_blend = 0.0;
                 surface.phase = Phase::Ascending;
                 net.notify("Decollage...", now);
@@ -898,9 +1011,9 @@ fn surface_control(
             surface.heading = tangent(heading, next);
 
             let scale = (surface.fdist * 0.025).clamp(2.0, 40.0);
-            let ship_pos = center + surface.fpos;
+            let ship_pos = surface.fpos;
             let ship_rot = look(Vec3::ZERO, surface.heading, next).rotation;
-            *ship_tf = Transform { translation: ship_pos, rotation: ship_rot, scale: Vec3::splat(scale) };
+            ship_local = Transform { translation: ship_pos, rotation: ship_rot, scale: Vec3::splat(scale) };
 
             // Caméra derrière le vaisseau, orientable à la souris, jamais sous le relief
             let back = Quat::from_axis_angle(next, surface.fyaw) * -surface.heading;
@@ -910,8 +1023,8 @@ fn surface_control(
             if cam_local.length() < floor {
                 cam_local = cam_local.normalize() * floor;
             }
-            let cam_pos = center + cam_local;
-            *cam_tf = look(cam_pos, ship_pos + next * (0.4 * scale) - cam_pos, next);
+            let cam_pos = cam_local;
+            cam_local_tf = look(cam_pos, ship_pos + next * (0.4 * scale) - cam_pos, next);
             surface.terrain = Some(terrain);
             ctrl.distance = surface.fdist;
 
@@ -930,12 +1043,17 @@ fn surface_control(
                 let terrain = surface.terrain.take().unwrap();
                 let dir1 = (surface.fpos + surface.heading * scale * 6.0).normalize();
                 let heading = surface.heading;
-                let cam_from = *cam_tf;
+                let cam_from = cam_local_tf;
                 begin_descent(&mut surface, kind, terrain, next, r, dir1, heading, scale, cam_from);
                 net.notify("Atterrissage...", now);
             }
         }
         Phase::Orbit => {}
+    }
+    // Retour au monde (sauf si l'on vient de quitter l'astre : la vue orbitale reprend la main)
+    if surface.active() {
+        *ship_tf = frame.to_world(ship_local);
+        *cam_tf = frame.to_world(cam_local_tf);
     }
 
     // Ciel : couleur de l'atmosphère le jour (coucher de soleil près de l'horizon), noir dans l'espace
@@ -954,7 +1072,54 @@ fn surface_control(
         let space = SPACE_SKY.to_srgba();
         let c = sky_color(&params, height, air, [space.red, space.green, space.blue]);
         clear.0 = Color::srgb(c[0], c[1], c[2]);
+        surface.daylight = daylight(&params, height, air);
+        surface.sun_height = height;
+        if surface.dark() && !surface.night_told && !params.gaseous {
+            surface.night_told = true;
+            let what = if surface.phase == Phase::Walking { "lampe" } else { "phares" };
+            net.notify(&format!("Il fait nuit ici. N : allumer / eteindre la {what}."), now);
+        }
+        if ctx.keys.just_pressed(LAMP_KEY) && !ui_open {
+            surface.lamps = !surface.lamps;
+            net.notify(if surface.lamps { "Lampe et phares : automatiques (allumes dans le noir)." } else { "Lampe et phares eteints." }, now);
+        }
     }
+}
+
+/// Jour du ciel (0 : nuit, 1 : plein jour) : l'étoile au-dessus de l'horizon, sous une
+/// atmosphère (sans air, le ciel reste noir même en plein jour).
+pub fn daylight(p: &BodyParams, sun_height: f32, air: f32) -> f32 {
+    if !p.atmosphere || p.pressure < 0.01 {
+        return 0.0;
+    }
+    smoothstep((sun_height + 0.15) / 0.35) * air
+}
+
+/// Clair de lune (0 à 1) vu d'un point du sol : chaque astre au-dessus de l'horizon renvoie la
+/// lumière de l'étoile selon sa phase (part éclairée vue d'ici) et sa taille apparente. Une pleine
+/// lune comme la nôtre donne ~0,15 ; une grosse lune proche, davantage.
+pub fn moonlight(eye: Vec3, up: Vec3, star: Vec3, bodies: &[(Vec3, f32)]) -> f32 {
+    let mut total = 0.0;
+    for &(center, radius) in bodies {
+        let to_body = center - eye;
+        let d = to_body.length();
+        if d <= radius * 1.01 {
+            continue;
+        }
+        let dir = to_body / d;
+        // Sous l'horizon (on garde le bord du disque)
+        if up.dot(dir) < -radius / d {
+            continue;
+        }
+        // Phase : angle, vu de l'astre, entre l'étoile et nous ; part éclairée (1 + cos) / 2
+        let to_star = (star - center).normalize_or(Vec3::X);
+        let to_eye = -dir;
+        let lit = (1.0 + to_star.dot(to_eye)) * 0.5;
+        // Taille apparente par rapport à notre Lune (rayon angulaire ~ 1/220)
+        let size = (radius / d * 220.0).powi(2);
+        total += 0.15 * lit * size;
+    }
+    total.min(1.0)
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -979,6 +1144,7 @@ const DIM_RADII: f32 = 12.0;
 const DIM_FLOOR: f32 = 0.08;
 
 fn update_galaxy_dim(
+    surface: Res<Surface>,
     target: Res<CameraTarget>,
     settings: Res<GameSettings>,
     planets: Query<(&Transform, &PlanetId), With<PlanetRoot>>,
@@ -997,7 +1163,9 @@ fn update_galaxy_dim(
         (Some(center), Some(r)) => {
             let altitude = (cam.translation.distance(center) - r).max(0.0);
             let closeness = (1.0 - altitude / (DIM_RADII * r)).clamp(0.0, 1.0);
-            1.0 - (1.0 - DIM_FLOOR) * smoothstep(closeness)
+            // Au sol, la nuit (ou sans air), les étoiles et la galaxie reviennent
+            let floor = if surface.active() { DIM_FLOOR + (NIGHT_GALAXY - DIM_FLOOR) * (1.0 - surface.daylight()) } else { DIM_FLOOR };
+            1.0 - (1.0 - floor) * smoothstep(closeness)
         }
         _ => 1.0,
     };
@@ -1012,8 +1180,10 @@ fn update_galaxy_dim(
 
 /// Lumière diffuse du ciel pendant un séjour : de jour sous une atmosphère seulement (la nuit, et
 /// sans air, il n'y a que la lumière directe de l'étoile).
+#[allow(clippy::too_many_arguments)]
 fn surface_light(
     surface: Res<Surface>,
+    settings: Res<GameSettings>,
     mut ambient: ResMut<AmbientLight>,
     planets: Query<(&Transform, &PlanetId), With<PlanetRoot>>,
     moons: Query<(&Transform, &MoonId), With<MoonRoot>>,
@@ -1051,19 +1221,151 @@ fn surface_light(
     let cam_local = cam.translation - center;
     let up = cam_local.normalize_or(Vec3::Y);
     let altitude = cam_local.length() - params.radius;
-    let day = if params.atmosphere {
-        smoothstep((up.dot(to_star) + 0.15) / 0.35) * (1.0 - altitude / atmosphere_depth(&params)).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
+    let air = (1.0 - altitude / atmosphere_depth(&params)).clamp(0.0, 1.0);
+    let day = daylight(&params, up.dot(to_star), air);
+    // Au sol, la nuit est noire (lueur des étoiles) ; en s'élevant, on retrouve l'éclairage de
+    // l'espace. Le clair de lune s'y ajoute.
+    let ground = (1.0 - altitude / (params.radius * 0.5).max(1.0)).clamp(0.0, 1.0);
+    let night = AMBIENT_SPACE + (AMBIENT_NIGHT - AMBIENT_SPACE) * ground;
+    let star = center + to_star * 1.0e7;
+    let mut bodies: Vec<(Vec3, f32)> = Vec::new();
+    for (t, pid) in &planets {
+        if Some(TargetKind::Planet(pid.0)) == surface.body {
+            continue;
+        }
+        if let Some(p) = settings.systems.get(pid.0 / 1000).and_then(|s| s.planets().get(pid.0 % 1000)) {
+            bodies.push((t.translation, p.radius));
+        }
+    }
+    for (t, mid) in &moons {
+        if Some(TargetKind::Moon(mid.planet_idx, mid.moon_idx)) == surface.body {
+            continue;
+        }
+        let r = settings
+            .systems
+            .get(mid.planet_idx / 1000)
+            .and_then(|s| s.planets().get(mid.planet_idx % 1000))
+            .and_then(|p| p.moons.get(mid.moon_idx))
+            .map_or(0.0, |m| m.radius);
+        bodies.push((t.translation, r));
+    }
+    let moon = moonlight(cam.translation, up, star, &bodies) * (1.0 - day);
     // Une atmosphère épaisse diffuse plus de lumière ; la teinte est celle du ciel
-    ambient.brightness = AMBIENT_SPACE + (AMBIENT_DAY - AMBIENT_SPACE) * day * params.pressure.clamp(0.05, 4.0).powf(0.25);
-    ambient.color = if day > 0.0 {
+    let sky_light = (AMBIENT_DAY - night) * day * params.pressure.clamp(0.05, 4.0).powf(0.25);
+    ambient.brightness = night + sky_light + MOONLIGHT_MAX * moon;
+    ambient.color = if day > 0.05 {
         let s = params.sky;
         Color::srgb(0.4 + 0.3 * s[0], 0.4 + 0.3 * s[1], 0.4 + 0.3 * s[2])
+    } else if moon > 0.02 {
+        MOONLIGHT_TINT
     } else {
         AMBIENT_SPACE_TINT
     };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Lampe du marcheur et phares du vaisseau
+// ─────────────────────────────────────────────────────────────────────────
+
+#[derive(Component)]
+struct Lamp {
+    /// Phares du vaisseau (sinon, lampe du marcheur).
+    headlight: bool,
+}
+
+fn spawn_lamps(mut commands: Commands) {
+    for headlight in [false, true] {
+        commands.spawn((
+            SpotLight {
+                intensity: 0.0,
+                range: 1_000.0,
+                outer_angle: if headlight { 0.55 } else { 0.5 },
+                inner_angle: if headlight { 0.3 } else { 0.25 },
+                shadows_enabled: false,
+                color: Color::srgb(1.0, 0.95, 0.85),
+                ..default()
+            },
+            Transform::IDENTITY,
+            Visibility::Hidden,
+            Lamp { headlight },
+        ));
+    }
+}
+
+/// Dans le noir, la lampe suit le regard du marcheur ; en vol, les phares éclairent devant et
+/// sous le vaisseau. Leur puissance est réglée sur la lumière de l'étoile à midi (moitié de
+/// celle-ci à quelques mètres), quelle que soit la distance de la planète à son étoile.
+#[allow(clippy::type_complexity)]
+fn update_lamps(
+    surface: Res<Surface>,
+    stars: Query<(&GlobalTransform, &PointLight), Without<Lamp>>,
+    ship_q: Query<&Transform, (With<Ship>, Without<Lamp>, Without<Camera3d>)>,
+    cam_q: Query<&Transform, (With<Camera3d>, Without<Lamp>, Without<Ship>)>,
+    mut lamps: Query<(&Lamp, &mut SpotLight, &mut Transform, &mut Visibility), (Without<Ship>, Without<Camera3d>)>,
+) {
+    let walking = surface.phase == Phase::Walking;
+    let on = surface.lamps && surface.dark() && !surface.gaseous();
+    let (Ok(ship), Ok(cam)) = (ship_q.get_single(), cam_q.get_single()) else { return };
+    let voxel = surface.terrain.as_ref().map_or(10.0, |t| t.voxel());
+    // Éclairement de l'étoile au niveau de la planète (lux), d'après la plus brillante
+    let sun = stars
+        .iter()
+        .map(|(gt, l)| l.intensity / (4.0 * std::f32::consts::PI * gt.translation().distance_squared(cam.translation).max(1.0)))
+        .fold(0.0f32, f32::max)
+        .max(20.0);
+    for (lamp, mut light, mut tf, mut vis) in &mut lamps {
+        let wanted = on && (lamp.headlight != walking);
+        let v = if wanted { Visibility::Inherited } else { Visibility::Hidden };
+        if *vis != v {
+            *vis = v;
+        }
+        if !wanted {
+            continue;
+        }
+        let (reach, place) = if lamp.headlight {
+            // Devant le vaisseau, inclinés de 25° vers le sol
+            let scale = ship.scale.x;
+            let up = *ship.up();
+            let dir = (*ship.forward() * 0.9 - up * 0.42).normalize();
+            (scale * 25.0 + 60.0, Transform::from_translation(ship.translation + *ship.forward() * scale * 1.2).looking_to(dir, up))
+        } else {
+            (voxel * 6.0, Transform::from_translation(cam.translation + *cam.down() * voxel * 0.3).looking_to(*cam.forward(), *cam.up()))
+        };
+        *tf = place;
+        light.intensity = 0.5 * sun * 4.0 * std::f32::consts::PI * reach * reach;
+        light.range = reach * 12.0;
+    }
+}
+
+/// Saison (et heure, pour le givre du matin) du terrain où l'on séjourne : neige et calottes
+/// avancent et reculent ; les tuiles sont reconstruites quand elle change vraiment.
+fn update_season(
+    clock: Res<crate::world_clock::WorldClock>,
+    settings: Res<GameSettings>,
+    mut surface: ResMut<Surface>,
+    planets: Query<(&Transform, &PlanetId), With<PlanetRoot>>,
+    moons: Query<(&Transform, &MoonId), With<MoonRoot>>,
+    stars: Query<&Transform, With<StarRoot>>,
+) {
+    let Some(kind) = surface.body() else { return };
+    let Some((spin, _, _)) = crate::world_clock::body_spin(&settings, &kind) else { return };
+    let tf = match kind {
+        TargetKind::Planet(id) => planets.iter().find(|(_, p)| p.0 == id).map(|(t, _)| *t),
+        TargetKind::Moon(pid, mi) => moons.iter().find(|(_, m)| m.planet_idx == pid && m.moon_idx == mi).map(|(t, _)| *t),
+        _ => None,
+    };
+    let Some(tf) = tf else { return };
+    let Some(star) = stars.iter().map(|s| s.translation).min_by(|a, b| a.distance_squared(tf.translation).total_cmp(&b.distance_squared(tf.translation))) else { return };
+    let Some(terrain) = surface.terrain.as_mut() else { return };
+    let p = &mut terrain.params;
+    let mut season = spin.season(clock.secs, p.climate.mean_c);
+    season.sun_lon = Some(crate::world_clock::sun_longitude(tf.rotation, star - tf.translation));
+    // L'heure ne compte que pour le givre (de l'eau, de l'air)
+    let frost = p.atmosphere && !p.airless && p.hydro.snow;
+    let season = season.quantized(frost);
+    if p.climate.season != season {
+        p.climate = p.climate.at(season);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1073,15 +1375,21 @@ fn surface_light(
 struct TileEntry {
     entity: Entity,
     last_needed: f64,
+    /// Climat (saison, heure) avec lequel la tuile a été construite : `TileStore::generation`.
+    generation: u32,
 }
 
 #[derive(Resource, Default)]
 struct TileStore {
     body: Option<TargetKind>,
     built: HashMap<TileKey, TileEntry>,
-    tasks: HashMap<TileKey, Task<(Mesh, Vec<DecorInstance>)>>,
+    tasks: HashMap<TileKey, (Task<(Mesh, Vec<DecorInstance>)>, u32)>,
     material: Option<Handle<StandardMaterial>>,
     far_hidden: bool,
+    /// Climat des tuiles : quand la saison (ou l'heure, pour le givre) change, on les reconstruit
+    /// une à une, en gardant les anciennes affichées en attendant.
+    climate: Option<crate::planetgen::climate::Climate>,
+    generation: u32,
 }
 
 fn set_far_visibility(
@@ -1137,13 +1445,24 @@ fn update_tiles(
         }
         store.far_hidden = false;
         store.body = wanted;
+        store.climate = None;
     }
     let Some(kind) = store.body else { return };
     let (Some(terrain), Ok(cam)) = (surface.terrain.as_ref(), cam_q.get_single()) else { return };
-    let Some((root, center)) = find_root(&kind, &planets, &moons) else { return };
+    let Some((root, root_tf)) = find_root(&kind, &planets, &moons) else { return };
     let params = terrain.params;
     let layout = terrain.layout;
     let now = time.elapsed_secs_f64();
+    if store.climate != Some(params.climate) {
+        // Pas de nouvelle saison tant que la précédente n'est pas finie (temps très accéléré)
+        let rebuilding = store.built.values().any(|e| e.generation != store.generation);
+        if store.climate.is_none() || !rebuilding {
+            store.climate = Some(params.climate);
+            store.generation = store.generation.wrapping_add(1);
+        }
+    }
+    let generation = store.generation;
+    let params = BodyParams { climate: store.climate.unwrap_or(params.climate), ..params };
 
     let material = store
         .material
@@ -1157,8 +1476,9 @@ fn update_tiles(
         })
         .clone();
 
-    // Tuiles voulues autour de la caméra, avec leurs ancêtres (repli le temps de la construction)
-    let cam_local = cam.translation - center;
+    // Tuiles voulues autour de la caméra, avec leurs ancêtres (repli le temps de la construction).
+    // Caméra dans le repère fixe de l'astre : les tuiles tournent avec lui.
+    let cam_local = root_tf.rotation.inverse() * (cam.translation - root_tf.translation);
     let mut leaves = Vec::new();
     select_tiles(layout, params.radius, cam_local, &mut leaves);
     let mut needed: HashSet<TileKey> = HashSet::with_capacity(leaves.len() * 2);
@@ -1177,42 +1497,54 @@ fn update_tiles(
         for face in 0..6 {
             let key = TileKey::root(face);
             let entity = spawn_tile(&mut commands, &mut meshes, &material, root, build_tile_mesh(&params, key));
-            store.built.insert(key, TileEntry { entity, last_needed: now });
+            store.built.insert(key, TileEntry { entity, last_needed: now, generation });
         }
     }
 
     // Récupère les tuiles terminées
     let finished: Vec<TileKey> = store.tasks.keys().copied().collect();
     for key in finished {
-        let Some(task) = store.tasks.get_mut(&key) else { continue };
+        let Some((task, built_gen)) = store.tasks.get_mut(&key) else { continue };
+        let built_gen = *built_gen;
         if let Some((mesh, objects)) = block_on(future::poll_once(task)) {
             store.tasks.remove(&key);
             let entity = spawn_tile(&mut commands, &mut meshes, &material, root, mesh);
             // Décor de la tuile (tuiles proches seulement) : il disparaît avec elle
             decor.spawn(&mut commands, entity, &objects);
-            store.built.insert(key, TileEntry { entity, last_needed: now });
+            // Nouvelle saison : la tuile remplace l'ancienne (visible jusque-là)
+            let shown = store.built.get(&key).and_then(|old| vis.get(old.entity).ok().map(|v| *v)).unwrap_or(Visibility::Hidden);
+            if let Ok(mut v) = vis.get_mut(entity) {
+                *v = shown;
+            }
+            if let Some(old) = store.built.insert(key, TileEntry { entity, last_needed: now, generation: built_gen }) {
+                commands.entity(old.entity).despawn_recursive();
+            }
         }
     }
 
     // Lance les constructions manquantes : d'abord les grosses tuiles, puis les plus proches
-    let mut missing: Vec<(u8, f32, TileKey)> = needed
+    // (les tuiles d'une ancienne saison passent après les manquantes)
+    let mut missing: Vec<(bool, u8, f32, TileKey)> = needed
         .iter()
-        .filter(|k| !store.built.contains_key(k) && !store.tasks.contains_key(k))
-        .map(|k| (k.depth, (cam_local - k.center_dir() * params.radius).length_squared(), *k))
+        .filter(|k| !store.tasks.contains_key(k) && store.built.get(k).is_none_or(|e| e.generation != generation))
+        .map(|k| (store.built.contains_key(k), k.depth, (cam_local - k.center_dir() * params.radius).length_squared(), *k))
         .collect();
-    missing.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    missing.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.total_cmp(&b.2)));
     let pool = AsyncComputeTaskPool::get();
-    for (_, _, key) in missing {
+    for (_, _, _, key) in missing {
         if store.tasks.len() >= MAX_TILE_TASKS {
             break;
         }
         let p = params;
         store.tasks.insert(
             key,
-            pool.spawn(async move {
-                let terrain = Terrain::new(p);
-                (build_tile_mesh_with(&terrain, key), tile_decor(&terrain, key))
-            }),
+            (
+                pool.spawn(async move {
+                    let terrain = Terrain::new(p);
+                    (build_tile_mesh_with(&terrain, key), tile_decor(&terrain, key))
+                }),
+                generation,
+            ),
         );
     }
 
@@ -1284,13 +1616,13 @@ fn find_root(
     kind: &TargetKind,
     planets: &Query<(Entity, &PlanetId, &Transform), (With<PlanetRoot>, Without<Camera3d>)>,
     moons: &Query<(Entity, &MoonId, &Transform), (With<MoonRoot>, Without<Camera3d>)>,
-) -> Option<(Entity, Vec3)> {
+) -> Option<(Entity, Transform)> {
     match *kind {
-        TargetKind::Planet(id) => planets.iter().find(|(_, p, _)| p.0 == id).map(|(e, _, t)| (e, t.translation)),
+        TargetKind::Planet(id) => planets.iter().find(|(_, p, _)| p.0 == id).map(|(e, _, t)| (e, *t)),
         TargetKind::Moon(planet_idx, moon_idx) => moons
             .iter()
             .find(|(_, m, _)| m.planet_idx == planet_idx && m.moon_idx == moon_idx)
-            .map(|(e, _, t)| (e, t.translation)),
+            .map(|(e, _, t)| (e, *t)),
         _ => None,
     }
 }
@@ -1345,6 +1677,7 @@ fn update_hud(
     surface: Res<Surface>,
     target: Res<CameraTarget>,
     settings: Res<GameSettings>,
+    weather: Res<crate::world_clock::LocalWeather>,
     mut hud: Query<&mut Text, With<SurfaceHud>>,
 ) {
     let label = match surface.phase {
@@ -1355,7 +1688,10 @@ fn update_hud(
             None => String::new(),
         },
         Phase::Flying if surface.gaseous() => "ZQSD/WASD : voler   A/D : tourner   Maj : accelerer   Espace/Ctrl : monter/descendre\nClic droit : orbiter   Molette : zoom (>1000 : orbite)   Pas de sol : la pression abime la coque".to_string(),
-        Phase::Flying => "ZQSD/WASD : voler   A/D : tourner   Maj : accelerer   Espace/Ctrl : monter/descendre\nClic droit : orbiter   Molette : zoom (>1000 : orbite)   V : atterrir".to_string(),
+        Phase::Flying => format!(
+            "ZQSD/WASD : voler   A/D : tourner   Maj : accelerer   Espace/Ctrl : monter/descendre\nClic droit : orbiter   Molette : zoom (>1000 : orbite)   V : atterrir   N : phares\n{}",
+            weather.short()
+        ),
         Phase::Descending => "Atterrissage en cours...".to_string(),
         Phase::Ascending => "Decollage en cours...".to_string(),
         Phase::Walking => {
@@ -1366,13 +1702,10 @@ fn update_hud(
             let params = surface.params();
             let radius = params.map_or(0.0, |p| p.radius);
             let alt = w.pos.length() - radius;
-            // Température locale : latitude et altitude (le sommet des montagnes est plus froid)
-            let temp = match (&surface.terrain, params) {
-                (Some(t), Some(p)) => t.temperature_at(up, alt / p.terrain_height.max(1.0)),
-                _ => 0.0,
-            };
+            // Heure, saison et température locales (latitude, altitude, heure, saison)
+            let now = if weather.body.is_some() { weather.short() } else { String::new() };
             format!(
-                "ZQSD/WASD : marcher   Maj : courir   Espace : sauter   V : decoller\nLat {lat:.1}  Lon {lon:.1}  Alt {alt:.0}  Temp. {temp:.0} C{}",
+                "ZQSD/WASD : marcher   Maj : courir   Espace : sauter   V : decoller   N : lampe\nLat {lat:.1}  Lon {lon:.1}  Alt {alt:.0}   {now}{}",
                 match (w.in_water, w.liquid) {
                     (false, _) => "",
                     (_, crate::planet::VoxelType::Methane) => "  (dans le methane)",
@@ -1436,6 +1769,69 @@ mod tests {
         let ground = t.ground(w.up()).top;
         assert!((w.pos.length() - ground).abs() < 1e-2, "{} vs {}", w.pos.length(), ground);
         assert!(w.hvel.length() < 1e-2);
+    }
+
+    /// Règle 10 : 10 min debout sur une planète qui tourne (jour de 24 min, orbite autour de
+    /// l'étoile) sans glisser d'un voxel : le marcheur vit dans le repère fixe de l'astre, et sa
+    /// position dans le monde suit exactement le sol sous ses pieds.
+    #[test]
+    fn standing_ten_minutes_on_a_spinning_planet() {
+        use crate::world_clock::{day_secs, season_secs, Spin};
+        let t = world();
+        let dir = Vec3::new(0.3, 0.5, -0.6).normalize();
+        let mut w = Walker::spawn(&t, dir, Vec3::X);
+        settle(&mut w, &t, 3.0);
+        let start = w.pos;
+        let spin = Spin { tilt: 0.4, day_s: day_secs(24.0), year_s: 4.0 * season_secs(365.0), day_phase: 0.3, year_phase: 0.1, locked: false, ecc: 0.0, peri: 0.0 };
+        let dt = 1.0 / 60.0;
+        let mut clock = 5_000.0f64;
+        for k in 0..(600 * 60) {
+            clock += dt as f64;
+            w.step(&t, &WalkInput::default(), dt);
+            if k % 600 == 0 {
+                // Le pied, posé dans le monde, est au-dessus du même point du sol
+                let center = Vec3::new(1.0e5, 0.0, 0.0).lerp(Vec3::new(0.0, 0.0, 1.0e5), k as f32 / 36_000.0);
+                let frame = Frame { center, rot: spin.rotation(clock, -center) };
+                let foot = frame.to_world(Transform::from_translation(w.pos)).translation;
+                let ground = frame.to_world(Transform::from_translation(start)).translation;
+                assert!(foot.distance(ground) < t.voxel() * 0.05, "{}", foot.distance(ground));
+            }
+        }
+        assert!(w.pos.distance(start) < t.voxel() * 0.05, "a glisse de {}", w.pos.distance(start));
+    }
+
+    #[test]
+    fn moonlight_follows_the_phase_and_the_horizon() {
+        let eye = Vec3::new(0.0, 1_000.0, 0.0);
+        let up = Vec3::Y;
+        // Une lune comme la nôtre (rayon angulaire 1/220) au zénith
+        let moon = (Vec3::new(0.0, 1_000.0 + 220_000.0, 0.0), 1_000.0);
+        let star_behind_us = Vec3::new(0.0, -1.0e9, 0.0);
+        let star_behind_moon = Vec3::new(0.0, 1.0e9, 0.0);
+        let full = moonlight(eye, up, star_behind_us, &[moon]);
+        let new = moonlight(eye, up, star_behind_moon, &[moon]);
+        assert!((full - 0.15).abs() < 0.01, "{full}");
+        assert!(new < 0.001, "{new}");
+        let quarter = moonlight(eye, up, Vec3::new(1.0e9, 0.0, 0.0), &[moon]);
+        assert!((quarter - 0.075).abs() < 0.01, "{quarter}");
+        // Sous l'horizon : rien
+        let below = (Vec3::new(0.0, -220_000.0, 0.0), 1_000.0);
+        assert_eq!(moonlight(eye, up, star_behind_us, &[below]), 0.0);
+        // Une grosse lune proche éclaire bien plus (plafonnée)
+        let big = (Vec3::new(0.0, 30_000.0, 0.0), 3_000.0);
+        assert!(moonlight(eye, up, star_behind_us, &[big]) > 0.9);
+    }
+
+    #[test]
+    fn the_sky_is_dark_at_night_and_without_air() {
+        let mut p = world().params;
+        p.atmosphere = true;
+        p.pressure = 1.0;
+        assert!(daylight(&p, 0.8, 1.0) > 0.99);
+        assert!(daylight(&p, -0.3, 1.0) < 0.01);
+        assert!((0.1..0.9).contains(&daylight(&p, 0.0, 1.0)), "crepuscule");
+        p.atmosphere = false;
+        assert_eq!(daylight(&p, 0.8, 1.0), 0.0);
     }
 
     #[test]
