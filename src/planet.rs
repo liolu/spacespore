@@ -280,6 +280,8 @@ pub enum VoxelType {
     Fungus,
     Glass,
     Sulfur,
+    /// Filon de minerai dans la paroi d'une grotte (B2, plus fréquent en profondeur).
+    Ore,
 }
 
 impl VoxelType {
@@ -310,6 +312,7 @@ impl VoxelType {
             VoxelType::Fungus => [0.85, 0.45, 0.3, 1.0],
             VoxelType::Glass => [0.16, 0.24, 0.2, 1.0],
             VoxelType::Sulfur => [0.9, 0.82, 0.25, 1.0],
+            VoxelType::Ore => [0.7, 0.48, 0.24, 1.0],
         }
     }
 

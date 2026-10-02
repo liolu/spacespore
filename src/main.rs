@@ -3,6 +3,7 @@ mod claims;
 mod combat;
 mod decor;
 mod diplomacy;
+mod caves;
 mod chat_cmd;
 mod galaxy_fx;
 mod gas;

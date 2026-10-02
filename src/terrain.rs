@@ -25,6 +25,7 @@ use crate::planetgen::climate::{sea_material, Climate};
 use crate::planetgen::geology::{moon_relief, Relief, ReliefField};
 use crate::planetgen::hydrology::Hydro;
 use crate::settings::{MoonConfig, PlanetConfig};
+use crate::caves::{eval_pieces, ore_chance, CaveCell, CaveStyle, Caves, Piece, Region};
 use crate::voxel::{BodyVoxels, Cell, BLOCK};
 
 /// Colonnes par côté d'une tuile.
@@ -294,6 +295,8 @@ pub struct Terrain {
     pub overhang: Option<Overhang>,
     /// Cellules modifiées (minage, 0.14) : vides pour l'instant.
     voxels: Option<Arc<BodyVoxels>>,
+    /// Grottes (B2), partagées entre les tuiles d'un même astre (cache des régions).
+    pub caves: Option<Arc<Caves>>,
 }
 
 impl Terrain {
@@ -318,8 +321,22 @@ impl Terrain {
             biomes: BiomeField::new(params.biomes),
             overhang: None,
             voxels: None,
+            caves: CaveStyle::of(&params).map(|s| Arc::new(Caves::new(s, params.seed, params.layout().voxel))),
         }
         .with_overhang()
+    }
+
+    /// Le même terrain avec les grottes (et leur cache) d'un autre terrain du même astre.
+    pub fn with_caves(mut self, caves: Option<Arc<Caves>>) -> Self {
+        if caves.is_some() {
+            self.caves = caves;
+        }
+        self
+    }
+
+    /// Rayon du sol (champ de hauteur brut) dans la direction `dir` : la surface des grottes.
+    pub fn surface_r(&self, dir: Vec3) -> f32 {
+        self.raw_height(dir).0.max(self.params.radius)
     }
 
     /// Le même terrain avec les cellules modifiées de l'astre.
@@ -496,21 +513,69 @@ impl Terrain {
 
     /// Formes 3D ou cellules modifiées près de cette colonne : sinon le champ de hauteur suffit.
     fn has_3d(&self, face: u8, i: i64, j: i64, dir: Vec3) -> bool {
-        self.overhang.as_ref().is_some_and(|o| o.near(dir))
+        self.caves.is_some()
+            || self.overhang.as_ref().is_some_and(|o| o.near(dir))
             || self.voxels.as_ref().is_some_and(|v| v.layers_in(face, i.div_euclid(BLOCK), j.div_euclid(BLOCK)).is_some())
     }
 
     /// LA fonction des voxels (règle 11) : matière de la cellule (couche `k`) de la colonne
     /// (face, i, j), dont la colonne de base est `base` (première couche vide `top_k`).
-    /// Delta d'abord, puis le champ de hauteur, puis les formes 3D.
+    /// Delta d'abord, puis le champ de hauteur creusé par les grottes, puis les formes 3D.
     pub fn kind_at(&self, face: u8, i: i64, j: i64, k: i32, dir: Vec3, base: &Column, top_k: i32) -> VoxelType {
+        self.kind_in(face, i, j, k, dir, base, top_k, None)
+    }
+
+    /// Comme `kind_at`, avec les pièces de grottes qui croisent la colonne déjà rassemblées, et
+    /// les couches (k0..=k1) où chacune peut compter (maillage d'une tuile).
+    #[allow(clippy::too_many_arguments)]
+    pub fn kind_in(&self, face: u8, i: i64, j: i64, k: i32, dir: Vec3, base: &Column, top_k: i32, pieces: Option<&[(i32, i32, Piece)]>) -> VoxelType {
         if let Some(v) = &self.voxels {
             if let Some(kind) = v.get(Cell { face, i, j, k }) {
                 return kind;
             }
         }
         if k < top_k {
-            return base.kind;
+            let v = self.layout.voxel;
+            let r = self.layer_radius(k) + v * 0.5;
+            let depth = base.top - r;
+            // Sous la mer, pas de grotte (elle se remplirait) ; près de la surface, le sol
+            if !base.kind.is_liquid() {
+                if let Some(caves) = &self.caves {
+                    if depth < crate::caves::MAX_DEPTH + caves.size {
+                        let p = dir * r;
+                        let cell = match pieces {
+                            Some(list) => eval_pieces(list.iter().filter(|(k0, k1, _)| (*k0..=*k1).contains(&k)).map(|(_, _, piece)| piece), p, v),
+                            None => {
+                                let near = caves.pieces_near(p, &|d| self.surface_r(d));
+                                eval_pieces(
+                                    near.iter().filter(|piece| {
+                                        let (c, r) = piece.bound();
+                                        c.distance_squared(p) <= r * r
+                                    }),
+                                    p,
+                                    v,
+                                )
+                            }
+                        };
+                        match cell {
+                            CaveCell::Air => return VoxelType::Air,
+                            CaveCell::Water => return VoxelType::Water,
+                            CaveCell::Crystal => return VoxelType::Crystal,
+                            CaveCell::Rock => {}
+                        }
+                    }
+                }
+            }
+            if depth < 2.5 * v || base.kind.is_liquid() {
+                return base.kind;
+            }
+            // Roche profonde, avec des filons plus fréquents en profondeur (phase 8)
+            let h = (((face as u64) << 58) ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (j as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F) ^ (k as u64).wrapping_mul(0x1656_67B1_9E37_79F9))
+                .wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            if ((h >> 40) as f32 / (1u64 << 24) as f32) < ore_chance(depth) {
+                return VoxelType::Ore;
+            }
+            return self.caves.as_ref().map_or(VoxelType::Stone, |c| c.style.rock);
         }
         if let Some(o) = &self.overhang {
             if o.solid(dir * (self.layer_radius(k) + self.layout.voxel * 0.5)) {
@@ -534,7 +599,9 @@ impl Terrain {
             return base;
         }
         let highest = self.highest_layer(face, i, j, top_k);
-        let start = if r.is_finite() { (self.layer(r + 1e-3) - 1).min(highest) } else { highest };
+        // (marges en fraction de voxel : à 10 000 unités du centre, 0,001 est sous la précision
+        // d'un f32)
+        let start = if r.is_finite() { (self.layer(r + 0.05 * self.layout.voxel) - 1).min(highest) } else { highest };
         for k in (start - 512..=start).rev() {
             let kind = self.kind_at(face, i, j, k, center, &base, top_k);
             if kind != VoxelType::Air {
@@ -555,7 +622,7 @@ impl Terrain {
         }
         let (base, top_k) = self.base_cell_column(center);
         let highest = self.highest_layer(face, i, j, top_k);
-        let k0 = ((r - self.params.radius) / self.layout.voxel).ceil() as i32;
+        let k0 = ((r - self.params.radius) / self.layout.voxel - 0.05).ceil() as i32;
         for k in k0..=highest {
             if self.kind_at(face, i, j, k, center, &base, top_k) != VoxelType::Air {
                 return self.layer_radius(k);
@@ -835,6 +902,20 @@ struct Col3 {
     j: i64,
 }
 
+/// Couleur d'une cellule : celle de la colonne pour le sol, celle de sa matière pour la roche, les
+/// filons, les cristaux et l'eau des grottes (avec un peu de variation).
+fn cell_color(kind: VoxelType, k: i32, c: &Col3) -> [f32; 4] {
+    if kind == c.base.kind && k < c.top_k {
+        return c.base.color;
+    }
+    if k >= c.top_k && kind == VoxelType::Stone {
+        return OVERHANG_COLOR;
+    }
+    let base = kind.color();
+    let jitter = (((c.i * 31 + c.j * 17 + k as i64 * 7) & 15) as f32 / 15.0 - 0.5) * 0.08;
+    [(base[0] + jitter).clamp(0.02, 1.0), (base[1] + jitter).clamp(0.02, 1.0), (base[2] + jitter).clamp(0.02, 1.0), 1.0]
+}
+
 /// Tuile en voxels 3D (niveau le plus fin) : chaque cellule pleine montre ses faces tournées vers
 /// une cellule vide (dessus, dessous des surplombs, côtés). Sans forme 3D, le résultat a les mêmes
 /// dessus que le champ de hauteur. Une jupe descend le long des bords (raccord avec les tuiles
@@ -890,15 +971,96 @@ pub fn build_voxel_tile_mesh(t: &Terrain, key: TileKey) -> Mesh {
             }
         }
     }
-    let kind = |ci: i32, cj: i32, k: i32| -> VoxelType {
+    // Grottes : régions qui touchent la tuile, rassemblées une fois
+    let regions: Vec<Arc<Region>> = match &t.caves {
+        Some(caves) => {
+            let dirs = [corner(0, 0), corner(TILE_CELLS, 0), corner(0, TILE_CELLS), corner(TILE_CELLS, TILE_CELLS), tile_dir];
+            caves.for_tile(&dirs, &|d| t.surface_r(d))
+        }
+        None => Vec::new(),
+    };
+    // Pour chaque colonne : les régions dont la sphère englobante croise la colonne, et les
+    // couches concernées (le reste de la colonne est de la roche pleine)
+    // Seulement les pièces dans le cône de la tuile
+    let cone = key.arc(t.params.radius) * 0.75 / t.params.radius + 2.0 * v / t.params.radius;
+    let pieces: Vec<Piece> = regions
+        .iter()
+        .filter(|r| {
+            let (bc, br) = r.bound();
+            bc.angle_between(tile_dir) < cone + (br + 2.0 * v) / bc.length().max(1.0)
+        })
+        .flat_map(|r| r.pieces().collect::<Vec<_>>())
+        .filter(|piece| {
+            let (bc, br) = piece.bound();
+            let len = bc.length().max(1.0);
+            bc.angle_between(tile_dir) < cone + (br + 2.0 * v) / len
+        })
+        .collect();
+    let mut col_pieces: Vec<Vec<(i32, i32, Piece)>> = Vec::with_capacity(cols.len());
+    let mut col_spans: Vec<Vec<(i32, i32)>> = Vec::with_capacity(cols.len());
+    let margin = v * 1.5;
+    for c in &cols {
+        let mut list = Vec::new();
+        let mut spans = Vec::new();
+        for piece in &pieces {
+            let (bc, br) = piece.bound();
+            let br = br + margin;
+            let along = bc.dot(c.base.dir);
+            let perp2 = bc.length_squared() - along * along;
+            if along > 0.0 && perp2 < br * br {
+                let half = (br * br - perp2).sqrt();
+                let span = (t.layer(along - half) - 1, (t.layer(along + half) + 1).min(c.top_k));
+                if span.0 <= span.1 {
+                    list.push((span.0, span.1, *piece));
+                    // Seules les pièces creusées ouvrent des faces à dessiner
+                    if !matches!(piece, Piece::Fill(_)) {
+                        spans.push(span);
+                    }
+                }
+            }
+        }
+        col_pieces.push(list);
+        col_spans.push(spans);
+    }
+    let index = |ci: i32, cj: i32| (cj + 1) as usize * nc + (ci + 1) as usize;
+    let compute = |ci: i32, cj: i32, k: i32| -> VoxelType {
         let c = col(ci, cj);
-        if k < kmin {
-            return c.base.kind;
+        let list = &col_pieces[index(ci, cj)];
+        if !any_3d && list.is_empty() && k >= c.top_k {
+            return VoxelType::Air;
         }
-        if !any_3d {
-            return if k < c.top_k { c.base.kind } else { VoxelType::Air };
+        t.kind_in(c.face, c.i, c.j, k, c.base.dir, &c.base, c.top_k, Some(list))
+    };
+    // Couches à examiner dans une colonne : autour du sol, plus là où passent les grottes
+    let ranges = |ci: i32, cj: i32| -> Vec<(i32, i32)> {
+        let c = col(ci, cj);
+        let mut out = vec![(kmin.min(c.top_k - 1), kmax)];
+        out.extend(col_spans[index(ci, cj)].iter().copied());
+        out.sort();
+        let mut merged: Vec<(i32, i32)> = Vec::new();
+        for (a, b) in out {
+            match merged.last_mut() {
+                Some(last) if a <= last.1 + 1 => last.1 = last.1.max(b),
+                _ => merged.push((a, b)),
+            }
         }
-        t.kind_at(c.face, c.i, c.j, k, c.base.dir, &c.base, c.top_k)
+        merged
+    };
+    // Chaque cellule n'est calculée qu'une fois : matières de toutes les colonnes (bordure
+    // comprise) sur leurs couches examinées, un voxel de marge
+    let mut memo: Vec<Vec<(i32, Vec<VoxelType>)>> = Vec::with_capacity(cols.len());
+    for cj in -1..=TILE_CELLS as i32 {
+        for ci in -1..=TILE_CELLS as i32 {
+            memo.push(ranges(ci, cj).into_iter().map(|(a, b)| (a - 1, (a - 1..=b + 1).map(|k| compute(ci, cj, k)).collect())).collect());
+        }
+    }
+    let kind = |ci: i32, cj: i32, k: i32| -> VoxelType {
+        for (k0, list) in &memo[index(ci, cj)] {
+            if k >= *k0 && ((k - k0) as usize) < list.len() {
+                return list[(k - k0) as usize];
+            }
+        }
+        compute(ci, cj, k)
     };
 
     let mut buf = MeshBuf::default();
@@ -912,17 +1074,17 @@ pub fn build_voxel_tile_mesh(t: &Terrain, key: TileKey) -> Mesh {
             let c = col(ci, cj);
             let (u, w) = (ci as usize, cj as usize);
             let up = c.base.dir;
-            for k in kmin..=kmax {
+            for k in ranges(ci, cj).into_iter().flat_map(|(a, b)| a..=b) {
                 let here = kind(ci, cj, k);
                 if here == VoxelType::Air {
                     continue;
                 }
-                let color = if k < c.top_k { c.base.color } else { OVERHANG_COLOR };
+                let color = cell_color(here, k, c);
                 let (r0, r1) = (t.layer_radius(k), t.layer_radius(k + 1));
                 if kind(ci, cj, k + 1) == VoxelType::Air {
                     buf.quad([corner(u, w) * r1, corner(u + 1, w) * r1, corner(u + 1, w + 1) * r1, corner(u, w + 1) * r1], up, color);
                 }
-                if k > kmin && kind(ci, cj, k - 1) == VoxelType::Air {
+                if kind(ci, cj, k - 1) == VoxelType::Air {
                     buf.quad([corner(u, w) * r0, corner(u + 1, w) * r0, corner(u + 1, w + 1) * r0, corner(u, w + 1) * r0], -up, shade(color, 0.55));
                 }
                 let sides: [((i32, i32), (usize, usize), (usize, usize)); 4] = [
@@ -1101,7 +1263,9 @@ mod tests {
     #[test]
     fn ground_matches_the_finest_mesh() {
         let p = earth_like();
-        let t = Terrain::new(p);
+        let mut t = Terrain::new(p);
+        t.caves = None;
+        t.overhang = None;
         let dir = Vec3::new(-0.4, 0.3, 0.86).normalize();
         let (face, s, tt) = dir_to_face(dir);
         let n = (1u32 << t.layout.max_depth) as f32;
@@ -1111,7 +1275,7 @@ mod tests {
             x: (((s + 1.0) * 0.5 * n) as u32).min(n as u32 - 1),
             y: (((tt + 1.0) * 0.5 * n) as u32).min(n as u32 - 1),
         };
-        let mesh = build_tile_mesh(&p, key);
+        let mesh = build_tile_mesh_with(&t, key);
         let Some(VertexAttributeValues::Float32x3(pos)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else { panic!() };
         // Le sommet de face supérieure le plus proche de `dir` est à la hauteur de `ground`
         let ground = t.ground(dir).top;
@@ -1158,6 +1322,7 @@ mod tests {
         p.seed = 77;
         let mut t = Terrain::new(p);
         t.overhang = None;
+        t.caves = None;
         for face in 0..6u8 {
             for (s, tt) in [(0.1, -0.2), (0.999, 0.3), (-0.999, -0.999)] {
                 let key = finest(&t, face_dir(face, s, tt));
@@ -1239,6 +1404,52 @@ mod tests {
         assert!(down > 0, "pas de dessous");
         // Loin de l'arche, pas de plafond
         assert_eq!(t.ceiling(-o.dir, t.ground(-o.dir).top + 1.0), f32::INFINITY);
+    }
+
+    /// B2 : des grottes creusées dans la roche (air sous la surface), avec des entrées, et rien
+    /// au-delà de 2 000 unités de profondeur.
+    #[test]
+    fn caves_are_carved_under_the_surface() {
+        let t = Terrain::new(earth_like());
+        let caves = t.caves.clone().expect("grottes");
+        let surf = |d: Vec3| t.surface_r(d);
+        let mut carved = 0;
+        let mut entrance = None;
+        for x in -8..8 {
+            for z in -8..8 {
+                let d = Vec3::new(x as f32 * 0.02, 1.0, z as f32 * 0.02).normalize();
+                for depth in [1.0, 3.0, 6.0] {
+                    let p = d * (surf(d) - depth * caves.size);
+                    if let Some(r) = caves.region(caves.key_of(p), &surf) {
+                        if let Some((rc, _)) = r.room {
+                            let (face, i, j) = t.cell_of(rc.normalize());
+                            let center = t.cell_dir(face, i, j);
+                            let (base, top_k) = t.base_cell_column(center);
+                            if !base.kind.is_liquid() && t.kind_at(face, i, j, t.layer(rc.length()), center, &base, top_k) == VoxelType::Air {
+                                carved += 1;
+                            }
+                        }
+                        entrance = entrance.or(r.entrance);
+                    }
+                }
+            }
+        }
+        assert!(carved > 0, "aucune salle creusee");
+        // Une entrée : au bord du puits, le sol descend bien plus bas que la surface
+        if let Some(e) = entrance {
+            let dir = e.normalize();
+            let top = t.base_column(dir, t.voxel()).top;
+            if !t.base_column(dir, t.voxel()).kind.is_liquid() {
+                assert!(t.ground(dir).top < top - 2.0 * t.voxel(), "entree bouchee : {} vs {top}", t.ground(dir).top);
+            }
+        }
+        // Très profond : de la roche
+        let d = Vec3::Y;
+        let (face, i, j) = t.cell_of(d);
+        let center = t.cell_dir(face, i, j);
+        let (base, top_k) = t.base_cell_column(center);
+        let deep = t.layer(base.top - crate::caves::MAX_DEPTH - 2.0 * caves.size);
+        assert_ne!(t.kind_at(face, i, j, deep, center, &base, top_k), VoxelType::Air);
     }
 
     /// Un delta (minage, 0.14) creuse bien une cellule : le sol descend d'un voxel.
@@ -1369,11 +1580,13 @@ mod bench {
             select_tiles(t.layout, p.radius, dir * (t.ground(dir).top + 20.0), &mut sel);
             keys.extend(sel.into_iter().filter(|k| k.depth as u32 == t.layout.max_depth).take(20).map(|k| (t.params, k)));
         }
-        for (name, voxel) in [("champ de hauteur", false), ("voxels 3D", true)] {
+        // Un terrain par astre, comme dans le jeu (les tuiles partagent le cache des grottes)
+        let terrains: Vec<Terrain> = keys.iter().map(|(p, _)| *p).collect::<Vec<_>>().chunks(20).map(|c| Terrain::new(c[0])).collect();
+        for (name, voxel) in [("champ de hauteur", false), ("voxels 3D (1re fois)", true), ("voxels 3D", true)] {
             let start = std::time::Instant::now();
-            for (p, key) in &keys {
-                let t = Terrain::new(*p);
-                std::hint::black_box(if voxel { build_voxel_tile_mesh(&t, *key) } else { build_height_tile_mesh(&t, *key) });
+            for (n, (_, key)) in keys.iter().enumerate() {
+                let t = &terrains[(n / 20).min(terrains.len() - 1)];
+                std::hint::black_box(if voxel { build_voxel_tile_mesh(t, *key) } else { build_height_tile_mesh(t, *key) });
             }
             let ms = start.elapsed().as_secs_f64() * 1000.0;
             println!("BENCH {name} : {} tuiles fines, {:.2} ms par tuile", keys.len(), ms / keys.len() as f64);

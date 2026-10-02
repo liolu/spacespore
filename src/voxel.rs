@@ -67,7 +67,7 @@ impl BlockKey {
 }
 
 /// Matières, dans un ordre figé (codes des deltas : ne jamais réordonner, seulement ajouter).
-const CODES: [VoxelType; 25] = [
+const CODES: [VoxelType; 26] = [
     VoxelType::Air,
     VoxelType::Water,
     VoxelType::Sand,
@@ -93,6 +93,7 @@ const CODES: [VoxelType; 25] = [
     VoxelType::Fungus,
     VoxelType::Glass,
     VoxelType::Sulfur,
+    VoxelType::Ore,
 ];
 
 pub fn voxel_code(v: VoxelType) -> u8 {
