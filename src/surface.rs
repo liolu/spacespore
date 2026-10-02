@@ -70,6 +70,8 @@ impl Plugin for SurfacePlugin {
             .init_resource::<TileStore>()
             .add_event::<OverhangCommand>()
             .init_resource::<VoxelsChanged>()
+            .init_gizmo_group::<IndicatorGizmos>()
+            .add_systems(Update, fade_indicators.after(SurfaceControl))
             .add_event::<CaveCommand>()
             .init_resource::<NearestCave>()
             .add_systems(Update, (go_cave.before(SurfaceControl), find_nearest_cave))
@@ -1515,6 +1517,50 @@ fn go_cave(time: Res<Time>, mut events: EventReader<CaveCommand>, mut surface: R
         }
         nearest.last = 0.0;
     }
+}
+
+/// Indicateurs visuels de l'espace (orbites, traînées des planètes, cercles autour des astres,
+/// portée du vaisseau, trous de ver, zones) : un groupe de traits à part, qui s'efface en douceur
+/// quand on s'approche d'une planète ou d'une lune, et revient quand on remonte.
+#[derive(Default, Reflect, GizmoConfigGroup)]
+pub struct IndicatorGizmos;
+
+/// Épaisseur des traits des indicateurs au loin (pixels).
+const INDICATOR_WIDTH: f32 = 2.0;
+
+fn fade_indicators(
+    time: Res<Time>,
+    target: Res<CameraTarget>,
+    settings: Res<GameSettings>,
+    surface: Res<Surface>,
+    planets: Query<(&Transform, &PlanetId), With<PlanetRoot>>,
+    moons: Query<(&Transform, &MoonId), With<MoonRoot>>,
+    cam_q: Query<&Transform, (With<Camera3d>, Without<PlanetRoot>, Without<MoonRoot>)>,
+    mut store: ResMut<GizmoConfigStore>,
+    mut fade: Local<Option<f32>>,
+) {
+    let Ok(cam) = cam_q.get_single() else { return };
+    let kind = surface.body().unwrap_or(target.0);
+    let body = match kind {
+        TargetKind::Planet(id) => planets.iter().find(|(_, p)| p.0 == id).map(|(t, _)| t.translation),
+        TargetKind::Moon(pid, mi) => moons.iter().find(|(_, m)| m.planet_idx == pid && m.moon_idx == mi).map(|(t, _)| t.translation),
+        _ => None,
+    };
+    // Altitude en rayons de l'astre : tout disparaît sous 0,3 rayon, tout revient au-dessus de 2
+    let wanted = match (body, body_params(&settings, &kind)) {
+        (Some(center), Some(p)) if !p.gaseous || surface.active() => {
+            let altitude = (cam.translation.distance(center) - p.radius).max(0.0) / p.radius.max(1.0);
+            smoothstep((altitude - 0.3) / 1.7)
+        }
+        _ => 1.0,
+    };
+    // En douceur (environ une seconde)
+    let current = fade.unwrap_or(wanted);
+    let next = current + (wanted - current) * (1.0 - (-3.0 * time.delta_secs()).exp());
+    *fade = Some(next);
+    let (config, _) = store.config_mut::<IndicatorGizmos>();
+    config.enabled = next > 0.02;
+    config.line_width = INDICATOR_WIDTH * next;
 }
 
 /// Les cellules modifiées ont changé (impact de météorite, delta reçu d'un autre joueur).

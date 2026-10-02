@@ -651,7 +651,7 @@ fn draw_trip_fx(
 //  Dessin
 // ─────────────────────────────────────────────────────────────────────────
 
-fn draw_mouth(gizmos: &mut Gizmos, mouth: Vec3, cam_pos: Vec3, t: f32) {
+fn draw_mouth(gizmos: &mut Gizmos<crate::surface::IndicatorGizmos>, mouth: Vec3, cam_pos: Vec3, t: f32) {
     let dist = cam_pos.distance(mouth);
     // Taille apparente à peu près constante de loin, taille réelle de près
     // Le trou de ver « respire »
@@ -707,7 +707,7 @@ fn draw_wormholes(
     wormholes: Res<Wormholes>,
     settings: Res<GameSettings>,
     cam_q: Query<&GlobalTransform, With<Camera3d>>,
-    mut gizmos: Gizmos,
+    mut gizmos: Gizmos<crate::surface::IndicatorGizmos>,
 ) {
     let Ok(cam) = cam_q.get_single() else { return };
     let cam_pos = cam.translation();

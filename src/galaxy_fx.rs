@@ -341,7 +341,8 @@ const CLOUD_PALETTE: [[f32; 3]; CLOUD_COLORS] = [
 ];
 /// Niveaux d'opacité (fondu) : un matériau par couleur et par niveau.
 const CLOUD_STEPS: usize = 8;
-const CLOUD_MAX_ALPHA: f32 = 0.06;
+/// (adouci : les nuages trop vifs gâchaient le ciel des planètes)
+const CLOUD_MAX_ALPHA: f32 = 0.032;
 const CLOUD_TEXTURE: u32 = 128;
 /// Nuages de la galaxie principale ; les autres en ont selon leur taille.
 const CLOUDS_MAIN: usize = 220;
@@ -527,8 +528,9 @@ fn update_clouds(
         let gdist = galaxy_dist.get(cloud.galaxy_id as usize).copied().unwrap_or(f32::MAX);
         let to_cloud = tf.translation - cam_pos;
         let dist = to_cloud.length();
-        // La galaxie principale s'estompe près d'une planète ou d'une lune
-        let fade = cloud_fade(dist, cloud.size, gdist) * if cloud.galaxy_id == 0 { dim.0 } else { 1.0 };
+        // Près d'une planète ou d'une lune, les nuages de toutes les galaxies s'estompent (ciel de
+        // l'astre) ; les galaxies lointaines restent plus discrètes que la nôtre
+        let fade = cloud_fade(dist, cloud.size, gdist) * dim.0 * if cloud.galaxy_id == 0 { 1.0 } else { 0.6 };
         let step = (fade * (CLOUD_STEPS - 1) as f32).round() as usize;
         // Invisible, ou derrière la caméra : rien à dessiner
         if step == 0 || (dist > cloud.size && fwd.dot(to_cloud / dist) < -0.4) {

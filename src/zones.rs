@@ -175,7 +175,7 @@ fn draw_zone_edges(
     settings: Res<GameSettings>,
     state: Res<ZonesState>,
     stars: Query<(&GlobalTransform, &StarId), With<StarRoot>>,
-    mut gizmos: Gizmos,
+    mut gizmos: Gizmos<crate::surface::IndicatorGizmos>,
 ) {
     let (true, Some(si), Some(z)) = (settings.show_zones, state.system, state.zones) else { return };
     let Some(center) = stars.iter().find(|(_, id)| id.0 == si * 1000).map(|(gt, _)| gt.translation()) else { return };
