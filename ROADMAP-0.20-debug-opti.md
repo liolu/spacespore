@@ -1,991 +1,344 @@
-(j'ai demandé à chatgpt c'est 2 question il connait pas le projet il était vierge d'info mais fait une road map c'est 2 syteme )
+# Feuille de route — Débogage et optimisation (0.20)
 
+Objectif : **reprendre le contrôle** du LOD et de la lumière (les deux plus gros problèmes actuels) et
+**mesurer** au lieu de deviner. Trois outils, dans cet ordre :
 
+1. un **panneau de réglages en direct** (LOD, lumière, ombres, terrain, streaming, ciel) ;
+2. des **mesures** et des **vues de débogage** qui montrent ce que le moteur fait ;
+3. un **benchmark automatique** : le jeu pilote seul le vaisseau sur un parcours fixe, change les
+   réglages un par un et enregistre tout dans des fichiers que l'IA analyse.
+
+Ensuite seulement, on **optimise** le LOD et la lumière à partir des chiffres.
+
+Source : conversation avec ChatGPT (`prompt0.20.md`), qui ne connaissait pas le projet. Cette feuille
+de route garde ses bonnes idées et les **adapte au code réel** (Bevy 0.15, origine flottante,
+~12 500 systèmes, tuiles de terrain asynchrones).
+
+Chaque phase se termine par un build instable jouable. Une PR par phase, non fusionnée : tu testes,
+puis tu dis « push main ». Chaque phase a son **prompt prêt à coller** (section « Prompts »).
+
+---
+
+## 1. Ta demande, reformulée
+
+### 1.1 Benchmark
+
+- Le joueur **n'a pas la main** : le jeu emmène le vaisseau de planète en planète, plonge vers la
+  surface, regarde autour de lui, regarde les galaxies, passe par tout ce qui est lourd, **toujours dans
+  le même ordre**.
+- On **change des variables** entre deux passages pour voir laquelle coûte le plus et laquelle fait
+  gagner le plus. Exemple : `a=10 b=25 c=80` pendant 1 min, puis `c=50`, puis `c=30`, puis `a=15`…
+- À chaque passage : FPS et toutes les autres mesures.
+
+**Verdict :** la méthode est bonne. Pour qu'elle soit fiable, il faut :
+
+| Problème | Solution |
+|---|---|
+| Trop de combinaisons (5 variables × 5 valeurs = 3 125 passages = 52 h) | **Une variable à la fois** d'abord (§5.3), puis seulement les paires qui comptent |
+| Le monde est procédural : une autre planète fausse la comparaison | **Graine fixe, parcours fixe, heure fixe** (§5.1) |
+| Un passage peut tomber sur un pic (compilation de shader, tâche lente) | **Préchauffage** de 20 s puis **3 répétitions**, on garde la **médiane** |
+| Le FPS moyen cache les saccades | Mesurer les **temps d'image**, le **1 % bas**, le **0,1 % bas** et les **pics** (§4.1) |
+| Savoir que c'est lent ne dit pas **pourquoi** | Mesurer **chaque système** (terrain, lumière, étoiles…) en ms (§4.2) |
+
+### 1.2 Panneau de réglages
+
+- Une **page en jeu** pour régler **en direct** le LOD et la lumière, sans recompiler.
+- Ajouter ce qui manque (culling, ombres, streaming, terrain, vues de débogage, préréglages).
+
+---
 
-je fait un jeu space voxel gigantesque +10000 planetes le jeu tourne bien mais j'en suis meme pas à la moitié et je voudrais faire un benchmark
+## 2. Point de départ (code actuel, v0.11.0)
+
+Le problème principal : **les réglages sont des constantes éparpillées dans six fichiers**. Une IA qui
+« optimise le LOD » ne sait pas lesquelles toucher, et rien ne se règle en jeu.
+
+### 2.1 LOD : il y en a six, indépendants
+
+| LOD | Réglage aujourd'hui | Fichier |
+|---|---|---|
+| Sphère des planètes vue de loin | 6 niveaux, seuils fixes à **3 / 5 / 7 / 10 / 14 rayons**, résolutions **20 / 14 / 10 / 6 / 4 / 2**, multiplié par « Détail planètes » (`lod_quality` 0,5 à 1,5) | `lod.rs` |
+| Tâches de LOD des astres | `MAX_LOD_TASKS_IN_FLIGHT = 8`, `STAR_DETAIL_RADII = 6`, `DETAIL_CUTOFF` | `planet.rs` |
+| Terrain proche (quadtree de tuiles) | `SPLIT_FACTOR = 1,8`, `TILE_CELLS = 32`, `MAX_VOXEL = 11`, `MAX_TILE_TASKS = 10`, `MAX_TILES = 520`, `TILE_KEEP_SECS = 8` | `terrain.rs`, `surface.rs` |
+| Décor des tuiles | `MAX_DENSITY = 0,1`, calculé avec la tuile | `decor.rs` |
+| Étoiles lointaines (secteurs de ~100) | `LOD_STARS_END / GONE`, `LOD_CAPS_START / FULL`, `LOD_STEPS = 10` | `planet.rs` |
+| Masquage des astres | `astre_lod_cull` (distance + direction caméra), recharge différée | `astre/mod.rs` |
 
-ce que je voudrais faire le joueur n'a pas le controle et envoyé de planetes en planetes plongé dans sur la planetes regardé autour les glaxie et tout ce qui est très lourd dans un ordre très précis ect...
+### 2.2 Lumière : plusieurs sources qui se superposent
 
-et je change des vars pour voir qu'elle var optimise le plus et laquel prend le plus
-ex 
+| Lumière | Aujourd'hui | Fichier |
+|---|---|---|
+| Étoile | `PointLight` (portée `light_range`, ombres **activées** sur l'étoile chargée) : une ombre de lumière ponctuelle = **6 rendus** (cubemap), très cher | `planet.rs` (~l.1363, ~l.2048) |
+| Soleil au sol | `DirectionalLight` `SunLight` (éclairement réglé selon l'heure, pas d'ombres) | `main.rs`, `surface.rs` |
+| Ambiante | Constantes `AMBIENT_SPACE = 300`, `AMBIENT_DAY = 1 500`, `AMBIENT_NIGHT = 35`, `MOONLIGHT_MAX = 260`, brumes `NIGHT_HAZE`, `DAY_HAZE`, `NIGHT_GALAXY` | `surface.rs` |
+| Phares, lampe (N) | `PointLight` du vaisseau, lampe du joueur | `ship.rs`, `surface.rs` |
+| Brouillard | `DistanceFog` des géantes gazeuses et de l'horizon | `gas.rs` |
+| Nébuleuses | `PointLight` | `astre/Remnant_stellaire/nebula.rs` |
+| Ombres | Un seul interrupteur (`settings.shadows`), pas de taille de carte, pas de cascades réglées | `graphics.rs` |
+
+### 2.3 Mesures existantes
+
+| Outil | Ce qu'il fait | Fichier |
+|---|---|---|
+| `FrameTimeDiagnosticsPlugin` | FPS et temps d'image lissés, affichés en haut à gauche | `main.rs` |
+| F12 `ProfilingLog` | Journal texte : FPS min / max / moyenne, astres masqués et rechargés | `astre/mod.rs` |
+| Préréglages Bas → Ultra | MSAA, ombres, détail planètes, nuages, éruptions | `graphics.rs` |
+| `/aller etoile|planete|lune <type>` | Téléporte vers un astre d'un type donné (base du parcours de benchmark) | `test_cmd.rs` |
+| `/heure`, `/temps` | Horloge du monde (0.11 A1) : permet de **figer l'heure** pendant un test | `world_clock.rs` |
+| Bancs `bench_tiles`, `bench_decor` | Coût d'une tuile et du décor, hors jeu | `planetgen` (tests) |
+
+Touches F déjà prises : F1 (vaisseau), F2 (réseau), F3 (statistiques), F12 (journal).
+
+---
 
-a 10 b 25 c80 1 min je check les fps et tout les autres info puis 
-a 10 b25 c50 1 min puis 
-a10 b25 c30 1min puis
-a15 b25 c80 ect....
+## 3. Règles d'architecture
 
-
-
-dit moi si c'est une bonne méthode de teste et ce qui peut etre fait pour que se soit mieux 
-
-je le fait avec ia le code
-
-ChatGPT a dit :
-Oui, c’est une très bonne base, surtout pour un jeu voxel procédural où beaucoup de systèmes peuvent se concurrencer : génération de planètes, streaming, LOD, voxels, shaders, physique, culling, génération de végétation/objets, etc.
-
-Mais je changerais légèrement ta méthode pour que ton benchmark te dise pourquoi ça ralentit, et pas seulement quelle configuration est plus rapide.
-
-Ta méthode actuelle
-Ton idée :
-
-A=10 B=25 C=80 → 1 min → FPS / temps CPU / GPU / mémoire
-A=10 B=25 C=50 → 1 min → ...
-A=10 B=25 C=30 → 1 min → ...
-A=15 B=25 C=80 → ...
-...
-
-est valable. Le problème est que si tu modifies plusieurs variables indépendamment et que tu fais énormément de combinaisons, le nombre de tests explose.
-
-Par exemple, seulement :
-
-A : 5 valeurs
-B : 5 valeurs
-C : 5 valeurs
-D : 5 valeurs
-E : 5 valeurs
-
-ça fait déjà 3 125 configurations.
-
-À 1 minute par configuration → plus de 52 heures de benchmark, sans compter les chargements et répétitions.
-
-Ce que je ferais à ta place
-Je construirais un benchmark automatisé et reproductible.
-
-Le joueur est contrôlé par le jeu et suit exactement le même trajet :
-
-Départ
- ↓
-Planète 1
- ↓
-Approche planète
- ↓
-Descente
- ↓
-Rotation caméra 360°
- ↓
-Vue horizon
- ↓
-Vue ciel / galaxie
- ↓
-Zone avec beaucoup de voxels
- ↓
-Zone avec beaucoup d'objets
- ↓
-Départ
- ↓
-Planète 2
-...
-
-Et surtout : aucune intervention humaine pendant le benchmark.
-
-L'IA peut ensuite modifier les variables, lancer le benchmark, récupérer les données et passer au suivant.
-
-Ne mesure pas uniquement les FPS
-C'est probablement le point le plus important.
-
-Au minimum, enregistre :
-
-Mesure	Pourquoi
-FPS moyen	Performance générale
-FPS 1% low	Fluidité réelle
-FPS 0.1% low	Gros freezes/stutters
-Frame time CPU	Voir si le CPU bloque
-Frame time GPU	Voir si le GPU bloque
-RAM	Consommation mémoire
-VRAM	Consommation GPU
-Draw calls	Charge du rendu
-Triangles	Géométrie affichée
-Nombre de voxels/chunks actifs	Charge du monde
-Temps génération chunk	Procédural
-Temps streaming	Chargement/déchargement
-Temps physique	Physique/collisions
-Temps scripts	Logique du jeu
-Temps shaders	GPU
-
-Le frame time est particulièrement important.
-
-60 FPS ≈ 16,67 ms/frame
-
-120 FPS ≈ 8,33 ms/frame
-
-144 FPS ≈ 6,94 ms/frame
-
-Donc tu peux avoir :
-
-FPS moyen : 120
-
-mais :
-
-Frame 1 : 8 ms
-Frame 2 : 8 ms
-Frame 3 : 8 ms
-Frame 4 : 80 ms  ← gros freeze
-Frame 5 : 8 ms
-
-Le joueur va clairement ressentir le freeze, même si ton FPS moyen paraît excellent.
-
-Encore mieux : des scènes de benchmark spécialisées
-Je ne ferais pas un seul parcours.
-
-Je ferais plusieurs scénarios.
-
-Benchmark A — Voyage spatial
-Planète → espace → planète → espace → planète
-
-Mesure principalement :
-
-streaming
-
-génération
-
-mémoire
-
-chargements
-
-transitions
-
-garbage collection
-
-Benchmark B — Surface planète
-Atterrissage
-→ déplacement
-→ rotation 360°
-→ horizon
-→ ciel
-→ végétation
-→ structures
-
-Mesure :
-
-voxels
-
-LOD
-
-culling
-
-shaders
-
-objets
-
-draw calls
-
-Benchmark C — Vue galaxie
-Tu places la caméra de façon à afficher énormément de choses :
-
-        galaxies
-     *  *   *  *
-   *    PLANÈTE   *
-     *  *   *  *
-
-Ça permet de tester spécifiquement :
-
-nombre d'objets célestes
-
-particules
-
-shaders
-
-distance de rendu
-
-instancing
-
-culling
-
-Benchmark D — Worst case
-Et celui-là est très important.
-
-Tu cherches volontairement la situation la plus lourde :
-
-beaucoup de voxels
-+
-beaucoup d'objets
-+
-beaucoup de végétation
-+
-beaucoup de particules
-+
-beaucoup de planètes visibles
-+
-streaming
-+
-génération
-
-C'est ton test :
-
-"Qu'est-ce qui arrive quand absolument tout est chargé ?"
-
-Et je changerais ton système de variables
-Au lieu de faire uniquement :
-
-A=10 B=25 C=80
-A=10 B=25 C=50
-A=10 B=25 C=30
-
-je commencerais par mesurer une variable à la fois.
-
-Par exemple :
-
-Baseline
-
-A=10
-B=25
-C=80
-
-Puis :
-
-A=5
-A=10
-A=15
-A=20
-A=25
-
-avec B et C constants.
-
-Puis :
-
-B=10
-B=15
-B=20
-B=25
-B=30
-
-Puis C.
-
-Ça te donne rapidement une courbe :
-
-Performance
-   │
-   │████
-   │████
-   │███
-   │██
-   │█
-   └──────────────
-       A
-
-Tu vois immédiatement si A a un impact énorme ou quasiment nul.
-
-Ensuite seulement : interactions
-C'est là que ça devient intéressant.
-
-Imaginons :
-
-A → énorme impact
-B → petit impact
-C → énorme impact
-
-Tu testes alors :
-
-A faible + C faible
-A faible + C moyen
-A faible + C élevé
-
-A moyen + C faible
-A moyen + C moyen
-A moyen + C élevé
-
-A élevé + C faible
-A élevé + C moyen
-A élevé + C élevé
-
-Tu peux découvrir quelque chose comme :
-
-A seul       → -15%
-C seul       → -12%
-
-A + C        → -40%
-
-Ce qui signifie que A et C interagissent.
-
-Et ça, un simple test variable-par-variable ne le détectera pas toujours.
-
-Fais surtout plusieurs répétitions
-Je ne ferais pas :
-
-A=10 B=25 C=80
-→ 60 secondes
-→ résultat
-
-une seule fois.
-
-Fais plutôt :
-
-Warm-up : 20 sec
-
-Run 1 : 60 sec
-Run 2 : 60 sec
-Run 3 : 60 sec
-
-et prends par exemple :
-
-median FPS
-median frame time
-1% low
-0.1% low
-maximum frame time
-
-Le médian est souvent beaucoup plus utile qu'une moyenne lorsqu'il y a des valeurs aberrantes.
-
-Très important avec ton jeu : le benchmark doit être déterministe
-Puisque ton jeu est procédural, il faut absolument éviter :
-
-Benchmark 1
-→ planète aléatoire
-
-Benchmark 2
-→ autre planète
-
-Benchmark 3
-→ autre génération
-
-Sinon tu ne sauras pas si :
-
-C=50
-
-est réellement meilleur que :
-
-C=80
-
-ou si tu es simplement tombé sur une planète moins lourde.
-
-Utilise donc un seed fixe.
-
-Par exemple :
-
-Benchmark seed = 483729
-Route = 17
-Planet sequence = 4 → 12 → 31 → 7
-Camera path = fixe
-
-Chaque configuration passe exactement au même endroit.
-
-Et je ferais enregistrer tout ça automatiquement
-Ton benchmark pourrait générer un CSV du genre :
-
-test,A,B,C,avg_fps,1_low,0.1_low,cpu_ms,gpu_ms,ram_mb,vram_mb,draw_calls
-001,10,25,80,118,82,51,7.2,8.1,6240,4820,1832
-002,10,25,50,134,97,68,6.1,7.4,5980,4510,1621
-003,10,25,30,147,105,73,5.7,6.8,5730,4290,1488
-004,15,25,80,103,69,42,8.3,9.7,6910,5210,2194
-
-Et là tu peux vraiment exploiter les résultats.
-
-Encore mieux avec ton utilisation de l'IA
-Puisque tu codes avec une IA, ne lui demande pas simplement "optimise mon jeu".
-
-Donne-lui plutôt les données du benchmark.
-
-Par exemple :
-
-Variable A augmente :
-
-10 → GPU 8.1 ms
-20 → GPU 8.4 ms
-30 → GPU 11.7 ms
-40 → GPU 17.9 ms
-
-Variable B :
-
-10 → GPU 8.0 ms
-20 → GPU 8.1 ms
-30 → GPU 8.2 ms
-40 → GPU 8.3 ms
-
-L'IA peut alors t'aider à identifier :
-
-A = probablement critique
-B = probablement peu important
-
-et surtout chercher dans le code ce qui explique cette relation.
-
-Une chose que j'ajouterais absolument
-Fais deux niveaux de benchmark :
-
-1. Benchmark "joueur"
-Il répond à :
-
-"Est-ce que le jeu tourne bien ?"
-
-Donc :
-
-FPS
-1% low
-0.1% low
-frame time
-stutters
-RAM
-VRAM
-
-2. Benchmark "moteur"
-Il répond à :
-
-"Pourquoi c'est lent ?"
-
-Donc :
-
-CPU :
-  génération voxel       2.4 ms
-  streaming              1.1 ms
-  physique               0.8 ms
-  scripts                0.5 ms
-
-GPU :
-  terrain                3.2 ms
-  atmosphère             1.7 ms
-  végétation             1.4 ms
-  espace                 0.9 ms
-  post-processing        0.6 ms
-
-C'est ce deuxième benchmark qui va être extrêmement précieux pour ton projet.
-
-Parce que si tu découvres :
-
-GPU total = 12 ms
-terrain = 7 ms
-
-tu sais immédiatement où chercher.
-
-Alors que :
-
-FPS = 83
-
-ne te dit pratiquement rien.
-
-Pour ton projet, je partirais donc sur cette architecture
-                 BENCHMARK
-                     │
-          ┌──────────┴──────────┐
-          │                     │
-      Parcours fixe        Seed fixe
-          │                     │
-          └──────────┬──────────┘
-                     │
-             Scénarios contrôlés
-                     │
-       ┌─────────────┼─────────────┐
-       │             │             │
-    Surface       Espace       Worst case
-       │             │             │
-       └─────────────┼─────────────┘
-                     │
-              Profiling détaillé
-                     │
-       ┌─────────────┼─────────────┐
-       │             │             │
-      CPU           GPU          Mémoire
-       │             │             │
-       └─────────────┼─────────────┘
-                     │
-                CSV / JSON
-                     │
-                     ↓
-                    IA
-                     │
-             analyse + pistes
-
-Donc oui : ton idée est bonne. Je la transformerais simplement en benchmark automatisé, déterministe, multi-scénarios, avec profiling CPU/GPU et répétitions, plutôt qu'en simple succession de tests d'une minute.
-
-Et avec +10 000 planètes, je te conseille particulièrement de séparer le coût de ce qui existe dans l'univers du coût de ce qui est réellement rendu/généré autour du joueur. C'est souvent là que les architectures de gros jeux spatiaux gagnent énormément en performance.
-
-
-Vous avez dit :
-
-ok deuxieme probleme actuellement comme je fait du vibe coding j'ai pas beaucoup de controle sur le lod et la lumiere c'est mes 2 plus gros probleme actuellement 
-
-ce que je veut c'est faire une page qui me permet de faire les réglages de c'est éléments en direct dit moi j'ai oublier des chose et dit les améliorations possible
-
-ChatGPT a dit :
-Oui. Et pour ton cas, je ferais plus qu'une simple page de réglages : un vrai "Rendering Debug Panel" accessible en jeu, qui te permet de comprendre immédiatement ce que le moteur fait.
-
-Tu as identifié LOD + lumière, mais pour un jeu voxel spatial gigantesque, il y a plusieurs catégories que je mettrais dans cette interface.
-
-1. LOD — à rendre entièrement contrôlable
-Ne mets pas juste :
-
-LOD distance = 500
-
-Il te faut plusieurs niveaux :
-
-LOD 0 : 0–100 m
-LOD 1 : 100–300 m
-LOD 2 : 300–1 km
-LOD 3 : 1–5 km
-LOD 4 : 5–20 km
-LOD 5 : 20+ km
-
-Et surtout des réglages séparés pour :
-
-distance de chaque LOD
-
-qualité/résolution de chaque LOD
-
-transition entre LOD
-
-vitesse de transition
-
-morphing
-
-culling
-
-distance de rendu
-
-distance de génération
-
-distance de simulation
-
-distance de collision
-
-Très important
-LOD de rendu ≠ distance de génération ≠ distance de simulation.
-
-Par exemple :
-
-0–100 m      → rendu haute qualité + collision + simulation
-100–500 m    → rendu moyen + collision simplifiée
-500–2 km     → rendu low-poly + pas de collision
-2–20 km      → représentation très simplifiée
-20+ km       → seulement représentation spatiale
-
-Ça peut énormément aider ton architecture.
-
-2. Lumière
-Là aussi, ne fais pas seulement :
-
-Sun intensity
-Ambient intensity
-
-Je créerais des groupes.
-
-Soleil
-Sun intensity
-Sun color
-Sun angle
-Shadow distance
-Shadow resolution
-Shadow cascades
-Shadow bias
-Normal bias
-
-Lumière ambiante
-Ambient intensity
-Ambient color
-Sky contribution
-Ground contribution
-
-Atmosphère
-Pour tes planètes, c'est potentiellement énorme :
-
-Atmosphere enabled
-Atmosphere quality
-Rayleigh
-Mie
-Density
-Sun scattering
-Horizon scattering
-Planet radius
-Atmosphere radius
-
-Ombres
-Très important pour les performances :
-
-Shadows ON/OFF
-Shadow distance
-Shadow resolution
-Cascade count
-Cascade distance
-Soft shadows
-Contact shadows
-
-Et idéalement un bouton :
-
-[ DEBUG SHADOWS ]
-
-qui colore les différentes cascades :
-
-Rouge    = Cascade 0
-Jaune    = Cascade 1
-Vert     = Cascade 2
-Bleu     = Cascade 3
-
-Tu vois immédiatement où ton moteur dépense ses ressources.
-
-3. Culling
-Je mettrais ça dans ta page dès le début.
-
-Tu peux avoir :
-
-Frustum culling
-Distance culling
-Occlusion culling
-Chunk culling
-Object culling
-Planet culling
-Asteroid culling
-Vegetation culling
-Particle culling
-
-Avec les distances :
-
-Vegetation : 300 m
-Objects    : 1 km
-Chunks     : 5 km
-Planets    : 1 000 km
-
-4. Voxel / terrain
-Pour ton jeu, je ferais une section dédiée.
-
-Voxel render distance
-Voxel generation distance
-Voxel simulation distance
-Chunk size
-Chunk resolution
-Mesh resolution
-Max loaded chunks
-Max generated chunks/frame
-Max mesh builds/frame
-
-Et surtout :
-
-Max generation time/frame
-
-Exemple :
-
-Voxel generation budget : 2 ms/frame
-
-Ça évite qu'une génération massive fasse :
-
-Frame normale : 8 ms
-Frame génération : 120 ms
-
-et provoque un énorme freeze.
-
-5. Streaming
-Avec 10 000+ planètes, je considère ça comme obligatoire.
-
-Streaming enabled
-
-Planet load distance
-Planet unload distance
-
-Chunk load distance
-Chunk unload distance
-
-Max loads/frame
-Max unloads/frame
-
-Generation budget
-Mesh generation budget
-Texture loading budget
-
-Et surtout une visualisation :
-
-🟢 Loaded
-🟡 Loading
-🔵 Generated
-🔴 Unloading
-⚫ Not loaded
-
-Tu peux alors regarder une planète et comprendre immédiatement ce qui se passe.
-
-6. Une chose extrêmement importante : pouvoir forcer les LOD
-Ajoute des boutons :
-
-LOD AUTO
-LOD 0
-LOD 1
-LOD 2
-LOD 3
-LOD 4
-
-Ainsi tu peux regarder exactement le même endroit avec :
-
-LOD 0
-
-puis :
-
-LOD 1
-
-puis :
-
-LOD 2
-
-et mesurer le coût.
-
-Encore mieux :
-
-[ FORCE ALL LOD 0 ]
-[ FORCE ALL LOD 1 ]
-[ FORCE ALL LOD 2 ]
-[ AUTO ]
-
-Ça sera extrêmement utile pour ton benchmark.
-
-7. Mode "visualisation"
-C'est probablement ce qui te manque actuellement le plus si tu fais beaucoup de vibe coding.
-
-Ajoute des modes de debug :
-
-Normal
-Wireframe
-Normals
-Albedo
-Roughness
-Metallic
-Depth
-Lighting
-Shadow cascades
-LOD
-Chunks
-Culling
-Collision
-Overdraw
-
-Et surtout :
-
-LOD Debug
-Colorie les objets :
-
-LOD 0 → rouge
-LOD 1 → orange
-LOD 2 → jaune
-LOD 3 → vert
-LOD 4 → bleu
-LOD 5 → violet
-
-Tu regardes la planète et tu vois immédiatement :
-
-"Pourquoi cette montagne est encore en LOD 0 à 4 km ?"
-
-8. Profiling directement dans cette page
-Je mettrais un petit panneau permanent :
-
-FPS                 117
-Frame time          8.5 ms
-
-CPU                  5.1 ms
-GPU                  7.8 ms
-
-LOD                  1.2 ms
-Voxel                1.8 ms
-Lighting             2.4 ms
-Shadows              1.7 ms
-Atmosphere            0.7 ms
-Post FX               0.4 ms
-
-Draw calls             842
-Triangles          3.2 M
-
-Chunks loaded         184
-Chunks generating       3
-
-RAM                 5.8 GB
-VRAM                4.1 GB
-
-Et tu peux voir immédiatement :
-
-"Lighting = 2.4 ms"
-
-→ tu modifies les paramètres lumière.
-
-Tu repasses à :
-
-"Lighting = 1.1 ms"
-
-→ tu viens de gagner 1.3 ms.
-
-9. Presets
-Très utile pour travailler avec l'IA.
-
-[ ULTRA ]
-[ HIGH ]
-[ MEDIUM ]
-[ LOW ]
-[ POTATO ]
-[ CUSTOM ]
-
-Mais également :
-
-[ SAVE PRESET ]
-[ LOAD PRESET ]
-[ EXPORT JSON ]
-[ IMPORT JSON ]
-
-Par exemple :
-
+1. **Un seul endroit pour les réglages.** Une ressource `Tuning` (module `src/tuning.rs`), rangée par
+   groupes : `lod.planete`, `lod.terrain`, `lod.decor`, `lod.etoiles`, `lumiere.etoile`,
+   `lumiere.soleil`, `lumiere.ambiante`, `ombres`, `brouillard`, `culling`, `streaming`. **Toutes** les
+   constantes du §2 y passent. Valeurs par défaut = valeurs actuelles : la phase T1 ne change **rien** à
+   l'image.
+2. **Les réglages sont des données.** `Tuning` se lit et s'écrit en JSON (`saves/vX.Y.Z/tuning/*.json`).
+   Le benchmark, le panneau et l'IA utilisent **le même fichier**.
+3. **Réglage ≠ débogage.** Les réglages changent le jeu. Les vues de débogage (couleurs de LOD, fil de
+   fer…) ne servent qu'à **voir** et ne sont jamais enregistrées.
+4. **Distances séparées.** Pour chaque couche : distance de **rendu**, de **génération**, de
+   **collision**, de **suppression**. Aujourd'hui elles sont confondues.
+5. **Budgets en millisecondes, pas en nombre.** « 10 tâches de tuiles » devient « 2 ms de génération
+   par image » : une grosse tuile ne bloque plus l'image.
+6. **Mesurer ne doit rien coûter quand c'est éteint.** Les mesures fines sont des `info_span!` de
+   `tracing` (Bevy) et des compteurs ; éteintes, elles ne coûtent rien.
+7. **Benchmark reproductible.** Graine fixe, parcours fixe, heure figée, réseau coupé, VSync et limite de
+   FPS désactivées, taille de fenêtre fixe, build **release**. Le fichier de résultat note la machine
+   (CPU, GPU, RAM, pilote), la version et le commit.
+8. **Pas de régression de taille.** Aucune optimisation ne réduit une distance, un rayon ou une échelle
+   du monde (règle des feuilles 0.10 et 0.11). On optimise le **coût**, pas le **monde**.
+
+---
+
+## 4. Ce qu'on mesure
+
+### 4.1 Mesures « joueur » (est-ce que ça tourne bien ?)
+
+| Mesure | Pourquoi |
+|---|---|
+| FPS moyen et **médian** | Performance générale |
+| **1 % bas**, **0,1 % bas** | Fluidité réelle |
+| **Temps d'image max** et nombre de **pics > 33 ms** | Les saccades que le joueur sent |
+| RAM du processus | Fuites, caches qui grossissent |
+| Nombre d'entités, de maillages, de matériaux | Fuites d'assets (maillages jamais libérés) |
+
+Repère : 60 FPS = 16,7 ms ; **120 FPS = 8,3 ms** (cible de la règle 13 de la 0.11) ; 144 FPS = 6,9 ms.
+
+### 4.2 Mesures « moteur » (pourquoi c'est lent ?)
+
+| Groupe | Mesures |
+|---|---|
+| CPU par système | LOD planètes, quadtree du terrain, réception des tuiles, décor, étoiles et secteurs, masquage des astres, lumière / jour-nuit, physique et collisions, interface, réseau |
+| Tâches asynchrones | tuiles en cours / en attente, temps moyen et max d'une tuile, tâches de LOD des astres |
+| GPU | temps total et **par passe** (ombres, opaque, transparent, post-traitement) avec `RenderDiagnosticsPlugin` de Bevy 0.15 si le GPU le permet |
+| Rendu | triangles affichés, nombre d'objets dessinés, lumières actives, lumières avec ombres |
+| Monde | tuiles chargées par niveau, astres visibles / masqués, systèmes chargés, secteurs d'étoiles |
+
+**Profilage profond** (option) : build avec la fonctionnalité `trace_tracy` de Bevy pour ouvrir une
+capture dans **Tracy** et voir chaque système image par image.
+
+### 4.3 Budget de l'image
+
+Panneau qui compare chaque groupe à son budget (cible 120 FPS = 8,3 ms) :
+
+```
+Terrain        2,1 / 2,0 ms  🟠
+Lumière        3,8 / 1,5 ms  🔴
+Ombres         3,2 / 1,5 ms  🔴
+LOD planètes   0,4 / 1,0 ms  🟢
+Étoiles        0,6 / 1,0 ms  🟢
+```
+
+---
+
+## 5. Le benchmark automatique
+
+### 5.1 Parcours fixe
+
+Lancement : `spacespore.exe --bench <plan.json>` (ou `/bench <nom>` dans le chat). Le jeu charge une
+**graine de benchmark** fixe dans une sauvegarde à part (`saves/bench/`), coupe le réseau, fige l'heure
+(`/heure`), puis enchaîne les étapes sans intervention :
+
+| # | Scénario | Ce qu'il charge | Ce qu'il mesure surtout |
+|---|---|---|---|
+| A | **Voyage** : étoile G → planète rocheuse → géante gazeuse → système suivant → trou de ver | streaming des systèmes, LOD des sphères, tâches de LOD | saccades de chargement, RAM |
+| B | **Plongée** : orbite → descente jusqu'à `FLIGHT_ZOOM` → vol bas → atterrissage (V) → tour à 360° → horizon → regard vers le ciel | quadtree des tuiles, décor, brume, soleil | génération de tuiles, décor, lumière |
+| C | **Nuit au sol** : même lieu, heure de nuit, ciel étoilé, galaxie, lune, lampe | étoiles, galaxie, ambiante de nuit, lumières locales | lumière, transparence |
+| D | **Galaxie** : on recule jusqu'à voir la galaxie entière, puis les galaxies voisines | secteurs d'étoiles, effets de galaxie (`galaxy_fx.rs`) | nombre d'objets, LOD des étoiles |
+| E | **Géante gazeuse** : on entre jusqu'au cœur | brouillard, `gas.rs` | brouillard, transparence |
+| F | **Pire cas** : planète à vie dense (beaucoup de décor), au coucher du soleil, ombres activées, lune visible, phares allumés, vol rapide à basse altitude | tout en même temps | ce qui casse en premier |
+
+Les astres du parcours sont trouvés **une fois** par la recherche de `/aller` puis **figés par leur
+identifiant** dans le plan : le parcours ne change jamais. La caméra suit des **trajectoires écrites**
+(points + durées), pas des commandes clavier.
+
+### 5.2 Fichiers produits
+
+Dossier `saves/bench/<date>-<nom>/` :
+
+- `frames.csv` : une ligne par image (`t, scenario, etape, frame_ms, cpu_ms, gpu_ms, tuiles, taches,
+  entites, triangles…`) ;
+- `resume.csv` : une ligne par passage (`config, a, b, c, fps_median, low1, low01, max_ms, pics, ram…`) ;
+- `rapport.md` : tableau lisible + les 5 réglages qui ont le plus d'effet ;
+- `machine.json` : CPU, GPU, RAM, pilote, version, commit, plan utilisé.
+
+### 5.3 Plan de balayage des variables
+
+`plan.json` décrit les passages :
+
+```json
 {
-  "lod": {
-    "planet": 5000,
-    "terrain": 2000,
-    "vegetation": 400
-  },
-  "lighting": {
-    "shadowDistance": 1500,
-    "shadowResolution": 2048,
-    "cascadeCount": 4
-  }
+  "graine": 483729,
+  "scenarios": ["B", "C", "F"],
+  "prechauffage_s": 20, "duree_s": 60, "repetitions": 3,
+  "base": "tuning/base.json",
+  "balayages": [
+    { "var": "lod.terrain.split_factor", "valeurs": [1.2, 1.5, 1.8, 2.2, 2.6] },
+    { "var": "ombres.taille_carte",      "valeurs": [512, 1024, 2048, 4096] },
+    { "var": "lod.decor.densite_max",    "valeurs": [0.02, 0.05, 0.1] }
+  ],
+  "croisements": [ ["lod.terrain.split_factor", "ombres.taille_carte"] ]
 }
+```
 
-Et ça devient parfait pour ton workflow avec IA.
+1. **Base** : réglages actuels, 3 répétitions.
+2. **Une variable à la fois** : les autres restent à la base. Courbe « coût selon la valeur ».
+3. **Croisements** seulement pour les 2 ou 3 variables qui comptent : on vérifie si elles s'additionnent
+   ou s'aggravent (A seul −15 %, C seul −12 %, A + C −40 % = elles interagissent).
+4. Le rapport classe les variables : **effet sur le FPS** et **effet sur l'image** (à vérifier à l'œil
+   sur les captures prises au même instant de chaque passage).
 
-L'IA peut modifier le JSON, lancer le benchmark, analyser le résultat, puis proposer une nouvelle configuration.
+Durée typique : 3 scénarios × 1 min × 3 répétitions = ~10 min par valeur ; un balayage complet se lance
+le soir et se lit le lendemain.
 
-10. Une amélioration encore plus importante : profils par distance
-Pour ton jeu spatial, je ne ferais pas uniquement :
+### 5.4 Le travail avec l'IA
 
-Global LOD distance
+On ne demande plus « optimise le jeu ». On donne `rapport.md` et `resume.csv` :
 
-Je ferais :
+> « `lod.terrain.split_factor` 1,8 → 2,6 : GPU 8,1 → 17,9 ms, 1 % bas 82 → 41. `decor.densite_max` :
+> effet < 0,3 ms. Trouve dans le code ce qui explique la première courbe. »
 
-Camera distance
-        ↓
-┌──────────────────────┐
-│      0–100 m         │
-│      HIGH            │
-├──────────────────────┤
-│     100–500 m        │
-│      MEDIUM          │
-├──────────────────────┤
-│    500m–2 km         │
-│       LOW            │
-├──────────────────────┤
-│      2–20 km         │
-│   VERY LOW           │
-├──────────────────────┤
-│       20 km+         │
-│   REPRESENTATION     │
-└──────────────────────┘
+---
 
-Et la même logique pour la lumière.
+## 6. Le panneau de réglages en direct
 
-11. Je rajouterais un "Performance Budget"
-C'est une excellente façon de travailler avec ton IA.
+Touche **F6** (ou `/reglages`). Panneau à onglets, chaque valeur avec un curseur, sa valeur par défaut
+et un bouton « remettre ».
 
-Par exemple :
+| Onglet | Contenu |
+|---|---|
+| **Performance** | FPS, temps d'image (courbe des 5 dernières secondes), 1 % bas, CPU / GPU, budget par groupe (§4.3), compteurs du §4.2 |
+| **LOD** | Sphères : 5 seuils (en rayons) et 6 résolutions, multiplicateur. Terrain : `split_factor`, profondeur max, taille max d'un voxel, tuiles max, durée de garde. Étoiles : distances des secteurs et des points. **Forcer un niveau** : AUTO / LOD0 … LOD5. **Geler le LOD** (le LOD ne bouge plus, on peut tourner autour pour voir ce qui est chargé). **Hystérésis** (marge pour éviter le clignotement entre deux niveaux). |
+| **Terrain et décor** | Distances de rendu / génération / collision / suppression (règle 4), budget de génération en ms par image, tâches max, densité du décor, distance du décor |
+| **Lumière** | Étoile : intensité, portée, couleur. Soleil au sol : éclairement jour, aube, crépuscule. Ambiante : espace, jour, nuit, teinte. Lune, brume de jour et de nuit, éclat de la galaxie la nuit. Phares et lampe : intensité, portée, angle. **Exposition** de la caméra. |
+| **Ombres** | Activées (étoile ponctuelle / soleil directionnel), taille des cartes (ponctuelle et directionnelle), **cascades** (nombre, distances, recouvrement), biais de profondeur et de normale, distance max des ombres |
+| **Brouillard et ciel** | Brouillard des géantes (visibilité, couleur), brume d'horizon, nuages, éruptions |
+| **Culling** | Interrupteurs et distances : astres (`astre_lod_cull`), décor, étoiles, nébuleuses ; afficher ce qui est masqué |
+| **Streaming** | Distances de chargement / déchargement des systèmes et des astres, chargements max par image, tâches de LOD en vol |
+| **Préréglages** | Bas / Moyen / Haut / Ultra / **Patate** / Personnalisé ; **enregistrer**, **charger**, **exporter / importer JSON** ; **comparer A / B** (une touche bascule entre deux réglages pour voir la différence d'image et de FPS) |
 
-Target : 60 FPS
-Budget : 16.67 ms
+---
 
-CPU budget : 8 ms
-GPU budget : 12 ms
+## 7. Les vues de débogage
 
-Puis :
+Touche **F7** pour passer d'une vue à l'autre (ou liste dans l'onglet). Rien n'est enregistré.
 
-Lighting       3.8 / 3.0 ms 🔴
-LOD            1.2 / 2.0 ms 🟢
-Voxel          2.1 / 2.0 ms 🟠
-Shadows        3.2 / 2.0 ms 🔴
-Atmosphere     0.8 / 1.5 ms 🟢
+| Vue | Ce qu'elle montre |
+|---|---|
+| Normale | Le jeu |
+| **Couleurs de LOD** | LOD0 rouge, LOD1 orange, LOD2 jaune, LOD3 vert, LOD4 bleu, LOD5 violet ; tuiles de terrain colorées par profondeur. « Pourquoi cette montagne est-elle encore en LOD0 à 4 km ? » |
+| **Bords des tuiles** | Contour de chaque tuile et de chaque secteur d'étoiles, avec son niveau |
+| **Fil de fer** | `WireframePlugin` de Bevy : densité réelle des maillages |
+| **États du streaming** | 🟢 chargé, 🟡 en cours, 🔵 généré pas encore affiché, 🔴 en déchargement, ⚫ masqué |
+| **Cascades d'ombres** | Rouge / jaune / vert / bleu par cascade |
+| **Lumière seule** | Tout en gris, on ne voit que l'éclairage (trouver les trous et les excès) |
+| **Normales** | Normales en couleur (faces à l'envers, coutures entre tuiles) |
+| **Collisions** | Volumes de collision du marcheur et du vaisseau |
+| **Masquage** | Ce que `astre_lod_cull` cache, vu depuis une caméra libre détachée |
 
-L'interface te dit donc directement où tu dépasses ton budget.
+**Caméra libre détachée** (option des vues) : on fige la caméra du jeu (LOD, masquage, ombres calculés
+depuis elle) et on se promène avec une seconde caméra pour voir le monde « de l'extérieur ».
 
-12. Et le truc que je ferais absolument avec ton IA
-Ne laisse pas l'IA avoir accès uniquement à :
+---
 
-lodDistance
-shadowDistance
-...
+## 8. Phases
 
-Donne-lui une structure clairement organisée :
+| Phase | Contenu | Taille |
+|---|---|---|
+| **T1. Réglages centralisés** | Module `src/tuning.rs` : ressource `Tuning` rangée par groupes (règle 1), **toutes** les constantes du §2 remplacées par des lectures de `Tuning`, chargement / enregistrement JSON (règle 2). Les préréglages de `graphics.rs` passent par `Tuning`. Valeurs par défaut identiques : **aucun changement visible** (captures avant / après dans la PR). | L |
+| **T2. Mesures** | Spans `tracing` sur les systèmes du §4.2, compteurs (tuiles, tâches, entités, maillages, triangles, lumières), `RenderDiagnosticsPlugin` (GPU par passe si possible), RAM du processus, 1 % / 0,1 % bas sur une fenêtre glissante, pics. Petit affichage F4 (FPS, ms, CPU / GPU, budget). Le journal F12 utilise ces mesures et écrit un CSV. Option `trace_tracy`. | M |
+| **T3. Panneau de réglages** | Le panneau F6 du §6, réglage en direct (chaque changement s'applique à l'image suivante, sans recharger le monde quand c'est possible, sinon bouton « reconstruire »), préréglages, export / import JSON, comparaison A / B. | L |
+| **T4. Vues de débogage** | Les vues du §7, forcer et geler le LOD, caméra libre détachée. | M |
+| **T5. Benchmark** | Mode `--bench` : sauvegarde de benchmark à graine fixe, réseau coupé, heure figée, trajectoires écrites, scénarios A à F (§5.1), fichiers du §5.2, captures d'écran aux mêmes instants. | L |
+| **T6. Balayage** | `plan.json` (§5.3) : base, une variable à la fois, croisements, répétitions, médianes, `rapport.md` avec le classement des variables. Première campagne complète, résultats joints à la PR. | M |
+| **T7. Optimiser le LOD** | À partir des résultats de T6. Pistes : **budget en ms** au lieu de 10 tâches (règle 5) ; **hystérésis** contre le clignotement ; distances séparées rendu / génération / collision (règle 4) ; tuiles prioritaires devant la caméra et au centre de l'écran ; **transition** douce entre niveaux (fondu ou morphing des hauteurs) ; seuils de sphère reliés à la taille **à l'écran** (pixels) plutôt qu'en rayons ; décor en **instances** partagées ; libération vérifiée des maillages. | L |
+| **T8. Optimiser la lumière** | À partir des résultats de T6. Pistes : **plus d'ombre cubemap** de l'étoile près d'une planète (6 rendus) : le soleil directionnel à cascades fait les ombres au sol, la lumière ponctuelle seulement l'éclairage lointain ; cascades réglées sur l'altitude ; une seule lumière avec ombres à la fois ; portée des phares et de la lampe limitée ; ambiante et brume continues entre espace, orbite et sol (plus de saut) ; exposition automatique douce. | L |
+| **T9. Préréglages finaux** | Bas / Moyen / Haut / Ultra / Patate recalculés depuis les mesures (chaque préréglage = un objectif de FPS sur la machine de test), proposés dans le menu Options. Benchmark rejoué : tableau avant / après 0.20 dans la PR. | S |
 
-Rendering
-├── LOD
-│   ├── Planet
-│   ├── Terrain
-│   ├── Vegetation
-│   └── Objects
-│
-├── Lighting
-│   ├── Sun
-│   ├── Ambient
-│   ├── Shadows
-│   └── Atmosphere
-│
-├── Culling
-│   ├── Frustum
-│   ├── Distance
-│   └── Occlusion
-│
-├── Voxel
-│   ├── Rendering
-│   ├── Generation
-│   └── Simulation
-│
-├── Streaming
-│
-└── PostProcessing
+Ordre : T1 → T2 → T3 → T4 → T5 → T6 → (T7 et T8 dans l'ordre que donnent les mesures) → T9.
 
-Comme ça, quand tu demandes à ton IA :
+---
 
-"Optimise le rendu d'une planète"
+## 9. Ce qui manquait dans la liste de départ
 
-elle peut travailler sur un système structuré, au lieu de modifier 15 variables dispersées dans le code.
+- **Six LOD indépendants** (§2.1) : la conversation ChatGPT parle d'un seul LOD ; ici il faut régler la
+  sphère, le terrain, le décor, les étoiles, le masquage et le streaming séparément.
+- **Ombres d'une lumière ponctuelle** : c'est probablement le premier coût caché (6 rendus de la scène).
+- **Hystérésis** du LOD : sans marge, une tuile au seuil change de niveau à chaque image.
+- **Saccades de compilation des shaders** au premier affichage d'un matériau : d'où le préchauffage.
+- **Fuites d'assets** : maillages et matériaux créés par tuile et jamais libérés (compteur T2).
+- **Origine flottante** : le recentrage (au-delà de 100 000) peut provoquer un pic ; il est mesuré à part.
+- **Captures d'écran** à chaque passage : un réglage qui double le FPS mais rend le jeu moche n'est pas
+  un gain.
+- **Machine notée** dans chaque résultat : les chiffres d'un autre PC ne se comparent pas.
+- **VSync et limite de FPS coupées** pendant le benchmark, sinon tout plafonne à 60 ou 144.
 
-En fait, ton panneau devrait ressembler à ça
-╔════════════════ RENDER DEBUG ════════════════╗
+---
 
- PERFORMANCE
- FPS                 118
- Frame                8.47 ms
- CPU                  5.32 ms
- GPU                  7.81 ms
+## 10. Questions à trancher
 
-───────────────────────────────────────────────
+| # | Question | Proposition |
+|---|---|---|
+| Q1 | Interface du panneau : **bevy_egui** (curseurs, onglets et courbes tout faits, une dépendance de plus) ou **bevy_ui** maison (comme le reste du jeu) ? | **bevy_egui** pour le panneau de débogage seulement : 5 fois moins de code, et il ne touche pas l'interface du jeu. |
+| Q2 | Cible de FPS ? | **120 FPS** (8,3 ms) sur la machine de test, comme la règle 13 de la 0.11 ; préréglage Patate à 60 FPS sur une petite machine. |
+| Q3 | Panneau et vues accessibles aux joueurs, ou réservés au développement ? | Dans tous les builds, mais **cachés** : `/reglages` et F6 seulement après `/debug`. |
+| Q4 | Benchmark : durée maximale d'une campagne ? | Une nuit (~8 h) ; un passage rapide (base seule, 3 scénarios) en ~5 min pour vérifier une PR. |
+| Q5 | Quelle est la machine de test (CPU, GPU, RAM) ? | À noter ici une fois pour toutes. |
+| Q6 | Les PR des autres versions (0.11 B/C/D, 0.12 éditeur) doivent-elles passer le benchmark rapide ? | Oui à partir de T6 : tableau avant / après dans chaque PR qui touche au rendu. |
 
- LOD
- ☑ Automatic
- Planet distance       5000
- Terrain LOD0          100
- Terrain LOD1          300
- Terrain LOD2         1000
- Terrain LOD3         3000
- Vegetation            400
+---
 
- [AUTO] [LOD0] [LOD1] [LOD2] [LOD3]
+## 11. Prompts (à coller dans une nouvelle session, une par phase)
 
-───────────────────────────────────────────────
+Chaque prompt suppose : « Lis `ROADMAP-0.20-debug-opti.md` et `CLAUDE.md`. Crée la branche
+`claude/roadmap-0-20-tX` depuis `main`. Build release. Ouvre une PR non fusionnée avec mesures et
+captures. »
 
- LIGHTING
- Sun intensity          1.0
- Ambient                 0.4
- Shadow distance       1500
- Shadow resolution     2048
- Cascades                  4
- Atmosphere              HIGH
-
-───────────────────────────────────────────────
-
- CULLING
- ☑ Frustum
- ☑ Distance
- ☑ Occlusion
-
-───────────────────────────────────────────────
-
- VOXELS
- Render distance        2000
- Generation distance    2500
- Simulation distance    500
- Max chunks             500
- Generation budget      2 ms
-
-───────────────────────────────────────────────
-
- DEBUG VIEW
- ○ Normal
- ○ LOD
- ○ Wireframe
- ○ Normals
- ○ Shadows
- ○ Chunks
- ○ Culling
- ○ Overdraw
-
-───────────────────────────────────────────────
-
- [SAVE PRESET] [LOAD] [EXPORT JSON]
-
-╚══════════════════════════════════════════════╝
-
-Et je séparerais bien "réglages" et "debug". Les réglages changent le comportement réel du jeu ; les modes debug servent à comprendre ce que le moteur est en train de faire.
-
-Avec ton projet, les 4 systèmes que je mettrais en priorité absolue dans cette interface sont : LOD → culling → shadows/lighting → streaming. Ce sont eux qui te permettront ensuite de faire des benchmarks propres et de donner à l'IA des données exploitables plutôt que de la laisser "optimiser à l'aveugle".
+- **T1** — « Phase T1 de `ROADMAP-0.20-debug-opti.md` : crée `src/tuning.rs` avec la ressource `Tuning`
+  rangée par groupes (règle 1). Remplace toutes les constantes listées au §2 (`lod.rs`, `terrain.rs`,
+  `surface.rs`, `planet.rs`, `decor.rs`, `gas.rs`, `graphics.rs`, `astre/mod.rs`) par des lectures de
+  `Tuning`, avec les valeurs actuelles par défaut. JSON dans `saves/vX.Y.Z/tuning/`. Aucun changement
+  visible : joins des captures avant / après au même endroit. »
+- **T2** — « Phase T2 : ajoute les mesures du §4 (spans `tracing`, compteurs, `RenderDiagnosticsPlugin`,
+  RAM, 1 % et 0,1 % bas, pics), l'affichage F4 et le CSV du journal F12. Option de build `trace_tracy`.
+  Vérifie que les mesures éteintes ne coûtent rien (FPS avant / après). »
+- **T3** — « Phase T3 : panneau F6 du §6 (selon la décision Q1), réglage en direct de tout `Tuning`,
+  préréglages, export / import JSON, comparaison A / B. »
+- **T4** — « Phase T4 : vues de débogage du §7 (F7), forcer et geler le LOD, caméra libre détachée. »
+- **T5** — « Phase T5 : mode `--bench` du §5 : graine fixe, réseau coupé, heure figée, trajectoires
+  écrites, scénarios A à F, fichiers `frames.csv`, `resume.csv`, `rapport.md`, `machine.json`,
+  captures. »
+- **T6** — « Phase T6 : balayage `plan.json` du §5.3 (base, une variable à la fois, croisements,
+  3 répétitions, médianes, classement). Lance une première campagne sur les variables de LOD et
+  d'ombres et joins `rapport.md` à la PR. »
+- **T7** — « Phase T7 : optimise le LOD d'après le dernier `rapport.md` (pistes du §8). Chaque
+  changement : benchmark avant / après et captures. Aucune distance du monde réduite (règle 8). »
+- **T8** — « Phase T8 : optimise la lumière et les ombres d'après le dernier `rapport.md` (pistes du §8),
+  benchmark avant / après et captures jour, nuit, coucher, espace. »
+- **T9** — « Phase T9 : recalcule les préréglages depuis les mesures, mets-les dans le menu Options,
+  rejoue le benchmark complet et joins le tableau avant / après 0.20. »
