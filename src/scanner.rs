@@ -242,6 +242,7 @@ fn update_scanner(
     settings: Res<GameSettings>,
     cache: Res<ProfileCache>,
     target: Res<CameraTarget>,
+    weather: Res<crate::world_clock::LocalWeather>,
     star_q: Query<&StarId, With<StarRoot>>,
     mut scanner: ResMut<Scanner>,
     mut panel: Query<&mut Visibility, With<ScannerPanel>>,
@@ -262,6 +263,12 @@ fn update_scanner(
             None => (String::new(), 0),
         };
     }
+    // Heure, saison et températures du jour et de l'année, en direct (0.11)
+    let live = if weather.body.is_some() && weather.body == Some(target.0) { weather.scanner_line() } else { String::new() };
+    let full = match scanner.text.rsplit_once('\n') {
+        Some((head, tail)) if !live.is_empty() => format!("{head}\n{live}\n{tail}"),
+        _ => scanner.text.clone(),
+    };
     let show = scanner.visible && !scanner.text.is_empty();
     for mut v in &mut panel {
         let wanted = if show { Visibility::Inherited } else { Visibility::Hidden };
@@ -275,8 +282,8 @@ fn update_scanner(
         _ => Color::srgb(0.85, 0.92, 1.0),
     };
     for (mut t, mut c) in &mut text {
-        if t.0 != scanner.text {
-            t.0 = scanner.text.clone();
+        if t.0 != full {
+            t.0 = full.clone();
         }
         if c.0 != color {
             c.0 = color;

@@ -330,6 +330,8 @@ pub struct PlanetChunk {
     pub grid_y: usize,
     pub current_lod: LodLevel,
     pub planet_id: usize,
+    /// Saison avec laquelle le maillage a été construit (neige et calottes, 0.11).
+    pub season: crate::planetgen::climate::Season,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1199,7 +1201,7 @@ fn spawn_planet_meshes(
                 Mesh3d(meshes.add(mesh)),
                 MeshMaterial3d(rock_material.clone()),
                 Transform::IDENTITY,
-                PlanetChunk { face, grid_x: gx, grid_y: gy, current_lod: lod, planet_id },
+                PlanetChunk { face, grid_x: gx, grid_y: gy, current_lod: lod, planet_id, season: Default::default() },
                 LodChunk,
                 FarMesh,
             ))
@@ -1838,10 +1840,12 @@ const MAX_LOD_TASKS_IN_FLIGHT: usize = 8;
 pub struct LodTask {
     task: Task<Mesh>,
     lod: LodLevel,
+    season: crate::planetgen::climate::Season,
 }
 
 fn update_lod(
     mut commands: Commands,
+    clock: Res<WorldClock>,
     surface: Res<Surface>,
     settings: Res<GameSettings>,
     camera_q: Query<&Transform, With<Camera3d>>,
@@ -1868,6 +1872,7 @@ fn update_lod(
                 *mesh = new_mesh;
             }
             chunk.current_lod = task.lod;
+            chunk.season = task.season;
             commands.entity(entity).remove::<LodTask>();
         } else {
             in_flight += 1;
@@ -1901,20 +1906,22 @@ fn update_lod(
         let v = (chunk.grid_y as f32 + 0.5) / divs as f32;
         let center = chunk.face.to_sphere_pos(u, v) * pcfg.radius;
         let new_lod = compute_lod_level(cam_local, center, pcfg.radius);
+        // Saison de la planète, arrondie (1°, 1 K) : la neige avance et recule vue de l'espace
+        let season = crate::world_clock::Spin::planet(pcfg).season(clock.secs, pcfg.climate().mean_c).quantized(false);
 
-        if new_lod != chunk.current_lod {
+        if new_lod != chunk.current_lod || season != chunk.season {
             let (face, gx, gy) = (chunk.face, chunk.grid_x, chunk.grid_y);
             let (radius, sea, height, seed, noise, detail) = (
                 pcfg.radius, pcfg.sea_level, pcfg.terrain_height,
                 pcfg.seed, pcfg.noise_scale, pcfg.detail_scale,
             );
-            let (climate, hydro, atmosphere, relief, biomes) = (pcfg.climate(), pcfg.hydrology.hydro, pcfg.atmosphere, pcfg.geology.relief, pcfg.biomes);
+            let (climate, hydro, atmosphere, relief, biomes) = (pcfg.climate().at(season), pcfg.hydrology.hydro, pcfg.atmosphere, pcfg.geology.relief, pcfg.biomes);
             let task = pool.spawn(async move {
                 build_chunk_mesh(face, gx, gy, divs, radius, sea, height, seed, noise, detail, new_lod, climate, hydro, atmosphere, relief, biomes)
             });
             // `try_insert` : le morceau a pu disparaître dans la même image (système quitté,
             // téléportation `/aller`) ; un `insert` ferait planter le jeu
-            commands.entity(entity).try_insert(LodTask { task, lod: new_lod });
+            commands.entity(entity).try_insert(LodTask { task, lod: new_lod, season });
             in_flight += 1;
         }
     }

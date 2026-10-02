@@ -95,6 +95,12 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   phase et taille apparente des autres astres), brume moins opaque la nuit (`haze_opacity`, lunes et etoiles
   visibles), galaxie visible la nuit (`NIGHT_GALAXY`), lampe du marcheur / phares du vaisseau (touche N, allumes
   dans le noir, puissance calee sur la lumiere de l'etoile : `update_lamps`). Ligne jour/nuit = lumiere de l'etoile.
+  A3 = temperature vivante : `Climate::season` (`Season` : declinaison avec retard, excentricite, longitude du
+  soleil ; jamais sauvee), `Climate::at(season)`, `temperature(lat signee, alt, Some(Moment { hour }))` (max a
+  14 h 30, `DAY_PEAK`), givre du matin (`Climate::frost_at`, biomes). `Spin::season` ; amplitude jour/nuit
+  `atmosphere::diurnal_amplitude`. Tuiles reconstruites quand la saison arrondie change (`TileStore::generation`,
+  `surface::update_season`), maillage lointain aussi (`PlanetChunk::season`). `world_clock::LocalWeather` :
+  heure, saison, temperature, min/max du jour et de l'annee (HUD, scanner, `/heure`). PROTOCOL 17.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

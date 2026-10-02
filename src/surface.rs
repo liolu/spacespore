@@ -72,7 +72,7 @@ impl Plugin for SurfacePlugin {
             .add_systems(Update, update_galaxy_dim)
             .add_systems(
                 Update,
-                (surface_control.in_set(SurfaceControl), surface_light, update_lamps, update_tiles, update_hud)
+                (surface_control.in_set(SurfaceControl), surface_light, update_lamps, update_season, update_tiles, update_hud)
                     .chain()
                     .after(crate::planet::orbit_planets)
                     .after(crate::planet::orbit_moons),
@@ -466,6 +466,19 @@ impl Surface {
             Phase::Flying => Some(self.fpos),
             Phase::Descending | Phase::Ascending => Some(self.dir1),
         }
+    }
+
+    /// Altitude relative du sol (0 = niveau de la mer, 1 = sommets) sous le marcheur ou le
+    /// vaisseau en vol bas : les sommets sont plus froids.
+    pub fn ground_altitude(&self) -> Option<f32> {
+        let t = self.terrain.as_ref()?;
+        let p = &t.params;
+        let r = match self.phase {
+            Phase::Walking => self.walker.pos.length(),
+            Phase::Flying => t.ground(self.fpos.normalize_or(Vec3::Y)).top,
+            _ => return None,
+        };
+        Some(crate::planetgen::climate::relative_altitude((r - p.radius) / p.terrain_height.max(1.0)))
     }
 
     /// Direction (repère fixe de l'astre, depuis son centre) au-dessus de laquelle le vaisseau
@@ -1324,6 +1337,37 @@ fn update_lamps(
     }
 }
 
+/// Saison (et heure, pour le givre du matin) du terrain où l'on séjourne : neige et calottes
+/// avancent et reculent ; les tuiles sont reconstruites quand elle change vraiment.
+fn update_season(
+    clock: Res<crate::world_clock::WorldClock>,
+    settings: Res<GameSettings>,
+    mut surface: ResMut<Surface>,
+    planets: Query<(&Transform, &PlanetId), With<PlanetRoot>>,
+    moons: Query<(&Transform, &MoonId), With<MoonRoot>>,
+    stars: Query<&Transform, With<StarRoot>>,
+) {
+    let Some(kind) = surface.body() else { return };
+    let Some((spin, _, _)) = crate::world_clock::body_spin(&settings, &kind) else { return };
+    let tf = match kind {
+        TargetKind::Planet(id) => planets.iter().find(|(_, p)| p.0 == id).map(|(t, _)| *t),
+        TargetKind::Moon(pid, mi) => moons.iter().find(|(_, m)| m.planet_idx == pid && m.moon_idx == mi).map(|(t, _)| *t),
+        _ => None,
+    };
+    let Some(tf) = tf else { return };
+    let Some(star) = stars.iter().map(|s| s.translation).min_by(|a, b| a.distance_squared(tf.translation).total_cmp(&b.distance_squared(tf.translation))) else { return };
+    let Some(terrain) = surface.terrain.as_mut() else { return };
+    let p = &mut terrain.params;
+    let mut season = spin.season(clock.secs, p.climate.mean_c);
+    season.sun_lon = Some(crate::world_clock::sun_longitude(tf.rotation, star - tf.translation));
+    // L'heure ne compte que pour le givre (de l'eau, de l'air)
+    let frost = p.atmosphere && !p.airless && p.hydro.snow;
+    let season = season.quantized(frost);
+    if p.climate.season != season {
+        p.climate = p.climate.at(season);
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 //  Tuiles de terrain
 // ─────────────────────────────────────────────────────────────────────────
@@ -1331,15 +1375,21 @@ fn update_lamps(
 struct TileEntry {
     entity: Entity,
     last_needed: f64,
+    /// Climat (saison, heure) avec lequel la tuile a été construite : `TileStore::generation`.
+    generation: u32,
 }
 
 #[derive(Resource, Default)]
 struct TileStore {
     body: Option<TargetKind>,
     built: HashMap<TileKey, TileEntry>,
-    tasks: HashMap<TileKey, Task<(Mesh, Vec<DecorInstance>)>>,
+    tasks: HashMap<TileKey, (Task<(Mesh, Vec<DecorInstance>)>, u32)>,
     material: Option<Handle<StandardMaterial>>,
     far_hidden: bool,
+    /// Climat des tuiles : quand la saison (ou l'heure, pour le givre) change, on les reconstruit
+    /// une à une, en gardant les anciennes affichées en attendant.
+    climate: Option<crate::planetgen::climate::Climate>,
+    generation: u32,
 }
 
 fn set_far_visibility(
@@ -1395,6 +1445,7 @@ fn update_tiles(
         }
         store.far_hidden = false;
         store.body = wanted;
+        store.climate = None;
     }
     let Some(kind) = store.body else { return };
     let (Some(terrain), Ok(cam)) = (surface.terrain.as_ref(), cam_q.get_single()) else { return };
@@ -1402,6 +1453,16 @@ fn update_tiles(
     let params = terrain.params;
     let layout = terrain.layout;
     let now = time.elapsed_secs_f64();
+    if store.climate != Some(params.climate) {
+        // Pas de nouvelle saison tant que la précédente n'est pas finie (temps très accéléré)
+        let rebuilding = store.built.values().any(|e| e.generation != store.generation);
+        if store.climate.is_none() || !rebuilding {
+            store.climate = Some(params.climate);
+            store.generation = store.generation.wrapping_add(1);
+        }
+    }
+    let generation = store.generation;
+    let params = BodyParams { climate: store.climate.unwrap_or(params.climate), ..params };
 
     let material = store
         .material
@@ -1436,42 +1497,54 @@ fn update_tiles(
         for face in 0..6 {
             let key = TileKey::root(face);
             let entity = spawn_tile(&mut commands, &mut meshes, &material, root, build_tile_mesh(&params, key));
-            store.built.insert(key, TileEntry { entity, last_needed: now });
+            store.built.insert(key, TileEntry { entity, last_needed: now, generation });
         }
     }
 
     // Récupère les tuiles terminées
     let finished: Vec<TileKey> = store.tasks.keys().copied().collect();
     for key in finished {
-        let Some(task) = store.tasks.get_mut(&key) else { continue };
+        let Some((task, built_gen)) = store.tasks.get_mut(&key) else { continue };
+        let built_gen = *built_gen;
         if let Some((mesh, objects)) = block_on(future::poll_once(task)) {
             store.tasks.remove(&key);
             let entity = spawn_tile(&mut commands, &mut meshes, &material, root, mesh);
             // Décor de la tuile (tuiles proches seulement) : il disparaît avec elle
             decor.spawn(&mut commands, entity, &objects);
-            store.built.insert(key, TileEntry { entity, last_needed: now });
+            // Nouvelle saison : la tuile remplace l'ancienne (visible jusque-là)
+            let shown = store.built.get(&key).and_then(|old| vis.get(old.entity).ok().map(|v| *v)).unwrap_or(Visibility::Hidden);
+            if let Ok(mut v) = vis.get_mut(entity) {
+                *v = shown;
+            }
+            if let Some(old) = store.built.insert(key, TileEntry { entity, last_needed: now, generation: built_gen }) {
+                commands.entity(old.entity).despawn_recursive();
+            }
         }
     }
 
     // Lance les constructions manquantes : d'abord les grosses tuiles, puis les plus proches
-    let mut missing: Vec<(u8, f32, TileKey)> = needed
+    // (les tuiles d'une ancienne saison passent après les manquantes)
+    let mut missing: Vec<(bool, u8, f32, TileKey)> = needed
         .iter()
-        .filter(|k| !store.built.contains_key(k) && !store.tasks.contains_key(k))
-        .map(|k| (k.depth, (cam_local - k.center_dir() * params.radius).length_squared(), *k))
+        .filter(|k| !store.tasks.contains_key(k) && store.built.get(k).is_none_or(|e| e.generation != generation))
+        .map(|k| (store.built.contains_key(k), k.depth, (cam_local - k.center_dir() * params.radius).length_squared(), *k))
         .collect();
-    missing.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    missing.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.total_cmp(&b.2)));
     let pool = AsyncComputeTaskPool::get();
-    for (_, _, key) in missing {
+    for (_, _, _, key) in missing {
         if store.tasks.len() >= MAX_TILE_TASKS {
             break;
         }
         let p = params;
         store.tasks.insert(
             key,
-            pool.spawn(async move {
-                let terrain = Terrain::new(p);
-                (build_tile_mesh_with(&terrain, key), tile_decor(&terrain, key))
-            }),
+            (
+                pool.spawn(async move {
+                    let terrain = Terrain::new(p);
+                    (build_tile_mesh_with(&terrain, key), tile_decor(&terrain, key))
+                }),
+                generation,
+            ),
         );
     }
 
@@ -1604,6 +1677,7 @@ fn update_hud(
     surface: Res<Surface>,
     target: Res<CameraTarget>,
     settings: Res<GameSettings>,
+    weather: Res<crate::world_clock::LocalWeather>,
     mut hud: Query<&mut Text, With<SurfaceHud>>,
 ) {
     let label = match surface.phase {
@@ -1614,7 +1688,10 @@ fn update_hud(
             None => String::new(),
         },
         Phase::Flying if surface.gaseous() => "ZQSD/WASD : voler   A/D : tourner   Maj : accelerer   Espace/Ctrl : monter/descendre\nClic droit : orbiter   Molette : zoom (>1000 : orbite)   Pas de sol : la pression abime la coque".to_string(),
-        Phase::Flying => "ZQSD/WASD : voler   A/D : tourner   Maj : accelerer   Espace/Ctrl : monter/descendre\nClic droit : orbiter   Molette : zoom (>1000 : orbite)   V : atterrir".to_string(),
+        Phase::Flying => format!(
+            "ZQSD/WASD : voler   A/D : tourner   Maj : accelerer   Espace/Ctrl : monter/descendre\nClic droit : orbiter   Molette : zoom (>1000 : orbite)   V : atterrir   N : phares\n{}",
+            weather.short()
+        ),
         Phase::Descending => "Atterrissage en cours...".to_string(),
         Phase::Ascending => "Decollage en cours...".to_string(),
         Phase::Walking => {
@@ -1625,13 +1702,10 @@ fn update_hud(
             let params = surface.params();
             let radius = params.map_or(0.0, |p| p.radius);
             let alt = w.pos.length() - radius;
-            // Température locale : latitude et altitude (le sommet des montagnes est plus froid)
-            let temp = match (&surface.terrain, params) {
-                (Some(t), Some(p)) => t.temperature_at(up, alt / p.terrain_height.max(1.0)),
-                _ => 0.0,
-            };
+            // Heure, saison et température locales (latitude, altitude, heure, saison)
+            let now = if weather.body.is_some() { weather.short() } else { String::new() };
             format!(
-                "ZQSD/WASD : marcher   Maj : courir   Espace : sauter   V : decoller\nLat {lat:.1}  Lon {lon:.1}  Alt {alt:.0}  Temp. {temp:.0} C{}",
+                "ZQSD/WASD : marcher   Maj : courir   Espace : sauter   V : decoller   N : lampe\nLat {lat:.1}  Lon {lon:.1}  Alt {alt:.0}   {now}{}",
                 match (w.in_water, w.liquid) {
                     (false, _) => "",
                     (_, crate::planet::VoxelType::Methane) => "  (dans le methane)",
@@ -1708,7 +1782,7 @@ mod tests {
         let mut w = Walker::spawn(&t, dir, Vec3::X);
         settle(&mut w, &t, 3.0);
         let start = w.pos;
-        let spin = Spin { tilt: 0.4, day_s: day_secs(24.0), year_s: 4.0 * season_secs(365.0), day_phase: 0.3, year_phase: 0.1, locked: false };
+        let spin = Spin { tilt: 0.4, day_s: day_secs(24.0), year_s: 4.0 * season_secs(365.0), day_phase: 0.3, year_phase: 0.1, locked: false, ecc: 0.0, peri: 0.0 };
         let dt = 1.0 / 60.0;
         let mut clock = 5_000.0f64;
         for k in 0..(600 * 60) {

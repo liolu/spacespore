@@ -17,6 +17,7 @@ use bevy::prelude::*;
 use std::f64::consts::TAU;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::planetgen::climate::{Climate, Moment, Season, DAY_PEAK};
 use crate::settings::{GameSettings, MoonConfig, PlanetConfig};
 
 /// Secondes de jeu par heure de la planète (Q1 : 1 h = 1 min).
@@ -82,7 +83,8 @@ impl Plugin for WorldClockPlugin {
             .add_event::<ClockCommand>()
             .add_systems(Startup, load_clock)
             .add_systems(First, tick_clock)
-            .add_systems(Update, (save_clock, run_clock_commands))
+            .init_resource::<LocalWeather>()
+            .add_systems(Update, (save_clock, update_local_weather, run_clock_commands).chain())
             .add_systems(Last, save_clock_on_exit);
     }
 }
@@ -149,6 +151,9 @@ pub struct Spin {
     pub year_phase: f64,
     /// Rotation synchrone : la face +X regarde toujours l'astre central (étoile ou planète).
     pub locked: bool,
+    /// Excentricité de l'orbite (autour de l'étoile) et moment du périhélie dans l'année (0..1).
+    pub ecc: f64,
+    pub peri: f64,
 }
 
 impl Spin {
@@ -160,6 +165,8 @@ impl Spin {
             day_phase: phase_of(p.seed, 1),
             year_phase: phase_of(p.seed, 2),
             locked: p.tidally_locked,
+            ecc: p.eccentricity as f64,
+            peri: phase_of(p.seed, 3),
         }
     }
 
@@ -167,12 +174,31 @@ impl Spin {
     /// celles de sa planète.
     pub fn moon(m: &MoonConfig, parent: &PlanetConfig) -> Self {
         let _ = m;
-        Self { tilt: 0.0, day_s: 0.0, year_s: 4.0 * season_secs(parent.period_days), day_phase: 0.0, year_phase: phase_of(parent.seed, 2), locked: true }
+        Self {
+            tilt: 0.0,
+            day_s: 0.0,
+            year_s: 4.0 * season_secs(parent.period_days),
+            day_phase: 0.0,
+            year_phase: phase_of(parent.seed, 2),
+            locked: true,
+            ecc: parent.eccentricity as f64,
+            peri: phase_of(parent.seed, 3),
+        }
     }
 
     /// Avancement de l'année (0..1) : 0 = été du nord (l'axe penche vers l'étoile).
     pub fn year_fraction(&self, t: f64) -> f64 {
         (t / self.year_s + self.year_phase).rem_euclid(1.0)
+    }
+
+    /// Saison à l'instant `t` pour un astre de température moyenne `mean_c` (°C) : déclinaison de
+    /// l'étoile avec le retard des saisons (un mois sur douze, l'été le plus chaud vient après le
+    /// solstice) et écart dû à l'excentricité (plus chaud au périhélie : T ∝ r^-1/2).
+    pub fn season(&self, t: f64, mean_c: f32) -> Season {
+        let y = self.year_fraction(t);
+        let decl = if self.locked { 0.0 } else { (self.tilt.sin() * (TAU * (y - SEASON_LAG)).cos()).asin() as f32 };
+        let offset = ((mean_c as f64 + 273.15).max(0.0) * 0.5 * self.ecc * (TAU * (y - self.peri - SEASON_LAG)).cos()) as f32;
+        Season { decl, offset, sun_lon: None }
     }
 
     /// L'astre a des saisons (axe incliné de plus de 3°).
@@ -198,6 +224,15 @@ impl Spin {
         let angle = TAU * (t / self.day_s + self.day_phase).rem_euclid(1.0);
         (tilt * Quat::from_rotation_y(angle as f32)).normalize()
     }
+}
+
+/// Retard des saisons sur l'étoile (fraction d'année).
+pub const SEASON_LAG: f64 = 1.0 / 12.0;
+
+/// Longitude (repère fixe de l'astre) du point où l'étoile est au zénith.
+pub fn sun_longitude(rotation: Quat, to_star: Vec3) -> f32 {
+    let s = rotation.inverse() * to_star;
+    s.x.atan2(s.z)
 }
 
 /// Heure locale (0..24) en un point `p` du repère fixe de l'astre, l'étoile étant dans la
@@ -236,6 +271,169 @@ pub fn hour_text(h: f32) -> String {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+//  Météo locale : heure, saison, température (HUD, scanner, /heure)
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Heure, saison et températures là où l'on est (posé, en vol bas) ou sous le vaisseau, sur
+/// l'astre visité ou ciblé. Recalculé à chaque image.
+#[derive(Resource, Default, Clone)]
+pub struct LocalWeather {
+    pub body: Option<crate::TargetKind>,
+    pub name: String,
+    /// Heure locale (0..24), hauteur de l'étoile (degrés), latitude (degrés).
+    pub hour: f32,
+    pub sun_deg: f32,
+    pub lat_deg: f32,
+    pub season: &'static str,
+    pub locked: bool,
+    pub day_s: f64,
+    pub season_s: f64,
+    /// Température maintenant, minimum et maximum du jour, puis de l'année (°C).
+    pub temp: f32,
+    pub day: (f32, f32),
+    pub year: (f32, f32),
+}
+
+impl LocalWeather {
+    /// Ligne courte du HUD : « 14 h 05  ete  12 C ».
+    pub fn short(&self) -> String {
+        if self.body.is_none() {
+            return String::new();
+        }
+        format!("{}  {}  {:.0} C", hour_text(self.hour), self.season, self.temp)
+    }
+
+    /// Ligne du scanner : températures du jour et de l'année à cette latitude.
+    pub fn scanner_line(&self) -> String {
+        if self.body.is_none() {
+            return String::new();
+        }
+        format!(
+            "Ici ({:.0} deg) : {}, {}, {:.0} C\nJour : {:.0} a {:.0} C   Annee : {:.0} a {:.0} C",
+            self.lat_deg,
+            hour_text(self.hour),
+            self.season,
+            self.temp,
+            self.day.0,
+            self.day.1,
+            self.year.0,
+            self.year.1
+        )
+    }
+
+    /// Réponse de `/heure`.
+    pub fn long(&self) -> String {
+        let day = if self.locked { "rotation synchrone : jour ou nuit eternels".to_string() } else { format!("jour de {}", duration_text(self.day_s)) };
+        format!(
+            "{} : {}, soleil a {:.0} deg, {} (lat. {:.0} deg), {:.0} C (jour {:.0} a {:.0}, annee {:.0} a {:.0}) - {day}, saison de {}.",
+            self.name,
+            hour_text(self.hour),
+            self.sun_deg,
+            self.season,
+            self.lat_deg,
+            self.temp,
+            self.day.0,
+            self.day.1,
+            self.year.0,
+            self.year.1,
+            duration_text(self.season_s),
+        )
+    }
+}
+
+/// Rotation et climat (sans saison) d'une planète ou d'une lune, et son nom.
+pub fn body_spin(settings: &GameSettings, kind: &crate::TargetKind) -> Option<(Spin, Climate, String)> {
+    use crate::TargetKind;
+    let climate = crate::surface::body_params(settings, kind)?.climate;
+    match *kind {
+        TargetKind::Planet(id) => {
+            let sys = settings.systems.get(id / 1000)?;
+            let p = sys.planets().get(id % 1000)?;
+            Some((Spin::planet(p), climate, format!("{} {}", sys.name, id % 1000 + 1)))
+        }
+        TargetKind::Moon(pid, mi) => {
+            let sys = settings.systems.get(pid / 1000)?;
+            let planets = sys.planets();
+            let p = planets.get(pid % 1000)?;
+            let m = p.moons.get(mi)?;
+            Some((Spin::moon(m, p), climate, format!("{} {} {}", sys.name, pid % 1000 + 1, (b'a' + mi as u8) as char)))
+        }
+        _ => None,
+    }
+}
+
+/// Températures (°C) au point `dir` du repère fixe de l'astre, à l'altitude relative `alt` :
+/// maintenant, min / max du jour, min / max de l'année.
+pub fn temperatures(spin: &Spin, climate: &Climate, t: f64, hour: f32, dir: Vec3, alt: f32) -> (f32, (f32, f32), (f32, f32)) {
+    let lat = dir.y.clamp(-1.0, 1.0).asin();
+    let today = climate.at(spin.season(t, climate.mean_c));
+    let at = |c: &Climate, h: f32| c.temperature(lat, alt, Some(Moment { hour: h }));
+    let now = at(&today, hour / 24.0);
+    let (lo, hi) = (DAY_PEAK - 0.5, DAY_PEAK);
+    let day = if spin.locked { (now, now) } else { (at(&today, lo), at(&today, hi)) };
+    let mut year = (f32::MAX, f32::MIN);
+    for k in 0..24 {
+        let tk = t + spin.year_s * k as f64 / 24.0;
+        let c = climate.at(spin.season(tk, climate.mean_c));
+        let (a, b) = if spin.locked { (at(&c, hour / 24.0), at(&c, hour / 24.0)) } else { (at(&c, lo), at(&c, hi)) };
+        year = (year.0.min(a), year.1.max(b));
+    }
+    (now, day, year)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn update_local_weather(
+    clock: Res<WorldClock>,
+    settings: Res<GameSettings>,
+    surface: Res<crate::surface::Surface>,
+    target: Res<crate::CameraTarget>,
+    ship_q: Query<&Transform, With<crate::Ship>>,
+    planets: Query<(&Transform, &crate::planet::PlanetId), With<crate::planet::PlanetRoot>>,
+    moons: Query<(&Transform, &crate::planet::MoonId), With<crate::planet::MoonRoot>>,
+    stars: Query<&Transform, With<crate::planet::StarRoot>>,
+    mut weather: ResMut<LocalWeather>,
+) {
+    use crate::TargetKind;
+    let kind = surface.body().unwrap_or(target.0);
+    let tf = match kind {
+        TargetKind::Planet(id) => planets.iter().find(|(_, p)| p.0 == id).map(|(t, _)| *t),
+        TargetKind::Moon(pid, mi) => moons.iter().find(|(_, m)| m.planet_idx == pid && m.moon_idx == mi).map(|(t, _)| *t),
+        _ => None,
+    };
+    let (Some(tf), Some((spin, climate, name))) = (tf, body_spin(&settings, &kind)) else {
+        if weather.body.is_some() {
+            *weather = LocalWeather::default();
+        }
+        return;
+    };
+    let Some(star) = stars.iter().map(|s| s.translation).min_by(|a, b| a.distance_squared(tf.translation).total_cmp(&b.distance_squared(tf.translation))) else { return };
+    let to_star = (star - tf.translation).normalize_or(Vec3::X);
+    // Le point : là où l'on est posé ou survole, sinon sous le vaisseau
+    let p = surface.local_point().unwrap_or_else(|| {
+        let ship = ship_q.get_single().map_or(tf.translation + Vec3::Y, |s| s.translation);
+        tf.rotation.inverse() * (ship - tf.translation)
+    });
+    let dir = p.normalize_or(Vec3::Y);
+    let alt = surface.ground_altitude().unwrap_or(0.0);
+    let hour = local_hour(tf.rotation, to_star, dir);
+    let (temp, day, year) = temperatures(&spin, &climate, clock.secs, hour, dir, alt);
+    *weather = LocalWeather {
+        body: Some(kind),
+        name,
+        hour,
+        sun_deg: sun_elevation(tf.rotation, to_star, dir).to_degrees(),
+        lat_deg: dir.y.clamp(-1.0, 1.0).asin().to_degrees(),
+        season: season_name(&spin, clock.secs, dir.y),
+        locked: spin.locked,
+        day_s: spin.day_s,
+        season_s: spin.year_s / 4.0,
+        temp,
+        day,
+        year,
+    };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 //  Commandes /heure et /temps
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -245,19 +443,12 @@ pub enum ClockCommand {
     Speed(String),
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run_clock_commands(
     time: Res<Time>,
     mut events: EventReader<ClockCommand>,
     mut clock: ResMut<WorldClock>,
-    settings: Res<GameSettings>,
-    surface: Res<crate::surface::Surface>,
-    target: Res<crate::CameraTarget>,
+    weather: Res<LocalWeather>,
     mut net: ResMut<crate::net::Net>,
-    ship_q: Query<&Transform, With<crate::Ship>>,
-    planets: Query<(&Transform, &crate::planet::PlanetId), With<crate::planet::PlanetRoot>>,
-    moons: Query<(&Transform, &crate::planet::MoonId), With<crate::planet::MoonRoot>>,
-    stars: Query<&Transform, With<crate::planet::StarRoot>>,
 ) {
     let now = time.elapsed_secs_f64();
     for ev in events.read() {
@@ -278,71 +469,14 @@ fn run_clock_commands(
                 }
             }
             ClockCommand::Hour => {
-                let kind = surface.body().unwrap_or(target.0);
-                let Some(info) = body_time(&settings, &kind, clock.secs, &planets, &moons, &stars, surface.local_point(), ship_q.get_single().ok().map(|t| t.translation))
-                else {
+                if weather.body.is_none() {
                     net.notify("Ciblez une planete ou une lune (chargee) pour connaitre son heure.", now);
-                    continue;
-                };
-                net.notify(&info, now);
+                } else {
+                    net.notify(&weather.long(), now);
+                }
             }
         }
     }
-}
-
-/// « Terre 3 : 14 h 05, ete (jour de 24 min, annee de 4 h) ».
-#[allow(clippy::too_many_arguments)]
-fn body_time(
-    settings: &GameSettings,
-    kind: &crate::TargetKind,
-    t: f64,
-    planets: &Query<(&Transform, &crate::planet::PlanetId), With<crate::planet::PlanetRoot>>,
-    moons: &Query<(&Transform, &crate::planet::MoonId), With<crate::planet::MoonRoot>>,
-    stars: &Query<&Transform, With<crate::planet::StarRoot>>,
-    local_point: Option<Vec3>,
-    ship: Option<Vec3>,
-) -> Option<String> {
-    use crate::TargetKind;
-    let (tf, spin, name) = match *kind {
-        TargetKind::Planet(id) => {
-            let (si, pi) = (id / 1000, id % 1000);
-            let sys = settings.systems.get(si)?;
-            let p = sys.planets().get(pi)?.clone();
-            let tf = planets.iter().find(|(_, pid)| pid.0 == id)?.0;
-            (*tf, Spin::planet(&p), format!("{} {}", sys.name, pi + 1))
-        }
-        TargetKind::Moon(pid, mi) => {
-            let (si, pi) = (pid / 1000, pid % 1000);
-            let sys = settings.systems.get(si)?;
-            let planets_list = sys.planets();
-            let p = planets_list.get(pi)?;
-            let m = p.moons.get(mi)?;
-            let tf = moons.iter().find(|(_, id)| id.planet_idx == pid && id.moon_idx == mi)?.0;
-            (*tf, Spin::moon(m, p), format!("{} {} {}", sys.name, pi + 1, (b'a' + mi as u8) as char))
-        }
-        _ => return None,
-    };
-    let star = stars.iter().map(|s| s.translation).min_by(|a, b| a.distance_squared(tf.translation).total_cmp(&b.distance_squared(tf.translation)))?;
-    let to_star = (star - tf.translation).normalize_or(Vec3::X);
-    // Le point : là où l'on est posé ou survole, sinon sous le vaisseau
-    let p = local_point.unwrap_or_else(|| tf.rotation.inverse() * (ship.unwrap_or(tf.translation + Vec3::Y) - tf.translation));
-    let p = p.normalize_or(Vec3::Y);
-    let hour = local_hour(tf.rotation, to_star, p);
-    let lat = p.y.clamp(-1.0, 1.0).asin();
-    let day = if spin.locked {
-        "rotation synchrone : jour ou nuit eternels".to_string()
-    } else {
-        format!("jour de {}", duration_text(spin.day_s))
-    };
-    let elevation = sun_elevation(tf.rotation, to_star, p).to_degrees();
-    Some(format!(
-        "{name} : {}, soleil a {:.0} deg, {} (lat. {:.0} deg) - {day}, saison de {}.",
-        hour_text(hour),
-        elevation,
-        season_name(&spin, t, lat),
-        lat.to_degrees(),
-        duration_text(spin.year_s / 4.0),
-    ))
 }
 
 /// « 24 min », « 1 h 30 ».
@@ -362,7 +496,7 @@ mod tests {
     use super::*;
 
     fn earth() -> Spin {
-        Spin { tilt: 23.4f64.to_radians(), day_s: day_secs(24.0), year_s: 4.0 * season_secs(365.25), day_phase: 0.0, year_phase: 0.0, locked: false }
+        Spin { tilt: 23.4f64.to_radians(), day_s: day_secs(24.0), year_s: 4.0 * season_secs(365.25), day_phase: 0.0, year_phase: 0.0, locked: false, ecc: 0.017, peri: 0.53 }
     }
 
     #[test]
@@ -464,5 +598,43 @@ mod tests {
         let mean = v.iter().sum::<f64>() / v.len() as f64;
         assert!((3000.0..4200.0).contains(&mean), "{mean}");
         assert!(v.iter().all(|s| (MIN_SEASON_SECS..=MAX_SEASON_SECS).contains(s)));
+    }
+
+    /// A3 : la Terre (≈ 10 °C entre le jour et la nuit), la Lune (≈ 250 °C), Vénus (presque rien).
+    #[test]
+    fn day_and_night_temperatures_of_earth_moon_and_venus() {
+        use crate::planetgen::atmosphere::diurnal_amplitude;
+        let swing = |t_k: f32, bar: f32, rotation_h: f32| {
+            let c = Climate { mean_c: t_k - 273.15, diurnal: diurnal_amplitude(t_k, bar, rotation_h), ..Default::default() };
+            let spin = Spin { tilt: 0.0, ..earth() };
+            let (_, day, _) = temperatures(&spin, &c, 0.0, 12.0, Vec3::new(1.0, 0.0, 0.0), 0.0);
+            day.1 - day.0
+        };
+        let earth = swing(288.0, 1.0, 24.0);
+        let moon = swing(250.0, 0.0, 708.0);
+        let venus = swing(737.0, 92.0, 2802.0);
+        let mars = swing(210.0, 0.006, 24.6);
+        assert!((7.0..15.0).contains(&earth), "terre {earth}");
+        assert!((220.0..320.0).contains(&moon), "lune {moon}");
+        assert!(venus < 5.0, "venus {venus}");
+        assert!((50.0..110.0).contains(&mars), "mars {mars}");
+    }
+
+    /// A3 : l'été du nord est plus chaud que son hiver, et l'hémisphère sud est à l'inverse.
+    #[test]
+    fn summer_is_warmer_than_winter() {
+        let s = earth();
+        let c = Climate { mean_c: 15.0, span: 50.0, lapse: 50.0, diurnal: 5.0, tilt: 23.4, ..Default::default() };
+        let north = Vec3::new(0.7, 0.7, 0.0).normalize();
+        let south = Vec3::new(0.7, -0.7, 0.0).normalize();
+        // Été du nord un peu après le solstice (retard des saisons)
+        let summer = s.year_s * SEASON_LAG;
+        let winter = summer + s.year_s * 0.5;
+        let t = |time: f64, dir: Vec3| temperatures(&s, &c, time, 12.0, dir, 0.0).0;
+        assert!(t(summer, north) > t(winter, north) + 12.0, "{} {}", t(summer, north), t(winter, north));
+        assert!(t(summer, south) < t(winter, south) - 12.0);
+        // Min / max de l'année encadrent ceux du jour
+        let (_, day, year) = temperatures(&s, &c, summer, 12.0, north, 0.0);
+        assert!(year.0 <= day.0 && year.1 >= day.1 - 0.5);
     }
 }
