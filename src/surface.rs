@@ -1663,6 +1663,7 @@ fn update_tiles(
     let voxels = store.voxels.clone();
     // Les grottes de l'astre (et leur cache) sont partagées par toutes les tuiles
     let caves = terrain.caves.clone();
+    let rocks = terrain.rocks.clone();
 
     let material = store
         .material
@@ -1696,7 +1697,7 @@ fn update_tiles(
     if store.built.is_empty() && store.tasks.is_empty() {
         for face in 0..6 {
             let key = TileKey::root(face);
-            let first = Terrain::new(params).with_voxels(voxels.clone()).with_caves(caves.clone());
+            let first = Terrain::new(params).with_voxels(voxels.clone()).with_caves(caves.clone()).with_rocks(rocks.clone());
             let entity = spawn_tile(&mut commands, &mut meshes, &material, root, build_tile_mesh_with(&first, key));
             store.built.insert(key, TileEntry { entity, last_needed: now, generation });
         }
@@ -1739,11 +1740,12 @@ fn update_tiles(
         let p = params;
         let vx = voxels.clone();
         let cv = caves.clone();
+        let rk = rocks.clone();
         store.tasks.insert(
             key,
             (
                 pool.spawn(async move {
-                    let terrain = Terrain::new(p).with_voxels(vx).with_caves(cv);
+                    let terrain = Terrain::new(p).with_voxels(vx).with_caves(cv).with_rocks(rk);
                     (build_tile_mesh_with(&terrain, key), tile_decor(&terrain, key))
                 }),
                 generation,

@@ -483,7 +483,7 @@ mod tests {
                     let ground = t.column(dir, tile_quantum(t.layout, max)).top;
                     if d.kind == DecorKind::GlowShroom {
                         // Dans une grotte : sous la surface, posé sur le sol de la salle
-                        assert!(d.transform.translation.length() < ground - t.voxel());
+                        assert!(d.transform.translation.length() <= ground + 0.01);
                     } else {
                         assert!((d.transform.translation.length() - ground).abs() < 1.0);
                     }

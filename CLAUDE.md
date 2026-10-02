@@ -115,6 +115,11 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   filons `VoxelType::Ore` (`ore_chance`, plus riches en profondeur). Maillage : pieces filtrees par colonne + memo.
   Sous terre (`Surface::underground`) : lumiere de l'etoile eteinte (`dim_star_light`), lampe allumee.
   Champignons lumineux (`DecorKind::GlowShroom`, vie). Scanner : grotte la plus proche ; `/grotte`. PROTOCOL 19.
+  B3 = montagnes (`geology.rs::ReliefField::sample`) : chaines en bruit de cretes (`ridged`), cols, erosion qui
+  arrondit ; mesas symetriques alignees sur la mer (`with_sea` : la cote ne bouge pas) ; canyons a fond plat ;
+  volcans avec cratere au sommet et coulees figees (basalte) ; eboulis au pied (`ReliefSample` -> matiere dans
+  `base_column`). Arches et cheminees de fee (`rocks.rs`, cellules de 60 voxels hachees, `Piece::Add`, mondes avec
+  air), partagees entre tuiles (`Terrain::with_rocks`). PROTOCOL 20.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

@@ -460,13 +460,15 @@ pub enum Piece {
     Carve(Shape, f32),
     Fill(Shape),
     Geode(Vec3, f32),
+    /// Roche posée sur le sol, même au-dessus de la surface (arches, cheminées : `rocks.rs`).
+    Add(Shape),
 }
 
 impl Piece {
     /// Sphère englobante.
     pub fn bound(&self) -> (Vec3, f32) {
         match self {
-            Piece::Carve(s, _) | Piece::Fill(s) => s.bound(),
+            Piece::Carve(s, _) | Piece::Fill(s) | Piece::Add(s) => s.bound(),
             Piece::Geode(c, r) => (*c, *r),
         }
     }
@@ -497,7 +499,7 @@ pub fn eval_pieces<'a>(pieces: impl Iterator<Item = &'a Piece>, p: Vec3, voxel: 
                 }
                 crystal |= d < *r;
             }
-            Piece::Fill(s) => filled |= s.contains(p),
+            Piece::Fill(s) | Piece::Add(s) => filled |= s.contains(p),
             Piece::Carve(s, water_r) => {
                 if s.contains(p) {
                     carved = true;

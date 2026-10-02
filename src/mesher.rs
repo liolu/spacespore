@@ -307,7 +307,7 @@ pub fn build_chunk_mesh(
     detail_fbm.octaves = 4;
     let color_perlin = Perlin::new(seed.wrapping_add(200));
     // Même relief géologique que le terrain voxel
-    let relief = ReliefField::new(relief);
+    let relief = ReliefField::new(relief).with_sea(sea_level);
     // Mêmes biomes que le terrain voxel : la couleur vue de l'espace est celle du sol
     let biomes = BiomeField::new(biomes);
 
