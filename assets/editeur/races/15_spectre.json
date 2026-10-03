@@ -1,0 +1,375 @@
+{
+ "id": "spectre",
+ "name": "Spectre",
+ "races": [
+  "Fantome",
+  "Esprit",
+  "Liche flottante"
+ ],
+ "locomotion": "flotte",
+ "preview": "glisse",
+ "parts": [
+  {
+   "name": "bassin",
+   "boxes": [
+    [
+     5,
+     10,
+     14,
+     10,
+     11,
+     17
+    ]
+   ],
+   "pivot": [
+    8,
+    11,
+    16
+   ]
+  },
+  {
+   "name": "tronc",
+   "boxes": [
+    [
+     5,
+     12,
+     14,
+     10,
+     19,
+     17
+    ]
+   ],
+   "parent": "bassin",
+   "pivot": [
+    8,
+    12,
+    16
+   ]
+  },
+  {
+   "name": "cou",
+   "boxes": [
+    [
+     7,
+     20,
+     15,
+     8,
+     20,
+     16
+    ]
+   ],
+   "parent": "tronc",
+   "pivot": [
+    8,
+    20,
+    16
+   ]
+  },
+  {
+   "name": "tete",
+   "boxes": [
+    [
+     5,
+     21,
+     13,
+     10,
+     26,
+     18
+    ]
+   ],
+   "parent": "cou",
+   "pivot": [
+    8,
+    21,
+    16
+   ]
+  },
+  {
+   "name": "bras",
+   "boxes": [
+    [
+     3,
+     16,
+     15,
+     4,
+     19,
+     16
+    ]
+   ],
+   "parent": "tronc",
+   "pivot": [
+    4,
+    19.5,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "avant_bras",
+   "boxes": [
+    [
+     3,
+     12,
+     15,
+     4,
+     15,
+     16
+    ]
+   ],
+   "parent": "bras",
+   "pivot": [
+    4,
+    16,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "main",
+   "boxes": [
+    [
+     3,
+     10,
+     15,
+     4,
+     11,
+     16
+    ]
+   ],
+   "parent": "avant_bras",
+   "pivot": [
+    4,
+    12,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "traine_1",
+   "boxes": [
+    [
+     6,
+     6,
+     14,
+     9,
+     9,
+     17
+    ]
+   ],
+   "parent": "bassin",
+   "pivot": [
+    8,
+    9.5,
+    16
+   ]
+  },
+  {
+   "name": "traine_2",
+   "boxes": [
+    [
+     7,
+     3,
+     14,
+     8,
+     5,
+     16
+    ]
+   ],
+   "parent": "traine_1",
+   "pivot": [
+    8,
+    6,
+    15.5
+   ]
+  },
+  {
+   "name": "traine_3",
+   "boxes": [
+    [
+     7,
+     1,
+     13,
+     8,
+     2,
+     15
+    ]
+   ],
+   "parent": "traine_2",
+   "pivot": [
+    8,
+    3,
+    15
+   ]
+  },
+  {
+   "name": "capuche",
+   "boxes": [
+    [
+     5,
+     21,
+     12,
+     10,
+     27,
+     12
+    ],
+    [
+     5,
+     27,
+     13,
+     10,
+     27,
+     18
+    ],
+    [
+     4,
+     21,
+     13,
+     4,
+     27,
+     18
+    ],
+    [
+     11,
+     21,
+     13,
+     11,
+     27,
+     18
+    ]
+   ],
+   "parent": "tete",
+   "fixed": true
+  }
+ ],
+ "options": [
+  {
+   "id": "bras2",
+   "name": "Bras supplementaires",
+   "parts": [
+    {
+     "name": "bras2",
+     "boxes": [
+      [
+       3,
+       13,
+       13,
+       4,
+       15,
+       14
+      ]
+     ],
+     "parent": "tronc",
+     "pivot": [
+      4,
+      15.5,
+      14
+     ],
+     "sym": true
+    },
+    {
+     "name": "avant_bras2",
+     "boxes": [
+      [
+       3,
+       10,
+       13,
+       4,
+       12,
+       14
+      ]
+     ],
+     "parent": "bras2",
+     "pivot": [
+      4,
+      13,
+      14
+     ],
+     "sym": true
+    },
+    {
+     "name": "main2",
+     "boxes": [
+      [
+       3,
+       9,
+       13,
+       4,
+       9,
+       14
+      ]
+     ],
+     "parent": "avant_bras2",
+     "pivot": [
+      4,
+      10,
+      14
+     ],
+     "sym": true
+    }
+   ]
+  },
+  {
+   "id": "cape",
+   "name": "Cape (flotte au vent)",
+   "parts": [
+    {
+     "name": "cape_1",
+     "boxes": [
+      [
+       6,
+       15,
+       13,
+       9,
+       19,
+       13
+      ]
+     ],
+     "parent": "tronc",
+     "pivot": [
+      8,
+      19.5,
+      13.5
+     ]
+    },
+    {
+     "name": "cape_2",
+     "boxes": [
+      [
+       6,
+       12,
+       13,
+       9,
+       14,
+       13
+      ]
+     ],
+     "parent": "cape_1",
+     "pivot": [
+      8,
+      15,
+      13.5
+     ]
+    },
+    {
+     "name": "cape_3",
+     "boxes": [
+      [
+       6,
+       8,
+       13,
+       9,
+       8,
+       13
+      ]
+     ],
+     "parent": "cape_2",
+     "pivot": [
+      8,
+      12,
+      13.5
+     ]
+    }
+   ]
+  }
+ ]
+}

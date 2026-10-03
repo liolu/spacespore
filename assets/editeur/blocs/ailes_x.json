@@ -1,0 +1,157 @@
+{
+  "id": "ailes_x",
+  "name": "Ailes en X (une paire par cote)",
+  "kinds": [
+    "vaisseau"
+  ],
+  "scalable": true,
+  "parts": [
+    {
+      "name": "haut",
+      "pivot": [
+        0,
+        1.5,
+        2
+      ],
+      "boxes": [
+        [
+          0,
+          1,
+          0,
+          9,
+          1,
+          3
+        ]
+      ]
+    },
+    {
+      "name": "bas",
+      "pivot": [
+        0,
+        0.5,
+        2
+      ],
+      "boxes": [
+        [
+          0,
+          -1,
+          0,
+          9,
+          -1,
+          3
+        ]
+      ]
+    }
+  ],
+  "anims": {
+    "repos": {
+      "duration": 1.0,
+      "tracks": {}
+    },
+    "x_ouvert": {
+      "duration": 1.0,
+      "tracks": {
+        "haut": {
+          "type": "cles",
+          "rot": [
+            [
+              0.0,
+              0,
+              0,
+              12
+            ],
+            [
+              1.0,
+              0,
+              0,
+              12
+            ]
+          ]
+        },
+        "bas": {
+          "type": "cles",
+          "rot": [
+            [
+              0.0,
+              0,
+              0,
+              -12
+            ],
+            [
+              1.0,
+              0,
+              0,
+              -12
+            ]
+          ]
+        }
+      }
+    },
+    "deploiement": {
+      "duration": 4.0,
+      "tracks": {
+        "haut": {
+          "type": "cles",
+          "rot": [
+            [
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              1,
+              0,
+              0,
+              12
+            ],
+            [
+              3,
+              0,
+              0,
+              12
+            ],
+            [
+              4,
+              0,
+              0,
+              0
+            ]
+          ]
+        },
+        "bas": {
+          "type": "cles",
+          "rot": [
+            [
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              1,
+              0,
+              0,
+              -12
+            ],
+            [
+              3,
+              0,
+              0,
+              -12
+            ],
+            [
+              4,
+              0,
+              0,
+              0
+            ]
+          ]
+        }
+      }
+    }
+  },
+  "states": {
+    "combat": "x_ouvert"
+  }
+}

@@ -1,0 +1,287 @@
+{
+ "id": "quadrupede",
+ "name": "Quadrupede animal",
+ "races": [
+  "Cheval",
+  "Loup",
+  "Chat",
+  "Ours"
+ ],
+ "locomotion": "quadrupede",
+ "preview": "trot",
+ "parts": [
+  {
+   "name": "corps",
+   "boxes": [
+    [
+     5,
+     9,
+     7,
+     10,
+     14,
+     20
+    ]
+   ],
+   "pivot": [
+    8,
+    12,
+    14
+   ]
+  },
+  {
+   "name": "cou",
+   "boxes": [
+    [
+     6,
+     14,
+     21,
+     9,
+     17,
+     23
+    ]
+   ],
+   "parent": "corps",
+   "pivot": [
+    8,
+    14,
+    21.5
+   ]
+  },
+  {
+   "name": "tete",
+   "boxes": [
+    [
+     5,
+     16,
+     24,
+     10,
+     20,
+     29
+    ]
+   ],
+   "parent": "cou",
+   "pivot": [
+    8,
+    17,
+    23.5
+   ]
+  },
+  {
+   "name": "museau",
+   "boxes": [
+    [
+     6,
+     16,
+     30,
+     9,
+     18,
+     31
+    ]
+   ],
+   "parent": "tete",
+   "fixed": true
+  },
+  {
+   "name": "oreille",
+   "boxes": [
+    [
+     5,
+     21,
+     25,
+     6,
+     22,
+     26
+    ]
+   ],
+   "parent": "tete",
+   "pivot": [
+    6,
+    21,
+    25.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "patte_av",
+   "boxes": [
+    [
+     5,
+     4,
+     19,
+     6,
+     8,
+     20
+    ]
+   ],
+   "parent": "corps",
+   "pivot": [
+    6.5,
+    9,
+    19.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "pied_av",
+   "boxes": [
+    [
+     5,
+     0,
+     19,
+     6,
+     3,
+     20
+    ]
+   ],
+   "parent": "patte_av",
+   "pivot": [
+    6,
+    4,
+    19.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "patte_ar",
+   "boxes": [
+    [
+     5,
+     4,
+     8,
+     6,
+     8,
+     9
+    ]
+   ],
+   "parent": "corps",
+   "pivot": [
+    6.5,
+    9,
+    8.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "pied_ar",
+   "boxes": [
+    [
+     5,
+     0,
+     8,
+     6,
+     3,
+     9
+    ]
+   ],
+   "parent": "patte_ar",
+   "pivot": [
+    6,
+    4,
+    8.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "queue_1",
+   "boxes": [
+    [
+     7,
+     12,
+     4,
+     8,
+     13,
+     6
+    ]
+   ],
+   "parent": "corps",
+   "pivot": [
+    8,
+    13,
+    7
+   ]
+  },
+  {
+   "name": "queue_2",
+   "boxes": [
+    [
+     7,
+     11,
+     2,
+     8,
+     12,
+     3
+    ]
+   ],
+   "parent": "queue_1",
+   "pivot": [
+    8,
+    12.5,
+    4
+   ]
+  },
+  {
+   "name": "queue_3",
+   "boxes": [
+    [
+     7,
+     10,
+     0,
+     8,
+     11,
+     1
+    ]
+   ],
+   "parent": "queue_2",
+   "pivot": [
+    8,
+    11.5,
+    2
+   ]
+  }
+ ],
+ "options": [
+  {
+   "id": "cornes",
+   "name": "Cornes",
+   "parts": [
+    {
+     "name": "corne",
+     "boxes": [
+      [
+       5,
+       21,
+       27,
+       5,
+       23,
+       27
+      ]
+     ],
+     "parent": "tete",
+     "sym": true,
+     "fixed": true
+    }
+   ]
+  },
+  {
+   "id": "criniere",
+   "name": "Criniere",
+   "parts": [
+    {
+     "name": "criniere",
+     "boxes": [
+      [
+       7,
+       18,
+       20,
+       8,
+       18,
+       23
+      ]
+     ],
+     "parent": "cou",
+     "fixed": true
+    }
+   ]
+  }
+ ]
+}

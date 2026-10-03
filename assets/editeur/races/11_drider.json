@@ -1,0 +1,342 @@
+{
+ "id": "drider",
+ "name": "Drider",
+ "races": [
+  "Drider",
+  "Arachne"
+ ],
+ "locomotion": "octopode",
+ "preview": "marche_araignee",
+ "parts": [
+  {
+   "name": "corps",
+   "boxes": [
+    [
+     5,
+     6,
+     13,
+     10,
+     10,
+     18
+    ]
+   ],
+   "pivot": [
+    8,
+    8,
+    15
+   ]
+  },
+  {
+   "name": "abdomen",
+   "boxes": [
+    [
+     4,
+     5,
+     4,
+     11,
+     12,
+     12
+    ]
+   ],
+   "parent": "corps",
+   "pivot": [
+    8,
+    8,
+    12.5
+   ]
+  },
+  {
+   "name": "tronc",
+   "boxes": [
+    [
+     5,
+     11,
+     15,
+     10,
+     18,
+     18
+    ]
+   ],
+   "parent": "corps",
+   "pivot": [
+    8,
+    11,
+    16.5
+   ]
+  },
+  {
+   "name": "cou",
+   "boxes": [
+    [
+     7,
+     19,
+     16,
+     8,
+     19,
+     17
+    ]
+   ],
+   "parent": "tronc",
+   "pivot": [
+    8,
+    19,
+    16.5
+   ]
+  },
+  {
+   "name": "tete",
+   "boxes": [
+    [
+     5,
+     20,
+     14,
+     10,
+     25,
+     19
+    ]
+   ],
+   "parent": "cou",
+   "pivot": [
+    8,
+    20,
+    16.5
+   ]
+  },
+  {
+   "name": "bras",
+   "boxes": [
+    [
+     3,
+     15,
+     19,
+     4,
+     18,
+     20
+    ]
+   ],
+   "parent": "tronc",
+   "pivot": [
+    4,
+    18.5,
+    20
+   ],
+   "sym": true
+  },
+  {
+   "name": "avant_bras",
+   "boxes": [
+    [
+     3,
+     11,
+     19,
+     4,
+     14,
+     20
+    ]
+   ],
+   "parent": "bras",
+   "pivot": [
+    4,
+    15,
+    20
+   ],
+   "sym": true
+  },
+  {
+   "name": "main",
+   "boxes": [
+    [
+     3,
+     9,
+     19,
+     4,
+     10,
+     20
+    ]
+   ],
+   "parent": "avant_bras",
+   "pivot": [
+    4,
+    11,
+    20
+   ],
+   "sym": true
+  },
+  {
+   "name": "mandibules",
+   "boxes": [
+    [
+     7,
+     20,
+     20,
+     8,
+     21,
+     20
+    ]
+   ],
+   "parent": "tete",
+   "fixed": true
+  },
+  {
+   "name": "patte_1",
+   "boxes": [
+    [
+     1,
+     9,
+     18,
+     3,
+     10,
+     18
+    ]
+   ],
+   "parent": "corps",
+   "pivot": [
+    4,
+    9.5,
+    18.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "bout_1",
+   "boxes": [
+    [
+     0,
+     0,
+     18,
+     1,
+     8,
+     18
+    ]
+   ],
+   "parent": "patte_1",
+   "pivot": [
+    1.5,
+    9,
+    18.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "patte_2",
+   "boxes": [
+    [
+     1,
+     9,
+     16,
+     3,
+     10,
+     16
+    ]
+   ],
+   "parent": "corps",
+   "pivot": [
+    4,
+    9.5,
+    16.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "bout_2",
+   "boxes": [
+    [
+     0,
+     0,
+     16,
+     1,
+     8,
+     16
+    ]
+   ],
+   "parent": "patte_2",
+   "pivot": [
+    1.5,
+    9,
+    16.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "patte_3",
+   "boxes": [
+    [
+     1,
+     9,
+     14,
+     3,
+     10,
+     14
+    ]
+   ],
+   "parent": "corps",
+   "pivot": [
+    4,
+    9.5,
+    14.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "bout_3",
+   "boxes": [
+    [
+     0,
+     0,
+     14,
+     1,
+     8,
+     14
+    ]
+   ],
+   "parent": "patte_3",
+   "pivot": [
+    1.5,
+    9,
+    14.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "patte_4",
+   "boxes": [
+    [
+     1,
+     9,
+     12,
+     3,
+     10,
+     12
+    ]
+   ],
+   "parent": "corps",
+   "pivot": [
+    4,
+    9.5,
+    12.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "bout_4",
+   "boxes": [
+    [
+     0,
+     0,
+     12,
+     1,
+     8,
+     12
+    ]
+   ],
+   "parent": "patte_4",
+   "pivot": [
+    1.5,
+    9,
+    12.5
+   ],
+   "sym": true
+  }
+ ],
+ "options": []
+}

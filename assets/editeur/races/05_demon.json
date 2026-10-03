@@ -1,0 +1,549 @@
+{
+ "id": "demon",
+ "name": "Demon",
+ "races": [
+  "Demon",
+  "Succube",
+  "Diablotin"
+ ],
+ "locomotion": "bipede + vol",
+ "preview": "voler",
+ "parts": [
+  {
+   "name": "bassin",
+   "boxes": [
+    [
+     5,
+     10,
+     14,
+     10,
+     11,
+     17
+    ]
+   ],
+   "pivot": [
+    8,
+    11,
+    16
+   ]
+  },
+  {
+   "name": "tronc",
+   "boxes": [
+    [
+     5,
+     12,
+     14,
+     10,
+     19,
+     17
+    ]
+   ],
+   "parent": "bassin",
+   "pivot": [
+    8,
+    12,
+    16
+   ]
+  },
+  {
+   "name": "cou",
+   "boxes": [
+    [
+     7,
+     20,
+     15,
+     8,
+     20,
+     16
+    ]
+   ],
+   "parent": "tronc",
+   "pivot": [
+    8,
+    20,
+    16
+   ]
+  },
+  {
+   "name": "tete",
+   "boxes": [
+    [
+     5,
+     21,
+     13,
+     10,
+     26,
+     18
+    ]
+   ],
+   "parent": "cou",
+   "pivot": [
+    8,
+    21,
+    16
+   ]
+  },
+  {
+   "name": "bras",
+   "boxes": [
+    [
+     3,
+     16,
+     15,
+     4,
+     19,
+     16
+    ]
+   ],
+   "parent": "tronc",
+   "pivot": [
+    4,
+    19.5,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "avant_bras",
+   "boxes": [
+    [
+     3,
+     12,
+     15,
+     4,
+     15,
+     16
+    ]
+   ],
+   "parent": "bras",
+   "pivot": [
+    4,
+    16,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "main",
+   "boxes": [
+    [
+     3,
+     10,
+     15,
+     4,
+     11,
+     16
+    ]
+   ],
+   "parent": "avant_bras",
+   "pivot": [
+    4,
+    12,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "cuisse",
+   "boxes": [
+    [
+     5,
+     6,
+     14,
+     7,
+     9,
+     17
+    ]
+   ],
+   "parent": "bassin",
+   "pivot": [
+    6.5,
+    10,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "tibia",
+   "boxes": [
+    [
+     5,
+     2,
+     15,
+     7,
+     5,
+     16
+    ]
+   ],
+   "parent": "cuisse",
+   "pivot": [
+    6.5,
+    6,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "pied",
+   "boxes": [
+    [
+     5,
+     0,
+     14,
+     7,
+     1,
+     18
+    ]
+   ],
+   "parent": "tibia",
+   "pivot": [
+    6.5,
+    2,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "aile",
+   "boxes": [
+    [
+     1,
+     17,
+     13,
+     5,
+     20,
+     13
+    ]
+   ],
+   "parent": "tronc",
+   "pivot": [
+    5.5,
+    19,
+    13.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "pointe",
+   "boxes": [
+    [
+     0,
+     21,
+     13,
+     2,
+     27,
+     13
+    ]
+   ],
+   "parent": "aile",
+   "pivot": [
+    1,
+    20.5,
+    13.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "queue_1",
+   "boxes": [
+    [
+     8,
+     10,
+     11,
+     8,
+     10,
+     13
+    ]
+   ],
+   "parent": "bassin",
+   "pivot": [
+    8.5,
+    11,
+    14
+   ]
+  },
+  {
+   "name": "queue_2",
+   "boxes": [
+    [
+     8,
+     10,
+     8,
+     8,
+     10,
+     10
+    ]
+   ],
+   "parent": "queue_1",
+   "pivot": [
+    8.5,
+    11,
+    11
+   ]
+  },
+  {
+   "name": "queue_3",
+   "boxes": [
+    [
+     8,
+     10,
+     5,
+     8,
+     10,
+     7
+    ]
+   ],
+   "parent": "queue_2",
+   "pivot": [
+    8.5,
+    11,
+    8
+   ]
+  },
+  {
+   "name": "queue_4",
+   "boxes": [
+    [
+     8,
+     10,
+     2,
+     8,
+     10,
+     4
+    ]
+   ],
+   "parent": "queue_3",
+   "pivot": [
+    8.5,
+    11,
+    5
+   ]
+  },
+  {
+   "name": "corne",
+   "boxes": [
+    [
+     5,
+     27,
+     17,
+     5,
+     28,
+     18
+    ],
+    [
+     4,
+     29,
+     17,
+     4,
+     30,
+     17
+    ]
+   ],
+   "parent": "tete",
+   "sym": true,
+   "fixed": true
+  }
+ ],
+ "options": [
+  {
+   "id": "oreilles",
+   "name": "Oreilles mobiles",
+   "parts": [
+    {
+     "name": "oreille",
+     "boxes": [
+      [
+       5,
+       27,
+       15,
+       6,
+       29,
+       16
+      ]
+     ],
+     "parent": "tete",
+     "pivot": [
+      6,
+      27,
+      15.5
+     ],
+     "sym": true
+    }
+   ]
+  },
+  {
+   "id": "bras2",
+   "name": "Bras supplementaires",
+   "parts": [
+    {
+     "name": "bras2",
+     "boxes": [
+      [
+       3,
+       13,
+       13,
+       4,
+       15,
+       14
+      ]
+     ],
+     "parent": "tronc",
+     "pivot": [
+      4,
+      15.5,
+      14
+     ],
+     "sym": true
+    },
+    {
+     "name": "avant_bras2",
+     "boxes": [
+      [
+       3,
+       10,
+       13,
+       4,
+       12,
+       14
+      ]
+     ],
+     "parent": "bras2",
+     "pivot": [
+      4,
+      13,
+      14
+     ],
+     "sym": true
+    },
+    {
+     "name": "main2",
+     "boxes": [
+      [
+       3,
+       9,
+       13,
+       4,
+       9,
+       14
+      ]
+     ],
+     "parent": "avant_bras2",
+     "pivot": [
+      4,
+      10,
+      14
+     ],
+     "sym": true
+    }
+   ]
+  },
+  {
+   "id": "cape",
+   "name": "Cape (flotte au vent)",
+   "parts": [
+    {
+     "name": "cape_1",
+     "boxes": [
+      [
+       6,
+       15,
+       13,
+       9,
+       19,
+       13
+      ]
+     ],
+     "parent": "tronc",
+     "pivot": [
+      8,
+      19.5,
+      13.5
+     ]
+    },
+    {
+     "name": "cape_2",
+     "boxes": [
+      [
+       6,
+       12,
+       13,
+       9,
+       14,
+       13
+      ]
+     ],
+     "parent": "cape_1",
+     "pivot": [
+      8,
+      15,
+      13.5
+     ]
+    },
+    {
+     "name": "cape_3",
+     "boxes": [
+      [
+       6,
+       8,
+       13,
+       9,
+       8,
+       13
+      ]
+     ],
+     "parent": "cape_2",
+     "pivot": [
+      8,
+      12,
+      13.5
+     ]
+    }
+   ]
+  },
+  {
+   "id": "cheveux",
+   "name": "Cheveux longs",
+   "parts": [
+    {
+     "name": "cheveux_1",
+     "boxes": [
+      [
+       5,
+       22,
+       12,
+       10,
+       25,
+       12
+      ]
+     ],
+     "parent": "tete",
+     "pivot": [
+      8,
+      25.5,
+      12.5
+     ]
+    },
+    {
+     "name": "cheveux_2",
+     "boxes": [
+      [
+       5,
+       18,
+       12,
+       10,
+       21,
+       12
+      ]
+     ],
+     "parent": "cheveux_1",
+     "pivot": [
+      8,
+      22,
+      12.5
+     ]
+    }
+   ]
+  }
+ ]
+}

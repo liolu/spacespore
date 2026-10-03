@@ -1,0 +1,170 @@
+{
+  "id": "tuyere_orientable",
+  "name": "Tuyere orientable",
+  "kinds": [
+    "vaisseau"
+  ],
+  "scalable": true,
+  "parts": [
+    {
+      "name": "cardan",
+      "pivot": [
+        0.5,
+        0.5,
+        0.5
+      ],
+      "boxes": [
+        [
+          -1,
+          -1,
+          0,
+          1,
+          1,
+          0
+        ]
+      ],
+      "color": [
+        90,
+        95,
+        105
+      ],
+      "material": "Metal"
+    },
+    {
+      "name": "tuyere",
+      "pivot": [
+        0.5,
+        0.5,
+        0
+      ],
+      "boxes": [
+        [
+          -1,
+          -1,
+          -4,
+          1,
+          1,
+          -1
+        ]
+      ],
+      "parent": "cardan",
+      "color": [
+        110,
+        115,
+        125
+      ],
+      "material": "Metal"
+    },
+    {
+      "name": "flamme",
+      "pivot": [
+        0.5,
+        0.5,
+        -4
+      ],
+      "boxes": [
+        [
+          0,
+          0,
+          -8,
+          0,
+          0,
+          -5
+        ]
+      ],
+      "parent": "tuyere",
+      "color": [
+        255,
+        140,
+        40
+      ],
+      "material": "Lumineuse"
+    }
+  ],
+  "anims": {
+    "repos": {
+      "duration": 1.0,
+      "tracks": {
+        "cardan": {
+          "type": "vise",
+          "axis": [
+            0,
+            1,
+            0
+          ],
+          "forward": [
+            0,
+            0,
+            -1
+          ],
+          "limits": [
+            -25,
+            25
+          ],
+          "input": "poussee"
+        },
+        "tuyere": {
+          "type": "vise",
+          "axis": [
+            1,
+            0,
+            0
+          ],
+          "forward": [
+            0,
+            0,
+            -1
+          ],
+          "limits": [
+            -25,
+            25
+          ],
+          "input": "poussee"
+        },
+        "flamme": {
+          "type": "entree",
+          "input": "poussee",
+          "scale": [
+            [
+              0.4,
+              0.4,
+              0.05
+            ],
+            [
+              1,
+              1,
+              1
+            ]
+          ],
+          "flicker": 0.15
+        }
+      }
+    },
+    "eteint": {
+      "duration": 1.0,
+      "tracks": {
+        "flamme": {
+          "type": "cles",
+          "scale": [
+            [
+              0.0,
+              0.001,
+              0.001,
+              0.001
+            ],
+            [
+              1.0,
+              0.001,
+              0.001,
+              0.001
+            ]
+          ]
+        }
+      }
+    }
+  },
+  "states": {
+    "pose": "eteint",
+    "detruit": "eteint"
+  }
+}

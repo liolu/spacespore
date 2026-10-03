@@ -287,7 +287,6 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
         let inner = to_display(au_lo).max(lo_limit);
         let outer = to_display(au_hi).min(hi_limit);
         if au_hi > au_lo * 1.12 && outer - inner > 0.03 * scale * stretch {
-            let mid = 0.5 * (inner + outer);
             belts.push(Belt {
                 kind: BeltKind::Main,
                 seed,
@@ -295,7 +294,10 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
                 au_outer: qs(au_hi),
                 inner: q(inner, 10.0),
                 outer: q(outer, 10.0),
-                half_thickness: q(mid * thick, 10.0),
+                // Vraie ceinture principale : inclinaisons surtout sous 10° (un tore épais au plus
+                // d'un tiers de sa largeur, dense au milieu). La largeur affichée est comprimée par
+                // l'échelle log : l'épaisseur se règle sur elle, pas sur le rayon.
+                half_thickness: q((outer - inner) * thick * 2.4, 10.0),
                 mass_earth: mass as f32,
                 density: q(((mass.log10() + 5.0) / 2.0).clamp(0.3, 1.5), 1e-3),
                 snow_au: qs(snow),
@@ -317,7 +319,6 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
         let inner = to_display(au_lo).max(extent(last).1 + margin);
         // Même largeur affichée qu'en échelle logarithmique, partant du bord réel
         let outer = inner + (to_display(au_hi) - to_display(au_lo)).max(0.3 * scale * stretch);
-        let mid = 0.5 * (inner + outer);
         // Compagnon lointain trop proche : pas de ceinture glacée (C3)
         if au_hi <= limits.max_au && outer <= limits.outer {
         belts.push(Belt {
@@ -327,7 +328,8 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
             au_outer: qs(au_hi),
             inner: q(inner, 10.0),
             outer: q(outer, 10.0),
-            half_thickness: q(mid * thick, 10.0),
+            // Ceinture de Kuiper : la population « froide » est plate (inclinaisons de quelques degrés)
+            half_thickness: q((outer - inner) * thick * 0.8, 10.0),
             mass_earth: mass as f32,
             // Énorme volume : moins d'astéroïdes par cellule à masse égale
             density: q(((mass.log10() + 3.0) / 2.5).clamp(0.3, 1.2), 1e-3),

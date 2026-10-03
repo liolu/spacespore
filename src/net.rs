@@ -44,7 +44,7 @@ use std::time::Duration;
 
 use crate::planet::SpawnedSystems;
 use crate::settings::GameSettings;
-use crate::ship::{outline_material, LocalOutline, Ship, ShipAssets};
+use crate::ship::{outline_material, LocalOutline, Ship};
 use crate::CameraController;
 
 pub const NET_PORT: u16 = 27777;
@@ -52,7 +52,7 @@ pub const MAX_NAME_LEN: usize = 16;
 pub const MAX_TAG_LEN: usize = 5;
 /// Étoiles revendiquées au plus par joueur.
 pub const MAX_CLAIMS: usize = 5;
-const PROTOCOL: u32 = 27;
+const PROTOCOL: u32 = 30;
 /// Modifications de voxels gardées en attente au plus (protection contre un flot).
 const VOXEL_EDITS_MAX: usize = 512;
 pub const MAX_CHAT_LEN: usize = 120;
@@ -135,6 +135,9 @@ struct PlayerState {
     siege: Option<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     taken: Vec<u32>,
+    /// Modèles du joueur et ce qu'ils font (E7).
+    #[serde(default, skip_serializing_if = "crate::net_models::Looks::is_default")]
+    look: crate::net_models::Looks,
 }
 
 fn is_full_hp(hp: &u8) -> bool {
@@ -268,6 +271,12 @@ enum Msg {
     Guild { guild: crate::guild::GuildRecord },
     /// Cellules voxel modifiées (cratère d'impact, minage) : l'hôte les relaie à tous.
     Voxels { edits: Vec<crate::voxel::VoxelEdit> },
+    /// Modèle demandé par empreinte (règle 7) : les morceaux qui manquent (`[0]` au début).
+    ModelWant { fp: u64, parts: Vec<u32> },
+    /// Un morceau d'un fichier de modèle (hexadécimal).
+    ModelPart { fp: u64, index: u32, total: u32, data: String },
+    /// Un joueur partage un modèle (E8) : chacun le reçoit par son empreinte, dans sa bibliothèque.
+    Share { fp: u64, name: String, from: String },
     Bye,
 }
 
@@ -885,6 +894,8 @@ pub struct Peer {
     stay: f64,
     clock: f64,
     speed: f64,
+    /// Ses modèles et ce qu'ils font (E7).
+    pub look: crate::net_models::Looks,
 }
 
 fn one() -> f64 {
@@ -917,6 +928,7 @@ impl Peer {
             hits: self.status.hits.clone(),
             siege: self.status.siege,
             taken: self.status.taken.clone(),
+            look: self.look.clone(),
         }
     }
 }
@@ -970,6 +982,16 @@ pub struct Net {
     pub voxel_inbox: Vec<crate::voxel::VoxelEdit>,
     /// (hôte) Modifications reçues d'un client, à renvoyer à tous.
     voxel_relay: Vec<crate::voxel::VoxelEdit>,
+    /// Fichiers de modèles en route (E7).
+    transfers: crate::net_models::Transfers,
+    /// Mon amarrage dans le hangar d'un autre joueur (E7).
+    pub dock: Option<crate::net_models::DockState>,
+    /// Modèles que je partage (empreinte, nom), à envoyer (E8).
+    pub share_out: Vec<(u64, String)>,
+    /// Modèles partagés par les autres, en route : (empreinte, nom, auteur, depuis).
+    shares_in: Vec<(u64, String, String, f64)>,
+    /// Hôte : qui a partagé quel fichier (pour le lui demander).
+    share_owner: HashMap<u64, u32>,
     /// Fiches de guilde qui me manquent (une version plus récente est annoncée).
     pub guild_want: Vec<u64>,
     /// Fiches de guilde qu'un autre joueur me demande.
@@ -1013,6 +1035,11 @@ impl Default for Net {
             voxel_outbox: Vec::new(),
             voxel_inbox: Vec::new(),
             voxel_relay: Vec::new(),
+            transfers: Default::default(),
+            dock: None,
+            share_out: Vec::new(),
+            shares_in: Vec::new(),
+            share_owner: HashMap::new(),
             guild_want: Vec::new(),
             guild_asked: Vec::new(),
             profiles: ProfileCache::default(),
@@ -1092,6 +1119,16 @@ impl Net {
     }
 
     /// Identifiant du joueur local (0 = hôte ou hors ligne).
+    /// Tests (développement) : un faux joueur à la position `pos` (monde), avec cette allure.
+    pub fn test_peer(&mut self, id: u32, name: &str, pos: Vec3, rot: Quat, look: crate::net_models::Looks) {
+        self.peers.insert(id, Peer {
+            name: name.into(), tag: String::new(), gid: 0, ph: 0, claims: Vec::new(),
+            status: PlayerStatus::default(), color: [1.0, 0.6, 0.2],
+            abs: crate::settings::to_abs(pos), rot, vel: Vec3::ZERO, last_update: f64::MAX, sys: None, stay: 0.0, clock: 0.0, speed: 1.0,
+            look,
+        });
+    }
+
     pub fn my_id(&self) -> u32 {
         match self.session {
             Session::Connected { my_id, .. } => my_id,
@@ -1244,6 +1281,7 @@ fn update_peer(peers: &mut HashMap<u32, Peer>, profiles: &ProfileCache, st: Play
             name: String::new(), tag: String::new(), gid: 0, ph: 0, claims: Vec::new(),
             status: PlayerStatus::default(), color: [1.0; 3],
             abs: pos, rot, vel: Vec3::ZERO, last_update: now, sys: st.sys, stay: 0.0, clock: 0.0, speed: 1.0,
+            look: Default::default(),
         });
     }
     let Some(p) = peers.get_mut(&st.id) else { return };
@@ -1263,6 +1301,7 @@ fn update_peer(peers: &mut HashMap<u32, Peer>, profiles: &ProfileCache, st: Play
     p.status.hits = st.hits.into_iter().take(MAX_PLAYERS).collect();
     p.status.siege = st.siege;
     p.status.taken = st.taken.into_iter().take(MAX_CLAIMS).collect();
+    p.look = st.look.sanitized();
 
     if let Some(profile) = profile.filter(|_| p.ph != st.ph) {
         p.ph = st.ph;
@@ -1335,6 +1374,8 @@ pub(crate) fn net_update(
     spawned: Option<Res<SpawnedSystems>>,
     mut clock: ResMut<crate::world_clock::WorldClock>,
     mut net: ResMut<Net>,
+    mut models: ResMut<crate::models::GameModels>,
+    surface: Res<crate::surface::Surface>,
 ) {
     if !net.enabled {
         return; // aucun port ouvert avant l'ouverture du panneau Multijoueur
@@ -1392,7 +1433,41 @@ pub(crate) fn net_update(
         stay: now - net.sys_since,
         clock: clock.secs,
         speed: clock.speed,
+        look: crate::net_models::Looks {
+            ship: Some(models.ship.clone()).filter(|k| *k != crate::models::ModelKey::default_ship()),
+            chr: Some(models.character.clone()).filter(|k| *k != crate::models::ModelKey::default_character()),
+            ss: surface.ship_state().to_string(),
+            walk: surface.walker_state().and_then(|(b, t, a)| crate::net_models::WalkState::new(b, t, a)),
+            dock: net.dock,
+        },
     };
+    // Modèles des autres joueurs qui nous manquent : à demander (règle 7)
+    for fp in models.missing_prints() {
+        net.transfers.want(fp, now);
+    }
+    // Modèles partagés (E8) : arrivés, ils vont dans la bibliothèque (`saves/modeles/partages/`)
+    let mut arrived = Vec::new();
+    net.shares_in.retain(|(fp, name, from, since)| {
+        if let Some(bytes) = models.file(*fp) {
+            arrived.push((bytes, name.clone(), from.clone()));
+            return false;
+        }
+        now - since < 300.0
+    });
+    for (fp, ..) in net.shares_in.clone() {
+        net.transfers.want(fp, now);
+    }
+    for (bytes, name, from) in arrived {
+        let dir = crate::editeur::library_dir().join("partages");
+        let r = crate::editeur::format::Model::from_bytes(&bytes).and_then(|mut m| {
+            m.name = format!("{name} (de {from})");
+            crate::editeur::save_model(&dir, &m)
+        });
+        match r {
+            Ok(_) => net.notify(&format!("{from} a partage \"{name}\" : il est dans votre bibliotheque (editeur)."), now),
+            Err(e) => net.notify(&format!("Modele partage illisible : {e}"), now),
+        }
+    }
     if !net.upnp_started {
         net.upnp_started = true;
         start_upnp(net.upnp.clone());
@@ -1526,6 +1601,37 @@ pub(crate) fn net_update(
                             net.guild_inbox.push(guild);
                         }
                     }
+                    // Un modèle demandé : je l'ai (je l'envoie) ou je le demande à son joueur
+                    Msg::ModelWant { fp, parts } => {
+                        if clients.contains_key(&addr) {
+                            if models.file(fp).is_some() {
+                                net.transfers.serve(addr, fp, &parts);
+                            } else {
+                                net.transfers.want(fp, now);
+                            }
+                        }
+                    }
+                    Msg::ModelPart { fp, index, total, data } => {
+                        if clients.contains_key(&addr) {
+                            if let Some(bytes) = net.transfers.receive(fp, index, total, &data) {
+                                models.add_file(bytes);
+                            }
+                        }
+                    }
+                    // Un client partage un modèle : je le note, le prends aussi, et préviens les autres
+                    Msg::Share { fp, name, from } => {
+                        if let Some(slot) = clients.get(&addr) {
+                            let (name, from) = (sanitize_chat(&name).unwrap_or_default(), sanitize_name(&from));
+                            net.share_owner.insert(fp, slot.id);
+                            if net.shares_in.len() < 16 {
+                                net.shares_in.push((fp, name.clone(), from.clone(), now));
+                            }
+                            let msg = Msg::Share { fp, name, from };
+                            for (a, _) in clients.iter().filter(|(a, _)| **a != addr) {
+                                send(socket, *a, &msg);
+                            }
+                        }
+                    }
                     // Un client a modifié des voxels : on les applique et on les relaie à tous
                     Msg::Voxels { edits } => {
                         if clients.contains_key(&addr) {
@@ -1554,6 +1660,27 @@ pub(crate) fn net_update(
                 alive
             });
 
+            // Modèles : je demande ceux qui me manquent à leur joueur, j'envoie ceux demandés
+            for (fp, parts) in net.transfers.asks(now) {
+                let key = crate::models::ModelKey::Print(fp);
+                let shared = net.share_owner.get(&fp).copied();
+                let owner = clients.iter().find(|(_, s)| Some(s.id) == shared || net.peers.get(&s.id).is_some_and(|p| p.look.ship.as_ref() == Some(&key) || p.look.chr.as_ref() == Some(&key)));
+                if let Some((addr, _)) = owner {
+                    send(socket, *addr, &Msg::ModelWant { fp, parts });
+                }
+            }
+            for (to, fp, index) in net.transfers.next_parts(crate::net_models::PARTS_PER_FRAME) {
+                if let Some((total, data)) = models.file(fp).and_then(|b| crate::net_models::part_of(&b, index)) {
+                    send(socket, to, &Msg::ModelPart { fp, index, total, data });
+                }
+            }
+            // Mes partages : à tous les clients
+            for (fp, name) in std::mem::take(&mut net.share_out) {
+                let msg = Msg::Share { fp, name, from: my_name.clone() };
+                for addr in clients.keys() {
+                    send(socket, *addr, &msg);
+                }
+            }
             // Voxels modifiés par moi ou par un client : à tous les clients
             if tick && (!net.voxel_outbox.is_empty() || !net.voxel_relay.is_empty()) {
                 let mut edits: Vec<crate::voxel::VoxelEdit> = net.voxel_outbox.drain(..).collect();
@@ -1752,6 +1879,22 @@ pub(crate) fn net_update(
                             }
                         }
                     }
+                    // L'hôte demande un de mes modèles, ou m'en envoie un morceau
+                    Msg::ModelWant { fp, parts } => {
+                        if models.file(fp).is_some() {
+                            net.transfers.serve(*host, fp, &parts);
+                        }
+                    }
+                    Msg::ModelPart { fp, index, total, data } => {
+                        if let Some(bytes) = net.transfers.receive(fp, index, total, &data) {
+                            models.add_file(bytes);
+                        }
+                    }
+                    Msg::Share { fp, name, from } => {
+                        if net.shares_in.len() < 16 && !net.shares_in.iter().any(|s| s.0 == fp) {
+                            net.shares_in.push((fp, sanitize_chat(&name).unwrap_or_default(), sanitize_name(&from), now));
+                        }
+                    }
                     Msg::Bye => {
                         next = Some((Session::Offline, "L'hote a quitte la partie.".into(), false, None));
                         break;
@@ -1764,6 +1907,17 @@ pub(crate) fn net_update(
                 }
             }
             if next.is_none() {
+                for (fp, name) in std::mem::take(&mut net.share_out) {
+                    send(socket, *host, &Msg::Share { fp, name, from: my_name.clone() });
+                }
+                for (fp, parts) in net.transfers.asks(now) {
+                    send(socket, *host, &Msg::ModelWant { fp, parts });
+                }
+                for (to, fp, index) in net.transfers.next_parts(crate::net_models::PARTS_PER_FRAME) {
+                    if let Some((total, data)) = models.file(fp).and_then(|b| crate::net_models::part_of(&b, index)) {
+                        send(socket, to, &Msg::ModelPart { fp, index, total, data });
+                    }
+                }
                 if now - *last_recv > TIMEOUT {
                     next = Some((Session::Offline, "Connexion perdue avec l'hote.".into(), true, None));
                 } else if tick {
@@ -1893,10 +2047,12 @@ fn cleanup_on_exit(mut exit: EventReader<AppExit>, mut net: ResMut<Net>) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[derive(Component)]
-struct RemoteShip {
-    id: u32,
+pub(crate) struct RemoteShip {
+    pub(crate) id: u32,
     color: [f32; 3],
     outline: Handle<StandardMaterial>,
+    /// Son modèle (E7).
+    rig: Entity,
 }
 
 #[derive(Component)]
@@ -1909,17 +2065,19 @@ fn label_color(c: [f32; 3]) -> Color {
     Color::srgb(0.35 + c[0] * 0.65, 0.35 + c[1] * 0.65, 0.35 + c[2] * 0.65)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sync_remote_ships(
     mut commands: Commands,
     time: Res<Time>,
     net: Res<Net>,
-    assets: Option<Res<ShipAssets>>,
+    models: Res<crate::models::GameModels>,
+    surface: Res<crate::surface::Surface>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     cam_q: Query<&GlobalTransform, With<CameraController>>,
     mut ships: Query<(Entity, &mut RemoteShip, &mut Transform, &mut Visibility)>,
+    mut rigs: Query<&mut crate::models::Rig>,
     labels: Query<(Entity, &RemoteLabel)>,
 ) {
-    let Some(assets) = assets else { return };
     let now = time.elapsed_secs_f64();
     let dt = time.delta_secs();
     let cam_pos = cam_q.get_single().map(|gt| gt.translation()).unwrap_or_default();
@@ -1953,8 +2111,28 @@ fn sync_remote_ships(
             tf.translation = tf.translation.lerp(predicted, k);
         }
         tf.rotation = tf.rotation.slerp(peer.rot, (1.0 - (-12.0 * dt).exp()).clamp(0.0, 1.0));
-        // Même taille apparente que notre propre vaisseau
-        tf.scale = Vec3::splat((cam_pos.distance(tf.translation) * 0.008).max(0.05));
+        // Même taille apparente que notre propre vaisseau ; près de nous sur un astre : sa vraie
+        // taille (4 voxels = 1 bloc)
+        let key = peer.look.ship_key();
+        let icon = (cam_pos.distance(tf.translation) * 0.008).max(0.05);
+        let real = surface.voxel().zip(models.peek(&key)).map(|(v, l)| l.size().max_element() / 4.0 * v / crate::models::icon_length(l));
+        tf.scale = Vec3::splat(match real {
+            Some(r) if surface.center().is_some_and(|c| c.distance(tf.translation) < 1.0e6) => r,
+            _ => icon,
+        });
+        if let Ok(mut rig) = rigs.get_mut(rs.rig) {
+            if rig.key != key {
+                rig.key = key;
+            }
+            // Un vaisseau entre ou sort de ses hangars : ses portes s'ouvrent
+            if let Some((seq, t)) = crate::dock::carrier_sequence(&net, rs.id) {
+                rig.play(seq);
+                rig.t = t;
+            } else {
+                let state = if peer.status.hp == 0 { "detruit" } else if peer.look.ss.is_empty() { "vol" } else { peer.look.ss.as_str() };
+                rig.play(&format!("{}{state}", crate::editeur::motion::STATE_PREFIX));
+            }
+        }
         // Vaisseau détruit : invisible jusqu'à sa réapparition
         let want = if peer.status.hp == 0 { Visibility::Hidden } else { Visibility::Inherited };
         if *vis != want {
@@ -1973,16 +2151,20 @@ fn sync_remote_ships(
             continue;
         }
         let outline = materials.add(outline_material(peer.color));
+        let rig = commands
+            .spawn((
+                crate::models::Rig::new(peer.look.ship_key(), crate::models::Fit::Ship, "etat:vol"),
+                Transform::IDENTITY,
+                Visibility::default(),
+            ))
+            .id();
         commands
             .spawn((
                 Transform::from_translation(peer.pos()).with_rotation(peer.rot),
                 Visibility::default(),
-                RemoteShip { id: *id, color: peer.color, outline: outline.clone() },
+                RemoteShip { id: *id, color: peer.color, outline: outline.clone(), rig },
             ))
-            .with_children(|p| {
-                assets.spawn_model(p);
-                assets.spawn_outline(p, outline);
-            });
+            .add_child(rig);
 
         commands
             .spawn((
@@ -2099,6 +2281,8 @@ mod tests {
                 ..GameSettings::default()
             })
             .init_resource::<crate::net_ui::NetPanel>()
+            .init_resource::<crate::models::GameModels>()
+            .init_resource::<crate::surface::Surface>()
             .add_plugins((NetPlugin, crate::guild::GuildPlugin));
         // Pas de recherche UPnP pendant les tests
         let mut net = app.world_mut().resource_mut::<Net>();
@@ -2140,7 +2324,7 @@ mod tests {
 
     fn state(id: u32, sys: Option<u32>, stay: f64, clock: f64) -> PlayerState {
         let ph = Profile { name: "x".into(), ..Profile::default() }.sanitized().fingerprint();
-        PlayerState { id, ph, pos: [0.0; 3], rot: [0.0, 0.0, 0.0, 1.0], sys, stay, clock, speed: 1.0, hp: MAX_HP, hits: Vec::new(), siege: None, taken: Vec::new() }
+        PlayerState { id, ph, pos: [0.0; 3], rot: [0.0, 0.0, 0.0, 1.0], sys, stay, clock, speed: 1.0, hp: MAX_HP, hits: Vec::new(), siege: None, taken: Vec::new(), look: Default::default() }
     }
 
     #[test]
@@ -2255,11 +2439,54 @@ mod tests {
         assert_eq!(host.world().resource::<Net>().voxel_inbox[0], edit);
         assert_eq!(client.world().resource::<Net>().voxel_inbox[0], edit);
 
+        // Modèle du client (E7, règle 7) : l'hôte le voit par son empreinte, le demande et le reçoit
+        let lib = crate::editeur::motion::Library::load(None).0;
+        let mut m = crate::editeur::defaults::build("vaisseau:corvette", &lib).unwrap();
+        m.name = format!("Corvette {:?}", std::time::SystemTime::now());
+        let bytes = m.to_bytes().unwrap();
+        let fp = {
+            let mut models = client.world_mut().resource_mut::<crate::models::GameModels>();
+            let fp = models.add_file(bytes.clone()).unwrap();
+            models.ship = crate::models::ModelKey::Print(fp);
+            fp
+        };
+        let key = crate::models::ModelKey::Print(fp);
+        let start = std::time::Instant::now();
+        loop {
+            host.update();
+            client.update();
+            let seen = host.world().resource::<Net>().peers.values().any(|p| p.look.ship.as_ref() == Some(&key));
+            let mut models = host.world_mut().resource_mut::<crate::models::GameModels>();
+            if seen {
+                models.get(&key);
+            }
+            if models.files.get(&fp).is_some_and(|b| **b == bytes) {
+                break;
+            }
+            assert!(start.elapsed().as_secs() < 15, "modele timeout");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        // Partage (E8) : le client partage un modèle, il arrive dans la bibliothèque de l'hôte
+        let mut shared = crate::editeur::defaults::build("perso:lamia", &lib).unwrap();
+        shared.name = format!("Naga {}", fp % 100_000);
+        let sfp = client.world_mut().resource_mut::<crate::models::GameModels>().add_file(shared.to_bytes().unwrap()).unwrap();
+        client.world_mut().resource_mut::<Net>().share_out.push((sfp, shared.name.clone()));
+        let want = format!("{} (de Client)", shared.name);
+        let dir = crate::editeur::library_dir().join("partages");
+        let start = std::time::Instant::now();
+        while !crate::editeur::list_models(&dir).iter().any(|e| e.name == want) {
+            host.update();
+            client.update();
+            assert!(start.elapsed().as_secs() < 15, "partage timeout");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
         // Chat : chacun écrit, les deux voient les deux messages une seule fois
         host.world_mut().send_event(NetCommand::Chat("salut".into()));
         client.world_mut().send_event(NetCommand::Chat("  coucou  ".into()));
         let texts = |app: &App| -> Vec<String> {
-            app.world().resource::<Net>().chat.lines.iter().map(|l| format!("{}: {}", l.name, l.text)).collect()
+            app.world().resource::<Net>().chat.lines.iter().filter(|l| !l.system).map(|l| format!("{}: {}", l.name, l.text)).collect()
         };
         let start = std::time::Instant::now();
         while texts(&host).len() < 2 || texts(&client).len() < 2 {

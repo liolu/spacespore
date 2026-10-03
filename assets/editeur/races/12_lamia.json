@@ -1,0 +1,487 @@
+{
+ "id": "lamia",
+ "name": "Lamia / naga",
+ "races": [
+  "Lamia",
+  "Naga"
+ ],
+ "locomotion": "reptation",
+ "preview": "reptation",
+ "parts": [
+  {
+   "name": "bassin",
+   "boxes": [
+    [
+     5,
+     10,
+     14,
+     10,
+     11,
+     17
+    ]
+   ],
+   "pivot": [
+    8,
+    11,
+    16
+   ]
+  },
+  {
+   "name": "tronc",
+   "boxes": [
+    [
+     5,
+     12,
+     14,
+     10,
+     19,
+     17
+    ]
+   ],
+   "parent": "bassin",
+   "pivot": [
+    8,
+    12,
+    16
+   ]
+  },
+  {
+   "name": "cou",
+   "boxes": [
+    [
+     7,
+     20,
+     15,
+     8,
+     20,
+     16
+    ]
+   ],
+   "parent": "tronc",
+   "pivot": [
+    8,
+    20,
+    16
+   ]
+  },
+  {
+   "name": "tete",
+   "boxes": [
+    [
+     5,
+     21,
+     13,
+     10,
+     26,
+     18
+    ]
+   ],
+   "parent": "cou",
+   "pivot": [
+    8,
+    21,
+    16
+   ]
+  },
+  {
+   "name": "bras",
+   "boxes": [
+    [
+     3,
+     16,
+     15,
+     4,
+     19,
+     16
+    ]
+   ],
+   "parent": "tronc",
+   "pivot": [
+    4,
+    19.5,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "avant_bras",
+   "boxes": [
+    [
+     3,
+     12,
+     15,
+     4,
+     15,
+     16
+    ]
+   ],
+   "parent": "bras",
+   "pivot": [
+    4,
+    16,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "main",
+   "boxes": [
+    [
+     3,
+     10,
+     15,
+     4,
+     11,
+     16
+    ]
+   ],
+   "parent": "avant_bras",
+   "pivot": [
+    4,
+    12,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "serpent_1",
+   "boxes": [
+    [
+     6,
+     7,
+     14,
+     9,
+     9,
+     17
+    ]
+   ],
+   "parent": "bassin",
+   "pivot": [
+    8,
+    10,
+    16
+   ]
+  },
+  {
+   "name": "serpent_2",
+   "boxes": [
+    [
+     6,
+     4,
+     14,
+     9,
+     6,
+     17
+    ]
+   ],
+   "parent": "serpent_1",
+   "pivot": [
+    8,
+    7,
+    16
+   ]
+  },
+  {
+   "name": "serpent_3",
+   "boxes": [
+    [
+     6,
+     0,
+     14,
+     9,
+     3,
+     17
+    ]
+   ],
+   "parent": "serpent_2",
+   "pivot": [
+    8,
+    4,
+    16
+   ]
+  },
+  {
+   "name": "serpent_4",
+   "boxes": [
+    [
+     6,
+     0,
+     11,
+     9,
+     2,
+     13
+    ]
+   ],
+   "parent": "serpent_3",
+   "pivot": [
+    8,
+    1.5,
+    14
+   ]
+  },
+  {
+   "name": "serpent_5",
+   "boxes": [
+    [
+     6,
+     0,
+     8,
+     9,
+     1,
+     10
+    ]
+   ],
+   "parent": "serpent_4",
+   "pivot": [
+    8,
+    1.5,
+    11
+   ]
+  },
+  {
+   "name": "serpent_6",
+   "boxes": [
+    [
+     7,
+     0,
+     5,
+     8,
+     1,
+     7
+    ]
+   ],
+   "parent": "serpent_5",
+   "pivot": [
+    8,
+    1,
+    8
+   ]
+  },
+  {
+   "name": "serpent_7",
+   "boxes": [
+    [
+     7,
+     0,
+     3,
+     8,
+     1,
+     4
+    ]
+   ],
+   "parent": "serpent_6",
+   "pivot": [
+    8,
+    1,
+    5
+   ]
+  },
+  {
+   "name": "serpent_8",
+   "boxes": [
+    [
+     7,
+     0,
+     0,
+     8,
+     0,
+     2
+    ]
+   ],
+   "parent": "serpent_7",
+   "pivot": [
+    8,
+    0.5,
+    3
+   ]
+  }
+ ],
+ "options": [
+  {
+   "id": "capuchon",
+   "name": "Capuchon de cobra",
+   "parts": [
+    {
+     "name": "capuchon",
+     "boxes": [
+      [
+       4,
+       21,
+       13,
+       4,
+       26,
+       14
+      ],
+      [
+       3,
+       22,
+       13,
+       3,
+       25,
+       13
+      ]
+     ],
+     "parent": "tete",
+     "sym": true,
+     "fixed": true
+    }
+   ]
+  },
+  {
+   "id": "ailes",
+   "name": "Ailes",
+   "parts": [
+    {
+     "name": "aile",
+     "boxes": [
+      [
+       1,
+       17,
+       13,
+       5,
+       20,
+       13
+      ]
+     ],
+     "parent": "tronc",
+     "pivot": [
+      5.5,
+      19,
+      13.5
+     ],
+     "sym": true
+    },
+    {
+     "name": "pointe",
+     "boxes": [
+      [
+       0,
+       21,
+       13,
+       2,
+       27,
+       13
+      ]
+     ],
+     "parent": "aile",
+     "pivot": [
+      1,
+      20.5,
+      13.5
+     ],
+     "sym": true
+    }
+   ]
+  },
+  {
+   "id": "bras2",
+   "name": "Bras supplementaires",
+   "parts": [
+    {
+     "name": "bras2",
+     "boxes": [
+      [
+       3,
+       13,
+       13,
+       4,
+       15,
+       14
+      ]
+     ],
+     "parent": "tronc",
+     "pivot": [
+      4,
+      15.5,
+      14
+     ],
+     "sym": true
+    },
+    {
+     "name": "avant_bras2",
+     "boxes": [
+      [
+       3,
+       10,
+       13,
+       4,
+       12,
+       14
+      ]
+     ],
+     "parent": "bras2",
+     "pivot": [
+      4,
+      13,
+      14
+     ],
+     "sym": true
+    },
+    {
+     "name": "main2",
+     "boxes": [
+      [
+       3,
+       9,
+       13,
+       4,
+       9,
+       14
+      ]
+     ],
+     "parent": "avant_bras2",
+     "pivot": [
+      4,
+      10,
+      14
+     ],
+     "sym": true
+    }
+   ]
+  },
+  {
+   "id": "cheveux",
+   "name": "Cheveux longs",
+   "parts": [
+    {
+     "name": "cheveux_1",
+     "boxes": [
+      [
+       5,
+       22,
+       12,
+       10,
+       25,
+       12
+      ]
+     ],
+     "parent": "tete",
+     "pivot": [
+      8,
+      25.5,
+      12.5
+     ]
+    },
+    {
+     "name": "cheveux_2",
+     "boxes": [
+      [
+       5,
+       18,
+       12,
+       10,
+       21,
+       12
+      ]
+     ],
+     "parent": "cheveux_1",
+     "pivot": [
+      8,
+      22,
+      12.5
+     ]
+    }
+   ]
+  }
+ ]
+}

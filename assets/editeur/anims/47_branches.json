@@ -1,0 +1,20 @@
+{
+ "id": "branches",
+ "name": "Branches au vent",
+ "group": "Procedurales",
+ "duration": 5.0,
+ "tracks": {
+  "branche_*_g": {
+   "type": "onde",
+   "axis": [
+    0,
+    0,
+    1
+   ],
+   "amplitude": 4,
+   "period": 5.0,
+   "step": 0.3
+  }
+ },
+ "mirror": 0.5
+}

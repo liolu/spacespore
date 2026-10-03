@@ -180,7 +180,9 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   `belts.rs`, `comets.rs`. Surface : `sun_list` / `combined_sky` (ciel et jour de tous les soleils, double coucher),
   `SurfaceSun` = une lumiere directionnelle par soleil avec ombres (cascades ~200 voxels) qui remplace la lumiere
   ponctuelle des etoiles sur un astre solide (`dim_star_light`), le decor projette des ombres. `/aller etoile
-  double|triple`. Saisons recalees (`SEASON_REF_DAYS` 115 -> 300 : moyenne 1 h, Q2). PROTOCOL 27.
+  double|triple`. Etoile cliquee de loin (`Star(indice du systeme)`) : `promote_star_target` (main.rs) la change en
+  `Star(systeme * 1000)` une fois le systeme charge (sinon le vaisseau reste au centre de masse, vide) ; `star_parts`.
+  Tests : `SPACESPORE_TEST_CMD` (commande du chat a 6 s), `SPACESPORE_TEST_STAR=k|sys` (`test_cmd::dev_script`). Saisons recalees (`SEASON_REF_DAYS` 115 -> 300 : moyenne 1 h, Q2). PROTOCOL 27.
   C4 = phenomenes du ciel (`sky.rs`) : orages magnetiques `storm(seed, activite, t)` par tranches de 15 min
   (`Storms` : eruptions plus hautes dans `update_flare_voxels`, aurores avivees 2 min plus tard) ; eclipses :
   `occultation` des disques, `SunDim` (lumiere de chaque soleil a la camera, passee a `sun_list`), taches d'ombre
@@ -198,6 +200,116 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   lumiere des soleils voilee (`SunDim`), ciel gris / brun, flash des eclairs, brouillard (`gas.rs`), particules
   autour de la camera (`particle_positions`), vent qui pousse le vaisseau en vol bas (`Surface::drift`), scanner.
   Banc : `cargo test --release bench_cloud_layer -- --ignored --nocapture`.
+- 0.12 (`ROADMAP-0.12-editeur.md`) : editeur de modeles voxel, module `src/editeur/`. E0 = fondations : etat
+  `AppState` (Jeu / Editeur, `editeur::in_game` coupe le clavier et la souris du jeu), ouvert au premier lancement
+  (`GameSettings::first_launch`, creation du personnage), par le bouton du menu (`EditorMenuButton`) et `/editeur`.
+  Format `.ssvox` (`format.rs`) : archive zip (meta.json + voxels.bin + zones.bin), palette 255 couleurs +
+  matiere (mate, metal, verre, lumineuse), `Sparse` = chunks 32^3 creux (absent / uniforme / plein, RLE), 10 Mo au
+  plus (Q4), grilles : perso 16 x 32 x 32, vaisseau 64 a 1024 (`ShipCategory`), autre <= 64. Bibliotheque
+  `saves/modeles/`, import Pixel World (`import.rs`, depuis `saves/import/`, couleurs de `BlockData.cs`). Test des
+  vrais modeles : `cargo test --release real_pixel_world -- --ignored --nocapture`. PROTOCOL inchange.
+  E1 = l'editeur : `edit.rs` (`Doc` : modele + historique, un trait de souris = un lot annulable, `Tool`
+  ajouter / retirer / peindre / pipette, symetrie miroir en x par defaut pour les persos, `raycast` DDA, maillage des
+  faces visibles), `view.rs` (la camera du jeu passe sur le calque `EDITOR_LAYER` = le monde disparait sans etre
+  decharge ; lumiere et gizmos `EditorGizmos` sur ce calque ; camera orbitale ; raccourcis 1-4, X, G, F, Ctrl+Z (W ou
+  Z physique), Ctrl+Y, Ctrl+S, fleches), `panels.rs` (interface reconstruite quand `ui_dirty`, fenetres Nouveau /
+  Bibliotheque / Renommer / Etiquettes, interface du jeu masquee). Tests visuels : `SPACESPORE_CAPTURE=x.png`
+  (+ `SPACESPORE_EDITOR_DEMO=1`, `SPACESPORE_CAPTURE_SECS`, `SPACESPORE_EDITOR_SCROLL`) fait une capture puis ferme le jeu.
+  E2 = palette (`palette.rs`) : OKLCH (`oklch_to_rgb8` ramene la saturation dans l'ecran), grille 36 teintes x 12
+  clartes x 4 `Saturation`, 16 gris, `THEMES` (peaux, cheveux, metaux, coques, militaire, neons, Pixel World),
+  `parse_hex`, `sorted` (palette du modele : gris, teinte, clarte). Recentes (16), couleur libre (Hex...), matiere de
+  la couleur ; clic droit sur une couleur du modele = `Doc::replace_color` (un lot annulable). Rendu par matiere :
+  `edit::build_meshes` (4 maillages) et `view::material_of` (mate, metal, verre transparent, lumineuse sans ombre).
+  A l'enregistrement, `Model::compact_palette` sur une copie (l'onglet garde ses index pour l'annulation).
+  E4 = blocs de mouvement (`motion.rs`) : un JSON par bloc dans `assets/editeur/blocs/` (integres par `build.rs`,
+  regle 4 ; le joueur peut en ajouter ou remplacer dans `saves/editeur/blocs/`) : parties (parent, pivot, boites de
+  cases) et animations (`cles` : [t, rx, ry, rz] degres / [t, x, y, z] ; `onde` : axe, amplitude, periode, dephasage),
+  « repos » obligatoire. `Placement` (quarts de tour en y, miroir x, taille) ; `Doc::place_block` = blocs blancs
+  (`BLOCK_WHITE`) + une `format::Zone` par partie (bloc, partie, parent, pivot, orientation), symetrie = bloc
+  reflete en face ; Ajouter contre une zone l'y fait entrer, Retirer l'en sort ; `remove_zone` (blocs gardes).
+  Lots d'annulation avec zones (`Batch`). Rendu : une entite par (zone, matiere) (`RigPart`, faces cachees par la
+  meme zone seulement), poses `motion::compose(zone_locals)` (aperçu P, choix de l'animation, melange 0,35 s),
+  gabarit `Ghost` qui joue son repos (rouge s'il deborde ou recouvre), contours des zones, `motion::collisions`
+  (zone qui traverse le corps fixe = rouge). Captures : `SPACESPORE_EDITOR_DEMO=blocs` (apercu) ou `gabarit`.
+  E5 = races et animations : `races.rs` (`RaceDef` : os = parties nom / parent / pivot / boites, `sym` = decrit a
+  gauche « _g » et reflete « _d », `fixed` = partie fixe qui suit son parent, `options` = membres optionnels avec
+  `replaces`) ; 23 familles dans `assets/editeur/races/`, 49 animations (§3.3) dans `assets/editeur/anims/`
+  (generes par un script, `build.rs` integre blocs / anims / races ; le joueur ajoute dans `saves/editeur/`).
+  `motion::Library` (blocs + `LibAnim` + races) ; une animation vise des os par nom de zone (`bone` : espaces -> _),
+  par motif de chaine (`queue_*`, `patte_*_g` : onde decalee de `step` par maillon), cote droit = gauche reflete
+  decale de `mirror` ; `requires` (voler : os « aile ») ; groupe « Procedurales » toujours actif par-dessus ;
+  pistes de taille (slime). Pour une zone : animation de son bloc, sinon de la bibliotheque, sinon repos ; vitesse
+  de la race (golem 0,6). Repere : perso vers +z, membre en avant = rx negatif. Choix de la race : `race_view`
+  anime (`Editor::shown`), options a cocher, choix de l'animation, camera decalee (`OrbitCam::shift`).
+  Captures par race : `SPACESPORE_EDITOR_DEMO=race:<id>` (+ `SPACESPORE_RACE_ANIM`, `SPACESPORE_RACE_OPTIONS`).
+  E3 = grandes grilles (jusqu'a 1024³) : `format::Chunk::Full(Arc<Vec<u8>>)` (copie a l'ecriture : copier un
+  modele, garder un chunk pour annuler ou l'envoyer au maillage ne coute rien), `Sparse::data_mut/fold/put_chunk`.
+  `Doc` : lots d'annulation par chunk (`Snap` avant / apres des voxels, zones, calques ; 768 Mo au plus),
+  `dirty_chunks` (seuls ces chunks sont remailles), `revision`, calque courant `layer`, coupe `cut`.
+  `Doc::edit_region` ecrit chunk par chunk (outils de volume `Shape` boite / sphere / cylindre / ligne et `Brush`
+  ajouter (cases vides) / retirer / peindre, avec le miroir ; `flood` = pot de peinture ; `copy` / `clear` /
+  `paste` / `transform_selection` = selection et `Clip`). Les cases cachees (calque masque, au-dela de la coupe)
+  ne sont ni touchees ni visees (`raycast` prend la `mesh::Visibility`). Calques : `Model::layers` +
+  `layer_map` (`layers.bin`). `mesh.rs` : maillage glouton d'un chunk (`ChunkJob` emporte le chunk et ses 26
+  voisins), niveaux de detail 1 / 2 / 4 selon la distance ; `view::ChunkMeshes` : entites par chunk, les 6
+  premiers chunks tout de suite, le reste hors du fil principal. Poids du fichier et nombre de blocs calcules en
+  arriere-plan. Outils 5 a 0, molette pendant un trace = epaisseur, Ctrl+C/X/V, Suppr, R (Maj+R), C et Page
+  prec./suiv. (coupe). Mesures (regle 8) : `cargo test --release bench_editor -- --ignored --nocapture` ;
+  capture + images/s : `SPACESPORE_EDITOR_DEMO=croiseur` (+ `SPACESPORE_EDITOR_CUT`), ecrit `<capture>.txt`.
+  Feuille de route : hangars des porte-vaisseaux (§5.1, E6 / E7, Q8).
+  E6 = blocs de vaisseau (§5) dans `assets/editeur/blocs/` (generes par un script) : portes, rampe, verriere,
+  ailes repliables / en X / a geometrie variable, train, propulseur et manoeuvre (flammes lumineuses), tuyere
+  orientable, tourelle, radar, anneau, panneaux, bras minier, feux ; `PartDef::color/material` (couleur de depart).
+  Pistes pilotees : `entree` (poussee / vitesse / manoeuvre -> rotation et taille, `flicker`), `clignote`,
+  `vise` (`aim_angle` : lacet, tangage d'apres la hauteur ; « poussee » = tuyere a l'oppose) ; `motion::Inputs`
+  (donnes par le jeu en E7, simules dans l'apercu : `Editor::inputs`, poussee reglable). Etats du vaisseau
+  `SHIP_STATES` : `BlockDef::states` etat -> animation, apercu « etat:vol » (passage en 1,5 s : `blend_secs`) ;
+  une animation du bloc sans piste pour une partie = immobile. Hangars (§5.1) : `BlockDef::hangar` (categorie,
+  soute a cargos, porte, place, chemin), `format::Hangar` dans `Model::hangars` (meta.json, annulable),
+  `edit::hangar_allowed` (Q8 : croiseur = chasseurs ; capital = chasseurs, corvettes, cargos jusqu'a la
+  fregate), apercu `hangar:entree` / `hangar:sortie` (`HANGAR_SECS`, porte qui joue « ouverture »,
+  `hangar_ship` = vaisseau fantome), chemin prolonge au clic (`extend_path`). Captures :
+  `SPACESPORE_EDITOR_DEMO=vaisseau` (etat combat) ou `hangar`.
+  E7 = les modeles en jeu (`models.rs`) : `ModelKey` (defaut `vaisseau:chasseur` / `perso:<race>` fabrique par
+  `editeur::defaults`, ou empreinte d'un `.ssvox`), `GameModels` (charge et maille hors du fil principal, fichiers
+  par empreinte, `saves/cache_modeles/`), `Rig` (enfant : une entite par zone et matiere, `RigPart`, anime par
+  `zone_locals_with` + `Inputs`, `play` = passage en douceur), `Fit::Ship` (nez +z du modele vers -Z, longueur
+  `icon_length` a l'echelle 1) / `Fit::Character` (hauteur du marcheur, ~2 blocs : decision du 03/10).
+  Choix : `GameSettings::ship_model` / `character_model` (bouton « Utiliser comme mon vaisseau / personnage » ;
+  le premier personnage enregistre est pris). Vaisseau : vraie taille pose et en vol bas (`surface::ShipDims`,
+  4 voxels = 1 bloc), icone dans l'espace ; zoom de vol bas `Surface::flight_zoom` ; etat (pose, decollage,
+  vol, combat via `combat::CombatState::last_shot`, detruit) et poussee pour les blocs (`models::drive_local`).
+  A pied : F5 = 3e personne (par defaut), personnage anime (`walker_anim`), le marcheur ne traverse pas le
+  vaisseau pose (`collision_boxes` par chunk, `push_out`). Reseau (`net_models.rs`, PROTOCOL 28) : `Looks` dans
+  `PlayerState` (modeles, etat du vaisseau, marcheur `WalkState`, amarrage `DockState`), fichiers demandes par
+  empreinte en morceaux de 16 Kio via l'hote (`Transfers`, `Msg::ModelWant/ModelPart`), autres joueurs : vaisseau
+  avec leur modele (vraie taille pres de nous sur un astre), personnage a pied (`sync_remote_walkers`).
+  Amarrage (`dock.rs`, touche H, dans l'espace) : hangar libre a notre taille d'un autre joueur, entree / amarre /
+  sortie, portes animees chez tous (`carrier_sequence`). Tests : `SPACESPORE_TEST_LAND=<s>` (V), 
+  `SPACESPORE_TEST_PEER=marcheur|croiseur|capital` (faux joueur), `SPACESPORE_TEST_DOCK=<s>`.
+  E8 = mode avance : `vox.rs` (MagicaVoxel 150 : SIZE/XYZI, RGBA, MATL verre/metal/lumineux, graphe nTRN/nGRP/nSHP,
+  morceaux de 256³, z du .vox = y ici ; import depuis `saves/import/`, export `saves/export/`). Animations du
+  modele `format::ModelAnim` (`Model::anims`, cles de rotation par os, dans meta.json, prioritaires dans
+  `zone_locals`), `Doc::set_pivot` / `edit_anims` (annulables), `custom.rs` (cles : `angles_at`, `set_key`,
+  `remove_key` ; `block_json` = zone + filles -> bloc de mouvement dans `saves/editeur/blocs/`). Panneau « Mode
+  avance » (zone choisie, pivot +- 0,5 ou au clic, animations, frise de 21 cases, angles +-15, cle, duree,
+  lecture / pause : `Preview::paused`). Partage (`Msg::Share`, `Net::share_out`) : le modele arrive chez les
+  autres par empreinte, dans `saves/modeles/partages/`. Capture : `SPACESPORE_EDITOR_DEMO=avance`.
+- Correctifs apres 0.12 : nuages (`weather::cloud_field`) : chaque champ n'est pousse par le vent que depuis sa
+  naissance (deux periodes de `MORPH_SECS` = 15 min) ; avant, le cisaillement depuis le debut de la partie
+  faisait des bandes de Jupiter. `CLOUD_DRIFT` (x6) pour voir bouger les nuages, taille des nuages propre a chaque
+  monde. Eclairs seulement sous un nuage d'orage (au-dessus du joueur et de l'impact). PROTOCOL 29.
+  Embarquement (`surface.rs`) : `Phase::Boarding` / `Disembarking` : le cockpit (bloc verriere, rampe ou porte du
+  modele : `cockpit`) s'ouvre (etat « pose »), le personnage saute dedans puis le vaisseau decolle ; a
+  l'atterrissage il en descend. Les vaisseaux par defaut ont une verriere. `SPACESPORE_TEST_LAND=<s>,<s>` (V a
+  plusieurs instants). L'editeur rend la souris (`Surface::release_cursor`).
+  Cometes, ceintures, etoiles multiples : la lueur d'une comete s'efface quand la camera est dans sa chevelure
+  (`Tails::near`) ; `asteroids::draw_trails` = trainees (gizmos) derriere cometes (5 % de la periode), gros
+  asteroides proches et planetes des systemes charges (4 %). Bande des ceintures = cailloux icosaedres bosseles
+  ombres par l'etoile (`band_mesh`, opaques) ; epaisseur des ceintures d'apres la largeur affichee (principale
+  0,12 a 0,24 de la largeur, Kuiper plate). `StarOrbit::period` = vraie periode (paire serree 1 a 200 j =
+  24 min a 80 h de jeu, compagnon lointain en siecles) ; paire serree a un quart de la premiere orbite permise.
+  PROTOCOL 30.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

@@ -61,6 +61,50 @@ const TILE_KEEP_SECS: f64 = 8.0;
 /// du jeu n'utilise pas (C, E, F, G, L, M, N, P et T servent déjà).
 pub const ENTER_SHIP_KEY: KeyCode = KeyCode::KeyV;
 
+/// Tests (développement) : `SPACESPORE_TEST_LAND=<s>[,<s>...]` appuie sur V à ces instants (atterrir,
+/// puis remonter dans le vaisseau...).
+fn test_land(now: f64) -> bool {
+    static DONE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let Ok(list) = std::env::var("SPACESPORE_TEST_LAND") else { return false };
+    let times: Vec<f64> = list.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+    let k = DONE.load(std::sync::atomic::Ordering::Relaxed);
+    let due = times.get(k).is_some_and(|at| now > *at);
+    if due {
+        DONE.store(k + 1, std::sync::atomic::Ordering::Relaxed);
+    }
+    due
+}
+
+/// À pied : vue à la troisième personne (on voit son personnage, E7) ou à la première.
+pub const VIEW_KEY: KeyCode = KeyCode::F5;
+
+/// Dimensions du vaisseau du joueur (son modèle, E7) : longueur à l'échelle 1 (`models::icon_length`),
+/// demi-hauteur à l'échelle 1, plus grande dimension en voxels (vraie taille : 4 voxels = 1 bloc).
+#[derive(Clone, Copy, Debug)]
+pub struct ShipDims {
+    pub icon_len: f32,
+    pub half_h: f32,
+    pub voxels: f32,
+}
+
+impl Default for ShipDims {
+    fn default() -> Self {
+        Self { icon_len: 5.0, half_h: 0.3, voxels: 64.0 }
+    }
+}
+
+impl ShipDims {
+    /// Longueur réelle du vaisseau au plus (voxels du terrain les plus grands).
+    pub fn max_length(&self) -> f32 {
+        self.voxels / 4.0 * crate::terrain::MAX_VOXEL
+    }
+
+    /// Échelle du vaisseau à sa vraie taille, sur un astre aux voxels de `voxel` unités.
+    pub fn real_scale(&self, voxel: f32) -> f32 {
+        self.voxels / 4.0 * voxel / self.icon_len
+    }
+}
+
 pub struct SurfacePlugin;
 
 impl Plugin for SurfacePlugin {
@@ -80,7 +124,7 @@ impl Plugin for SurfacePlugin {
             .add_systems(Update, update_galaxy_dim)
             .add_systems(
                 Update,
-                (surface_control.in_set(SurfaceControl), update_underground, dim_star_light, update_suns, surface_light, update_lamps, update_season, refresh_voxels, update_tiles, update_hud)
+                (surface_control.in_set(SurfaceControl).run_if(crate::editeur::in_game), update_underground, dim_star_light, update_suns, surface_light, update_lamps, update_season, refresh_voxels, update_tiles, update_hud)
                     .chain()
                     .after(crate::planet::orbit_planets)
                     .after(crate::planet::orbit_moons),
@@ -392,7 +436,16 @@ enum Phase {
     Ascending,
     /// Navigation à basse altitude autour de l'astre (zoom sous `FLIGHT_ZOOM`).
     Flying,
+    /// Le personnage monte dans le vaisseau (cockpit ouvert), puis le vaisseau décolle.
+    Boarding,
+    /// Après l'atterrissage, le cockpit s'ouvre et le personnage descend du vaisseau.
+    Disembarking,
 }
+
+/// Monter dans le vaisseau ou en descendre : attente (le cockpit s'ouvre), trajet (s).
+const BOARD_WAIT: f32 = 0.5;
+const UNBOARD_WAIT: f32 = 1.0;
+const BOARD_SECS: f32 = 1.6;
 
 /// En zoomant sous cette distance du vaisseau, on passe en navigation autour de l'astre ;
 /// en dézoomant au-delà, on revient à la vue orbitale.
@@ -449,6 +502,19 @@ pub struct Surface {
     rescue: bool,
     /// Repère de l'astre à la dernière image (chocs contre les astéroïdes).
     frame: Option<Frame>,
+    /// Dimensions du vaisseau (son modèle).
+    pub ship_dims: ShipDims,
+    /// À pied : vue à la troisième personne ; pose du personnage (monde) et son animation.
+    third_person: bool,
+    walker_local: Option<Transform>,
+    walker_world: Option<Transform>,
+    walker_anim: &'static str,
+    /// Montée / descente du vaisseau : instant, d'où et vers où (repère de l'astre), pose du
+    /// personnage.
+    board_t: f32,
+    board_from: Vec3,
+    board_to: Vec3,
+    board_pose: Option<Transform>,
 }
 
 impl Default for Surface {
@@ -489,6 +555,15 @@ impl Default for Surface {
             underground: 0.0,
             rescue: false,
             frame: None,
+            ship_dims: ShipDims::default(),
+            third_person: true,
+            walker_local: None,
+            walker_world: None,
+            walker_anim: "repos",
+            board_t: 0.0,
+            board_from: Vec3::ZERO,
+            board_to: Vec3::ZERO,
+            board_pose: None,
         }
     }
 }
@@ -497,6 +572,11 @@ impl Surface {
     /// Recentrage de l'origine flottante : la pose de caméra mémorisée est en repère monde.
     pub fn shift(&mut self, delta: Vec3) {
         self.cam_from.translation -= delta;
+    }
+
+    /// La souris est rendue (éditeur, menus) : elle sera recapturée au retour à pied.
+    pub fn release_cursor(&mut self) {
+        self.cursor_locked = false;
     }
 
     /// Atterrissage, séjour ou décollage en cours : la caméra n'est plus pilotée par l'orbite.
@@ -545,9 +625,50 @@ impl Surface {
         self.hover = Some((kind, dir.normalize_or(Vec3::Y)));
     }
 
+    /// Taille d'un voxel du terrain de l'astre où l'on séjourne.
+    pub fn voxel(&self) -> Option<f32> {
+        self.terrain.as_ref().filter(|_| self.active()).map(|t| t.voxel())
+    }
+
     /// Navigation à basse altitude autour de l'astre.
     pub fn flying(&self) -> bool {
         self.phase == Phase::Flying
+    }
+
+    /// Distance de caméra sous laquelle on passe en vol bas (au moins `FLIGHT_ZOOM`, trois longueurs
+    /// du vaisseau).
+    pub fn flight_zoom(&self) -> f32 {
+        FLIGHT_ZOOM.max(self.ship_dims.max_length() * 3.0)
+    }
+
+    /// État du vaisseau pour ses animations (E6) : posé, décollage, atterrissage, vol.
+    pub fn ship_state(&self) -> &'static str {
+        match self.phase {
+            Phase::Walking | Phase::Boarding | Phase::Disembarking => "pose",
+            Phase::Descending => "atterrissage",
+            Phase::Ascending => "decollage",
+            Phase::Flying | Phase::Orbit => "vol",
+        }
+    }
+
+    /// Le personnage du joueur à afficher (à pied, vue à la troisième personne) : pose (monde,
+    /// échelle = un voxel du terrain) et animation.
+    pub fn walker_view(&self) -> Option<(Transform, &'static str)> {
+        match self.phase {
+            Phase::Walking if self.third_person => self.walker_world.map(|t| (t, self.walker_anim)),
+            // On voit toujours le personnage monter dans le vaisseau ou en descendre
+            Phase::Boarding | Phase::Disembarking => self.walker_world.map(|t| (t, "marcher")),
+            _ => None,
+        }
+    }
+
+    /// Le marcheur (repère de l'astre, réseau) : astre, pose, animation.
+    pub fn walker_state(&self) -> Option<(TargetKind, Transform, &'static str)> {
+        match self.phase {
+            Phase::Walking => Some((self.body?, self.walker_local?, self.walker_anim)),
+            Phase::Boarding | Phase::Disembarking => Some((self.body?, self.board_pose?, "marcher")),
+            _ => None,
+        }
     }
 
     /// En vol : le vaisseau est repoussé de `push` (monde) par un choc contre un astéroïde ; il
@@ -587,7 +708,7 @@ impl Surface {
     pub fn local_point(&self) -> Option<Vec3> {
         match self.phase {
             Phase::Orbit => None,
-            Phase::Walking => Some(self.walker.pos),
+            Phase::Walking | Phase::Boarding | Phase::Disembarking => Some(self.walker.pos),
             Phase::Flying => Some(self.fpos),
             Phase::Descending | Phase::Ascending => Some(self.dir1),
         }
@@ -679,6 +800,37 @@ impl Surface {
     }
 }
 
+/// Le vaisseau posé décolle (le personnage est à bord).
+fn start_ascent(surface: &mut Surface, params: &BodyParams, fz: f32, cam_from: Transform) {
+    let dir = surface.ship_local.normalize();
+    surface.dir0 = dir;
+    surface.dir1 = dir;
+    surface.r0 = surface.ship_local.length();
+    surface.r1 = hover_radius(params);
+    surface.scale0 = surface.ship_scale;
+    surface.scale1 = fz * 1.2 * 0.008;
+    surface.heading = tangent(surface.ship_rot * Vec3::NEG_Z, dir);
+    surface.t = 0.0;
+    surface.dur = (2.5 + (surface.r1 - surface.r0) / 8000.0).clamp(2.5, 6.0);
+    surface.cam_from = cam_from;
+    surface.cam_blend = 0.0;
+    surface.phase = Phase::Ascending;
+}
+
+/// Où l'on monte dans le vaisseau posé (repère de l'astre) : sa verrière, sinon sa rampe ou sa
+/// porte (blocs de mouvement de son modèle), sinon le dessus du vaisseau, vers l'avant.
+fn cockpit(surface: &Surface, models: &crate::models::GameModels) -> Vec3 {
+    let ship = Transform { translation: surface.ship_local, rotation: surface.ship_rot, scale: Vec3::splat(surface.ship_scale) };
+    let Some(l) = models.peek(&models.ship) else { return surface.ship_local };
+    let m = ship.compute_matrix() * crate::models::fit_transform(l, crate::models::Fit::Ship).compute_matrix();
+    let entry = ["verriere", "rampe", "porte_pivotante", "porte_coulissante"]
+        .iter()
+        .find_map(|b| l.model.zones.iter().find(|z| z.block == *b))
+        .map(|z| Vec3::from_array(z.pivot))
+        .unwrap_or(Vec3::new(l.center().x, l.hi.y, l.center().z + l.size().z * 0.25));
+    m.transform_point3(entry)
+}
+
 /// Lance la descente du vaisseau vers `dir1` depuis (`dir0`, `r0`).
 #[allow(clippy::too_many_arguments)]
 fn begin_descent(
@@ -693,8 +845,9 @@ fn begin_descent(
     cam_from: Transform,
 ) {
     let params = terrain.params;
-    let scale1 = terrain.voxel() * 0.9;
-    let r1 = terrain.ground(dir1).top + scale1 * 0.45;
+    // Posé : sa vraie taille (4 voxels du modèle = 1 bloc), le dessous sur le sol
+    let scale1 = surface.ship_dims.real_scale(terrain.voxel());
+    let r1 = terrain.ground(dir1).top + scale1 * surface.ship_dims.half_h;
     let r0 = r0.max(r1 + scale1 * 8.0);
     let angle = dir0.dot(dir1).clamp(-1.0, 1.0).acos();
     surface.dur = (1.8 + (r0 - r1) / 9000.0 + angle * params.radius / 12000.0).clamp(2.5, 8.0);
@@ -801,6 +954,7 @@ struct Ctx<'w, 's> {
     dim: Res<'w, crate::sky::SunDim>,
     weather: Res<'w, crate::weather::WeatherNow>,
     clock: Res<'w, crate::world_clock::WorldClock>,
+    models: Res<'w, crate::models::GameModels>,
 }
 
 impl Ctx<'_, '_> {
@@ -893,7 +1047,9 @@ fn surface_control(
     let dt = ctx.time.delta_secs().min(0.1);
     let now = ctx.time.elapsed_secs_f64();
     let ui_open = ctx.menu.open || ctx.panel.open || ctx.panel.guild_open || ctx.panel.focus.is_some();
-    let enter = ctx.keys.just_pressed(ENTER_SHIP_KEY) && !ui_open;
+    let enter = (ctx.keys.just_pressed(ENTER_SHIP_KEY) && !ui_open) || test_land(now);
+    // Zoom de passage en vol bas : plus loin pour un grand vaisseau (on doit le voir en entier)
+    let fz = surface.flight_zoom();
 
     // ── En orbite : on attend l'ordre d'atterrir ─────────────────────────
     if surface.phase == Phase::Orbit {
@@ -910,7 +1066,7 @@ fn surface_control(
         if wheel > 0.0 {
             surface.zoom_in_until = now + 0.7;
         }
-        if ctrl.distance < FLIGHT_ZOOM && now < surface.zoom_in_until {
+        if ctrl.distance < fz && now < surface.zoom_in_until {
             if let (Some(params), Some(frame)) = (body_params(&ctx.settings, &kind), ctx.pose(&kind)) {
                 let local = frame.point(ship_tf.translation);
                 if (local.length() - hover_radius(&params)).abs() < params.radius * 0.1 + 250.0 {
@@ -921,7 +1077,7 @@ fn surface_control(
                     surface.heading = tangent(frame.vector(*ship_tf.forward()), up);
                     surface.fspeed = 0.0;
                     surface.fvert = 0.0;
-                    surface.fdist = ctrl.distance.clamp(60.0, FLIGHT_ZOOM * 0.95);
+                    surface.fdist = ctrl.distance.clamp(60.0, fz * 0.95);
                     surface.fyaw = 0.0;
                     surface.fpitch = 0.35;
                     // Une géante n'a pas de sol : on ne plonge pas d'office vers son cœur
@@ -1015,7 +1171,7 @@ fn surface_control(
             if u >= 1.0 {
                 if descending {
                     let right = surface.heading.cross(dir).normalize_or_zero();
-                    let side = (dir * r + right * (scale * 5.0 + 12.0)).normalize();
+                    let side = (dir * r + right * (scale * surface.ship_dims.icon_len * 0.6 + 12.0)).normalize();
                     let walker = Walker::spawn(surface.terrain.as_ref().unwrap(), side, -right);
                     surface.ship_local = dir * r;
                     surface.ship_rot = ship_rot;
@@ -1023,12 +1179,15 @@ fn surface_control(
                     surface.walker = walker;
                     surface.cam_from = cam_local_tf;
                     surface.cam_blend = 0.0;
-                    surface.phase = Phase::Walking;
-                    net.notify("ZQSD/WASD : marcher  Maj : courir  Espace : sauter  V : decoller", now);
+                    // Le cockpit s'ouvre et le personnage en descend
+                    surface.board_from = cockpit(&surface, &ctx.models);
+                    surface.board_to = walker.pos;
+                    surface.board_t = 0.0;
+                    surface.phase = Phase::Disembarking;
                 } else {
                     // De retour en orbite : le vaisseau stationne au-dessus du point de décollage
                     surface.hover = Some((kind, dir));
-                    ctrl.distance = FLIGHT_ZOOM * 1.2;
+                    ctrl.distance = fz * 1.2;
                     ctrl.zoom_goal = Some((params.radius * 2.5).max(2_500.0));
                     ctrl.last_target_pos = center;
                     surface.abort();
@@ -1057,9 +1216,25 @@ fn surface_control(
                 let sens = ctx.settings.mouse_sensitivity * 0.003;
                 input.look = look_delta.clamp_length_max(300.0) * sens;
             }
+            if ctx.keys.just_pressed(VIEW_KEY) && !ui_open {
+                surface.third_person = !surface.third_person;
+            }
             let terrain = surface.terrain.take().unwrap();
             let mut walker = surface.walker;
             walker.step(&terrain, &input, dt);
+            // On ne traverse pas le vaisseau posé (boîtes de collision de son modèle)
+            let ship_tf = Transform { translation: surface.ship_local, rotation: surface.ship_rot, scale: Vec3::splat(surface.ship_scale) };
+            if let Some(l) = ctx.models.peek(&ctx.models.ship) {
+                let to_ship = (ship_tf.compute_matrix() * crate::models::fit_transform(l, crate::models::Fit::Ship).compute_matrix()).inverse();
+                let v = terrain.voxel();
+                let waist = walker.pos + walker.up() * v;
+                if let Some(push) = crate::models::push_out(l, to_ship, waist, v * 0.4) {
+                    walker.pos += push;
+                }
+            }
+            let v = terrain.voxel();
+            let micro = params.asteroid.is_some();
+            surface.walker_anim = crate::models::walker_anim(walker.on_ground, walker.in_water, walker.hvel.length(), input.sprint, micro, walker.vr, v);
             surface.walker = walker;
             surface.terrain = Some(terrain);
 
@@ -1072,26 +1247,76 @@ fn surface_control(
 
             let up = walker.up();
             let eye = up * walker.eye_r;
-            let fps = look(eye, walker.view_dir(), up);
+            let v = surface.terrain.as_ref().map_or(1.0, |t| t.voxel());
+            surface.walker_local = Some(Transform { translation: walker.pos, rotation: look(Vec3::ZERO, walker.heading, up).rotation, scale: Vec3::splat(v) });
+            // Troisième personne : derrière et un peu au-dessus, jamais sous le sol
+            let fps = if surface.third_person {
+                let view = walker.view_dir();
+                let mut cam = eye - view * (v * 4.5) + up * (v * 0.8);
+                if let Some(t) = surface.terrain.as_ref() {
+                    let floor = t.floor(cam.normalize(), cam.length()).top + v * 0.4;
+                    if cam.length() < floor {
+                        cam = cam.normalize() * floor;
+                    }
+                }
+                look(cam, eye + up * (v * 0.2) - cam, up)
+            } else {
+                look(eye, walker.view_dir(), up)
+            };
             surface.cam_blend = (surface.cam_blend + dt / 0.8).min(1.0);
             cam_local_tf = blend_pose(&surface.cam_from, fps, smoothstep(surface.cam_blend));
 
-            if enter || surface.rescue {
+            if surface.rescue {
+                // Secours (A4) : directement au vaisseau
                 surface.rescue = false;
-                let dir = surface.ship_local.normalize();
-                surface.dir0 = dir;
-                surface.dir1 = dir;
-                surface.r0 = surface.ship_local.length();
-                surface.r1 = hover_radius(&params);
-                surface.scale0 = surface.ship_scale;
-                surface.scale1 = FLIGHT_ZOOM * 1.2 * 0.008;
-                surface.heading = tangent(surface.ship_rot * Vec3::NEG_Z, dir);
-                surface.t = 0.0;
-                surface.dur = (2.5 + (surface.r1 - surface.r0) / 8000.0).clamp(2.5, 6.0);
+                start_ascent(&mut surface, &params, fz, cam_local_tf);
+                net.notify("Decollage...", now);
+            } else if enter {
+                // Le cockpit s'ouvre, le personnage y monte, puis le vaisseau décolle
+                surface.board_from = surface.walker.pos;
+                surface.board_to = cockpit(&surface, &ctx.models);
+                surface.board_t = 0.0;
                 surface.cam_from = cam_local_tf;
                 surface.cam_blend = 0.0;
-                surface.phase = Phase::Ascending;
-                net.notify("Decollage...", now);
+                surface.phase = Phase::Boarding;
+            }
+        }
+        // ── Monter dans le vaisseau / en descendre ───────────────────────
+        Phase::Boarding | Phase::Disembarking => {
+            set_cursor(&mut ctx.windows, false);
+            let boarding = surface.phase == Phase::Boarding;
+            surface.board_t += dt;
+            let wait = if boarding { BOARD_WAIT } else { UNBOARD_WAIT };
+            let u = ((surface.board_t - wait) / BOARD_SECS).clamp(0.0, 1.0);
+            let e = smoothstep(u);
+            let (a, b) = (surface.board_from, surface.board_to);
+            let up = ((a + b) * 0.5).normalize_or(Vec3::Y);
+            let v = surface.terrain.as_ref().map_or(1.0, |t| t.voxel());
+            // Un petit saut entre le sol et le cockpit ; le personnage disparaît dans le vaisseau
+            let hop = v * 0.8 + a.distance(b) * 0.12;
+            let p = a.lerp(b, e) + up * (std::f32::consts::PI * e).sin() * hop;
+            let shown = if boarding { 1.0 - smoothstep((u - 0.8) / 0.2) } else { smoothstep(u / 0.2) };
+            let heading = tangent(if boarding { b - a } else { surface.walker.heading }, up);
+            surface.board_pose = Some(Transform { translation: p, rotation: look(Vec3::ZERO, heading, up).rotation, scale: Vec3::splat(v * shown.max(0.001)) });
+            surface.walker_local = surface.board_pose;
+            ship_local = Transform { translation: surface.ship_local, rotation: surface.ship_rot, scale: Vec3::splat(surface.ship_scale) };
+            // Caméra de côté, qui voit le personnage et le cockpit
+            let mid = (a + b) * 0.5;
+            let side = (b - a).cross(up).normalize_or(up.any_orthonormal_vector());
+            let dist = (a.distance(b) * 1.4).max(v * 8.0);
+            let cam = mid + side * dist + up * (dist * 0.45);
+            surface.cam_blend = (surface.cam_blend + dt / 0.8).min(1.0);
+            cam_local_tf = blend_pose(&surface.cam_from, look(cam, mid - cam, up), smoothstep(surface.cam_blend));
+            if surface.board_t >= wait + BOARD_SECS + 0.25 {
+                if boarding {
+                    start_ascent(&mut surface, &params, fz, cam_local_tf);
+                    net.notify("Decollage...", now);
+                } else {
+                    surface.cam_from = cam_local_tf;
+                    surface.cam_blend = 0.0;
+                    surface.phase = Phase::Walking;
+                    net.notify("ZQSD/WASD : marcher  Maj : courir  Espace : sauter  V : decoller", now);
+                }
             }
         }
         // ── Navigation à basse altitude ──────────────────────────────────
@@ -1152,11 +1377,15 @@ fn surface_control(
                     surface.fdescend = false;
                 }
             }
-            let r = r.clamp(ground + 25.0, ceiling.max(ground + 100.0)).min((roof - 25.0).max(ground + 25.0));
+            let real = surface.ship_dims.real_scale(terrain.voxel());
+            let clearance = (surface.ship_dims.half_h * real + 5.0).max(25.0);
+            let r = r.clamp(ground + clearance, ceiling.max(ground + 100.0)).min((roof - clearance).max(ground + clearance));
             surface.fpos = next * r;
             surface.heading = tangent(heading, next);
 
-            let scale = (surface.fdist * 0.025).clamp(2.0, 40.0);
+            // Vol bas : la vraie taille du vaisseau, la caméra assez loin pour le voir en entier
+            let scale = real;
+            surface.fdist = surface.fdist.max(real * surface.ship_dims.icon_len * 1.6);
             let ship_pos = surface.fpos;
             let ship_rot = look(Vec3::ZERO, surface.heading, next).rotation;
             ship_local = Transform { translation: ship_pos, rotation: ship_rot, scale: Vec3::splat(scale) };
@@ -1175,9 +1404,9 @@ fn surface_control(
             ctrl.distance = surface.fdist;
 
             // Dézoom au-delà de 1000 : retour à la vue orbitale, au-dessus de l'endroit survolé
-            if surface.fdist >= FLIGHT_ZOOM {
+            if surface.fdist >= fz {
                 surface.hover = Some((kind, next));
-                ctrl.distance = FLIGHT_ZOOM * 1.05;
+                ctrl.distance = fz * 1.05;
                 ctrl.zoom_goal = None;
                 ctrl.last_target_pos = center;
                 surface.abort();
@@ -1201,6 +1430,10 @@ fn surface_control(
         *ship_tf = frame.to_world(ship_local);
         *cam_tf = frame.to_world(cam_local_tf);
     }
+    surface.walker_world = match (surface.phase, surface.walker_local) {
+        (Phase::Walking | Phase::Boarding | Phase::Disembarking, Some(w)) => Some(frame.to_world(w)),
+        _ => None,
+    };
 
     // Ciel : couleur de l'atmosphère le jour (coucher de soleil près de l'horizon), noir dans l'espace
     if surface.active() {
@@ -2200,6 +2433,8 @@ fn update_hud(
         ),
         Phase::Descending => "Atterrissage en cours...".to_string(),
         Phase::Ascending => "Decollage en cours...".to_string(),
+        Phase::Boarding => "Embarquement...".to_string(),
+        Phase::Disembarking => "Le cockpit s'ouvre...".to_string(),
         Phase::Walking => {
             let w = &surface.walker;
             let up = w.up();

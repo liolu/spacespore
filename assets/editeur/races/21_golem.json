@@ -1,0 +1,236 @@
+{
+ "id": "golem",
+ "name": "Golem / geant",
+ "races": [
+  "Golem",
+  "Colosse",
+  "Titan de pierre"
+ ],
+ "locomotion": "bipede lourd",
+ "preview": "marcher",
+ "parts": [
+  {
+   "name": "bassin",
+   "boxes": [
+    [
+     3,
+     10,
+     13,
+     12,
+     12,
+     18
+    ]
+   ],
+   "pivot": [
+    8,
+    11,
+    16
+   ]
+  },
+  {
+   "name": "tronc",
+   "boxes": [
+    [
+     2,
+     13,
+     12,
+     13,
+     21,
+     19
+    ]
+   ],
+   "parent": "bassin",
+   "pivot": [
+    8,
+    13,
+    16
+   ]
+  },
+  {
+   "name": "tete",
+   "boxes": [
+    [
+     5,
+     22,
+     13,
+     10,
+     26,
+     18
+    ]
+   ],
+   "parent": "tronc",
+   "pivot": [
+    8,
+    22,
+    16
+   ]
+  },
+  {
+   "name": "bras",
+   "boxes": [
+    [
+     0,
+     15,
+     14,
+     1,
+     21,
+     17
+    ]
+   ],
+   "parent": "tronc",
+   "pivot": [
+    1.5,
+    21.5,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "avant_bras",
+   "boxes": [
+    [
+     0,
+     9,
+     14,
+     1,
+     14,
+     17
+    ]
+   ],
+   "parent": "bras",
+   "pivot": [
+    1.5,
+    15,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "main",
+   "boxes": [
+    [
+     0,
+     6,
+     13,
+     1,
+     8,
+     18
+    ]
+   ],
+   "parent": "avant_bras",
+   "pivot": [
+    1.5,
+    9,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "cuisse",
+   "boxes": [
+    [
+     3,
+     6,
+     13,
+     6,
+     9,
+     18
+    ]
+   ],
+   "parent": "bassin",
+   "pivot": [
+    5,
+    10,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "tibia",
+   "boxes": [
+    [
+     3,
+     2,
+     14,
+     6,
+     5,
+     17
+    ]
+   ],
+   "parent": "cuisse",
+   "pivot": [
+    5,
+    6,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "pied",
+   "boxes": [
+    [
+     3,
+     0,
+     13,
+     6,
+     1,
+     19
+    ]
+   ],
+   "parent": "tibia",
+   "pivot": [
+    5,
+    2,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "cristaux",
+   "boxes": [
+    [
+     5,
+     19,
+     11,
+     6,
+     22,
+     11
+    ],
+    [
+     9,
+     17,
+     11,
+     9,
+     20,
+     11
+    ]
+   ],
+   "parent": "tronc",
+   "fixed": true
+  }
+ ],
+ "options": [
+  {
+   "id": "runes",
+   "name": "Runes",
+   "parts": [
+    {
+     "name": "runes",
+     "boxes": [
+      [
+       6,
+       15,
+       20,
+       9,
+       18,
+       20
+      ]
+     ],
+     "parent": "tronc",
+     "fixed": true
+    }
+   ]
+  }
+ ],
+ "speed": 0.6
+}

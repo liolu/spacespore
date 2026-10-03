@@ -1,0 +1,168 @@
+{
+  "id": "propulseurs_manoeuvre",
+  "name": "Propulseurs de manoeuvre",
+  "kinds": [
+    "vaisseau"
+  ],
+  "scalable": true,
+  "parts": [
+    {
+      "name": "bloc",
+      "pivot": [
+        0.5,
+        0.5,
+        0.5
+      ],
+      "boxes": [
+        [
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      ],
+      "color": [
+        90,
+        95,
+        105
+      ],
+      "material": "Metal"
+    },
+    {
+      "name": "flamme_haut",
+      "pivot": [
+        1,
+        2,
+        1
+      ],
+      "boxes": [
+        [
+          0,
+          2,
+          0,
+          1,
+          3,
+          1
+        ]
+      ],
+      "parent": "bloc",
+      "color": [
+        120,
+        190,
+        255
+      ],
+      "material": "Lumineuse"
+    },
+    {
+      "name": "flamme_cote",
+      "pivot": [
+        2,
+        1,
+        1
+      ],
+      "boxes": [
+        [
+          2,
+          0,
+          0,
+          3,
+          1,
+          1
+        ]
+      ],
+      "parent": "bloc",
+      "color": [
+        120,
+        190,
+        255
+      ],
+      "material": "Lumineuse"
+    }
+  ],
+  "anims": {
+    "repos": {
+      "duration": 1.0,
+      "tracks": {
+        "flamme_haut": {
+          "type": "entree",
+          "input": "manoeuvre",
+          "scale": [
+            [
+              1,
+              0.01,
+              1
+            ],
+            [
+              1,
+              1,
+              1
+            ]
+          ],
+          "flicker": 0.2
+        },
+        "flamme_cote": {
+          "type": "entree",
+          "input": "manoeuvre",
+          "scale": [
+            [
+              0.01,
+              1,
+              1
+            ],
+            [
+              1,
+              1,
+              1
+            ]
+          ],
+          "flicker": 0.2
+        }
+      }
+    },
+    "eteint": {
+      "duration": 1.0,
+      "tracks": {
+        "flamme_haut": {
+          "type": "cles",
+          "scale": [
+            [
+              0.0,
+              0.001,
+              0.001,
+              0.001
+            ],
+            [
+              1.0,
+              0.001,
+              0.001,
+              0.001
+            ]
+          ]
+        },
+        "flamme_cote": {
+          "type": "cles",
+          "scale": [
+            [
+              0.0,
+              0.001,
+              0.001,
+              0.001
+            ],
+            [
+              1.0,
+              0.001,
+              0.001,
+              0.001
+            ]
+          ]
+        }
+      }
+    }
+  },
+  "states": {
+    "pose": "eteint",
+    "detruit": "eteint"
+  }
+}

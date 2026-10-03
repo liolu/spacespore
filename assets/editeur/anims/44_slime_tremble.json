@@ -1,0 +1,31 @@
+{
+ "id": "slime_tremble",
+ "name": "Slime qui tremble",
+ "group": "Procedurales",
+ "duration": 0.8,
+ "tracks": {
+  "slime": {
+   "type": "cles",
+   "scale": [
+    [
+     0.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    [
+     0.4,
+     1.03,
+     0.97,
+     1.03
+    ],
+    [
+     0.8,
+     1.0,
+     1.0,
+     1.0
+    ]
+   ]
+  }
+ }
+}

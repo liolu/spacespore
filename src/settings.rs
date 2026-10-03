@@ -1113,6 +1113,10 @@ pub struct GameSettings {
     // ── Multijoueur ──────────────────────────────────────────────────────
     #[serde(default = "default_player_name")] pub player_name: String,
     #[serde(default = "default_aura_color")]  pub aura_color:  [f32; 3],
+    /// Modèles de l'éditeur utilisés en jeu (E7) : fichiers `.ssvox` (relatifs au dossier des
+    /// sauvegardes) ; aucun = le modèle par défaut.
+    #[serde(default)]                         pub ship_model: Option<String>,
+    #[serde(default)]                         pub character_model: Option<String>,
     #[serde(default)]                         pub last_join_address: String,
     /// Tag de clan / guilde affiché entre crochets devant le pseudo (vide = sans guilde).
     #[serde(default)]                         pub clan_tag: String,
@@ -1138,6 +1142,8 @@ pub struct GameSettings {
     /// Ce jeu a pris une identité de secours (un autre jeu utilisait la même sauvegarde) :
     /// il ne réécrit plus `settings.json`, pour ne pas écraser le compte de l'autre.
     #[serde(skip)]                            pub temp_identity: bool,
+    /// Premier lancement (aucune sauvegarde) : création du personnage dans l'éditeur (0.12).
+    #[serde(skip)]                            pub first_launch: bool,
 
     // ── Systèmes stellaires (régénérés au lancement, jamais sauvegardés) ─
     #[serde(skip)] pub systems: crate::systems::Systems,
@@ -1183,6 +1189,8 @@ impl Default for GameSettings {
             world_seed: DEFAULT_WORLD_SEED,
             player_name: default_player_name(),
             aura_color: default_aura_color(),
+            ship_model: None,
+            character_model: None,
             last_join_address: String::new(),
             clan_tag: String::new(),
             claims: Vec::new(),
@@ -1196,6 +1204,7 @@ impl Default for GameSettings {
             world_clock: 0.0,
             voxel_deltas: Default::default(),
             temp_identity: false,
+            first_launch: false,
             systems: default_systems(&default_galaxies(DEFAULT_WORLD_SEED), DEFAULT_WORLD_SEED),
             galaxies: default_galaxies(DEFAULT_WORLD_SEED),
             planets: default_planets(), stars: default_stars(),
@@ -1254,8 +1263,9 @@ impl GameSettings {
                 Err(_) => Self::default(),
             }
         } else {
-            let settings = Self::default();
+            let mut settings = Self::default();
             settings.save();
+            settings.first_launch = true;
             settings
         };
         s.apply_world_save();

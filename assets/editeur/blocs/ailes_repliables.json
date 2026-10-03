@@ -1,0 +1,94 @@
+{
+  "id": "ailes_repliables",
+  "name": "Ailes repliables",
+  "kinds": [
+    "vaisseau"
+  ],
+  "scalable": true,
+  "parts": [
+    {
+      "name": "aile",
+      "pivot": [
+        0.5,
+        0.5,
+        2.5
+      ],
+      "boxes": [
+        [
+          1,
+          0,
+          0,
+          9,
+          0,
+          4
+        ]
+      ]
+    }
+  ],
+  "anims": {
+    "repos": {
+      "duration": 1.0,
+      "tracks": {}
+    },
+    "ouverte": {
+      "duration": 1.0,
+      "tracks": {
+        "aile": {
+          "type": "cles",
+          "rot": [
+            [
+              0.0,
+              0,
+              0,
+              85
+            ],
+            [
+              1.0,
+              0,
+              0,
+              85
+            ]
+          ]
+        }
+      }
+    },
+    "ouverture": {
+      "duration": 4.0,
+      "tracks": {
+        "aile": {
+          "type": "cles",
+          "rot": [
+            [
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              1,
+              0,
+              0,
+              85
+            ],
+            [
+              3,
+              0,
+              0,
+              85
+            ],
+            [
+              4,
+              0,
+              0,
+              0
+            ]
+          ]
+        }
+      }
+    }
+  },
+  "states": {
+    "pose": "ouverte",
+    "atterrissage": "ouverte"
+  }
+}

@@ -1,0 +1,185 @@
+{
+  "id": "queue",
+  "name": "Queue (chaine de 4)",
+  "kinds": [
+    "personnage",
+    "autre"
+  ],
+  "parts": [
+    {
+      "name": "queue_1",
+      "pivot": [
+        1,
+        1,
+        1
+      ],
+      "boxes": [
+        [
+          0,
+          0,
+          -2,
+          1,
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "name": "queue_2",
+      "parent": "queue_1",
+      "pivot": [
+        1,
+        1,
+        -2
+      ],
+      "boxes": [
+        [
+          0,
+          0,
+          -5,
+          1,
+          1,
+          -3
+        ]
+      ]
+    },
+    {
+      "name": "queue_3",
+      "parent": "queue_2",
+      "pivot": [
+        1,
+        1,
+        -5
+      ],
+      "boxes": [
+        [
+          0,
+          0,
+          -8,
+          0,
+          1,
+          -6
+        ]
+      ]
+    },
+    {
+      "name": "queue_4",
+      "parent": "queue_3",
+      "pivot": [
+        0.5,
+        1,
+        -8
+      ],
+      "boxes": [
+        [
+          0,
+          0,
+          -11,
+          0,
+          0,
+          -9
+        ]
+      ]
+    }
+  ],
+  "anims": {
+    "repos": {
+      "duration": 2.5,
+      "tracks": {
+        "queue_1": {
+          "type": "onde",
+          "axis": [
+            0,
+            1,
+            0
+          ],
+          "amplitude": 8.0,
+          "period": 2.5,
+          "phase": 0.0
+        },
+        "queue_2": {
+          "type": "onde",
+          "axis": [
+            0,
+            1,
+            0
+          ],
+          "amplitude": 10.5,
+          "period": 2.5,
+          "phase": 0.15
+        },
+        "queue_3": {
+          "type": "onde",
+          "axis": [
+            0,
+            1,
+            0
+          ],
+          "amplitude": 13.0,
+          "period": 2.5,
+          "phase": 0.3
+        },
+        "queue_4": {
+          "type": "onde",
+          "axis": [
+            0,
+            1,
+            0
+          ],
+          "amplitude": 15.5,
+          "period": 2.5,
+          "phase": 0.44999999999999996
+        }
+      }
+    },
+    "marcher": {
+      "duration": 1.2,
+      "tracks": {
+        "queue_1": {
+          "type": "onde",
+          "axis": [
+            0,
+            1,
+            0
+          ],
+          "amplitude": 14,
+          "period": 1.2,
+          "phase": 0.0
+        },
+        "queue_2": {
+          "type": "onde",
+          "axis": [
+            0,
+            1,
+            0
+          ],
+          "amplitude": 18,
+          "period": 1.2,
+          "phase": 0.15
+        },
+        "queue_3": {
+          "type": "onde",
+          "axis": [
+            0,
+            1,
+            0
+          ],
+          "amplitude": 22,
+          "period": 1.2,
+          "phase": 0.3
+        },
+        "queue_4": {
+          "type": "onde",
+          "axis": [
+            0,
+            1,
+            0
+          ],
+          "amplitude": 26,
+          "period": 1.2,
+          "phase": 0.44999999999999996
+        }
+      }
+    }
+  }
+}

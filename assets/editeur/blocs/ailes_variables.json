@@ -1,0 +1,51 @@
+{
+  "id": "ailes_variables",
+  "name": "Ailes a geometrie variable",
+  "kinds": [
+    "vaisseau"
+  ],
+  "scalable": true,
+  "parts": [
+    {
+      "name": "aile",
+      "pivot": [
+        0.5,
+        0.5,
+        1.5
+      ],
+      "boxes": [
+        [
+          1,
+          0,
+          0,
+          10,
+          0,
+          3
+        ]
+      ]
+    }
+  ],
+  "anims": {
+    "repos": {
+      "duration": 1.0,
+      "tracks": {
+        "aile": {
+          "type": "entree",
+          "input": "vitesse",
+          "rot": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              50,
+              0
+            ]
+          ]
+        }
+      }
+    }
+  }
+}

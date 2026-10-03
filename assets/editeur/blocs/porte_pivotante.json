@@ -1,0 +1,94 @@
+{
+  "id": "porte_pivotante",
+  "name": "Porte pivotante",
+  "kinds": [
+    "vaisseau",
+    "autre"
+  ],
+  "scalable": true,
+  "parts": [
+    {
+      "name": "porte",
+      "pivot": [
+        0.5,
+        0,
+        0
+      ],
+      "boxes": [
+        [
+          0,
+          0,
+          0,
+          0,
+          7,
+          4
+        ]
+      ]
+    }
+  ],
+  "anims": {
+    "repos": {
+      "duration": 1.0,
+      "tracks": {}
+    },
+    "ouverte": {
+      "duration": 1.0,
+      "tracks": {
+        "porte": {
+          "type": "cles",
+          "rot": [
+            [
+              0.0,
+              0,
+              -90,
+              0
+            ],
+            [
+              1.0,
+              0,
+              -90,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    "ouverture": {
+      "duration": 4.0,
+      "tracks": {
+        "porte": {
+          "type": "cles",
+          "rot": [
+            [
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              1,
+              0,
+              -90,
+              0
+            ],
+            [
+              3,
+              0,
+              -90,
+              0
+            ],
+            [
+              4,
+              0,
+              0,
+              0
+            ]
+          ]
+        }
+      }
+    }
+  },
+  "states": {
+    "pose": "ouverte"
+  }
+}
