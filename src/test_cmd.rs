@@ -33,7 +33,54 @@ impl Plugin for TestCmdPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<GoCommand>()
             .init_resource::<GoState>()
-            .add_systems(Update, (run_go_commands, finish_search, finish_arrival).chain());
+            .add_systems(Update, (run_go_commands, finish_search, finish_arrival).chain())
+            .add_systems(Update, dev_script);
+    }
+}
+
+/// Tests (développement) : `SPACESPORE_TEST_CMD` = une commande du chat lancée à 6 s ;
+/// `SPACESPORE_TEST_STAR=k` cible l'étoile k du système chargé (`sys` : son indice, comme une
+/// étoile cliquée de loin) à `SPACESPORE_TEST_STAR_SECS`
+/// (35 par défaut) ; les positions des étoiles et du vaisseau sont écrites dans le journal.
+#[allow(clippy::too_many_arguments)]
+fn dev_script(
+    time: Res<Time>,
+    spawned: Res<SpawnedSystems>,
+    settings: Res<GameSettings>,
+    mut target: ResMut<CameraTarget>,
+    mut chat: EventWriter<crate::chat_cmd::ChatCommand>,
+    stars: Query<(&GlobalTransform, &StarId), With<StarRoot>>,
+    ship: Query<&GlobalTransform, With<Ship>>,
+    mut step: Local<u8>,
+    mut last_log: Local<f32>,
+) {
+    let t = time.elapsed_secs();
+    if *step == 0 && t > 6.0 {
+        *step = 1;
+        if let Ok(cmd) = std::env::var("SPACESPORE_TEST_CMD") {
+            chat.send(crate::chat_cmd::ChatCommand(cmd));
+        }
+    }
+    let Ok(k) = std::env::var("SPACESPORE_TEST_STAR") else { return };
+    let at: f32 = std::env::var("SPACESPORE_TEST_STAR_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(35.0);
+    if *step == 1 && t > at {
+        *step = 2;
+        // « sys » : comme un clic sur l'étoile lointaine (indice du système)
+        if let Some(&si) = spawned.0.iter().next() {
+            let id = if k == "sys" { si } else { si * 1000 + k.parse::<usize>().unwrap_or(0) };
+            target.0 = TargetKind::Star(id);
+            info!("TEST cible etoile {id}");
+        }
+    }
+    if t - *last_log > 3.0 && *step >= 1 {
+        *last_log = t;
+        let s = ship.get_single().map(|g| g.translation()).unwrap_or_default();
+        for (g, id) in &stars {
+            let r = settings.systems.get(id.0 / 1000).and_then(|sys| sys.stars.get(id.0 % 1000)).map_or(0.0, |c| c.radius);
+            info!("TEST t={t:.0} etoile {} pos {:.0} rayon {r:.0} dist vaisseau {:.0}", id.0, g.translation(), g.translation().distance(s));
+        }
+        let tgt = match target.0 { TargetKind::Star(i) => format!("Star({i})"), _ => "autre".into() };
+        info!("TEST t={t:.0} vaisseau {s:.0} cible {tgt} systemes {:?}", spawned.0);
     }
 }
 

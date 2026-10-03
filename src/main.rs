@@ -323,6 +323,7 @@ fn main() {
                 profiling_snapshot,
                 astre_lod_cull,
                 process_pending_reloads,
+                promote_star_target,
             )
                 // Pendant l'éditeur (0.12), le jeu ne lit plus le clavier ni la souris
                 .run_if(editeur::in_game),
@@ -1016,6 +1017,25 @@ impl ZoomLevel {
 /// taille (une géante ne l'engloutit pas), et indépendante du zoom.
 fn hover_height(target: &CameraTarget, settings: &GameSettings) -> f32 {
     hover_height_for(target, settings, None)
+}
+
+/// Système et rang d'une étoile ciblée : chargée = `système * 1000 + n`, lointaine = indice du
+/// système (son étoile principale).
+pub(crate) fn star_parts(id: usize, loaded: bool) -> (usize, usize) {
+    if loaded { (id / 1000, id % 1000) } else { (id, 0) }
+}
+
+/// Étoile ciblée de loin (indice du système) : une fois son système chargé, la cible devient sa
+/// vraie étoile principale. Sans ça, le vaisseau reste au centre du système, qui est vide pour une
+/// étoile double ou triple (centre de masse entre les étoiles).
+fn promote_star_target(spawned: Res<planet::SpawnedSystems>, star_q: Query<&StarId, With<StarRoot>>, mut target: ResMut<CameraTarget>) {
+    let TargetKind::Star(i) = target.0 else { return };
+    if !spawned.0.contains(&i) || star_q.iter().any(|s| s.0 == i) {
+        return;
+    }
+    if star_q.iter().any(|s| s.0 == i * 1000) {
+        target.0 = TargetKind::Star(i * 1000);
+    }
 }
 
 /// Rayon de l'étoile ciblée (chargée : `système * 1000 + n` ; lointaine : indice du système).
@@ -1797,6 +1817,7 @@ fn update_fps_display(
     camera_target: Res<CameraTarget>,
     queries: TargetQueries,
     cam_q: Query<&GlobalTransform, With<CameraController>>,
+    star_ids: Query<&StarId, With<StarRoot>>,
 
     mut fps_q:
         Query<
@@ -1866,8 +1887,7 @@ fn update_fps_display(
             }
 
             TargetKind::Star(id) => {
-                let si = id / 1000;
-                let li = id % 1000;
+                let (si, li) = star_parts(id, star_ids.iter().any(|s| s.0 == id));
                 settings.systems.get(si)
                     .and_then(|s| s.stars.get(li))
                     .map(|s| s.temperature())
@@ -2024,8 +2044,8 @@ fn update_system_hud(
     let claim_line = (!extra.is_empty()).then_some(extra);
     let (sys_idx, body_label) = match camera_target.0 {
         TargetKind::Star(id) => {
-            let si = id / 1000;
-            let label = settings.systems.get(si).map(|s| match s.stars.get(id % 1000) {
+            let (si, li) = star_parts(id, star_q.iter().any(|s| s.0 == id));
+            let label = settings.systems.get(si).map(|s| match s.stars.get(li) {
                 Some(star) => format!("{} - {}", s.name, star.class.name()),
                 None => s.name.clone(),
             });
