@@ -257,6 +257,19 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   prec./suiv. (coupe). Mesures (regle 8) : `cargo test --release bench_editor -- --ignored --nocapture` ;
   capture + images/s : `SPACESPORE_EDITOR_DEMO=croiseur` (+ `SPACESPORE_EDITOR_CUT`), ecrit `<capture>.txt`.
   Feuille de route : hangars des porte-vaisseaux (§5.1, E6 / E7, Q8).
+  E6 = blocs de vaisseau (§5) dans `assets/editeur/blocs/` (generes par un script) : portes, rampe, verriere,
+  ailes repliables / en X / a geometrie variable, train, propulseur et manoeuvre (flammes lumineuses), tuyere
+  orientable, tourelle, radar, anneau, panneaux, bras minier, feux ; `PartDef::color/material` (couleur de depart).
+  Pistes pilotees : `entree` (poussee / vitesse / manoeuvre -> rotation et taille, `flicker`), `clignote`,
+  `vise` (`aim_angle` : lacet, tangage d'apres la hauteur ; « poussee » = tuyere a l'oppose) ; `motion::Inputs`
+  (donnes par le jeu en E7, simules dans l'apercu : `Editor::inputs`, poussee reglable). Etats du vaisseau
+  `SHIP_STATES` : `BlockDef::states` etat -> animation, apercu « etat:vol » (passage en 1,5 s : `blend_secs`) ;
+  une animation du bloc sans piste pour une partie = immobile. Hangars (§5.1) : `BlockDef::hangar` (categorie,
+  soute a cargos, porte, place, chemin), `format::Hangar` dans `Model::hangars` (meta.json, annulable),
+  `edit::hangar_allowed` (Q8 : croiseur = chasseurs ; capital = chasseurs, corvettes, cargos jusqu'a la
+  fregate), apercu `hangar:entree` / `hangar:sortie` (`HANGAR_SECS`, porte qui joue « ouverture »,
+  `hangar_ship` = vaisseau fantome), chemin prolonge au clic (`extend_path`). Captures :
+  `SPACESPORE_EDITOR_DEMO=vaisseau` (etat combat) ou `hangar`.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

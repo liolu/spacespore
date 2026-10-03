@@ -31,6 +31,28 @@
       "duration": 1.0,
       "tracks": {}
     },
+    "ouverte": {
+      "duration": 1.0,
+      "tracks": {
+        "porte": {
+          "type": "cles",
+          "rot": [
+            [
+              0.0,
+              0,
+              -90,
+              0
+            ],
+            [
+              1.0,
+              0,
+              -90,
+              0
+            ]
+          ]
+        }
+      }
+    },
     "ouverture": {
       "duration": 4.0,
       "tracks": {
@@ -65,5 +87,8 @@
         }
       }
     }
+  },
+  "states": {
+    "pose": "ouverte"
   }
 }

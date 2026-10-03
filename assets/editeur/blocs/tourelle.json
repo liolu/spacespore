@@ -27,7 +27,6 @@
     },
     {
       "name": "canon",
-      "parent": "socle",
       "pivot": [
         0.5,
         1.5,
@@ -42,129 +41,71 @@
           1,
           4
         ]
-      ]
+      ],
+      "parent": "socle"
     }
   ],
   "anims": {
     "repos": {
-      "duration": 6.0,
+      "duration": 1.0,
       "tracks": {
         "socle": {
-          "type": "cles",
-          "rot": [
-            [
-              0,
-              0,
-              -45,
-              0
-            ],
-            [
-              3,
-              0,
-              45,
-              0
-            ],
-            [
-              6,
-              0,
-              -45,
-              0
-            ]
-          ]
+          "type": "vise",
+          "axis": [
+            0,
+            1,
+            0
+          ],
+          "forward": [
+            0,
+            0,
+            1
+          ],
+          "limits": [
+            -180,
+            180
+          ],
+          "input": "cible"
         },
         "canon": {
-          "type": "cles",
-          "rot": [
-            [
-              0,
-              0,
-              0,
-              0
-            ],
-            [
-              1.5,
-              -10,
-              0,
-              0
-            ],
-            [
-              3,
-              0,
-              0,
-              0
-            ],
-            [
-              4.5,
-              -10,
-              0,
-              0
-            ],
-            [
-              6,
-              0,
-              0,
-              0
-            ]
-          ]
+          "type": "vise",
+          "axis": [
+            1,
+            0,
+            0
+          ],
+          "forward": [
+            0,
+            0,
+            1
+          ],
+          "limits": [
+            -60,
+            10
+          ],
+          "input": "cible"
         }
       }
     },
-    "combat": {
-      "duration": 2.0,
+    "rangee": {
+      "duration": 1.0,
+      "tracks": {}
+    },
+    "detruite": {
+      "duration": 1.0,
       "tracks": {
-        "socle": {
-          "type": "cles",
-          "rot": [
-            [
-              0,
-              0,
-              -20,
-              0
-            ],
-            [
-              1,
-              0,
-              20,
-              0
-            ],
-            [
-              2,
-              0,
-              -20,
-              0
-            ]
-          ]
-        },
         "canon": {
           "type": "cles",
           "rot": [
             [
-              0,
-              -15,
-              0,
-              0
-            ],
-            [
-              0.5,
-              -5,
+              0.0,
+              20,
               0,
               0
             ],
             [
-              1,
-              -15,
-              0,
-              0
-            ],
-            [
-              1.5,
-              -5,
-              0,
-              0
-            ],
-            [
-              2,
-              -15,
+              1.0,
+              20,
               0,
               0
             ]
@@ -172,5 +113,12 @@
         }
       }
     }
+  },
+  "states": {
+    "pose": "rangee",
+    "decollage": "rangee",
+    "vol": "rangee",
+    "atterrissage": "rangee",
+    "detruit": "detruite"
   }
 }

@@ -451,7 +451,28 @@ struct Meta {
     #[serde(default)]
     layers: Vec<Layer>,
     #[serde(default)]
+    hangars: Vec<Hangar>,
+    #[serde(default)]
     tags: Vec<String>,
+}
+
+/// Un emplacement de hangar d'un porte-vaisseau (E6, §5.1), dans le repère du modèle.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Hangar {
+    pub name: String,
+    /// Catégorie la plus grande qui y entre.
+    pub category: ShipCategory,
+    /// Soute à cargos (vaisseaux chargés de ressources).
+    #[serde(default)]
+    pub cargo: bool,
+    /// Zone de la porte (index dans `zones`).
+    #[serde(default)]
+    pub door: Option<u16>,
+    /// Place du vaisseau amarré, direction de son nez.
+    pub slot: [f32; 3],
+    pub facing: [f32; 3],
+    /// Chemin d'entrée, du dehors jusqu'à la place.
+    pub path: Vec<[f32; 3]>,
 }
 
 /// Un calque (E3) : nom et visibilité (gardée dans le fichier). Le calque 0 existe toujours.
@@ -479,6 +500,8 @@ pub struct Model {
     pub layers: Vec<Layer>,
     /// Calque de chaque voxel (index dans `layers`).
     pub layer_map: Sparse,
+    /// Emplacements de hangar (porte-vaisseaux, E6).
+    pub hangars: Vec<Hangar>,
     pub tags: Vec<String>,
 }
 
@@ -491,7 +514,7 @@ impl Model {
             (ModelKind::Vaisseau, None) => UVec3::splat(ShipCategory::Chasseur.grid()),
             (ModelKind::Autre, _) => UVec3::splat(32),
         };
-        Self { name: name.to_string(), kind, race: None, category, size, palette: Vec::new(), voxels: Sparse::default(), zones: Vec::new(), zone_map: Sparse::default(), layers: Vec::new(), layer_map: Sparse::default(), tags: Vec::new() }
+        Self { name: name.to_string(), kind, race: None, category, size, palette: Vec::new(), voxels: Sparse::default(), zones: Vec::new(), zone_map: Sparse::default(), layers: Vec::new(), layer_map: Sparse::default(), hangars: Vec::new(), tags: Vec::new() }
     }
 
     /// Les calques (au moins « Principal »).
@@ -562,6 +585,7 @@ impl Model {
             palette: self.palette.clone(),
             zones: self.zones.clone(),
             layers: self.layers.clone(),
+            hangars: self.hangars.clone(),
             tags: self.tags.clone(),
         };
         let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
@@ -623,6 +647,7 @@ impl Model {
             zone_map,
             layers: meta.layers,
             layer_map,
+            hangars: meta.hangars,
             tags: meta.tags,
         })
     }

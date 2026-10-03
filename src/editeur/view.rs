@@ -392,6 +392,18 @@ pub fn tools_input(
         }
         return;
     }
+    // Chemin d'un hangar : clic = un point de plus au bout extérieur
+    if let Some(i) = editor.path_edit {
+        if buttons.just_pressed(MouseButton::Left) {
+            if let Some(c) = place.or(hit) {
+                if let Some(d) = editor.doc_mut() {
+                    d.extend_path(i, c.as_vec3() + Vec3::splat(0.5));
+                }
+                editor.say("Point ajoute au chemin (Echap : fini).".into());
+            }
+        }
+        return;
+    }
     // Coller : le presse-papiers suit la souris, clic = le poser
     if editor.pasting {
         if buttons.just_pressed(MouseButton::Left) {
@@ -638,7 +650,7 @@ pub fn animate(time: Res<Time>, mut editor: ResMut<Editor>, mut q: Query<(&RigPa
     let dt = time.delta_secs();
     if let Some(p) = editor.preview.as_mut() {
         p.t += dt;
-        p.blend = (p.blend + dt / 0.35).min(1.0);
+        p.blend = (p.blend + dt / p.blend_secs.max(0.05)).min(1.0);
     }
     let pose = match editor.shown() {
         Some(d) if editor.preview.is_some() => motion::compose(&d.model, &editor.current_locals()),
@@ -804,6 +816,26 @@ pub fn draw(editor: Res<Editor>, root: Query<&Transform, With<EditorRoot>>, mut 
         let m = editor.pose.get(i + 1).copied().unwrap_or(Mat4::IDENTITY);
         let local = Mat4::from_scale_rotation_translation(*hi - *lo + Vec3::splat(0.06), Quat::IDENTITY, (*lo + *hi) * 0.5);
         g.cuboid(Transform::from_matrix(Mat4::from_translation(o) * m * local), zone_color(i, editor.colliding.contains(&i)));
+    }
+    // Hangars : chemin d'entrée (du dehors à la place), place, et le vaisseau qui entre ou sort
+    let hangar_seq = editor.preview.as_ref().filter(|p| p.anim == motion::HANGAR_IN || p.anim == motion::HANGAR_OUT).map(|p| (p.anim == motion::HANGAR_IN, p.t));
+    for (i, h) in doc.model.hangars.iter().enumerate() {
+        let col = if editor.path_edit == Some(i) { Color::srgb(1.0, 0.9, 0.2) } else if h.cargo { Color::srgb(1.0, 0.6, 0.2) } else { Color::srgb(0.4, 0.9, 1.0) };
+        let pts: Vec<Vec3> = h.path.iter().map(|p| o + Vec3::from_array(*p)).collect();
+        g.linestrip(pts.iter().copied(), col);
+        for q in &pts {
+            g.sphere(Isometry3d::from_translation(*q), 1.5, col);
+        }
+        let grid = h.category.grid() as f32;
+        let size = Vec3::new(grid * 0.5, grid * 0.25, grid * 0.8);
+        let face = |dir: Vec3| Quat::from_rotation_arc(Vec3::Z, dir.normalize_or(Vec3::Z));
+        let slot = Vec3::from_array(h.slot);
+        g.cuboid(Transform { translation: o + slot + Vec3::Y * size.y * 0.5, rotation: face(Vec3::from_array(h.facing)), scale: size }, col.with_alpha(0.35));
+        if let Some((entering, t)) = hangar_seq {
+            if let Some((pos, dir)) = motion::hangar_ship(h, entering, t) {
+                g.cuboid(Transform { translation: o + pos + Vec3::Y * size.y * 0.5, rotation: face(dir), scale: size }, col);
+            }
+        }
     }
     // Coupe : le plan
     if let Some(c) = doc.cut {

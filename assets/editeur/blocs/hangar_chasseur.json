@@ -1,0 +1,121 @@
+{
+  "id": "hangar_chasseur",
+  "name": "Hangar a chasseur (croiseur, capital)",
+  "kinds": [
+    "vaisseau"
+  ],
+  "parts": [
+    {
+      "name": "porte",
+      "pivot": [
+        0.5,
+        0,
+        0.5
+      ],
+      "boxes": [
+        [
+          -36,
+          0,
+          0,
+          35,
+          39,
+          0
+        ]
+      ]
+    }
+  ],
+  "anims": {
+    "repos": {
+      "duration": 1.0,
+      "tracks": {}
+    },
+    "ouverture": {
+      "duration": 4.0,
+      "tracks": {
+        "porte": {
+          "type": "cles",
+          "pos": [
+            [
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0.3,
+              0,
+              0,
+              2
+            ],
+            [
+              1,
+              0,
+              41,
+              2
+            ],
+            [
+              3,
+              0,
+              41,
+              2
+            ],
+            [
+              3.7,
+              0,
+              0,
+              2
+            ],
+            [
+              4,
+              0,
+              0,
+              0
+            ]
+          ]
+        }
+      }
+    }
+  },
+  "hangar": {
+    "category": "Chasseur",
+    "cargo": false,
+    "door": "porte",
+    "slot": [
+      0.5,
+      1,
+      -50
+    ],
+    "facing": [
+      0,
+      0,
+      -1
+    ],
+    "path": [
+      [
+        0.5,
+        30.0,
+        140.0
+      ],
+      [
+        0.5,
+        22.0,
+        60.0
+      ],
+      [
+        0.5,
+        14.0,
+        8
+      ],
+      [
+        0.5,
+        6.0,
+        -30.0
+      ],
+      [
+        0.5,
+        1,
+        -50
+      ]
+    ]
+  }
+}

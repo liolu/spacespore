@@ -1,26 +1,25 @@
 {
-  "id": "porte_coulissante",
-  "name": "Porte coulissante",
+  "id": "ailes_repliables",
+  "name": "Ailes repliables",
   "kinds": [
-    "vaisseau",
-    "autre"
+    "vaisseau"
   ],
   "scalable": true,
   "parts": [
     {
-      "name": "porte",
+      "name": "aile",
       "pivot": [
         0.5,
-        0,
-        0
+        0.5,
+        2.5
       ],
       "boxes": [
         [
+          1,
           0,
           0,
+          9,
           0,
-          0,
-          7,
           4
         ]
       ]
@@ -34,20 +33,20 @@
     "ouverte": {
       "duration": 1.0,
       "tracks": {
-        "porte": {
+        "aile": {
           "type": "cles",
-          "pos": [
+          "rot": [
             [
               0.0,
               0,
               0,
-              -5
+              85
             ],
             [
               1.0,
               0,
               0,
-              -5
+              85
             ]
           ]
         }
@@ -56,9 +55,9 @@
     "ouverture": {
       "duration": 4.0,
       "tracks": {
-        "porte": {
+        "aile": {
           "type": "cles",
-          "pos": [
+          "rot": [
             [
               0,
               0,
@@ -69,13 +68,13 @@
               1,
               0,
               0,
-              -5
+              85
             ],
             [
               3,
               0,
               0,
-              -5
+              85
             ],
             [
               4,
@@ -89,6 +88,7 @@
     }
   },
   "states": {
-    "pose": "ouverte"
+    "pose": "ouverte",
+    "atterrissage": "ouverte"
   }
 }

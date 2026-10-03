@@ -1,46 +1,66 @@
 {
-  "id": "ailes_x",
-  "name": "Ailes en X (une paire par cote)",
+  "id": "bras_minier",
+  "name": "Bras minier / grappin",
   "kinds": [
     "vaisseau"
   ],
   "scalable": true,
   "parts": [
     {
-      "name": "haut",
+      "name": "epaule",
       "pivot": [
-        0,
-        1.5,
-        2
+        0.5,
+        0.5,
+        0.5
       ],
       "boxes": [
         [
           0,
-          1,
           0,
-          9,
+          0,
           1,
-          3
+          1,
+          1
         ]
       ]
     },
     {
-      "name": "bas",
+      "name": "bras",
       "pivot": [
-        0,
         0.5,
-        2
+        0.5,
+        1.5
       ],
       "boxes": [
         [
           0,
+          0,
+          2,
+          1,
+          1,
+          7
+        ]
+      ],
+      "parent": "epaule"
+    },
+    {
+      "name": "pince",
+      "pivot": [
+        0.5,
+        0.5,
+        7.5
+      ],
+      "boxes": [
+        [
           -1,
           0,
-          9,
-          -1,
-          3
+          8,
+          2,
+          1,
+          9
         ]
-      ]
+      ],
+      "parent": "bras"
     }
   ],
   "anims": {
@@ -48,49 +68,10 @@
       "duration": 1.0,
       "tracks": {}
     },
-    "x_ouvert": {
-      "duration": 1.0,
+    "miner": {
+      "duration": 2.0,
       "tracks": {
-        "haut": {
-          "type": "cles",
-          "rot": [
-            [
-              0.0,
-              0,
-              0,
-              12
-            ],
-            [
-              1.0,
-              0,
-              0,
-              12
-            ]
-          ]
-        },
-        "bas": {
-          "type": "cles",
-          "rot": [
-            [
-              0.0,
-              0,
-              0,
-              -12
-            ],
-            [
-              1.0,
-              0,
-              0,
-              -12
-            ]
-          ]
-        }
-      }
-    },
-    "deploiement": {
-      "duration": 4.0,
-      "tracks": {
-        "haut": {
+        "epaule": {
           "type": "cles",
           "rot": [
             [
@@ -101,25 +82,19 @@
             ],
             [
               1,
+              25,
               0,
-              0,
-              12
+              0
             ],
             [
-              3,
-              0,
-              0,
-              12
-            ],
-            [
-              4,
+              2,
               0,
               0,
               0
             ]
           ]
         },
-        "bas": {
+        "bras": {
           "type": "cles",
           "rot": [
             [
@@ -130,18 +105,47 @@
             ],
             [
               1,
+              -20,
               0,
-              0,
-              -12
+              0
             ],
             [
-              3,
+              2,
               0,
               0,
-              -12
+              0
+            ]
+          ]
+        },
+        "pince": {
+          "type": "cles",
+          "rot": [
+            [
+              0,
+              0,
+              0,
+              0
             ],
             [
-              4,
+              0.8,
+              0,
+              0,
+              0
+            ],
+            [
+              1,
+              0,
+              0,
+              25
+            ],
+            [
+              1.4,
+              0,
+              0,
+              0
+            ],
+            [
+              2,
               0,
               0,
               0
@@ -150,8 +154,5 @@
         }
       }
     }
-  },
-  "states": {
-    "combat": "x_ouvert"
   }
 }
