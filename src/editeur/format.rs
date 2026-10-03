@@ -453,7 +453,17 @@ struct Meta {
     #[serde(default)]
     hangars: Vec<Hangar>,
     #[serde(default)]
+    anims: std::collections::BTreeMap<String, ModelAnim>,
+    #[serde(default)]
     tags: Vec<String>,
+}
+
+/// Une animation créée dans l'éditeur (mode avancé, E8) : images clés de rotation par os (nom de
+/// zone, `motion::bone`) : [t, rx, ry, rz] en degrés.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ModelAnim {
+    pub duration: f32,
+    pub keys: std::collections::BTreeMap<String, Vec<[f32; 4]>>,
 }
 
 /// Un emplacement de hangar d'un porte-vaisseau (E6, §5.1), dans le repère du modèle.
@@ -502,6 +512,8 @@ pub struct Model {
     pub layer_map: Sparse,
     /// Emplacements de hangar (porte-vaisseaux, E6).
     pub hangars: Vec<Hangar>,
+    /// Animations créées dans l'éditeur (E8).
+    pub anims: std::collections::BTreeMap<String, ModelAnim>,
     pub tags: Vec<String>,
 }
 
@@ -514,7 +526,7 @@ impl Model {
             (ModelKind::Vaisseau, None) => UVec3::splat(ShipCategory::Chasseur.grid()),
             (ModelKind::Autre, _) => UVec3::splat(32),
         };
-        Self { name: name.to_string(), kind, race: None, category, size, palette: Vec::new(), voxels: Sparse::default(), zones: Vec::new(), zone_map: Sparse::default(), layers: Vec::new(), layer_map: Sparse::default(), hangars: Vec::new(), tags: Vec::new() }
+        Self { name: name.to_string(), kind, race: None, category, size, palette: Vec::new(), voxels: Sparse::default(), zones: Vec::new(), zone_map: Sparse::default(), layers: Vec::new(), layer_map: Sparse::default(), hangars: Vec::new(), anims: Default::default(), tags: Vec::new() }
     }
 
     /// Les calques (au moins « Principal »).
@@ -586,6 +598,7 @@ impl Model {
             zones: self.zones.clone(),
             layers: self.layers.clone(),
             hangars: self.hangars.clone(),
+            anims: self.anims.clone(),
             tags: self.tags.clone(),
         };
         let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
@@ -648,6 +661,7 @@ impl Model {
             layers: meta.layers,
             layer_map,
             hangars: meta.hangars,
+            anims: meta.anims,
             tags: meta.tags,
         })
     }

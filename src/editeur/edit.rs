@@ -13,7 +13,8 @@ use bevy::render::mesh::Mesh;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
-use super::format::{Chunk, Hangar, Layer, Material, Model, ModelKind, PaletteEntry, ShipCategory, Zone, CHUNK};
+use super::format::{Chunk, Hangar, Layer, Material, Model, ModelAnim, ModelKind, PaletteEntry, ShipCategory, Zone, CHUNK};
+use std::collections::BTreeMap;
 use super::mesh::{Cut, Visibility};
 use super::motion::{self, BlockDef, Placement};
 
@@ -118,11 +119,12 @@ struct Batch {
     zones: Option<(Vec<Zone>, Vec<Zone>)>,
     layers: Option<(Vec<Layer>, Vec<Layer>)>,
     hangars: Option<(Vec<Hangar>, Vec<Hangar>)>,
+    anims: Option<(BTreeMap<String, ModelAnim>, BTreeMap<String, ModelAnim>)>,
 }
 
 impl Batch {
     fn is_empty(&self) -> bool {
-        self.chunks.is_empty() && self.zones.is_none() && self.layers.is_none() && self.hangars.is_none()
+        self.chunks.is_empty() && self.zones.is_none() && self.layers.is_none() && self.hangars.is_none() && self.anims.is_none()
     }
 
     /// Mémoire gardée (octets, environ : les chunks pleins).
@@ -316,6 +318,9 @@ impl Doc {
         }
         if let Some((before, after)) = &b.hangars {
             self.model.hangars = if forward { after.clone() } else { before.clone() };
+        }
+        if let Some((before, after)) = &b.anims {
+            self.model.anims = if forward { after.clone() } else { before.clone() };
         }
         self.dirty = true;
         self.revision += 1;
@@ -828,6 +833,35 @@ impl Doc {
 }
 
 impl Doc {
+    /// Déplace le pivot d'une zone (mode avancé, E8) : un lot annulable.
+    pub fn set_pivot(&mut self, z: usize, pivot: Vec3) {
+        if z >= self.model.zones.len() {
+            return;
+        }
+        self.end();
+        let before = self.model.zones.clone();
+        self.model.zones[z].pivot = pivot.to_array();
+        let after = self.model.zones.clone();
+        if before != after {
+            self.push(Batch { zones: Some((before, after)), ..Default::default() });
+            self.dirty = true;
+            self.revision += 1;
+        }
+    }
+
+    /// Change les animations du modèle (mode avancé, E8) : un lot annulable.
+    pub fn edit_anims(&mut self, f: impl FnOnce(&mut BTreeMap<String, ModelAnim>)) {
+        self.end();
+        let before = self.model.anims.clone();
+        f(&mut self.model.anims);
+        if self.model.anims != before {
+            let after = self.model.anims.clone();
+            self.push(Batch { anims: Some((before, after)), ..Default::default() });
+            self.dirty = true;
+            self.revision += 1;
+        }
+    }
+
     /// Change les hangars (un lot annulable).
     fn edit_hangars(&mut self, f: impl FnOnce(&mut Vec<Hangar>)) {
         self.end();

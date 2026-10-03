@@ -603,6 +603,8 @@ pub fn zone_placement(z: &Zone) -> Placement {
 /// un de ses os (dans l'ordre des groupes), puis celles de ses blocs.
 pub fn model_anims(m: &Model, lib: &Library) -> Vec<String> {
     let mut out = vec!["repos".to_string()];
+    // Les animations créées dans l'éditeur (E8)
+    out.extend(m.anims.keys().filter(|k| k.as_str() != "repos").cloned());
     let bones: Vec<String> = m.zones.iter().map(bone).collect();
     for a in &lib.anims {
         let fits = a.requires.is_empty() || bones.iter().any(|b| a.requires.iter().any(|r| b.starts_with(r.as_str())));
@@ -712,6 +714,9 @@ pub fn anim_duration(m: &Model, lib: &Library, anim: &str) -> f32 {
     if anim == HANGAR_IN || anim == HANGAR_OUT {
         return HANGAR_SECS;
     }
+    if let Some(a) = m.anims.get(anim) {
+        return (a.duration / model_speed(m, lib)).max(0.1);
+    }
     let library = lib.anim(anim).map_or(0.0, |a| a.duration);
     let states = m.zones.iter().filter_map(|z| lib.block(&z.block)).filter_map(|d| d.anims.get(block_anim(d, anim))).map(|a| a.duration).fold(0.0, f32::max);
     (blocks.max(library).max(states) / model_speed(m, lib)).max(0.5)
@@ -729,6 +734,7 @@ pub fn zone_locals(m: &Model, lib: &Library, anim: &str, t: f32, procedural: boo
 pub fn zone_locals_with(m: &Model, lib: &Library, anim: &str, t: f32, procedural: bool, inputs: &Inputs) -> Vec<Pose> {
     let doors: Vec<usize> = if anim == HANGAR_IN || anim == HANGAR_OUT { m.hangars.iter().filter_map(|h| h.door.map(|d| d as usize)).collect() } else { Vec::new() };
     let t = t * model_speed(m, lib);
+    let own = m.anims.get(anim);
     let wanted = lib.anim(anim);
     let rest = lib.anim("repos");
     let layers: Vec<&LibAnim> = if procedural { lib.anims.iter().filter(|a| a.group == PROCEDURAL).collect() } else { Vec::new() };
@@ -741,6 +747,11 @@ pub fn zone_locals_with(m: &Model, lib: &Library, anim: &str, t: f32, procedural
             let place = zone_placement(z);
             let pivot = Vec3::from_array(z.pivot);
             let (anim, t) = if doors.contains(&i) { ("ouverture", hangar_door_time(t)) } else { (anim, t) };
+            // Animation du modèle (E8) : elle seule compte ; un os sans clés ne bouge pas
+            if let Some(a) = own {
+                let base = a.keys.get(&b).map_or(Pose::default(), |k| sample(&Track::Keys { rot: k.clone(), pos: Vec::new(), scale: Vec::new() }, t, a.duration, 1));
+                return layers.iter().filter_map(|a| lib_pose(a, &b, t)).fold(base, |p, q| p.then(&q));
+            }
             // Le bloc a cette animation : elle seule compte (une partie sans piste ne bouge pas)
             if let Some(d) = def.filter(|d| d.anims.contains_key(block_anim(d, anim))) {
                 let base = part_pose(d, &z.part, block_anim(d, anim), t, &place, pivot, inputs).unwrap_or_default();
