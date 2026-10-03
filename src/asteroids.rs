@@ -29,13 +29,15 @@ use std::f64::consts::TAU;
 
 use crate::net::{Net, MAX_HP};
 use crate::planet::SpawnedSystems;
-use crate::planetgen::belts::{AsteroidClass, Belt};
+use crate::planetgen::belts::{AsteroidClass, Belt, Swarm};
+use crate::planetgen::comets::Comet;
+use crate::planetgen::system::Ring;
 use crate::planetgen::seeds::splitmix64;
-use crate::settings::{origin, to_abs, GameSettings};
+use crate::settings::{origin, to_abs, GameSettings, PlanetConfig, StarSystemConfig};
 use crate::ship::Ship;
 use crate::surface::{FarMesh, Surface};
 use crate::ui::{CameraTarget, TargetKind};
-use crate::world_clock::WorldClock;
+use crate::world_clock::{Spin, WorldClock};
 use crate::CameraController;
 
 pub struct AsteroidsPlugin;
@@ -48,7 +50,9 @@ impl Plugin for AsteroidsPlugin {
             .add_systems(Startup, setup_assets)
             // Après le recentrage de l'origine (First) : tout le reste de l'image voit les poses
             .add_systems(PreUpdate, place_asteroids)
-            .add_systems(Update, (go_belt, stream_asteroids, update_bands).chain().before(crate::surface::SurfaceControl))
+            .init_resource::<CometFx>()
+            .add_event::<CometCommand>()
+            .add_systems(Update, (go_belt, go_comet, stream_asteroids, update_bands, update_comet_tails).chain().before(crate::surface::SurfaceControl))
             .add_systems(PostUpdate, ship_collisions.before(bevy::transform::TransformSystem::TransformPropagate));
     }
 }
@@ -423,6 +427,182 @@ pub struct AsteroidKey {
     pub slot: u8,
 }
 
+/// Codes de source dans `AsteroidKey::belt` : ceintures (0..), Troyens, anneaux, comètes.
+pub const SWARM_BASE: u8 = 100;
+pub const RING_BASE: u8 = 200;
+pub const COMET_SOURCE: u8 = 250;
+
+/// D'où vient un astéroïde.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Source {
+    Belt,
+    Trojan,
+    Ring,
+    Comet,
+}
+
+impl AsteroidKey {
+    pub fn source(&self) -> Source {
+        match self.belt {
+            b if b >= COMET_SOURCE => Source::Comet,
+            b if b >= RING_BASE => Source::Ring,
+            b if b >= SWARM_BASE => Source::Trojan,
+            _ => Source::Belt,
+        }
+    }
+}
+
+/// Orbite de Kepler en f64 (même formule que `kepler::OrbitalElements`, même `mu`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Elements {
+    pub a: f64,
+    pub e: f64,
+    pub i: f64,
+    pub node: f64,
+    pub peri: f64,
+    pub m0: f64,
+    /// Planète errante : elle ne tourne pas autour de l'étoile.
+    pub frozen: bool,
+}
+
+impl Elements {
+    pub fn of_planet(p: &PlanetConfig) -> Self {
+        Self {
+            a: p.orbit_distance as f64,
+            e: p.eccentricity as f64,
+            i: p.inclination as f64,
+            node: p.ascending_node as f64,
+            peri: p.arg_periapsis as f64,
+            m0: p.mean_anomaly_0 as f64,
+            frozen: p.rogue,
+        }
+    }
+
+    pub fn of_comet(c: &Comet) -> Self {
+        Self { a: c.a, e: c.e, i: c.inc, node: c.node, peri: c.peri, m0: c.m0, frozen: false }
+    }
+
+    pub fn mean_motion(&self) -> f64 {
+        (mu() / self.a.max(1.0).powi(3)).sqrt()
+    }
+
+    /// Période (secondes de jeu).
+    pub fn period(&self) -> f64 {
+        TAU / self.mean_motion()
+    }
+
+    /// Position (depuis l'étoile) à l'instant `t`, en avance de `lead` (anomalie moyenne).
+    pub fn position(&self, t: f64, lead: f64) -> DVec3 {
+        let motion = if self.frozen { 0.0 } else { self.mean_motion() * t };
+        let m = (self.m0 + lead + motion).rem_euclid(TAU);
+        let e = self.e.clamp(0.0, 0.999);
+        // Newton (départ à π pour les orbites très allongées)
+        let mut ea = if e > 0.8 { std::f64::consts::PI } else { m };
+        for _ in 0..40 {
+            let d = (ea - e * ea.sin() - m) / (1.0 - e * ea.cos());
+            ea -= d;
+            if d.abs() < 1e-12 {
+                break;
+            }
+        }
+        let x = self.a * (ea.cos() - e);
+        let y = self.a * (1.0 - e * e).sqrt() * ea.sin();
+        let (cw, sw) = (self.peri.cos(), self.peri.sin());
+        let (co, so) = (self.node.cos(), self.node.sin());
+        let (ci, si) = (self.i.cos(), self.i.sin());
+        let px = (co * cw - so * sw * ci) * x + (-co * sw - so * cw * ci) * y;
+        let py = (so * cw + co * sw * ci) * x + (-so * sw + co * cw * ci) * y;
+        let pz = (sw * si) * x + (cw * si) * y;
+        DVec3::new(px, pz, py)
+    }
+
+    /// Repère du point en avance de `lead` : position, puis axes radial, normal, le long de l'orbite.
+    pub fn frame(&self, t: f64, lead: f64) -> (DVec3, DVec3, DVec3, DVec3) {
+        let p = self.position(t, lead);
+        let r = p.normalize_or(DVec3::X);
+        let dt = self.period() * 1e-4;
+        let v = self.position(t + dt, lead) - self.position(t - dt, lead);
+        let along = (v - r * v.dot(r)).normalize_or(r.any_orthonormal_vector());
+        (p, r, r.cross(along), along)
+    }
+}
+
+/// Anneau d'une planète vu par le champ d'astéroïdes (ses particules).
+#[derive(Clone, Copy, Debug)]
+pub struct RingSrc {
+    pub planet: u8,
+    pub ring: Ring,
+    pub el: Elements,
+    pub spin: Spin,
+    pub radius: f32,
+}
+
+impl RingSrc {
+    /// Centre de la planète et orientation du plan de l'anneau (y = axe de la planète) à `t`.
+    pub fn plane(&self, t: f64) -> (DVec3, Quat) {
+        let p = self.el.position(t, 0.0);
+        let axis = self.spin.rotation(t, -p.as_vec3()) * Vec3::Y;
+        (p, Quat::from_rotation_arc(Vec3::Y, axis))
+    }
+
+    /// Demi-épaisseur de l'anneau (unités).
+    pub fn half_thickness(&self) -> f64 {
+        ((self.ring.outer - self.ring.inner) as f64 * 0.004).max(30.0)
+    }
+}
+
+/// Tout ce qui donne des astéroïdes dans un système : ceintures, Troyens, anneaux, comètes.
+#[derive(Clone, Debug, Default)]
+pub struct Sources {
+    pub belts: Vec<Belt>,
+    /// Essaim, orbite de sa géante, distance réelle (UA).
+    pub swarms: Vec<(Swarm, Elements, f32)>,
+    pub rings: Vec<RingSrc>,
+    pub comets: Vec<Comet>,
+}
+
+impl Sources {
+    /// Seulement la source de `key` (calcul léger, appelé souvent).
+    pub fn for_key(sys: &StarSystemConfig, key: &AsteroidKey) -> Self {
+        match key.source() {
+            Source::Belt => Self { belts: sys.belts(), ..Default::default() },
+            Source::Comet => Self { comets: sys.comets(), ..Default::default() },
+            _ => Self::of(sys),
+        }
+    }
+
+    pub fn of(sys: &StarSystemConfig) -> Self {
+        let planets = sys.planets_uncached();
+        Self {
+            belts: sys.belts(),
+            swarms: sys
+                .swarms()
+                .into_iter()
+                .filter_map(|s| planets.get(s.planet as usize).map(|p| (s, Elements::of_planet(p), p.semi_major_au)))
+                .collect(),
+            rings: planets
+                .iter()
+                .enumerate()
+                .filter_map(|(i, p)| p.ring.map(|ring| RingSrc { planet: i as u8, ring, el: Elements::of_planet(p), spin: Spin::planet(p), radius: p.radius }))
+                .collect(),
+            comets: sys.comets(),
+        }
+    }
+}
+
+/// Trajectoire d'un astéroïde : tout est une fonction de l'horloge (règle 9).
+#[derive(Clone, Copy, Debug)]
+enum Path {
+    /// Ceinture : anneau de Kepler autour de l'étoile, petit épicycle.
+    Belt { rho0: f64, theta0: f64, y0: f64, n: f64, epi: f64, epi_y: f64, ph: f64, ph_y: f64 },
+    /// Troyen : décalage fixe (radial, normal, le long de l'orbite) autour du point L4 / L5.
+    Lagrange { el: Elements, lead: f64, off: DVec3 },
+    /// Comète : son orbite.
+    Comet { el: Elements, comet: Comet },
+    /// Particule d'anneau : orbite circulaire autour de sa planète, dans son plan équatorial.
+    Ring { src: RingSrc, rho: f64, theta0: f64, h: f64, n: f64 },
+}
+
 /// Un astéroïde, tout entier calculé depuis sa clé.
 #[derive(Clone, Copy, Debug)]
 pub struct Asteroid {
@@ -432,17 +612,15 @@ pub struct Asteroid {
     pub variant: Option<u32>,
     /// Distance à l'étoile en UA (température).
     pub au: f32,
-    rho0: f64,
-    theta0: f64,
-    y0: f64,
-    n: f64,
-    epi: f64,
-    epi_y: f64,
-    ph: f64,
-    ph_y: f64,
+    path: Path,
     axis: Vec3,
     spin: f64,
     spin0: f64,
+}
+
+/// Paramètre gravitationnel des orbites autour d'une planète (le même que celui des lunes).
+pub fn planet_mu() -> f64 {
+    (crate::kepler::DEFAULT_MU * 0.001) as f64
 }
 
 impl Asteroid {
@@ -454,12 +632,42 @@ impl Asteroid {
         self.key.level == LANDABLE_LEVEL
     }
 
-    /// Position (depuis le centre du système, plan des orbites y = 0) à l'instant `t`.
+    /// La comète, si c'en est une.
+    pub fn comet(&self) -> Option<&Comet> {
+        match &self.path {
+            Path::Comet { comet, .. } => Some(comet),
+            _ => None,
+        }
+    }
+
+    /// Orbite (comète), pour la période.
+    pub fn elements(&self) -> Option<Elements> {
+        match self.path {
+            Path::Comet { el, .. } | Path::Lagrange { el, .. } => Some(el),
+            _ => None,
+        }
+    }
+
+    /// Position (depuis le centre du système) à l'instant `t`.
     pub fn rel_position(&self, t: f64) -> DVec3 {
-        let m = self.n * t;
-        let rho = self.rho0 + self.epi * (m + self.ph).cos();
-        let theta = self.theta0 + m + 2.0 * self.epi / self.rho0 * (m + self.ph).sin();
-        DVec3::new(rho * theta.cos(), self.y0 + self.epi_y * (m + self.ph_y).sin(), rho * theta.sin())
+        match self.path {
+            Path::Belt { rho0, theta0, y0, n, epi, epi_y, ph, ph_y } => {
+                let m = n * t;
+                let rho = rho0 + epi * (m + ph).cos();
+                let theta = theta0 + m + 2.0 * epi / rho0 * (m + ph).sin();
+                DVec3::new(rho * theta.cos(), y0 + epi_y * (m + ph_y).sin(), rho * theta.sin())
+            }
+            Path::Lagrange { el, lead, off } => {
+                let (p, r, n, along) = el.frame(t, lead);
+                p + r * off.x + n * off.y + along * off.z
+            }
+            Path::Comet { el, .. } => el.position(t, 0.0),
+            Path::Ring { src, rho, theta0, h, n } => {
+                let (p, q) = src.plane(t);
+                let th = theta0 + n * t;
+                p + q.as_dquat() * DVec3::new(rho * th.cos(), h, rho * th.sin())
+            }
+        }
     }
 
     /// Orientation à l'instant `t` : rotation propre autour du plus petit axe (z de la forme).
@@ -521,7 +729,13 @@ impl Asteroid {
 
     /// Une ligne de description (HUD, scanner).
     pub fn title(&self) -> String {
-        format!("Asteroide {} - {}, {:.0} km", self.class().name(), self.shape.kind.name(), crate::planetgen::units::game_to_km(self.shape.radius as f64) * 2.0)
+        let km = crate::planetgen::units::game_to_km(self.shape.radius as f64) * 2.0;
+        match self.key.source() {
+            Source::Comet => format!("Comete - noyau de {:.0} km", km),
+            Source::Trojan => format!("Troyen {} - {}, {:.0} km", self.class().name(), self.shape.kind.name(), km),
+            Source::Ring => format!("Bloc de l'anneau, {:.1} km", km),
+            Source::Belt => format!("Asteroide {} - {}, {:.0} km", self.class().name(), self.shape.kind.name(), km),
+        }
     }
 }
 
@@ -536,16 +750,36 @@ fn tonnes(t: f64) -> String {
     }
 }
 
-/// Texte du scanner (touche I) pour un astéroïde.
-pub fn scanner_text(a: &Asteroid, belt: Option<&Belt>, lum: f64) -> String {
+/// Texte du scanner (touche I) pour un astéroïde ou une comète.
+pub fn scanner_text(a: &Asteroid, src: Option<&Sources>, lum: f64) -> String {
     use crate::planetgen::units::game_to_km;
-    let mut lines = vec!["SCANNER  -  Asteroide".to_string()];
+    let what = match a.key.source() {
+        Source::Comet => "Comete",
+        Source::Trojan => "Troyen",
+        _ => "Asteroide",
+    };
+    let mut lines = vec![format!("SCANNER  -  {what}")];
     lines.push(format!("Type : {}   Forme : {}", a.class().name(), a.shape.kind.name()));
     lines.push(format!("Diametre {:.0} km   Masse {}   Gravite {:.4} g", game_to_km(a.shape.radius as f64) * 2.0, tonnes(a.mass_t()), a.gravity_g()));
     // 1 h de l'astre = 1 min de jeu (A1)
     lines.push(format!("Rotation {:.1} h   Temperature {:.0} C   Pas d'air", a.spin_period() / 60.0, Belt::temperature_c(a.au as f64, lum)));
-    if let Some(b) = belt {
-        lines.push(format!("{} : {:.2} a {:.2} UA, ~{:.1e} asteroides de plus d'1 km", b.kind.name(), b.au_inner, b.au_outer, b.count_over_km()));
+    match (a.key.source(), src) {
+        (Source::Belt, Some(s)) => {
+            if let Some(b) = s.belts.get(a.key.belt as usize) {
+                lines.push(format!("{} : {:.2} a {:.2} UA, ~{:.1e} asteroides de plus d'1 km", b.kind.name(), b.au_inner, b.au_outer, b.count_over_km()));
+            }
+        }
+        (Source::Trojan, Some(s)) => {
+            if let Some((sw, _, au)) = s.swarms.get((a.key.belt - SWARM_BASE) as usize) {
+                lines.push(format!("{} de la planete {} ({:.2} UA)", sw.name(), sw.planet + 1, au));
+            }
+        }
+        (Source::Comet, _) => {
+            if let (Some(c), Some(el)) = (a.comet(), a.elements()) {
+                lines.push(format!("{} : perihelie {:.2} UA, excentricite {:.2}, un tour en {:.0} h de jeu", c.name(), c.q_au, c.e, el.period() / 3600.0));
+            }
+        }
+        _ => {}
     }
     let mut ores = a.ores();
     ores.sort_by(|x, y| y.1.total_cmp(&x.1));
@@ -556,10 +790,17 @@ pub fn scanner_text(a: &Asteroid, belt: Option<&Belt>, lum: f64) -> String {
     lines.join("\n")
 }
 
-/// Ligne des ceintures d'un système (scanner de l'étoile).
-pub fn belts_line(belts: &[Belt]) -> Option<String> {
-    let list: Vec<String> = belts.iter().map(|b| format!("{} {:.2}-{:.2} UA", b.kind.name(), b.au_inner, b.au_outer)).collect();
-    (!list.is_empty()).then(|| format!("Ceintures : {}", list.join(" ; ")))
+/// Ligne des ceintures d'un système (scanner de l'étoile) : ceintures, Troyens, comètes.
+pub fn belts_line(src: &Sources) -> Option<String> {
+    let mut list: Vec<String> = src.belts.iter().map(|b| format!("{} {:.2}-{:.2} UA", b.kind.name(), b.au_inner, b.au_outer)).collect();
+    let giants: std::collections::BTreeSet<u8> = src.swarms.iter().map(|(s, _, _)| s.planet + 1).collect();
+    if !giants.is_empty() {
+        list.push(format!("Troyens (planete {})", giants.iter().map(|g| g.to_string()).collect::<Vec<_>>().join(", ")));
+    }
+    if !src.comets.is_empty() {
+        list.push(format!("{} comete(s)", src.comets.len()));
+    }
+    (!list.is_empty()).then(|| format!("Petits corps : {}", list.join(" ; ")))
 }
 
 /// Densité de la ceinture au point (rayon, angle à l'instant 0, hauteur) : (base, champ dense 0..1).
@@ -586,10 +827,6 @@ fn sectors(rho: f64, cell: f64) -> u32 {
     ((TAU * rho / cell).floor() as u64).clamp(1, u32::MAX as u64) as u32
 }
 
-fn rings(belt: &Belt, cell: f64) -> u32 {
-    (((belt.outer - belt.inner) as f64 / cell).ceil() as u64).clamp(1, u32::MAX as u64) as u32
-}
-
 /// Rayon tiré selon une loi de puissance (beaucoup de petits, peu de gros).
 fn power_radius(lo: f32, hi: f32, u: f32) -> f32 {
     let a = 1.6f32;
@@ -597,7 +834,35 @@ fn power_radius(lo: f32, hi: f32, u: f32) -> f32 {
     (lo * (1.0 - u * k).powf(-1.0 / a)).min(hi)
 }
 
-/// Les astéroïdes d'une cellule (même résultat sur toutes les machines).
+/// Nombre d'astéroïdes d'une cellule de moyenne `lambda` (au plus 12).
+fn draw_count(rng: &mut Rng, lambda: f64) -> usize {
+    if lambda <= 0.0 {
+        return 0;
+    }
+    (lambda.floor() as usize + (rng.f64() < lambda.fract()) as usize).min(12)
+}
+
+/// Forme, rotation propre : la partie commune à toutes les sources.
+fn spin_and_shape(r: &mut Rng, level: u8, class: AsteroidClass, radius: f32) -> (AsteroidShape, Option<u32>, f64) {
+    let shape_seed = r.next() as u32;
+    let (shape, variant) = if level < LANDABLE_LEVEL {
+        let v = shape_seed % VARIANTS;
+        (variant_shape(class, v).with_radius(radius), Some(v))
+    } else {
+        (AsteroidShape::new(class, shape_seed, radius), None)
+    };
+    // Rotation propre : 2 à 20 h pour les gros (1 h = 1 min de jeu), plus vite les petits
+    let (p_lo, p_hi) = match level {
+        0 => (20.0, 90.0),
+        1 => (40.0, 300.0),
+        _ => (120.0, 1200.0),
+    };
+    let period = p_lo + (p_hi - p_lo) * r.f64();
+    let spin = TAU / period * if r.f64() < 0.1 { -1.0 } else { 1.0 };
+    (shape, variant, spin)
+}
+
+/// Les astéroïdes d'une cellule d'une ceinture (même résultat sur toutes les machines).
 pub fn cell_asteroids(sys: u32, bi: u8, belt: &Belt, level: u8, ring: u32, sector: u32, layer: i32) -> Vec<Asteroid> {
     let lv = &LEVELS[level as usize];
     let rho_lo = belt.inner as f64 + ring as f64 * lv.cell;
@@ -612,12 +877,8 @@ pub fn cell_asteroids(sys: u32, bi: u8, belt: &Belt, level: u8, ring: u32, secto
     let dt = TAU / s as f64;
     let base = mix(mix(mix(belt.seed as u64 ^ ((level as u64) << 40), ring as u64), sector as u64), layer as i64 as u64);
     let (dens, dense) = field_density(belt, rho_mid, (sector as f64 + 0.5) * dt, (layer as f64 + 0.5) * lv.cell);
-    let lambda = lv.per_cell * dens * (1.0 + lv.dense * dense);
-    if lambda <= 0.0 {
-        return Vec::new();
-    }
     let mut rng = Rng(base);
-    let count = (lambda.floor() as usize + (rng.f64() < lambda.fract()) as usize).min(12);
+    let count = draw_count(&mut rng, lv.per_cell * dens * (1.0 + lv.dense * dense));
     let n = (mu() / rho_mid.powi(3)).sqrt();
     let width = (belt.outer - belt.inner).max(1.0);
     (0..count)
@@ -629,26 +890,8 @@ pub fn cell_asteroids(sys: u32, bi: u8, belt: &Belt, level: u8, ring: u32, secto
             let radius = power_radius(lv.min_r, lv.max_r, r.f32());
             let frac = ((rho0 - belt.inner as f64) as f32 / width).clamp(0.0, 1.0);
             let class = belt.class_at(frac, r.f32());
-            let shape_seed = r.next() as u32;
-            let (shape, variant) = if level < LANDABLE_LEVEL {
-                let v = shape_seed % VARIANTS;
-                (variant_shape(class, v).with_radius(radius), Some(v))
-            } else {
-                (AsteroidShape::new(class, shape_seed, radius), None)
-            };
-            // Rotation propre : 2 à 20 h pour les gros (1 h = 1 min de jeu), plus vite les petits
-            let (p_lo, p_hi) = match level {
-                0 => (20.0, 90.0),
-                1 => (40.0, 300.0),
-                _ => (120.0, 1200.0),
-            };
-            let period = p_lo + (p_hi - p_lo) * r.f64();
-            let spin = TAU / period * if r.f64() < 0.1 { -1.0 } else { 1.0 };
-            Asteroid {
-                key: AsteroidKey { sys, belt: bi, level, ring, sector, layer, slot: slot as u8 },
-                shape,
-                variant,
-                au: belt.au_at(frac),
+            let (shape, variant, spin) = spin_and_shape(&mut r, level, class, radius);
+            let path = Path::Belt {
                 rho0,
                 theta0,
                 y0,
@@ -657,6 +900,13 @@ pub fn cell_asteroids(sys: u32, bi: u8, belt: &Belt, level: u8, ring: u32, secto
                 epi_y: lv.cell * 0.06 * r.f64(),
                 ph: TAU * r.f64(),
                 ph_y: TAU * r.f64(),
+            };
+            Asteroid {
+                key: AsteroidKey { sys, belt: bi, level, ring, sector, layer, slot: slot as u8 },
+                shape,
+                variant,
+                au: belt.au_at(frac),
+                path,
                 axis: r.dir(),
                 spin,
                 spin0: TAU * r.f64(),
@@ -665,40 +915,159 @@ pub fn cell_asteroids(sys: u32, bi: u8, belt: &Belt, level: u8, ring: u32, secto
         .collect()
 }
 
+/// Demi-axes (radial, normal, le long de l'orbite) d'un essaim de Troyens.
+fn swarm_axes(sw: &Swarm, el: &Elements) -> DVec3 {
+    let along = sw.spread as f64 * el.a;
+    DVec3::new(along * 0.2, along * 0.2, along)
+}
+
+/// Les Troyens d'une cellule (repère du point de Lagrange, cellules cubiques).
+fn swarm_cell(sys: u32, k: u8, sw: &Swarm, el: &Elements, au: f32, level: u8, i: i32, j: i32, l: i32) -> Vec<Asteroid> {
+    let lv = &LEVELS[level as usize];
+    let c = DVec3::new(i as f64 + 0.5, j as f64 + 0.5, l as f64 + 0.5) * lv.cell;
+    let ax = swarm_axes(sw, el);
+    let d = (c / ax).length_squared();
+    if d > 9.0 {
+        return Vec::new();
+    }
+    let base = mix(mix(mix(sw.seed as u64 ^ ((level as u64) << 40), i as i64 as u64), j as i64 as u64), l as i64 as u64);
+    let mut rng = Rng(base);
+    let count = draw_count(&mut rng, lv.per_cell * 1.5 * sw.density as f64 * (-d).exp());
+    let lead = if sw.leading { TAU / 6.0 } else { -TAU / 6.0 };
+    (0..count)
+        .map(|slot| {
+            let mut r = Rng(mix(base, slot as u64 + 1));
+            let off = (DVec3::new(i as f64, j as f64, l as f64) + DVec3::new(r.f64(), r.f64(), r.f64())) * lv.cell;
+            let radius = power_radius(lv.min_r, lv.max_r, r.f32());
+            let class = sw.class_at(r.f32());
+            let (shape, variant, spin) = spin_and_shape(&mut r, level, class, radius);
+            Asteroid {
+                key: AsteroidKey { sys, belt: SWARM_BASE + k, level, ring: i as u32, sector: j as u32, layer: l, slot: slot as u8 },
+                shape,
+                variant,
+                au,
+                path: Path::Lagrange { el: *el, lead, off },
+                axis: r.dir(),
+                spin,
+                spin0: TAU * r.f64(),
+            }
+        })
+        .collect()
+}
+
+/// Particules d'une cellule d'un anneau (repère qui tourne avec l'anneau, comme une ceinture).
+fn ring_cell(sys: u32, k: u8, rs: &RingSrc, ring: u32, sector: u32, layer: i32) -> Vec<Asteroid> {
+    let cell = RING_CELL;
+    let (inner, outer) = (rs.ring.inner as f64, rs.ring.outer as f64);
+    let rho_lo = inner + ring as f64 * cell;
+    if rho_lo >= outer {
+        return Vec::new();
+    }
+    let rho_mid = rho_lo + cell * 0.5;
+    let s = sectors(rho_mid, cell);
+    if sector >= s {
+        return Vec::new();
+    }
+    let dt = TAU / s as f64;
+    let f = ((rho_mid - inner) / (outer - inner)) as f32;
+    let base = mix(mix(mix(rs.ring.seed as u64 ^ 0x5249, ring as u64), sector as u64), layer as i64 as u64);
+    let mut rng = Rng(base);
+    let count = draw_count(&mut rng, RING_PER_CELL * rs.ring.profile(f) as f64);
+    let n = (planet_mu() / rho_mid.powi(3)).sqrt();
+    let h = rs.half_thickness();
+    (0..count)
+        .map(|slot| {
+            let mut r = Rng(mix(base, slot as u64 + 1));
+            let rho = rho_lo + r.f64() * cell;
+            let theta0 = (sector as f64 + r.f64()) * dt;
+            let y = ((layer as f64 + r.f64()) * cell).clamp(-h, h);
+            let radius = power_radius(RING_SIZES.0, RING_SIZES.1, r.f32());
+            let class = if r.f32() < rs.ring.ice { AsteroidClass::Ice } else if r.f32() < 0.5 { AsteroidClass::C } else { AsteroidClass::S };
+            let (shape, variant, spin) = spin_and_shape(&mut r, 0, class, radius);
+            Asteroid {
+                key: AsteroidKey { sys, belt: RING_BASE + k, level: 0, ring, sector, layer, slot: slot as u8 },
+                shape,
+                variant,
+                au: 0.0,
+                path: Path::Ring { src: *rs, rho, theta0, h: y, n },
+                axis: r.dir(),
+                spin,
+                spin0: TAU * r.f64(),
+            }
+        })
+        .collect()
+}
+
+/// Cellules des anneaux de particules : taille, nombre moyen là où l'anneau est opaque, tailles.
+const RING_CELL: f64 = 400.0;
+const RING_PER_CELL: f64 = 2.5;
+const RING_SIZES: (f32, f32) = (0.3, 2.5);
+
+/// Le noyau d'une comète.
+fn comet_asteroid(sys: u32, idx: usize, c: &Comet) -> Asteroid {
+    let mut r = Rng(mix(c.seed as u64, 0xC0E7));
+    let shape = AsteroidShape::new(AsteroidClass::Ice, c.seed, c.radius);
+    let period = 120.0 + 600.0 * r.f64();
+    Asteroid {
+        key: AsteroidKey { sys, belt: COMET_SOURCE, level: LANDABLE_LEVEL, ring: idx as u32, sector: 0, layer: 0, slot: 0 },
+        shape,
+        variant: None,
+        au: c.q_au * 2.0,
+        path: Path::Comet { el: Elements::of_comet(c), comet: *c },
+        axis: r.dir(),
+        spin: TAU / period,
+        spin0: TAU * r.f64(),
+    }
+}
+
 /// Forme partagée `v` des petits astéroïdes d'un type (rayon 1).
 pub fn variant_shape(class: AsteroidClass, v: u32) -> AsteroidShape {
     AsteroidShape::new(class, 0xA570_0000 ^ ((class as u32) << 8) ^ v, 1.0)
 }
 
 /// L'astéroïde `key`, recalculé.
-pub fn find(belts: &[Belt], key: AsteroidKey) -> Option<Asteroid> {
-    let belt = belts.get(key.belt as usize)?;
-    cell_asteroids(key.sys, key.belt, belt, key.level, key.ring, key.sector, key.layer).into_iter().nth(key.slot as usize)
+pub fn find(src: &Sources, key: AsteroidKey) -> Option<Asteroid> {
+    let list = match key.source() {
+        Source::Belt => {
+            let belt = src.belts.get(key.belt as usize)?;
+            cell_asteroids(key.sys, key.belt, belt, key.level, key.ring, key.sector, key.layer)
+        }
+        Source::Trojan => {
+            let k = key.belt - SWARM_BASE;
+            let (sw, el, au) = src.swarms.get(k as usize)?;
+            swarm_cell(key.sys, k, sw, el, *au, key.level, key.ring as i32, key.sector as i32, key.layer)
+        }
+        Source::Ring => {
+            let k = key.belt - RING_BASE;
+            ring_cell(key.sys, k, src.rings.get(k as usize)?, key.ring, key.sector, key.layer)
+        }
+        Source::Comet => return src.comets.get(key.ring as usize).map(|c| comet_asteroid(key.sys, key.ring as usize, c)),
+    };
+    list.into_iter().nth(key.slot as usize)
 }
 
-/// Astéroïdes d'un niveau autour du point `rel` (depuis le centre du système) à l'instant `t`,
-/// plus près que `reach`.
-pub fn near(sys: u32, bi: u8, belt: &Belt, level: u8, rel: DVec3, t: f64, reach: f64, out: &mut Vec<Asteroid>) {
-    let lv = &LEVELS[level as usize];
+/// Cellules d'un anneau (ceinture ou anneau de planète) autour de `rel` (repère de l'anneau :
+/// plan y = 0, centre à l'origine) : (anneau, secteur, couche).
+#[allow(clippy::too_many_arguments)]
+fn annulus_cells(inner: f64, outer: f64, half: f64, mu: f64, cell: f64, rel: DVec3, t: f64, reach: f64, mut visit: impl FnMut(u32, u32, i32)) {
     let rho_c = (rel.x * rel.x + rel.z * rel.z).sqrt();
-    let h = belt.half_thickness as f64 * 3.0;
-    let d_rho = (belt.inner as f64 - rho_c).max(rho_c - belt.outer as f64).max(0.0);
-    let d_y = (rel.y.abs() - h).max(0.0);
+    let d_rho = (inner - rho_c).max(rho_c - outer).max(0.0);
+    let d_y = (rel.y.abs() - half).max(0.0);
     if d_rho * d_rho + d_y * d_y > reach * reach {
         return;
     }
     let phi = rel.z.atan2(rel.x);
-    let cell = lv.cell;
-    let r0 = ((rho_c - reach - belt.inner as f64) / cell).floor().max(0.0) as i64;
-    let r1 = (((rho_c + reach - belt.inner as f64) / cell).floor() as i64).min(rings(belt, cell) as i64 - 1);
-    let l0 = ((rel.y - reach) / cell).floor().max((-h / cell).floor()) as i64;
-    let l1 = ((rel.y + reach) / cell).floor().min((h / cell).floor()) as i64;
+    let rings = (((outer - inner) / cell).ceil() as i64).max(1);
+    let r0 = ((rho_c - reach - inner) / cell).floor().max(0.0) as i64;
+    let r1 = (((rho_c + reach - inner) / cell).floor() as i64).min(rings - 1);
+    let l0 = ((rel.y - reach) / cell).floor().max((-half / cell).floor()) as i64;
+    let l1 = ((rel.y + reach) / cell).floor().min((half / cell).floor()) as i64;
     let margin = reach + cell * 1.1;
     for ring in r0..=r1 {
-        let rho_mid = belt.inner as f64 + (ring as f64 + 0.5) * cell;
+        let rho_mid = inner + (ring as f64 + 0.5) * cell;
         let s = sectors(rho_mid, cell) as i64;
         let dt = TAU / s as f64;
-        let n = (mu() / rho_mid.powi(3)).sqrt();
+        let n = (mu / rho_mid.powi(3)).sqrt();
         let epoch = (phi - n * t).rem_euclid(TAU);
         let center = (epoch / dt).floor() as i64;
         let span = (reach / (rho_mid * dt)).ceil() as i64 + 1;
@@ -708,13 +1077,86 @@ pub fn near(sys: u32, bi: u8, belt: &Belt, level: u8, rel: DVec3, t: f64, reach:
                 // La cellule (son centre à l'instant t) est-elle assez près ?
                 let th = (sector as f64 + 0.5) * dt + n * t;
                 let c = DVec3::new(rho_mid * th.cos(), (layer as f64 + 0.5) * cell, rho_mid * th.sin());
-                if c.distance_squared(rel) > margin * margin {
-                    continue;
+                if c.distance_squared(rel) <= margin * margin {
+                    visit(ring as u32, sector as u32, layer as i32);
                 }
-                out.extend(cell_asteroids(sys, bi, belt, level, ring as u32, sector as u32, layer as i32));
             }
         }
     }
+}
+
+/// Astéroïdes d'un niveau d'une ceinture autour du point `rel` (depuis le centre du système) à
+/// l'instant `t`, plus près que `reach`.
+#[allow(clippy::too_many_arguments)]
+pub fn near_belt(sys: u32, bi: u8, belt: &Belt, level: u8, rel: DVec3, t: f64, reach: f64, out: &mut Vec<Asteroid>) {
+    let cell = LEVELS[level as usize].cell;
+    annulus_cells(belt.inner as f64, belt.outer as f64, belt.half_thickness as f64 * 3.0, mu(), cell, rel, t, reach, |ring, sector, layer| {
+        out.extend(cell_asteroids(sys, bi, belt, level, ring, sector, layer));
+    });
+}
+
+/// Troyens d'un niveau d'un essaim autour de `rel`.
+#[allow(clippy::too_many_arguments)]
+fn near_swarm(sys: u32, k: u8, sw: &Swarm, el: &Elements, au: f32, level: u8, rel: DVec3, t: f64, reach: f64, out: &mut Vec<Asteroid>) {
+    let cell = LEVELS[level as usize].cell;
+    let lead = if sw.leading { TAU / 6.0 } else { -TAU / 6.0 };
+    let (p, r, n, along) = el.frame(t, lead);
+    let d = rel - p;
+    let local = DVec3::new(d.dot(r), d.dot(n), d.dot(along));
+    let ax = swarm_axes(sw, el) * 3.0;
+    // Assez près de l'essaim (ellipsoïde à 3 écarts) ?
+    if (local.abs() - ax).max(DVec3::ZERO).length() > reach {
+        return;
+    }
+    let lo = ((local - DVec3::splat(reach)).max(-ax) / cell).floor();
+    let hi = ((local + DVec3::splat(reach)).min(ax) / cell).floor();
+    let margin = reach + cell;
+    for i in lo.x as i32..=hi.x as i32 {
+        for j in lo.y as i32..=hi.y as i32 {
+            for l in lo.z as i32..=hi.z as i32 {
+                let c = DVec3::new(i as f64 + 0.5, j as f64 + 0.5, l as f64 + 0.5) * cell;
+                if c.distance_squared(local) <= margin * margin {
+                    out.extend(swarm_cell(sys, k, sw, el, au, level, i, j, l));
+                }
+            }
+        }
+    }
+}
+
+/// Particules d'un anneau de planète autour de `rel`.
+fn near_ring(sys: u32, k: u8, rs: &RingSrc, rel: DVec3, t: f64, reach: f64, out: &mut Vec<Asteroid>) {
+    let (p, q) = rs.plane(t);
+    let d = rel - p;
+    if d.length() > rs.ring.outer as f64 + reach {
+        return;
+    }
+    let local = q.inverse().as_dquat() * d;
+    annulus_cells(rs.ring.inner as f64, rs.ring.outer as f64, rs.half_thickness(), planet_mu(), RING_CELL, local, t, reach, |ring, sector, layer| {
+        out.extend(ring_cell(sys, k, rs, ring, sector, layer));
+    });
+}
+
+/// Tous les astéroïdes (ceintures, Troyens, anneaux) d'un système autour de `rel`, chacun avec la
+/// portée de son niveau. Les comètes n'y sont pas : elles sont toujours affichées.
+pub fn near_all(sys: u32, src: &Sources, rel: DVec3, t: f64, out: &mut Vec<Asteroid>) {
+    for (bi, belt) in src.belts.iter().enumerate() {
+        for (level, lv) in LEVELS.iter().enumerate() {
+            near_belt(sys, bi as u8, belt, level as u8, rel, t, lv.reach, out);
+        }
+    }
+    for (k, (sw, el, au)) in src.swarms.iter().enumerate() {
+        for (level, lv) in LEVELS.iter().enumerate() {
+            near_swarm(sys, k as u8, sw, el, *au, level as u8, rel, t, lv.reach, out);
+        }
+    }
+    for (k, rs) in src.rings.iter().enumerate() {
+        near_ring(sys, k as u8, rs, rel, t, LEVELS[0].reach, out);
+    }
+}
+
+/// Toutes les comètes d'un système.
+pub fn comets_of(sys: u32, src: &Sources) -> impl Iterator<Item = Asteroid> + '_ {
+    src.comets.iter().enumerate().map(move |(i, c)| comet_asteroid(sys, i, c))
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -734,11 +1176,11 @@ pub struct Live {
     meshed: bool,
 }
 
-/// Les astéroïdes affichés autour de la caméra, et les ceintures des systèmes chargés.
+/// Les astéroïdes affichés autour de la caméra, et les petits corps des systèmes chargés.
 #[derive(Resource, Default)]
 pub struct AsteroidField {
     live: HashMap<AsteroidKey, Live>,
-    belts: HashMap<usize, Vec<Belt>>,
+    sources: HashMap<usize, Sources>,
     tasks: HashMap<AsteroidKey, Task<Mesh>>,
     bands: HashMap<(usize, u8), (Entity, Handle<StandardMaterial>, Belt)>,
     last_refresh: f64,
@@ -767,9 +1209,9 @@ impl AsteroidField {
         self.live.len()
     }
 
-    /// Ceintures d'un système chargé.
-    pub fn belts(&self, si: usize) -> &[Belt] {
-        self.belts.get(&si).map_or(&[], |b| b.as_slice())
+    /// Petits corps d'un système chargé.
+    pub fn sources(&self, si: usize) -> Option<&Sources> {
+        self.sources.get(&si)
     }
 
     /// Recalcule à la prochaine image ce qui est autour de la caméra.
@@ -784,7 +1226,7 @@ pub fn body_params(settings: &GameSettings, key: &AsteroidKey) -> Option<crate::
         return None;
     }
     let sys = settings.systems.get(key.sys as usize)?;
-    let a = find(&sys.belts(), *key)?;
+    let a = find(&Sources::for_key(sys, key), *key)?;
     let lum = sys.star_physics().map_or(1.0, |p| p.luminosity_sun);
     Some(a.body_params(lum))
 }
@@ -935,42 +1377,44 @@ fn stream_asteroids(
     let t = clock.secs;
     let cam_abs = to_abs(cam.translation);
 
-    // Ceintures des systèmes chargés (recalculées : l'éditeur peut les changer)
-    field.belts.retain(|si, _| spawned.0.contains(si));
+    // Petits corps des systèmes chargés (recalculés : l'éditeur peut changer les planètes)
+    field.sources.retain(|si, _| spawned.0.contains(si));
     for &si in &spawned.0 {
-        let belts = settings.systems.get(si).map(|s| s.belts()).unwrap_or_default();
-        field.belts.insert(si, belts);
+        if let Some(sys) = settings.systems.get(si) {
+            field.sources.insert(si, Sources::of(sys));
+        }
     }
 
-    // Astéroïdes voulus : assez près de la caméra pour être vus (selon leur taille)
+    // Astéroïdes voulus : assez près de la caméra pour être vus (selon leur taille) ; les comètes
+    // toujours (leur queue se voit de loin)
     let mut wanted: HashMap<AsteroidKey, (Asteroid, f32)> = HashMap::new();
     let mut found = Vec::new();
-    for (&si, belts) in &field.belts {
+    for (&si, src) in &field.sources {
         let Some(center) = sys_center(&settings, si) else { continue };
         let rel = cam_abs - center;
-        for (bi, belt) in belts.iter().enumerate() {
-            for (level, lv) in LEVELS.iter().enumerate() {
-                found.clear();
-                near(si as u32, bi as u8, belt, level as u8, rel, t, lv.reach, &mut found);
-                for a in &found {
-                    let d = a.rel_position(t).distance(rel) as f32;
-                    let sight = (lv.sight * a.shape.radius + lv.sight_base).min(lv.reach as f32);
-                    if d < sight {
-                        wanted.insert(a.key, (*a, d));
-                    }
-                }
+        found.clear();
+        near_all(si as u32, src, rel, t, &mut found);
+        for a in &found {
+            let lv = &LEVELS[a.key.level as usize];
+            let d = a.rel_position(t).distance(rel) as f32;
+            let sight = (lv.sight * a.shape.radius + lv.sight_base).min(lv.reach as f32);
+            if d < sight {
+                wanted.insert(a.key, (*a, d));
             }
+        }
+        for a in comets_of(si as u32, src) {
+            wanted.insert(a.key, (a, a.rel_position(t).distance(rel) as f32));
         }
     }
     for key in pinned(&target, &surface) {
         if wanted.contains_key(&key) {
             continue;
         }
-        let belts = match field.belts.get(&(key.sys as usize)) {
-            Some(b) => b.clone(),
-            None => settings.systems.get(key.sys as usize).map(|s| s.belts()).unwrap_or_default(),
+        let found = match field.sources.get(&(key.sys as usize)) {
+            Some(src) => find(src, key),
+            None => settings.systems.get(key.sys as usize).and_then(|s| find(&Sources::for_key(s, &key), key)),
         };
-        if let Some(a) = find(&belts, key) {
+        if let Some(a) = found {
             wanted.insert(key, (a, 0.0));
         }
     }
@@ -1121,7 +1565,7 @@ fn update_bands(
     let stale: Vec<(usize, u8)> = field
         .bands
         .iter()
-        .filter(|((si, bi), (_, _, belt))| field.belts.get(si).and_then(|b| b.get(*bi as usize)) != Some(belt))
+        .filter(|((si, bi), (_, _, belt))| field.sources.get(si).and_then(|s| s.belts.get(*bi as usize)) != Some(belt))
         .map(|(k, _)| *k)
         .collect();
     for k in stale {
@@ -1129,10 +1573,10 @@ fn update_bands(
             commands.entity(e).try_despawn_recursive();
         }
     }
-    for (&si, belts) in &field.belts {
+    for (&si, src) in &field.sources {
         let Some(center) = sys_center(&settings, si) else { continue };
         let rel = cam_abs - center;
-        for (bi, belt) in belts.iter().enumerate() {
+        for (bi, belt) in src.belts.iter().enumerate() {
             let key = (si, bi as u8);
             let fade = ((distance_to_belt(belt, rel) as f32 - BAND_FADE_NEAR) / (BAND_FADE_FAR - BAND_FADE_NEAR)).clamp(0.0, 1.0);
             let fade = fade * fade * (3.0 - 2.0 * fade);
@@ -1166,6 +1610,201 @@ fn update_bands(
                 }
             }
         }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Comètes : chevelure, queue de gaz, queue de poussière
+// ─────────────────────────────────────────────────────────────────────────
+
+#[derive(Component)]
+struct CometPart;
+
+/// Chevelure et queues d'une comète affichée.
+struct Tails {
+    parts: [Entity; 3],
+    materials: [Handle<StandardMaterial>; 3],
+    activity: f32,
+}
+
+#[derive(Resource, Default)]
+struct CometFx {
+    tails: HashMap<AsteroidKey, Tails>,
+    /// Chevelure, queue de gaz (droite), queue de poussière (courbée).
+    meshes: Option<[Handle<Mesh>; 3]>,
+}
+
+/// Couleurs (linéaires, mélange additif) : chevelure, gaz ionisé bleu, poussière jaunâtre.
+const COMET_COLORS: [[f32; 3]; 3] = [[0.75, 0.88, 1.0], [0.3, 0.55, 1.0], [1.0, 0.86, 0.62]];
+
+/// Queue : longueur 1 le long de +z depuis la tête, deux rubans croisés qui s'élargissent et
+/// s'éteignent ; `curve` la courbe vers +x (poussière en retard sur l'orbite).
+fn tail_mesh(curve: f32) -> Mesh {
+    const N: usize = 32;
+    let (mut pos, mut col, mut idx) = (Vec::new(), Vec::new(), Vec::<u32>::new());
+    for plane in 0..2 {
+        let base = pos.len() as u32;
+        for k in 0..=N {
+            let s = k as f32 / N as f32;
+            let w = 0.015 + 0.16 * s;
+            let c = Vec3::new(curve * s * s, 0.0, s);
+            let side = if plane == 0 { Vec3::X } else { Vec3::Y };
+            let fade = (1.0 - s).powf(1.6);
+            for (o, edge) in [(-1.0f32, 0.0f32), (0.0, 1.0), (1.0, 0.0)] {
+                pos.push((c + side * w * o).to_array());
+                let v = fade * edge;
+                col.push([v, v, v, 1.0]);
+            }
+        }
+        for k in 0..N as u32 {
+            let a = base + k * 3;
+            let b = a + 3;
+            idx.extend_from_slice(&[a, a + 1, b, a + 1, b + 1, b, a + 1, a + 2, b + 1, a + 2, b + 2, b + 1]);
+        }
+    }
+    let n = pos.len();
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; n]);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
+    mesh.insert_indices(Indices::U32(idx));
+    mesh
+}
+
+/// Taille de la chevelure (rayon) et longueur de la queue d'une comète d'activité `act`.
+pub fn tail_size(c: &Comet, act: f32) -> (f32, f32) {
+    (c.radius * 4.0 + act * c.tail * 0.015, act * c.tail)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn update_comet_tails(
+    mut commands: Commands,
+    settings: Res<GameSettings>,
+    field: Res<AsteroidField>,
+    mut fx: ResMut<CometFx>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut parts: Query<(&mut Transform, &mut Visibility), (With<CometPart>, Without<AsteroidBody>)>,
+) {
+    let fx = &mut *fx;
+    let mesh = fx
+        .meshes
+        .get_or_insert_with(|| [meshes.add(Sphere::new(1.0).mesh().ico(3).unwrap_or_else(|_| Mesh::from(Sphere::new(1.0)))), meshes.add(tail_mesh(0.0)), meshes.add(tail_mesh(0.35))])
+        .clone();
+    // Comètes qui ne sont plus affichées
+    let gone: Vec<AsteroidKey> = fx.tails.keys().filter(|k| !field.live.contains_key(k)).copied().collect();
+    for k in gone {
+        if let Some(t) = fx.tails.remove(&k) {
+            for e in t.parts {
+                commands.entity(e).try_despawn_recursive();
+            }
+        }
+    }
+    for live in field.live.values() {
+        let Some(comet) = live.ast.comet() else { continue };
+        let Some(center) = sys_center(&settings, live.ast.key.sys as usize) else { continue };
+        let star = world_of(center, DVec3::ZERO);
+        let pos = live.pose.translation;
+        let away = pos - star;
+        let act = comet.activity(away.length() as f64);
+        let anti = away.normalize_or(Vec3::Z);
+        let tails = fx.tails.entry(live.ast.key).or_insert_with(|| {
+            let materials: [Handle<StandardMaterial>; 3] = [0, 1, 2].map(|_| materials.add(StandardMaterial { base_color: Color::BLACK, unlit: true, alpha_mode: AlphaMode::Add, cull_mode: None, double_sided: true, ..default() }));
+            let parts = [0, 1, 2].map(|i| commands.spawn((Mesh3d(mesh[i].clone()), MeshMaterial3d(materials[i].clone()), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, CometPart)).id());
+            Tails { parts, materials, activity: -1.0 }
+        });
+        // Couleurs : seulement quand l'activité change vraiment
+        if (tails.activity - act).abs() > 0.01 {
+            tails.activity = act;
+            for (i, m) in tails.materials.iter().enumerate() {
+                if let Some(m) = materials.get_mut(m) {
+                    let k = if i == 0 { 0.35 + 0.9 * act } else { 1.2 * act };
+                    let c = COMET_COLORS[i];
+                    m.base_color = Color::linear_rgb(c[0] * k, c[1] * k, c[2] * k);
+                }
+            }
+        }
+        let (coma, length) = tail_size(comet, act);
+        // Poussière : courbée en retard sur le mouvement (vers l'arrière de l'orbite)
+        let back = -live.vel;
+        let lag = (back - anti * back.dot(anti)).try_normalize().unwrap_or_else(|| anti.any_orthonormal_vector());
+        let dust_rot = Quat::from_mat3(&Mat3::from_cols(lag, anti.cross(lag), anti));
+        let poses = [
+            Transform::from_translation(pos).with_scale(Vec3::splat(coma)),
+            Transform::from_translation(pos).with_rotation(Quat::from_rotation_arc(Vec3::Z, anti)).with_scale(Vec3::splat(length.max(1.0))),
+            Transform::from_translation(pos).with_rotation(dust_rot).with_scale(Vec3::splat((length * 0.75).max(1.0))),
+        ];
+        let shown = [act > 0.005, act > 0.01, act > 0.01];
+        for i in 0..3 {
+            if let Ok((mut tf, mut v)) = parts.get_mut(tails.parts[i]) {
+                *tf = poses[i];
+                let wanted = if shown[i] { Visibility::Inherited } else { Visibility::Hidden };
+                if *v != wanted {
+                    *v = wanted;
+                }
+            }
+        }
+    }
+}
+
+/// `/comete` : aller à la comète la plus active du système.
+#[derive(Event)]
+pub struct CometCommand;
+
+#[allow(clippy::too_many_arguments)]
+fn go_comet(
+    time: Res<Time>,
+    clock: Res<WorldClock>,
+    settings: Res<GameSettings>,
+    spawned: Res<SpawnedSystems>,
+    surface: Res<Surface>,
+    mut events: EventReader<CometCommand>,
+    mut target: ResMut<CameraTarget>,
+    mut net: ResMut<Net>,
+    mut field: ResMut<AsteroidField>,
+    mut ship_q: Query<&mut Transform, With<Ship>>,
+    mut cam_q: Query<&mut CameraController>,
+) {
+    for _ in events.read() {
+        let now = time.elapsed_secs_f64();
+        if surface.active() {
+            net.notify("Remontez d'abord en orbite (molette ou V).", now);
+            continue;
+        }
+        let Some(&si) = spawned.0.iter().next() else {
+            net.notify("Aucun systeme charge : approchez-vous d'une etoile.", now);
+            continue;
+        };
+        let Some(sys) = settings.systems.get(si) else { continue };
+        let src = Sources { comets: sys.comets(), ..Default::default() };
+        let t = clock.secs;
+        // La plus active, sinon la plus proche de l'étoile
+        let best = comets_of(si as u32, &src).min_by(|a, b| {
+            let score = |x: &Asteroid| {
+                let r = x.rel_position(t).length();
+                (-(x.comet().map_or(0.0, |c| c.activity(r)) as f64), r)
+            };
+            score(a).partial_cmp(&score(b)).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let Some(a) = best else {
+            net.notify(&format!("{} n'a pas de comete. Essayez un autre systeme.", sys.name), now);
+            continue;
+        };
+        let pos = world_of(sys.abs_center().as_dvec3(), a.rel_position(t));
+        target.0 = TargetKind::Asteroid(a.key);
+        if let Ok(mut ship) = ship_q.get_single_mut() {
+            ship.translation = pos + Vec3::Y * (a.shape.max_radius() * 2.0 + 300.0);
+        }
+        let act = a.comet().map_or(0.0, |c| c.activity(a.rel_position(t).length()));
+        let (_, length) = a.comet().map_or((0.0, 0.0), |c| tail_size(c, act));
+        if let Ok(mut ctrl) = cam_q.get_single_mut() {
+            ctrl.last_target_pos = pos;
+            // Assez loin pour voir la queue entière, sinon près du noyau
+            ctrl.zoom_goal = Some(if length > 1.0 { length * 1.5 } else { a.shape.radius * 8.0 + 600.0 });
+        }
+        field.refresh_now();
+        let state = if act > 0.3 { "tres active" } else if act > 0.01 { "active" } else { "endormie, loin de l'etoile" };
+        net.notify(&format!("{} : {} ({state}). Molette pour s'approcher du noyau, V pour s'y poser.", sys.name, a.title()), now);
     }
 }
 
@@ -1279,7 +1918,7 @@ pub fn densest_field(sys: u32, bi: u8, belt: &Belt, t: f64) -> Option<Asteroid> 
     let th = best.1 + n * t;
     let rel = DVec3::new(mid * th.cos(), 0.0, mid * th.sin());
     let mut found = Vec::new();
-    near(sys, bi, belt, LANDABLE_LEVEL, rel, t, LEVELS[LANDABLE_LEVEL as usize].reach, &mut found);
+    near_belt(sys, bi, belt, LANDABLE_LEVEL, rel, t, LEVELS[LANDABLE_LEVEL as usize].reach, &mut found);
     found.into_iter().max_by(|a, b| a.shape.radius.total_cmp(&b.shape.radius))
 }
 
@@ -1383,7 +2022,7 @@ mod tests {
                     assert_eq!(x.key, y.key);
                     assert_eq!(x.shape, y.shape);
                     assert_eq!(x.rel_position(1234.5), y.rel_position(1234.5));
-                    assert_eq!(find(&[b], x.key).map(|f| f.shape), Some(x.shape));
+                    assert_eq!(find(&Sources { belts: vec![b], ..Default::default() }, x.key).map(|f| f.shape), Some(x.shape));
                 }
             }
         }
@@ -1393,7 +2032,7 @@ mod tests {
     fn asteroids_orbit_with_the_clock_and_stay_near_their_cell() {
         let b = belt();
         let mut found = Vec::new();
-        near(0, 0, &b, 1, DVec3::new(21_500_000.0, 0.0, 0.0), 0.0, 16_000.0, &mut found);
+        near_belt(0, 0, &b, 1, DVec3::new(21_500_000.0, 0.0, 0.0), 0.0, 16_000.0, &mut found);
         assert!(!found.is_empty(), "un champ de rochers autour du milieu de la ceinture");
         for a in &found {
             let p0 = a.rel_position(0.0);
@@ -1409,7 +2048,7 @@ mod tests {
         let a = found[0];
         let t = 50_000.0;
         let mut later = Vec::new();
-        near(0, 0, &b, 1, a.rel_position(t), t, 5_000.0, &mut later);
+        near_belt(0, 0, &b, 1, a.rel_position(t), t, 5_000.0, &mut later);
         assert!(later.iter().any(|x| x.key == a.key), "l'asteroide suit sa cellule");
     }
 
@@ -1420,7 +2059,7 @@ mod tests {
         for i in 0..200 {
             let th = i as f64 / 200.0 * TAU;
             let mut found = Vec::new();
-            near(0, 0, &b, 1, DVec3::new(21_500_000.0 * th.cos(), 0.0, 21_500_000.0 * th.sin()), 0.0, 12_000.0, &mut found);
+            near_belt(0, 0, &b, 1, DVec3::new(21_500_000.0 * th.cos(), 0.0, 21_500_000.0 * th.sin()), 0.0, 12_000.0, &mut found);
             counts.push(found.len());
         }
         counts.sort();
@@ -1445,6 +2084,110 @@ mod tests {
             let top = t.ground(d).top;
             assert!((top - a.shape.radius_at(d)).abs() <= t.voxel() * 1.01, "{top} vs {}", a.shape.radius_at(d));
         }
+    }
+
+    /// Un système avec une géante à anneaux, des Troyens et des comètes.
+    fn rich_system() -> (u32, Sources, Vec<PlanetConfig>) {
+        let settings = GameSettings::default();
+        for (si, sys) in settings.systems.dense().iter().enumerate().take(3000) {
+            let src = Sources::of(sys);
+            if !src.swarms.is_empty() && !src.rings.is_empty() && !src.comets.is_empty() {
+                return (si as u32, src, sys.planets_uncached().into_owned());
+            }
+        }
+        panic!("aucun systeme avec anneaux, Troyens et cometes");
+    }
+
+    #[test]
+    fn elements_match_the_planet_orbits() {
+        let (_, _, planets) = rich_system();
+        for p in planets.iter().filter(|p| !p.rogue) {
+            let el = Elements::of_planet(p);
+            let k = crate::kepler::OrbitalElements { a: p.orbit_distance, e: p.eccentricity, i: p.inclination, omega_big: p.ascending_node, omega: p.arg_periapsis, m0: p.mean_anomaly_0 };
+            for t in [0.0, 1234.5, 98_765.0] {
+                let a = el.position(t, 0.0);
+                let b = k.position(t, crate::kepler::DEFAULT_MU * crate::planet::PLANET_MU_SCALE).as_dvec3();
+                assert!(a.distance(b) < p.orbit_distance as f64 * 1e-4, "{a} vs {b}");
+            }
+        }
+    }
+
+    #[test]
+    fn trojans_gather_sixty_degrees_from_their_giant() {
+        let (si, src, planets) = rich_system();
+        let (k, (sw, el, _)) = src.swarms.iter().enumerate().next().unwrap();
+        let t = 5000.0;
+        let lead = if sw.leading { TAU / 6.0 } else { -TAU / 6.0 };
+        let l = el.position(t, lead);
+        let mut found = Vec::new();
+        for level in 0..3u8 {
+            near_swarm(si, k as u8, sw, el, 1.0, level, l, t, LEVELS[level as usize].reach, &mut found);
+        }
+        assert!(!found.is_empty(), "des Troyens autour de L4/L5");
+        let giant = el.position(t, 0.0);
+        for a in &found {
+            let p = a.rel_position(t);
+            // A 60 degres de la geante, sur son orbite
+            let angle = p.normalize().dot(giant.normalize()).clamp(-1.0, 1.0).acos().to_degrees();
+            assert!((40.0..80.0).contains(&angle), "{angle}");
+            assert_eq!(find(&src, a.key).map(|f| f.shape), Some(a.shape));
+        }
+        assert!(planets[sw.planet as usize].kind.gaseous());
+    }
+
+    #[test]
+    fn ring_particles_fill_the_ring_but_not_its_gaps() {
+        let (si, src, _) = rich_system();
+        let (k, rs) = src.rings.iter().enumerate().next().unwrap();
+        let t = 777.0;
+        let (p, q) = rs.plane(t);
+        let mut counts = Vec::new();
+        for i in 1..20 {
+            let f = i as f32 / 20.0;
+            let rho = rs.ring.inner + (rs.ring.outer - rs.ring.inner) * f;
+            let point = p + q.as_dquat() * DVec3::new(rho as f64, 0.0, 0.0);
+            let mut found = Vec::new();
+            near_ring(si, k as u8, rs, point, t, 600.0, &mut found);
+            for a in &found {
+                // Dans le plan de l'anneau, entre ses bords
+                let local = q.inverse().as_dquat() * (a.rel_position(t) - p);
+                assert!(local.y.abs() <= rs.half_thickness() + 1.0);
+                let r = (local.x * local.x + local.z * local.z).sqrt();
+                assert!(r >= rs.ring.inner as f64 - 1.0 && r <= rs.ring.outer as f64 + 1.0);
+                assert!(a.shape.radius <= RING_SIZES.1);
+            }
+            counts.push((rs.ring.profile(f), found.len()));
+        }
+        assert!(counts.iter().any(|(_, n)| *n > 3), "{counts:?}");
+        // Là où l'anneau est vide (division), presque rien
+        for (alpha, n) in &counts {
+            if *alpha < 0.01 {
+                assert!(*n <= 2, "{counts:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn comets_follow_their_orbit_and_grow_tails_near_the_star() {
+        let (si, src, _) = rich_system();
+        let c = src.comets[0];
+        let a = comets_of(si, &src).next().unwrap();
+        assert!(a.landable() && a.class() == AsteroidClass::Ice);
+        assert_eq!(find(&src, a.key).map(|f| f.shape), Some(a.shape));
+        let el = Elements::of_comet(&c);
+        // Au périhélie et à l'aphélie : bonnes distances, queue seulement près de l'étoile
+        let (mut near_r, mut far_r) = (f64::MAX, 0.0f64);
+        for k in 0..2000 {
+            let r = a.rel_position(el.period() * k as f64 / 2000.0).length();
+            near_r = near_r.min(r);
+            far_r = far_r.max(r);
+        }
+        assert!((near_r / c.perihelion() - 1.0).abs() < 0.05, "{near_r} vs {}", c.perihelion());
+        assert!((far_r / c.aphelion() - 1.0).abs() < 0.01);
+        let (_, tail_far) = tail_size(&c, c.activity(far_r));
+        let (_, tail_near) = tail_size(&c, c.activity(near_r));
+        assert_eq!(tail_far, 0.0);
+        assert!(tail_near > 100_000.0, "{tail_near}");
     }
 
     #[test]
@@ -1496,7 +2239,7 @@ mod tests {
         assert!(field.len() > 10, "champ dense : {} asteroides", field.len());
         let pose = field.pose(&a.key).expect("la cible existe");
         assert!(pose.translation.distance(pos) < 10.0, "{} vs {pos}", pose.translation);
-        assert!(field.belts(si).len() >= 1);
+        assert!(field.sources(si).is_some_and(|s| !s.belts.is_empty()));
         // Les maillages des gros arrivent
         let mut meshed = false;
         for _ in 0..300 {
@@ -1537,11 +2280,30 @@ mod tests {
             let rel = DVec3::new(21_500_000.0, 0.0, i as f64 * 50_000.0);
             for level in 0..3u8 {
                 let mut found = Vec::new();
-                near(0, 0, &b, level, rel, 0.0, LEVELS[level as usize].reach, &mut found);
+                near_belt(0, 0, &b, level, rel, 0.0, LEVELS[level as usize].reach, &mut found);
                 total += found.len();
             }
         }
         println!("cellules autour de la camera : {:.2} ms par mise a jour ({} asteroides en moyenne)", t0.elapsed().as_secs_f64() * 1000.0 / 20.0, total / 20);
+        // Troyens, anneau : la caméra dans un essaim, puis dans un anneau
+        let (si, src, _) = rich_system();
+        let settings = GameSettings::default();
+        let sys = &settings.systems[si as usize];
+        sys.planets();
+        let t0 = std::time::Instant::now();
+        let src2 = Sources::of(sys);
+        println!("petits corps d'un systeme (Sources::of) : {:.2} ms", t0.elapsed().as_secs_f64() * 1000.0);
+        let (sw, el, _) = &src.swarms[0];
+        let l = el.position(0.0, if sw.leading { TAU / 6.0 } else { -TAU / 6.0 });
+        let rs = &src.rings[0];
+        let (p, q) = rs.plane(0.0);
+        let in_ring = p + q.as_dquat() * DVec3::new((rs.ring.inner as f64 + rs.ring.outer as f64) * 0.5, 0.0, 0.0);
+        for (what, at) in [("essaim de Troyens", l), ("anneau", in_ring)] {
+            let t0 = std::time::Instant::now();
+            let mut found = Vec::new();
+            near_all(si, &src2, at, 0.0, &mut found);
+            println!("{what} : {:.2} ms, {} asteroides", t0.elapsed().as_secs_f64() * 1000.0, found.len());
+        }
         let s = AsteroidShape::new(AsteroidClass::S, 7, 300.0);
         let t0 = std::time::Instant::now();
         let m = build_mesh(&s, 40);

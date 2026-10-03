@@ -237,6 +237,8 @@ fn reach(p: &PlanetConfig) -> f64 {
 
 /// Ceintures du système d'étoile `star` (échelle G `scale`) dont les planètes sont `planets`.
 pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radius: f32, planets: &[PlanetConfig]) -> Vec<Belt> {
+    // La planète errante (C2) n'est pas sur une orbite : elle ne compte pas
+    let planets = &planets[..planets.iter().position(|p| p.rogue).unwrap_or(planets.len())];
     let mut rng = LayerRng::new(genome.seed as u64, Layer::Belts);
     let scale = scale as f64;
     let stretch = SPACE_STRETCH as f64;
@@ -331,6 +333,66 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
     belts
 }
 
+/// Troyens (C2) : essaim d'astéroïdes au point de Lagrange L4 (60° devant) ou L5 (60° derrière)
+/// d'une géante, sur son orbite.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Swarm {
+    /// Indice de la géante dans `planets()`.
+    pub planet: u8,
+    /// L4 (devant la planète) ou L5 (derrière).
+    pub leading: bool,
+    pub seed: u32,
+    pub mass_earth: f32,
+    /// Richesse (comme une ceinture).
+    pub density: f32,
+    /// Étendue le long de l'orbite (fraction du rayon de l'orbite) ; en largeur et en hauteur, un
+    /// cinquième.
+    pub spread: f32,
+}
+
+impl Swarm {
+    pub fn name(&self) -> &'static str {
+        if self.leading { "Troyens (L4)" } else { "Troyens (L5)" }
+    }
+
+    /// Les Troyens sont des C et des D sombres (comme ceux de Jupiter), un peu de S.
+    pub fn class_at(&self, u: f32) -> AsteroidClass {
+        if u < 0.7 { AsteroidClass::C } else if u < 0.92 { AsteroidClass::S } else { AsteroidClass::M }
+    }
+}
+
+/// Troyens des géantes (gazeuses surtout, de glace parfois), jamais d'une planète errante.
+pub fn trojans(genome: SystemGenome, planets: &[PlanetConfig]) -> Vec<Swarm> {
+    use super::system::PlanetKind;
+    let mut rng = LayerRng::new(genome.seed as u64 ^ 0x5452_4F4A, Layer::Belts);
+    let mut out = Vec::new();
+    for (i, p) in planets.iter().enumerate() {
+        let chance = match p.kind {
+            PlanetKind::GasGiant => 0.85,
+            PlanetKind::IceGiant => 0.5,
+            _ => 0.0,
+        };
+        // Tirages toujours faits : les essaims ne dépendent pas des planètes d'avant
+        let (roll, mass, spread, seed) = (rng.unit(), 10f64.powf(rng.range(-5.5, -4.0)), rng.range(0.08, 0.14), rng.next_u64());
+        if p.rogue || p.hot || roll >= chance {
+            continue;
+        }
+        for leading in [true, false] {
+            // L4 un peu plus riche que L5 (comme chez Jupiter)
+            let share = if leading { 0.6 } else { 0.4 };
+            out.push(Swarm {
+                planet: i as u8,
+                leading,
+                seed: (seed >> if leading { 0 } else { 32 }) as u32,
+                mass_earth: (mass * share) as f32,
+                density: q(((mass.log10() + 6.0) / 1.5).clamp(0.4, 1.3), 1e-3),
+                spread: q(spread, 1e-4),
+            });
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,13 +403,14 @@ mod tests {
         let systems = default_systems(&default_galaxies(42), 42);
         let (mut main, mut kuiper, mut n) = (0, 0, 0);
         for sys in systems.dense().iter().take(2000) {
-            let planets = sys.planets_uncached();
+            let all = sys.planets_uncached();
+            let planets: Vec<&PlanetConfig> = all.iter().filter(|p| !p.rogue).collect();
             let belts = sys.belts();
             n += 1;
             for b in &belts {
                 assert!(b.inner < b.outer && b.half_thickness > 0.0 && b.mass_earth > 0.0, "{b:?}");
                 assert!(b.au_inner < b.au_outer);
-                for p in planets.iter() {
+                for p in &planets {
                     let (a, e, r) = (p.orbit_distance, p.eccentricity, reach(p) as f32);
                     let (lo, hi) = (a * (1.0 - e) - r, a * (1.0 + e) + r);
                     assert!(hi < b.inner || lo > b.outer, "{} : planete {lo}..{hi} dans la ceinture {}..{}", sys.name, b.inner, b.outer);

@@ -64,7 +64,7 @@ struct GoState {
 pub const STAR_TYPES: &str = "o, b, a, f, g, k, m, blanche, brune, sous-geante, geante";
 pub const PLANET_TYPES: &str = "rocheuse, mini-neptune, neptune, gazeuse, jupiter-chaud, minuscule, petite, terrestre, \
 super-terre, ocean, glace, lave, methane, ammoniac, venus, titan, mars, oxygene, sans-air, vie, plantes, complexe, \
-anneaux, aurores, plaques, volcans, crateres, habitable, rare, legendaire";
+anneaux, aurores, errante, plaques, volcans, crateres, habitable, rare, legendaire";
 pub const MOON_TYPES: &str = "volcanique, ocean-cache, air, glacee, lave, vie, rare";
 
 pub fn help() -> String {
@@ -141,6 +141,7 @@ pub fn planet_matches(p: &PlanetConfig, kind: &str) -> Option<bool> {
         "plantes" => p.life.flora,
         "complexe" => p.life.level == LifeLevel::Complex,
         "anneaux" => p.ring.is_some(),
+        "errante" => p.rogue,
         "aurores" => p.aurora.is_some(),
         "plaques" => p.geology.tectonics == crate::planetgen::geology::Tectonics::Plates,
         "volcans" => p.geology.relief.volcanoes >= 10,

@@ -20,6 +20,7 @@ pub mod belts;
 pub mod biome;
 pub mod cache;
 pub mod climate;
+pub mod comets;
 pub mod genome;
 pub mod geology;
 pub mod habitability;
@@ -80,6 +81,15 @@ mod tests {
             }
             eat(sys.galaxy_id as u64);
             eat(sys.asteroid_belts.len() as u64);
+            for c in sys.comets() {
+                for v in [c.a, c.e, c.inc, c.node, c.peri, c.m0] {
+                    eat(v.to_bits());
+                }
+                eat(c.seed as u64);
+            }
+            for s in sys.swarms() {
+                eat(s.seed as u64 ^ ((s.planet as u64) << 40));
+            }
             for b in sys.belts() {
                 for v in [b.au_inner, b.au_outer, b.inner, b.outer, b.half_thickness, b.mass_earth, b.density, b.snow_au] {
                     eat(f(v));
