@@ -12,7 +12,6 @@
 //  d'un monde sans vie sont déjà nus. Les rochers et cristaux sont partout.
 // ─────────────────────────────────────────────────────────────────────────
 
-use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::render_asset::RenderAssetUsages;
@@ -368,7 +367,7 @@ impl DecorAssets {
             .iter()
             .map(|d| {
                 let material = if d.kind.glows() { self.glow.clone() } else { self.matte.clone() };
-                commands.spawn((Mesh3d(self.meshes[&d.kind].clone()), MeshMaterial3d(material), d.transform, NotShadowCaster)).id()
+                commands.spawn((Mesh3d(self.meshes[&d.kind].clone()), MeshMaterial3d(material), d.transform)).id()
             })
             .collect();
         commands.entity(tile).add_children(&children);
@@ -426,7 +425,7 @@ mod tests {
     fn earth_like() -> BodyParams {
         let settings = crate::settings::GameSettings::default();
         // Une planète générée avec des plantes, sinon une planète faite à la main reverdie
-        for sys in settings.systems.iter().take(3000) {
+        for sys in settings.systems.dense().iter().take(3000) {
             for p in sys.planets_uncached().iter() {
                 if p.biomes.flora && !p.gaseous() && p.hydrology.ocean_fraction < 0.8 {
                     return BodyParams::planet(p);
@@ -511,7 +510,7 @@ mod bench {
     fn bench_decor() {
         let settings = crate::settings::GameSettings::default();
         let mut bodies = Vec::new();
-        for sys in settings.systems.iter().take(3000) {
+        for sys in settings.systems.dense().iter().take(3000) {
             for p in sys.planets_uncached().iter() {
                 if p.biomes.flora && !p.gaseous() && bodies.len() < 6 {
                     bodies.push(BodyParams::planet(p));

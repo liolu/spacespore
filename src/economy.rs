@@ -206,7 +206,7 @@ pub struct Mission {
 
 impl Mission {
     pub fn describe(&self, npcs: &NpcTerritories, settings: &GameSettings) -> String {
-        let fname = |i: usize| npcs.factions.get(i).map_or("?".to_string(), |f| f.name.clone());
+        let fname = |i: usize| npcs.factions.get(&i).map_or("?".to_string(), |f| f.name.clone());
         match &self.kind {
             MissionKind::Explore { need } => format!("Exploration : visiter {need} systemes differents ({}/{need})", self.seen.len()),
             MissionKind::Scout { sys } => {
@@ -219,7 +219,7 @@ impl Mission {
 
 /// Les trois missions proposées par une faction : fixes pour une `edition` donnée.
 pub fn offered_missions(faction: usize, edition: usize, npcs: &NpcTerritories, settings: &GameSettings) -> Vec<Mission> {
-    let Some(me) = npcs.factions.get(faction) else { return Vec::new() };
+    let Some(me) = npcs.factions.get(&faction) else { return Vec::new() };
     let home = me.stars.first().and_then(|&s| settings.systems.get(s)).map(|s| s.center()).unwrap_or_default();
     (0..3)
         .map(|slot| {
@@ -235,7 +235,7 @@ pub fn offered_missions(faction: usize, edition: usize, npcs: &NpcTerritories, s
                     let to = npcs
                         .factions
                         .iter()
-                        .enumerate()
+                        .map(|(&i, f)| (i, f))
                         .filter(|(i, f)| *i != faction && f.galaxy == me.galaxy)
                         .min_by(|(_, a), (_, b)| {
                             let d = |f: &crate::galaxy_fx::NpcFaction| {

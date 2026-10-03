@@ -37,7 +37,7 @@ impl Plugin for ChatCmdPlugin {
 #[derive(Event)]
 pub struct ChatCommand(pub String);
 
-const COMMANDS: [&str; 18] = ["/impact", "/grotte", "/surplomb", "/tp", "/galaxie", "/profil", "/profile", "/graine", "/seed", "/aller", "/go", "/stats", "/aide", "/help", "/heure", "/time", "/temps", "/speed"];
+const COMMANDS: [&str; 21] = ["/impact", "/ceinture", "/comete", "/eclipse", "/grotte", "/surplomb", "/tp", "/galaxie", "/profil", "/profile", "/graine", "/seed", "/aller", "/go", "/stats", "/aide", "/help", "/heure", "/time", "/temps", "/speed"];
 
 /// La ligne est une commande du jeu (et non un message à envoyer).
 pub fn is_local(line: &str) -> bool {
@@ -96,7 +96,7 @@ fn find_galaxy(arg: &str, settings: &GameSettings, current: usize) -> Result<usi
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Commandes : (nom, arguments, description). Ordre d'affichage des propositions.
-pub const COMMAND_HELP: [(&str, &str, &str); 12] = [
+pub const COMMAND_HELP: [(&str, &str, &str); 15] = [
     ("/aide", "[commande]", "la liste des commandes, ou l'aide d'une commande"),
     ("/aller", "etoile|planete|lune <type> | suivant", "tests : aller a un type d'etoile, de planete ou de lune"),
     ("/stats", "[n | tout]", "statistiques de tous les astres d'une galaxie (F3 : masquer)"),
@@ -104,6 +104,9 @@ pub const COMMAND_HELP: [(&str, &str, &str); 12] = [
     ("/temps", "<facteur>", "tests : accelerer le temps (1 = normal, 60 = une heure de la planete par seconde)"),
     ("/surplomb", "", "tests : aller a l'arche de test en voxels 3D de l'astre (pose ou en vol bas)"),
     ("/grotte", "", "aller a l'entree de grotte la plus proche (pose ou en vol bas)"),
+    ("/ceinture", "", "aller au champ dense d'une ceinture d'asteroides du systeme charge"),
+    ("/comete", "", "aller a la comete la plus active du systeme charge"),
+    ("/eclipse", "[lune]", "aller a la prochaine eclipse de soleil (ou de lune) du systeme charge"),
     ("/impact", "", "tests : une meteorite s'ecrase tout pres (cratere sauve et partage)"),
     ("/tp", "<n | type de galaxie | liste>", "aller au trou noir d'une galaxie (0 = la notre)"),
     ("/profil", "", "exporter en JSON le profil de l'astre cible"),
@@ -113,7 +116,8 @@ pub const COMMAND_HELP: [(&str, &str, &str); 12] = [
 
 /// Ce que l'on peut taper après une commande, selon la position de l'argument.
 fn arguments(command: &str, previous: &[&str], galaxy_kinds: &[String], galaxies: usize) -> Vec<String> {
-    let numbers = || (0..galaxies).map(|n| n.to_string());
+    // (10 000 galaxies : seulement les 100 premières numéros proposés)
+    let numbers = || (0..galaxies.min(100)).map(|n| n.to_string());
     match (command, previous.len()) {
         ("/aller" | "/go", 0) => ["etoile", "planete", "lune", "suivant"].map(String::from).to_vec(),
         ("/aller" | "/go", 1) => {
@@ -285,6 +289,7 @@ fn run_chat_commands(
     mut overhang: EventWriter<crate::surface::OverhangCommand>,
     mut cave: EventWriter<crate::surface::CaveCommand>,
     mut impact: EventWriter<crate::meteors::ImpactCommand>,
+    mut small: (EventWriter<crate::asteroids::BeltCommand>, EventWriter<crate::asteroids::CometCommand>, EventWriter<crate::sky::EclipseCommand>),
     profiles: Res<ProfileCache>,
     star_q: Query<&StarId, With<StarRoot>>,
 ) {
@@ -331,6 +336,17 @@ fn run_chat_commands(
             }
             "/impact" => {
                 impact.send(crate::meteors::ImpactCommand);
+            }
+            // Ceintures d'astéroïdes (`asteroids.rs`)
+            "/ceinture" => {
+                small.0.send(crate::asteroids::BeltCommand);
+            }
+            "/comete" => {
+                small.1.send(crate::asteroids::CometCommand);
+            }
+            // Phénomènes du ciel (`sky.rs`)
+            "/eclipse" => {
+                small.2.send(crate::sky::EclipseCommand(arg.to_string()));
             }
             "/profil" | "/profile" => {
                 let loaded = matches!(target.0, TargetKind::Star(id) if star_q.iter().any(|s| s.0 == id));
@@ -458,7 +474,8 @@ mod tests {
         let settings = GameSettings::default();
         assert_eq!(find_galaxy("0", &settings, 5), Ok(0));
         assert_eq!(find_galaxy("maison", &settings, 5), Ok(0));
-        assert!(find_galaxy("9999", &settings, 0).is_err());
+        assert_eq!(find_galaxy("9999", &settings, 0), Ok(9999));
+        assert!(find_galaxy("10000", &settings, 0).is_err());
         assert!(find_galaxy("zzz", &settings, 0).is_err());
         let id = find_galaxy("spirale barree", &settings, 0).unwrap();
         assert_eq!(settings.galaxies[id].kind, GalaxyKind::Barred);

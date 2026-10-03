@@ -78,6 +78,34 @@ pub struct BodyParams {
     pub relief: Relief,
     /// Sols et biomes (phase 6).
     pub biomes: BiomeParams,
+    /// Astéroïde (C1) : sa forme remplace le relief (même fonction que son maillage lointain).
+    pub asteroid: Option<crate::asteroids::AsteroidShape>,
+    /// Marées (C4) : le niveau de la mer monte et descend (mis à jour pendant un séjour).
+    pub tide: Tide,
+}
+
+/// Marées (C4) : un renflement de la mer vers chaque astre qui la tire (et à l'opposé), en
+/// unités, dans le repère fixe de l'astre. Figées au moment de leur calcul : `surface.rs` les
+/// recalcule quand le niveau change d'un voxel sous le joueur.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Tide {
+    pub dirs: [Vec3; 4],
+    pub amps: [f32; 4],
+}
+
+impl Tide {
+    /// Hauteur de la mer (unités) dans la direction `dir` : haute vers l'astre et à l'opposé, basse
+    /// à 90° (marée d'équilibre, polynôme de Legendre P2).
+    pub fn at(&self, dir: Vec3) -> f32 {
+        self.dirs.iter().zip(self.amps).map(|(d, a)| {
+            let c = dir.dot(*d);
+            a * (1.5 * c * c - 0.5)
+        }).sum()
+    }
+
+    pub fn is_calm(&self) -> bool {
+        self.amps.iter().all(|a| *a == 0.0)
+    }
 }
 
 /// Ciel d'une planète faite à la main (sans atmosphère calculée) : celui de la Terre.
@@ -109,6 +137,8 @@ impl BodyParams {
             hydro: if p.gaseous() { Hydro::DRY } else { p.hydrology.hydro },
             relief: p.geology.relief,
             biomes: p.biomes,
+            asteroid: None,
+            tide: Default::default(),
         }
     }
 
@@ -137,6 +167,8 @@ impl BodyParams {
             hydro: Hydro::DRY,
             relief: m.relief.unwrap_or_else(|| moon_relief(m.seed)),
             biomes: BiomeParams::default(),
+            asteroid: None,
+            tide: Default::default(),
         }
     }
 
@@ -329,7 +361,7 @@ impl Terrain {
             biomes: BiomeField::new(params.biomes),
             overhang: None,
             voxels: None,
-            caves: CaveStyle::of(&params).map(|s| Arc::new(Caves::new(s, params.seed, params.layout().voxel))),
+            caves: CaveStyle::of(&params).filter(|_| params.asteroid.is_none()).map(|s| Arc::new(Caves::new(s, params.seed, params.layout().voxel))),
             // Seulement là où le vent et l'eau sculptent la roche
             min_crater: std::sync::atomic::AtomicU32::new((2.0 * params.layout().voxel / params.radius.max(1.0)).to_bits()),
             rocks: (params.atmosphere && !params.airless && !params.gaseous && params.pressure >= 0.05)
@@ -378,6 +410,9 @@ impl Terrain {
     }
 
     fn with_overhang(mut self) -> Self {
+        if self.params.asteroid.is_some() {
+            return self;
+        }
         self.overhang = Overhang::find(&self);
         self
     }
@@ -395,6 +430,11 @@ impl Terrain {
     /// Comme `raw_height`, avec la nature du relief (éboulis, coulées, falaises).
     fn raw_height_full(&self, dir: Vec3) -> (f32, f32, ReliefSample) {
         let p = &self.params;
+        // Astéroïde : sa forme (bosses et cratères compris)
+        if let Some(shape) = &p.asteroid {
+            let h = shape.radius_at(dir);
+            return (h, ((h / p.radius.max(1e-3) - 0.6) / 0.8).clamp(0.0, 1.0), ReliefSample::default());
+        }
         let s = dir * p.noise_scale;
         let continent = self.continent.get([s.x as f64, s.y as f64, s.z as f64]) as f32;
         let ds = p.detail_scale as f64;
@@ -459,10 +499,25 @@ impl Terrain {
         if p.gaseous {
             return Column { dir, top: p.radius * GAS_CORE, kind: VoxelType::Stone, color: [0.3, 0.25, 0.2, 1.0] };
         }
+        // Astéroïde : roche de son type, couleurs de son maillage
+        if let Some(shape) = &p.asteroid {
+            use crate::planetgen::belts::AsteroidClass;
+            let h = shape.radius_at(dir);
+            let top = p.radius + ((h - p.radius) / quantum).round() * quantum;
+            let kind = match shape.class {
+                AsteroidClass::C => VoxelType::Basalt,
+                AsteroidClass::S => VoxelType::Stone,
+                AsteroidClass::M => VoxelType::Ore,
+                AsteroidClass::Ice => VoxelType::Ice,
+            };
+            return Column { dir, top, kind, color: shape.color_at(dir) };
+        }
         let (h, hv, relief) = self.raw_height_full(dir);
         let rel = ((h - p.radius) / quantum).round();
+        // Marée (C4) : la mer monte ou descend de quelques voxels près du joueur
+        let tide_q = if p.tide.is_calm() { 0.0 } else { (p.tide.at(dir) / quantum).round() };
         // Sous le niveau de la mer : eau, banquise, ou bassin à sec (trop chaud, ou sans air)
-        let sea = if rel < 0.0 { sea_material(&p.climate, &p.hydro, p.airless, dir.y) } else { None };
+        let sea = if rel < tide_q { sea_material(&p.climate, &p.hydro, p.airless, dir.y) } else { None };
         let water = sea.is_some();
 
         let var = self.color.get([dir.x as f64 * 12.0, dir.y as f64 * 12.0, dir.z as f64 * 12.0]) as f32 * 0.10;
@@ -478,10 +533,14 @@ impl Terrain {
                 (base[2] * (1.0 - depth * 0.2) + var * 0.4 + jitter).clamp(0.03, 1.0),
                 1.0,
             ];
-            (p.radius, kind, color)
+            (p.radius + tide_q * quantum, kind, color)
         } else {
             // Hauteur réelle (collines comprises) : une colline au bord de l'eau n'est pas une plage
             let mut kind = self.surface_type((h - p.radius) / p.terrain_height.max(1.0), dir);
+            // Marée basse : le fond découvert est une grève de sable
+            if rel < 0.0 && sea_material(&p.climate, &p.hydro, p.airless, dir.y).is_some() {
+                kind = VoxelType::Sand;
+            }
             // Coulées de lave figées (basalte), éboulis au pied des pentes et des falaises (sauf
             // sous la neige éternelle des sommets)
             // Fond de cratère rempli : glace sur un monde froid et humide, lave figée ailleurs
@@ -1256,6 +1315,8 @@ mod tests {
             hydro: Hydro::default(),
             relief: Relief::default(),
             biomes: BiomeParams::default(),
+            asteroid: None,
+            tide: Default::default(),
         }
     }
 
@@ -1659,6 +1720,8 @@ mod sea_level_tests {
             hydro: Hydro::default(),
             relief: Relief::default(),
             biomes: BiomeParams::default(),
+            asteroid: None,
+            tide: Default::default(),
         }
     }
 }
@@ -1673,7 +1736,7 @@ mod bench {
     fn bench_tiles() {
         let settings = crate::settings::GameSettings::default();
         let mut bodies = Vec::new();
-        for sys in settings.systems.iter().take(40) {
+        for sys in settings.systems.dense().iter().take(40) {
             for p in sys.planets() {
                 if !p.gaseous() {
                     bodies.push(BodyParams::planet(p));
@@ -1701,7 +1764,7 @@ mod bench {
     #[ignore]
     fn bench_voxel_tiles() {
         let settings = crate::settings::GameSettings::default();
-        let bodies: Vec<BodyParams> = settings.systems.iter().take(40).flat_map(|s| s.planets().iter().filter(|p| !p.gaseous()).map(BodyParams::planet).collect::<Vec<_>>()).take(20).collect();
+        let bodies: Vec<BodyParams> = settings.systems.dense().iter().take(40).flat_map(|s| s.planets().iter().filter(|p| !p.gaseous()).map(BodyParams::planet).collect::<Vec<_>>()).take(20).collect();
         let mut keys = Vec::new();
         for p in &bodies {
             let t = Terrain::new(*p);
@@ -1734,7 +1797,7 @@ mod geology_tests {
     fn relief_keeps_the_ocean_fraction() {
         let settings = crate::settings::GameSettings::default();
         let mut checked = 0;
-        for sys in settings.systems.iter().take(3000) {
+        for sys in settings.systems.dense().iter().take(3000) {
             for p in sys.planets_uncached().iter().filter(|p| !p.gaseous() && p.hydrology.ocean_fraction > 0.05) {
                 if checked >= 40 {
                     return;

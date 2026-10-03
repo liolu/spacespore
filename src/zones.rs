@@ -50,12 +50,12 @@ pub fn display_for(sys: &StarSystemConfig, au: f64, hz: f64) -> f32 {
     let mut pts: Vec<(f64, f64)> = sys
         .planets()
         .iter()
-        .filter(|p| p.semi_major_au > 0.0)
+        .filter(|p| p.semi_major_au > 0.0 && !p.rogue)
         .map(|p| ((p.semi_major_au as f64).ln(), p.orbit_distance as f64))
         .collect();
     pts.sort_by(|a, b| a.0.total_cmp(&b.0));
     let x = au.max(1e-6).ln();
-    let fallback = |a: f64| display_distance(a, hz) * scale;
+    let fallback = |a: f64| display_distance(a, hz) * scale * crate::settings::SPACE_STRETCH as f64;
     let d = match (pts.first(), pts.last()) {
         (Some(&(x0, d0)), _) if x <= x0 => d0 * fallback(au) / fallback(x0.exp()),
         (_, Some(&(x1, d1))) if x >= x1 => d1 * fallback(au) / fallback(x1.exp()),
@@ -72,7 +72,8 @@ pub fn display_for(sys: &StarSystemConfig, au: f64, hz: f64) -> f32 {
 
 /// Zones d'un système généré (`None` : étoile faite à la main, sans physique).
 pub fn zones_of(sys: &StarSystemConfig) -> Option<Zones> {
-    let physics = sys.star_physics()?;
+    // Zone habitable recalculée avec les étoiles du centre (C3)
+    let physics = sys.lighting()?;
     let star = sys.stars.first()?;
     let hz = physics.luminosity_sun.max(1e-7).sqrt();
     let (inner, outer) = habitable_au(physics.luminosity_sun);
@@ -82,6 +83,7 @@ pub fn zones_of(sys: &StarSystemConfig) -> Option<Zones> {
     let last = sys
         .planets()
         .iter()
+        .filter(|p| !p.rogue)
         .map(|p| p.orbit_distance * (1.0 + p.eccentricity) + p.radius)
         .fold(0.0_f32, f32::max);
     Some(Zones { star: star_r, habitable_inner: hi, habitable_outer: ho, edge: (last * 1.15).max(ho * 1.6) })
@@ -175,7 +177,7 @@ fn draw_zone_edges(
     settings: Res<GameSettings>,
     state: Res<ZonesState>,
     stars: Query<(&GlobalTransform, &StarId), With<StarRoot>>,
-    mut gizmos: Gizmos,
+    mut gizmos: Gizmos<crate::surface::IndicatorGizmos>,
 ) {
     let (true, Some(si), Some(z)) = (settings.show_zones, state.system, state.zones) else { return };
     let Some(center) = stars.iter().find(|(_, id)| id.0 == si * 1000).map(|(gt, _)| gt.translation()) else { return };
@@ -202,10 +204,10 @@ mod tests {
     fn zones_are_ordered_and_planets_in_the_green_band_are_habitable_distance() {
         let settings = GameSettings::default();
         let mut checked = 0;
-        for sys in settings.systems.iter().take(400) {
+        for sys in settings.systems.dense().iter().take(400) {
             let Some(z) = zones_of(sys) else { continue };
             assert!(z.star < z.habitable_inner && z.habitable_inner < z.habitable_outer && z.habitable_outer < z.edge, "{z:?}");
-            let l = sys.star_physics().unwrap().luminosity_sun;
+            let l = sys.lighting().unwrap().luminosity_sun;
             let (inner, outer) = habitable_au(l);
             for p in sys.planets() {
                 let au = p.semi_major_au as f64;
@@ -218,7 +220,7 @@ mod tests {
                     panic!("planete chaude ({au} UA) dessinee dans la zone habitable");
                 }
             }
-            assert!(z.edge >= sys.planets().iter().map(|p| p.orbit_distance).fold(0.0, f32::max));
+            assert!(z.edge >= sys.planets().iter().filter(|p| !p.rogue).map(|p| p.orbit_distance).fold(0.0, f32::max));
         }
         assert!(checked > 10, "{checked}");
     }

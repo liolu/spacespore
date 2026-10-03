@@ -29,7 +29,7 @@ pub const MIN_SEASON_SECS: f64 = 600.0;
 pub const MAX_SEASON_SECS: f64 = 6.0 * 3600.0;
 /// Période orbitale (jours) dont la saison dure 1 h : réglée pour une moyenne de 1 h sur tout le
 /// monde généré (test `seasons_last_one_hour_on_average`).
-pub const SEASON_REF_DAYS: f64 = 115.0;
+pub const SEASON_REF_DAYS: f64 = 300.0;
 /// Accélération maximale du temps (`/temps`).
 pub const MAX_SPEED: f64 = 10_000.0;
 /// Écart toléré avec l'horloge de l'hôte avant de s'y recaler (secondes de jeu).
@@ -504,9 +504,9 @@ mod tests {
         assert_eq!(day_secs(24.0), 24.0 * 60.0);
         assert_eq!(day_secs(10.0), 600.0);
         assert_eq!(day_secs(5000.0), MAX_DAY_SECS);
-        // Terre : saisons de ~3 h (les periodes du monde sont surtout courtes, moyenne 1 h)
-        assert!((season_secs(115.0) - 3600.0).abs() < 1.0);
-        assert!((season_secs(365.25) / 3600.0 - 3.18).abs() < 0.01);
+        // Terre : saisons de ~1 h 13 (moyenne du monde : 1 h)
+        assert!((season_secs(SEASON_REF_DAYS as f32) - 3600.0).abs() < 1.0);
+        assert!((season_secs(365.25) / 3600.0 - 1.2175).abs() < 0.01);
         assert_eq!(season_secs(1.0), MIN_SEASON_SECS);
         assert_eq!(season_secs(1e6), MAX_SEASON_SECS);
     }
@@ -594,8 +594,11 @@ mod tests {
         use crate::settings::{default_galaxies, default_systems, DEFAULT_WORLD_SEED};
         let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
         let systems = default_systems(&galaxies, DEFAULT_WORLD_SEED);
-        let v: Vec<f64> = systems.iter().take(3000).flat_map(|s| s.planets_uncached().iter().map(|p| season_secs(p.period_days)).collect::<Vec<_>>()).collect();
+        // (sans les planètes errantes : pas d'étoile, pas de saisons)
+        let v: Vec<f64> = systems.dense().iter().take(3000).flat_map(|s| s.planets_uncached().iter().filter(|p| !p.rogue).map(|p| season_secs(p.period_days)).collect::<Vec<_>>()).collect();
         let mean = v.iter().sum::<f64>() / v.len() as f64;
+        println!("saison moyenne : {mean:.0} s");
+        // (recalée en C3 : les planètes des étoiles doubles serrées ont des années plus longues)
         assert!((3000.0..4200.0).contains(&mean), "{mean}");
         assert!(v.iter().all(|s| (MIN_SEASON_SECS..=MAX_SEASON_SECS).contains(s)));
     }

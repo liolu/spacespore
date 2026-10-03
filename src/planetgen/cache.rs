@@ -120,7 +120,7 @@ pub(super) fn forget_far_planets(
     // Pas de « changement » des réglages : rien d'autre ne doit réagir à ce ménage
     let settings = settings.bypass_change_detection();
     let mut freed = 0;
-    for (si, sys) in settings.systems.iter_mut().enumerate() {
+    for (si, sys) in settings.systems.iter_mut() {
         if sys.planets_cached() && !near.contains(&si) {
             sys.forget_planets();
             freed += 1;
@@ -133,5 +133,5 @@ pub(super) fn forget_far_planets(
 
 /// Nombre de systèmes dont les planètes sont en mémoire.
 pub fn cached_systems(settings: &GameSettings) -> usize {
-    settings.systems.iter().filter(|s| s.planets_cached()).count()
+    settings.systems.iter().filter(|(_, s)| s.planets_cached()).count()
 }

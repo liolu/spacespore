@@ -324,6 +324,8 @@ pub enum TargetKind {
     DistantGalaxyCore(u32),
     /// Ouverture d'un trou de ver : index du système qu'elle dessert.
     WormholeMouth(usize),
+    /// Astéroïde d'une ceinture (C1) : sa cellule et sa place.
+    Asteroid(crate::asteroids::AsteroidKey),
 }
 
 #[derive(Resource)]

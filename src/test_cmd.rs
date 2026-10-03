@@ -61,10 +61,10 @@ struct GoState {
     pending: Option<(usize, BodyId, f64)>,
 }
 
-pub const STAR_TYPES: &str = "o, b, a, f, g, k, m, blanche, brune, sous-geante, geante";
+pub const STAR_TYPES: &str = "o, b, a, f, g, k, m, blanche, brune, sous-geante, geante, double, triple";
 pub const PLANET_TYPES: &str = "rocheuse, mini-neptune, neptune, gazeuse, jupiter-chaud, minuscule, petite, terrestre, \
 super-terre, ocean, glace, lave, methane, ammoniac, venus, titan, mars, oxygene, sans-air, vie, plantes, complexe, \
-anneaux, aurores, plaques, volcans, crateres, habitable, rare, legendaire";
+anneaux, aurores, errante, plaques, volcans, crateres, habitable, rare, legendaire";
 pub const MOON_TYPES: &str = "volcanique, ocean-cache, air, glacee, lave, vie, rare";
 
 pub fn help() -> String {
@@ -141,6 +141,7 @@ pub fn planet_matches(p: &PlanetConfig, kind: &str) -> Option<bool> {
         "plantes" => p.life.flora,
         "complexe" => p.life.level == LifeLevel::Complex,
         "anneaux" => p.ring.is_some(),
+        "errante" => p.rogue,
         "aurores" => p.aurora.is_some(),
         "plaques" => p.geology.tectonics == crate::planetgen::geology::Tectonics::Plates,
         "volcans" => p.geology.relief.volcanoes >= 10,
@@ -170,6 +171,11 @@ pub fn moon_matches(m: &MoonConfig, kind: &str) -> Option<bool> {
 fn match_in(sys: &StarSystemConfig, si: usize, family: Family, kind: &str) -> Result<Option<BodyId>, ()> {
     let system = si as u32;
     match family {
+        // Étoiles doubles et triples (C3)
+        Family::Star if matches!(kind, "double" | "triple") => {
+            let n = if kind == "double" { 2 } else { 3 };
+            Ok((sys.stars.len() == n).then_some(BodyId::Star { system, index: 0 }))
+        }
         Family::Star => match sys.stars.first().map(|s| star_matches(s, kind)) {
             Some(None) => Err(()),
             Some(Some(true)) => Ok(Some(BodyId::Star { system, index: 0 })),
@@ -206,7 +212,8 @@ fn match_in(sys: &StarSystemConfig, si: usize, family: Family, kind: &str) -> Re
 /// Cherche le premier astre du type après le système `after` (en faisant le tour).
 /// `Err` : type inconnu ; `Ok(None)` : rien dans les `limit` systèmes examinés.
 pub fn find(settings: &GameSettings, family: Family, kind: &str, after: usize, limit: usize) -> Result<Option<BodyId>, ()> {
-    let n = settings.systems.len();
+    // Dans notre galaxie et les extérieures (les lointaines ne sont générées qu'à l'approche)
+    let n = settings.systems.dense().len();
     if n == 0 {
         return Ok(None);
     }
@@ -242,7 +249,7 @@ fn find_in(candidates: &[(usize, StarSystemConfig)], family: Family, kind: &str)
 /// Type compris pour cette famille ?
 fn known_type(family: Family, kind: &str) -> bool {
     match family {
-        Family::Star => star_matches(&StarConfig::default(), kind).is_some(),
+        Family::Star => matches!(kind, "double" | "triple") || star_matches(&StarConfig::default(), kind).is_some(),
         Family::Planet => planet_matches(&PlanetConfig::default(), kind).is_some(),
         Family::Moon => moon_matches(&MoonConfig::default(), kind).is_some(),
     }
@@ -268,7 +275,7 @@ fn start_travel(
     target.0 = TargetKind::Star(si);
     if let Ok(mut ship) = ship_q.get_single_mut() {
         let scale = sys.stars.first().map_or(1_000_000.0, |s| s.scale());
-        ship.translation = sys.center() + Vec3::new(scale * 2.0, scale * 0.3, 0.0);
+        ship.translation = sys.center() + Vec3::new(scale * 2.0, scale * 0.3, 0.0) * crate::settings::SPACE_STRETCH;
     }
     net.local.siege = None;
     net.notify(&format!("Test : {} \"{kind}\" trouvee dans {} ({}). Arrivee...", describe(family), sys.name, id.key()), now);
@@ -340,7 +347,7 @@ fn run_go_commands(
             net.notify(&format!("Type inconnu \"{kind}\". Types de {} : {types}.", describe(family)), now);
             continue;
         }
-        let n = settings.systems.len();
+        let n = settings.systems.dense().len();
         if n == 0 {
             continue;
         }
@@ -382,7 +389,7 @@ fn finish_search(
     match result {
         Ok(Some(id)) => start_travel(id, family, &kind, &settings, &mut state, &mut target, &mut net, &mut ship_q, now),
         Ok(None) => {
-            state.last = Some((family, kind.clone(), (after + SEARCH_LIMIT) % settings.systems.len().max(1)));
+            state.last = Some((family, kind.clone(), (after + SEARCH_LIMIT) % settings.systems.dense().len().max(1)));
             net.notify(&format!("Aucune {} \"{kind}\" dans les {SEARCH_LIMIT} systemes suivants. /aller suivant pour continuer.", describe(family)), now);
         }
         Err(()) => net.notify(&format!("Type inconnu \"{kind}\"."), now),
@@ -453,7 +460,7 @@ mod tests {
     #[test]
     fn every_listed_type_is_understood() {
         for t in STAR_TYPES.split(", ") {
-            assert!(star_matches(&StarConfig::default(), t).is_some(), "etoile {t}");
+            assert!(known_type(Family::Star, t), "etoile {t}");
         }
         for t in PLANET_TYPES.split(", ") {
             assert!(planet_matches(&PlanetConfig::default(), t).is_some(), "planete {t}");

@@ -25,8 +25,14 @@ mod planetgen;
 mod rocks;
 mod scanner;
 mod settings;
+mod systems;
+mod asteroids;
+mod rings;
+mod sky;
+mod weather;
 mod ship;
 mod stats;
+mod suit;
 mod surface;
 mod test_cmd;
 mod system_gen;
@@ -97,6 +103,7 @@ use astre::Remnant_stellaire::supernova::SupernovaRoot;
 pub struct TargetQueries<'w, 's> {
     pub wormholes: Res<'w, wormhole::Wormholes>,
     pub surface: Res<'w, surface::Surface>,
+    pub asteroids: Res<'w, asteroids::AsteroidField>,
 
     pub planet_q:
         Query<'w, 's, (&'static GlobalTransform, &'static PlanetId), With<PlanetRoot>>,
@@ -263,6 +270,11 @@ fn main() {
         .add_plugins(origin::OriginPlugin)
         .add_plugins(world_clock::WorldClockPlugin)
         .add_plugins(meteors::MeteorsPlugin)
+        .add_plugins(suit::SuitPlugin)
+        .add_plugins(asteroids::AsteroidsPlugin)
+        .add_plugins(rings::RingsPlugin)
+        .add_plugins(sky::SkyPlugin)
+        .add_plugins(weather::WeatherPlugin)
 
         // ── UI ──────────────────────────────────────────────────────────
         .add_plugins(UiPlugin)
@@ -387,7 +399,9 @@ fn setup_scene(
     commands.spawn((
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
-            far: 4_000_000_000.0 * settings::GALAXY_SCALE,
+            // Les galaxies lointaines vont jusqu'à ~2 G x GALAXY_SCALE du centre : de quoi les voir
+            // de l'autre bout de l'univers
+            far: 12_000_000_000.0 * settings::GALAXY_SCALE,
             ..default()
         }),
 
@@ -568,6 +582,11 @@ fn select_world_target(
         let tolerance = body_click_tolerance(camera, camera_transform, &viewport, transform.translation(), radius);
         consider(transform.translation(), tolerance, TargetKind::Planet(id.0));
     }
+    for live in queries.asteroids.iter().filter(|l| l.ast.landable()) {
+        let center = live.pose.translation;
+        let tolerance = body_click_tolerance(camera, camera_transform, &viewport, center, live.ast.shape.radius).min(200.0);
+        consider(center, tolerance, TargetKind::Asteroid(live.ast.key));
+    }
     for (transform, id) in &queries.star_q {
         // Les étoiles sont immenses : on les sélectionne en cliquant n'importe où sur leur disque
         let radius = settings.systems.get(id.0 / 1000).and_then(|s| s.stars.get(id.0 % 1000)).map_or(0.0, |s| s.radius);
@@ -639,10 +658,13 @@ fn select_world_target(
     // ── DistantGalaxyCore : depuis la vue d'ensemble (saut entre galaxies),
     //    ou le trou noir de la galaxie où l'on se trouve ────
     let current_gal = current_galaxy(&target.0, &queries, &settings);
-    for (gt, dc) in &queries.dist_core_q {
-        if overview || dc.galaxy_id == current_gal {
-            let center = gt.translation();
-            consider(center, galaxy_tolerance(center, dc.galaxy_id as usize), TargetKind::DistantGalaxyCore(dc.galaxy_id));
+    // (toutes les galaxies, même celles qui ne sont qu'un point : leur trou noir n'existe qu'à
+    // l'approche)
+    for (gid, g) in settings.galaxies.iter().enumerate().skip(1) {
+        let gid = gid as u32;
+        if overview || gid == current_gal {
+            let center = g.center();
+            consider(center, galaxy_tolerance(center, gid as usize), TargetKind::DistantGalaxyCore(gid));
         }
     }
 
@@ -717,6 +739,7 @@ fn current_galaxy(kind: &TargetKind, queries: &TargetQueries, settings: &GameSet
         TargetKind::DistantGalaxyCore(id) => return id,
         TargetKind::Planet(id) => id / 1000,
         TargetKind::Moon(planet_idx, _) => planet_idx / 1000,
+        TargetKind::Asteroid(key) => key.sys as usize,
         // Étoile chargée : id = sys * 1000 + i ; étoile lointaine : id = index du système
         TargetKind::Star(id) => {
             if queries.star_q.iter().any(|(_, sid)| sid.0 == id) { id / 1000 } else { id }
@@ -735,6 +758,7 @@ pub(crate) fn target_system(
     match *kind {
         TargetKind::Planet(id) => Some(Some(id / 1000)),
         TargetKind::Moon(planet_idx, _) => Some(Some(planet_idx / 1000)),
+        TargetKind::Asteroid(key) => Some(Some(key.sys as usize)),
         // Étoile chargée : id = sys * 1000 + i ; étoile lointaine : id = index du système
         TargetKind::Star(id) => {
             if star_q.iter().any(|sid| sid.0 == id) {
@@ -809,7 +833,7 @@ fn draw_body_markers(
     cam_q: Query<&GlobalTransform, With<Camera3d>>,
     planets: Query<(&GlobalTransform, &PlanetId), With<PlanetRoot>>,
     moons: Query<(&GlobalTransform, &MoonId), With<MoonRoot>>,
-    mut gizmos: Gizmos,
+    mut gizmos: Gizmos<surface::IndicatorGizmos>,
 ) {
     if !matches!(*zoom, ZoomLevel::Planet | ZoomLevel::System) {
         return;
@@ -884,7 +908,7 @@ pub struct CameraController {
 /// Limite du zoom 1 : en dessous, on reste verrouillé dans le système courant.
 /// Un système s'étend sur ~4 millions d'unités en médiane, 11 millions pour 99 % d'entre eux (1 à 8
 /// planètes, voir `planetgen::system`) : le niveau « Planète » les contient en entier.
-pub const ZOOM_PLANET_MAX: f32 = 18_000_000.0;
+pub const ZOOM_PLANET_MAX: f32 = 18_000_000.0 * settings::SPACE_STRETCH;
 
 /// Distance de caméra pour voir une galaxie entière (reste au zoom 4 pour
 /// pouvoir cliquer ses étoiles).
@@ -925,7 +949,7 @@ impl ZoomLevel {
     fn from_distance(d: f32) -> Self {
         if d < ZOOM_PLANET_MAX {
             ZoomLevel::Planet
-        } else if d < 30_000_000.0 {
+        } else if d < 30_000_000.0 * settings::SPACE_STRETCH {
             ZoomLevel::System
         } else if d < 2_000_000.0 * settings::GALAXY_SCALE {
             ZoomLevel::Sector
@@ -1025,6 +1049,7 @@ fn body_spin(q: &TargetQueries, kind: &TargetKind) -> Quat {
     let gt = match *kind {
         TargetKind::Planet(id) => q.planet_q.iter().find(|(_, p)| p.0 == id).map(|(gt, _)| gt),
         TargetKind::Moon(planet_idx, moon_idx) => q.moon_q.iter().find(|(_, m)| m.planet_idx == planet_idx && m.moon_idx == moon_idx).map(|(gt, _)| gt),
+        TargetKind::Asteroid(key) => return q.asteroids.pose(&key).map_or(Quat::IDENTITY, |t| t.rotation),
         _ => None,
     };
     gt.map_or(Quat::IDENTITY, |gt| gt.to_scale_rotation_translation().1)
@@ -1066,7 +1091,7 @@ fn steer_ship(ship_tf: &mut Transform, hover_pos: Vec3, snap: bool, dt: f32) {
     if snap || dist > HYPERJUMP_DIST || dist <= (1500.0 * dt).max(30.0) {
         ship_tf.translation = hover_pos;
     } else {
-        let cruise = (dist * 0.8).max(3000.0).min(50_000_000.0);
+        let cruise = (dist * 0.8).max(3000.0).min(50_000_000.0 * settings::SPACE_STRETCH);
         let step = (cruise * dt).min(dist);
         ship_tf.translation += to_hover.normalize() * step;
         ship_tf.look_to(to_hover.normalize(), Vec3::Y);
@@ -1323,6 +1348,8 @@ fn resolve_target(
     settings: &GameSettings,
 ) -> Vec3 {
     match target.0 {
+        TargetKind::Asteroid(key) => q.asteroids.pose(&key).map(|t| t.translation).unwrap_or_default(),
+
         TargetKind::Planet(i) =>
             q.planet_q
                 .iter()
@@ -1469,11 +1496,13 @@ fn resolve_target(
                 .map(|gt| gt.translation())
                 .unwrap_or(Vec3::ZERO),
 
+        // (le trou noir d'une galaxie lointaine n'existe qu'à l'approche : sinon, son centre)
         TargetKind::DistantGalaxyCore(id) =>
             q.dist_core_q
                 .iter()
                 .find(|(_, dc)| dc.galaxy_id == id)
                 .map(|(gt, _)| gt.translation())
+                .or_else(|| settings.galaxies.get(id as usize).map(|g| g.center()))
                 .unwrap_or_default(),
     }
 }
@@ -1489,7 +1518,7 @@ fn camera_distance_range(
     star_r: Option<f32>,
 ) -> (f32, f32) {
     match target.0 {
-        TargetKind::Planet(_) | TargetKind::Moon(_, _) => {
+        TargetKind::Planet(_) | TargetKind::Moon(_, _) | TargetKind::Asteroid(_) => {
             // On peut s'approcher jusqu'à 40 du vaisseau : sous 1000, navigation autour de l'astre
             (40.0, MAX_ZOOM)
         }
@@ -1527,9 +1556,9 @@ fn camera_distance_range(
 
         // Ouverture de trou de ver : le vaisseau se pose juste au-dessus (hover = moitié du minimum)
         TargetKind::WormholeMouth(_) => (5_000.0, MAX_ZOOM),
-        TargetKind::GalacticCore => (50_000.0 * settings::GALAXY_SCALE, MAX_ZOOM * 10.0),
+        TargetKind::GalacticCore => (50_000.0 * settings::GALAXY_SIZE_SCALE, MAX_ZOOM * 10.0),
         // Comme le trou noir principal : on peut zoomer dans la galaxie extérieure
-        TargetKind::DistantGalaxyCore(_) => (50_000.0 * settings::GALAXY_SCALE, MAX_ZOOM * 10.0),
+        TargetKind::DistantGalaxyCore(_) => (50_000.0 * settings::GALAXY_SIZE_SCALE, MAX_ZOOM * 10.0),
     }
 }
 
@@ -1963,6 +1992,7 @@ fn update_system_hud(
     wormholes: Res<wormhole::Wormholes>,
     npcs: Res<galaxy_fx::NpcTerritories>,
     sectors: Res<planet::StarSectors>,
+    asteroids: Res<asteroids::AsteroidField>,
 ) {
     // Étoile revendiquée : on affiche son propriétaire
     let target_sys = match target_system(&camera_target.0, &star_q) {
@@ -2022,6 +2052,7 @@ fn update_system_hud(
             (Some(si), label)
         }
         TargetKind::WormholeMouth(si) => (None, settings.systems.get(si).map(|s| format!("Trou de ver de {}", s.name))),
+        TargetKind::Asteroid(key) => (Some(key.sys as usize), asteroids.get(&key).map(|a| a.title())),
         TargetKind::GalacticCore => (None, Some("Trou Noir Galactique".to_string())),
         TargetKind::DistantGalaxyCore(id) => (None, Some(match settings.galaxies.get(id as usize) {
             Some(g) => format!("Galaxie {} - {}", id, ascii(g.kind.name())),
@@ -2069,7 +2100,7 @@ fn update_system_hud(
 fn draw_travel_range(
     zoom: Res<ZoomLevel>,
     ship_q: Query<&GlobalTransform, With<Ship>>,
-    mut gizmos: Gizmos,
+    mut gizmos: Gizmos<surface::IndicatorGizmos>,
 ) {
     if !matches!(*zoom, ZoomLevel::System | ZoomLevel::Sector | ZoomLevel::Galaxy | ZoomLevel::Cosmos) {
         return;
@@ -2094,7 +2125,7 @@ fn draw_planet_trails(
     mut trails: Local<std::collections::HashMap<usize, std::collections::VecDeque<Vec3>>>,
     epoch: Res<origin::OriginEpoch>,
     mut seen_epoch: Local<u32>,
-    mut gizmos: Gizmos,
+    mut gizmos: Gizmos<surface::IndicatorGizmos>,
 ) {
     // L'origine flottante a bougé : les anciennes positions ne sont plus dans le même repère
     if *seen_epoch != epoch.0 {
@@ -2170,7 +2201,7 @@ fn update_zoom_hud(
 // ─────────────────────────────────────────────────────────────────────────
 
 fn draw_light_indicator(
-    mut gizmos: Gizmos,
+    mut gizmos: Gizmos<surface::IndicatorGizmos>,
     settings: Res<GameSettings>,
 
     planet_q:
@@ -2322,11 +2353,12 @@ fn draw_light_indicator(
 // ─────────────────────────────────────────────────────────────────────────
 
 fn draw_orbits(
-    mut gizmos: Gizmos,
+    mut gizmos: Gizmos<surface::IndicatorGizmos>,
     settings: Res<GameSettings>,
     cam_q: Query<&GlobalTransform, With<Camera3d>>,
     spatial: Res<settings::SystemSpatialIndex>,
     spawned: Res<planet::SpawnedSystems>,
+    asteroids: Res<asteroids::AsteroidField>,
 
     planet_q:
         Query<
@@ -2382,7 +2414,7 @@ fn draw_orbits(
     let seg = 128;
 
     let draw_ring =
-        |gizmos: &mut Gizmos,
+        |gizmos: &mut Gizmos<surface::IndicatorGizmos>,
          r: f32,
          color: Color,
          center: Vec3| {
@@ -2480,7 +2512,7 @@ fn draw_orbits(
     // Les autres systèmes ne sont pas chargés : tracer leurs ~12 500 orbites
     // coûtait des millions de segments par image pour rien.
 
-    let draw_ellipse = |gizmos: &mut Gizmos, elems: &OrbitalElements, color: Color, center: Vec3| {
+    let draw_ellipse = |gizmos: &mut Gizmos<surface::IndicatorGizmos>, elems: &OrbitalElements, color: Color, center: Vec3| {
         let mut prev = center + elems.point_at(0.0);
         for i in 1..=seg {
             let e_anom = i as f32 / seg as f32 * std::f32::consts::TAU;
@@ -2495,7 +2527,8 @@ fn draw_orbits(
         let sc = sys.center();
 
         for (pi, pcfg) in sys.planets().iter().enumerate() {
-            if pcfg.orbit_distance >= 1.0 {
+            // Une planète errante n'a pas d'orbite
+            if pcfg.orbit_distance >= 1.0 && !pcfg.rogue {
                 let elems = OrbitalElements {
                     a: pcfg.orbit_distance,
                     e: pcfg.eccentricity,
@@ -2535,11 +2568,16 @@ fn draw_orbits(
             }
         }
 
-        for belt in &sys.asteroid_belts {
-            let r_inner = belt.distance - belt.width * 1.5;
-            let r_outer = belt.distance + belt.width * 1.5;
-            draw_ring(&mut gizmos, r_inner, belt_color, sc);
-            draw_ring(&mut gizmos, r_outer, belt_color, sc);
+        // Ceintures (C1) et orbites des comètes (C2)
+        if let Some(src) = asteroids.sources(si) {
+            for belt in &src.belts {
+                draw_ring(&mut gizmos, belt.inner, belt_color, sc);
+                draw_ring(&mut gizmos, belt.outer, belt_color, sc);
+            }
+            for c in &src.comets {
+                let elems = OrbitalElements { a: c.a as f32, e: c.e as f32, i: c.inc as f32, omega_big: c.node as f32, omega: c.peri as f32, m0: 0.0 };
+                draw_ellipse(&mut gizmos, &elems, comet_color, sc);
+            }
         }
     }
 

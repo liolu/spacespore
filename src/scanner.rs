@@ -108,6 +108,9 @@ fn secondary(p: &PlanetProfile) -> String {
     let liquid = h.ocean_liquid.as_deref().unwrap_or("aucun");
     let pressure = p.atmosphere.surface_pressure_bar.unwrap_or(0.0);
     let t = p.climate.mean_temperature_c;
+    if p.gameplay.rogue {
+        return "planete errante : aucune etoile, nuit eternelle".into();
+    }
     if !p.gameplay.walkable {
         return "pas de sol, nuages a perte de vue".into();
     }
@@ -244,6 +247,9 @@ fn update_scanner(
     target: Res<CameraTarget>,
     weather: Res<crate::world_clock::LocalWeather>,
     cave: Res<crate::surface::NearestCave>,
+    phases: Res<crate::sky::MoonPhases>,
+    weather_now: Res<crate::weather::WeatherNow>,
+    field: Res<crate::asteroids::AsteroidField>,
     star_q: Query<&StarId, With<StarRoot>>,
     mut scanner: ResMut<Scanner>,
     mut panel: Query<&mut Visibility, With<ScannerPanel>>,
@@ -253,21 +259,52 @@ fn update_scanner(
         scanner.visible = !scanner.visible;
     }
     let loaded = matches!(target.0, crate::ui::TargetKind::Star(id) if star_q.iter().any(|s| s.0 == id));
-    let id = target_body(&target.0, loaded);
-    let key = id.map(|i| i.key());
-    // Recalcul seulement quand la cible change, ou quand le système chargé change (profils en cache)
-    if key != scanner.shown || cache.is_changed() {
-        scanner.shown = key.clone();
-        (scanner.text, scanner.danger) = match id.and_then(|i| profile_of(&settings, &cache, i)) {
-            Some(Profile::Star(s)) => star_text(&s),
-            Some(Profile::Body(b)) => body_text(&b),
-            None => (String::new(), 0),
-        };
+    if let crate::ui::TargetKind::Asteroid(k) = target.0 {
+        // Astéroïde (C1) : calculé une fois affiché
+        let key = Some(format!("{k:?}"));
+        if key != scanner.shown {
+            if let Some(a) = field.get(&k) {
+                let lum = settings.systems.get(k.sys as usize).and_then(|s| s.lighting()).map_or(1.0, |p| p.luminosity_sun);
+                scanner.text = crate::asteroids::scanner_text(a, field.sources(k.sys as usize), lum);
+                scanner.danger = 0;
+                scanner.shown = key;
+            }
+        }
+    } else {
+        let id = target_body(&target.0, loaded);
+        let key = id.map(|i| i.key());
+        // Recalcul seulement quand la cible change, ou quand le système chargé change (profils en cache)
+        if key != scanner.shown || cache.is_changed() {
+            scanner.shown = key.clone();
+            (scanner.text, scanner.danger) = match id.and_then(|i| profile_of(&settings, &cache, i)) {
+                Some(Profile::Star(s)) => star_text(&s),
+                Some(Profile::Body(b)) => body_text(&b),
+                None => (String::new(), 0),
+            };
+            // Ceintures d'astéroïdes du système de l'étoile
+            if let (Some(crate::planetgen::live::BodyId::Star { system, .. }), false) = (id, scanner.text.is_empty()) {
+                if let Some(line) = settings.systems.get(system as usize).and_then(|s| crate::asteroids::belts_line(&crate::asteroids::Sources::of(s))) {
+                    scanner.text = format!("{}\n{line}", scanner.text);
+                }
+                // Étoile double ou triple (C3)
+                if let Some(st) = settings.systems.get(system as usize).and_then(|s| s.stellar()).filter(|st| !st.companions.is_empty()) {
+                    scanner.text = format!("{}\nSysteme : {}, zone habitable pour {:.2} L sol", scanner.text, st.kind.name(), st.luminosity);
+                }
+            }
+        }
     }
     // Heure, saison et températures du jour et de l'année, en direct (0.11)
     let mut live = if weather.body.is_some() && weather.body == Some(target.0) { weather.scanner_line() } else { String::new() };
     if !live.is_empty() && !cave.text.is_empty() {
         live = format!("{live}\n{}", cave.text);
+    }
+    // Météo là où l'on est (C5)
+    if weather_now.body == Some(target.0) && !weather_now.text.is_empty() {
+        live = if live.is_empty() { weather_now.text.clone() } else { format!("{live}\n{}", weather_now.text) };
+    }
+    // Phases des lunes (C4)
+    if phases.target == Some(target.0) && !phases.text.is_empty() {
+        live = if live.is_empty() { phases.text.clone() } else { format!("{live}\n{}", phases.text) };
     }
     let full = match scanner.text.rsplit_once('\n') {
         Some((head, tail)) if !live.is_empty() => format!("{head}\n{live}\n{tail}"),

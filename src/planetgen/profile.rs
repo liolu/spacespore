@@ -89,7 +89,7 @@ impl StarProfile {
         let seed = sys.body_seed();
         let id = BodyId::Star { system: sys_idx as u32, index: star_idx as u16 };
         // Seule l'étoile principale d'un système généré a une physique complète
-        let physics = if star_idx == 0 { sys.star_physics() } else { None };
+        let physics = sys.star_physics_of(star_idx);
         let p = physics.as_ref();
         Self {
             id: id.key(),
@@ -361,6 +361,8 @@ pub struct GameplaySection {
     pub aurora: Option<String>,
     pub tidal_heating: Option<f64>,
     pub subsurface_ocean: bool,
+    /// Planète errante (C2) : sans étoile.
+    pub rogue: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -496,7 +498,8 @@ fn gameplay_section(p: &PlanetConfig) -> GameplaySection {
         },
         hazards,
         danger_level: h.danger_level,
-        ring: p.ring.map(|r| format!("de {:.0} a {:.0} (rayon {:.0})", r.inner, r.outer, p.radius)),
+        ring: p.ring.map(|r| format!("de {:.0} a {:.0} (rayon {:.0}), {:.0} % de glace", r.inner, r.outer, p.radius, r.ice * 100.0)),
+        rogue: p.rogue,
         aurora: p.aurora.map(|a| format!("force {:.2} vers {:.0} degres de latitude", a.strength, a.latitude)),
         tidal_heating: None,
         subsurface_ocean: p.hydrology.subsurface_ocean,
@@ -745,7 +748,7 @@ mod tests {
     fn profiles_reflect_the_generated_bodies() {
         let settings = GameSettings::default();
         let deltas = WorldDeltas::new();
-        for (si, sys) in settings.systems.iter().enumerate().take(200) {
+        for (si, sys) in settings.systems.dense().iter().enumerate().take(200) {
             let star = StarProfile::build(si, 0, sys, &sys.stars[0]);
             // Physique réelle : de la naine blanche (0,01 R☉) à la géante (100 R☉)
             assert!((0.005..=101.0).contains(&star.radius_sun), "{}", star.radius_sun);

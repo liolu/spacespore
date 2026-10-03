@@ -28,9 +28,21 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   relatives a une origine absolue en f64 qui suit le vaisseau (recentrage au-dela de 100 000). Ne jamais garder une
   position « monde » en memoire : stocker l'absolu (`abs_center()`, `Wormhole.abs_a`, `Peer.abs`) et convertir.
   `StarSystemConfig::center()` / `GalaxyConfig::center()` = monde ; `abs_center` = absolu (generation, caches).
-- Echelle : `GALAXY_SCALE` (settings.rs, les distances entre etoiles/galaxies x300 depuis la phase 2) multiplie les distances entre etoiles/galaxies
-  (rayon 2,7 G ; voisine la plus proche a ~15 M en mediane dans la galaxie principale, ~4,5 M ailleurs) ; les
-  systemes gardent leur taille (~4 M en mediane, 11 M pour 99 %). Les etoiles lointaines sont groupees en
+- Echelle : `GALAXY_SCALE` (settings.rs, 300 x `SPACE_STRETCH`) multiplie les distances entre etoiles/galaxies
+  (rayon 13,5 G ; voisine la plus proche ~100 M en mediane). `SPACE_STRETCH` = 5 (0.11) : etirement visuel de
+  toutes les distances (etoiles, galaxies, orbites des planetes et lunes, applique a la fin de `system.rs`) ; tailles
+  des astres (`GALAXY_SIZE_SCALE` pour les trous noirs) et physique (UA, temperatures, marees) inchangees, orbites
+  plus lentes (Kepler), lumiere des etoiles compensee (`lumens`, `light_range_for`), vaisseau x5. Systemes ~19 M
+  en mediane, 52 M pour 99 %. Galaxies : 10 000 = la principale, 20 exterieures (`NUM_DISTANT_GALAXIES`) et 9 979 lointaines
+  (`NUM_OUTER_GALAXIES`, grille de cellules de 1,3 a 10 fois la plus lointaine, ajoutees apres : rien de connu ne
+  change), toutes de vraies galaxies. `settings.systems` = `systems::Systems` : les 21 premieres galaxies generees
+  au depart (`dense()`, numeros d'avant), chaque lointaine a une plage de numeros fixe (`galaxy_range`) et n'est
+  generee qu'au premier acces (`get`, `in_galaxy`, `load`) ; `iter()` = systemes deja generes AVEC leur numero.
+  Galaxie generee -> `planet::FarGalaxyLoaded` (index spatial, factions `FAR_FACTION_BASE + g x 64 + k`, trous de
+  ver `generate_galaxy`). Bras / trou noir / disque (`stream_galaxy_visuals`) et nuages (`stream_clouds`) crees a
+  l'approche seulement. `/aller` cherche dans les 21 premieres galaxies. LOD (`planet.rs`) : etoiles chargees par galaxie a l'approche (`stream_galaxy_stars`, entites
+  `FarStar` creees / retirees), eclaircies avec la distance (`star_keep`, toujours les memes : elles reviennent en
+  s'approchant), galaxie en point au-dela de `POINT_START` (`GalaxyPoint`, bras / trou noir / disque effaces). Les etoiles lointaines sont groupees en
   secteurs de ~100 etoiles (`StarSectors`) affiches/mis a jour ensemble.
 - Proportions d'un systeme (generees depuis la graine du monde, `settings.rs`) : echelle G du systeme
   600 000 a 1 500 000 (`StarConfig::scale()`) ; 1 R_terre = echelle/109. 1 a 8 planetes (`planetgen/system.rs`) :
@@ -130,6 +142,62 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   du joueur ou `/impact` : cratere en deltas voxel (`impact_crater`), sauve (`world.json`) et envoye
   (`net::Msg::Voxels`, l'hote relaie a tous ; `voxel_outbox`/`voxel_inbox`) ; `surface::VoxelsChanged` fait
   reconstruire tuiles et sol. Sans air : pas de trainee. PROTOCOL 22.
+  A4 = survie a pied (`suit.rs`) : `Environment` (pression, O2, CO2, temperature locale de `LocalWeather` ou de
+  la roche sous terre, radiation du sol, lave) -> `rates` (reserve d'O2 ~8 min, degats lents, alertes), `Suit`
+  (O2, vie) : a 0, `Surface::request_rescue` ramene au vaisseau (abri : recharge et soins). HUD a pied.
+  C1 = ceintures d'asteroides : `planetgen/belts.rs` (`sys.belts()`, couche `Layer::Belts`) : rocheuse avant la
+  premiere geante froide (sans toucher les orbites), glacee type Kuiper apres la derniere planete ; masse, largeur,
+  epaisseur, richesse, melange C / S / M / glace (`AsteroidClass::ores` -> minerais de la phase 8). `asteroids.rs` :
+  pas de liste, cellules hachees dans le repere qui tourne avec chaque anneau (Kepler, `mu()` des planetes), 3 niveaux
+  (`LEVELS` : cailloux, rochers, gros ou l'on se pose), champs denses (`field_density`), formes `AsteroidShape`
+  (gravats, binaire de contact, allonge, metallique, fragment, crateres ; `radius_at` = maillage, collisions et
+  terrain via `BodyParams::asteroid`), rotation sur le plus petit axe. `AsteroidField` : astéroides affiches autour de
+  la camera (cible et astre visite toujours gardes), poses en PreUpdate, maillages des gros en asynchrone, bande de
+  poussiere de loin. `TargetKind::Asteroid(AsteroidKey)` : vol bas, atterrissage, marche en microgravite. Chocs (Q6) :
+  `ship_collisions` -> `AsteroidHit` (degats selon la vitesse, `combat.rs`), cailloux pousses sans degat, pilote
+  automatique qui contourne. Chat : `/ceinture`. Banc : `cargo test --release bench_asteroids -- --ignored --nocapture`.
+  PROTOCOL 25.
+  C2 = anneaux, Troyens, cometes, planetes errantes. Anneaux (`rings.rs`) : `Ring` a `ice`, `gaps` (divisions),
+  `profile(f)` (bandes, divisions vides) ; maillage polaire a couleurs de sommets, ombre de la planete sur l'anneau
+  (`ring_light`) et de l'anneau sur la planete (coquille `ring_shadow`), dans un repere `RingFrame` qui garde
+  l'etoile a l'azimut 0 (couleurs recalculees seulement quand sa hauteur change). Les petits corps passent par
+  `asteroids.rs` (`Sources::of` : ceintures, essaims, anneaux, cometes ; `AsteroidKey::belt` = code de source,
+  `SWARM_BASE`/`RING_BASE`/`COMET_SOURCE` ; `Path` : ceinture, point de Lagrange, comete, anneau ; `Elements` =
+  Kepler f64, meme formule que `kepler.rs`). Troyens : `planetgen/belts.rs::trojans` (L4/L5 des geantes, cellules
+  cubiques dans le repere du point de Lagrange). Particules d'anneau : cellules qui tournent avec l'anneau autour de
+  la planete (`planet_mu`), absentes des divisions. Cometes : `planetgen/comets.rs` (famille de Jupiter / longue
+  periode, `activity(r)`), toujours affichees dans le systeme charge, chevelure + queue de gaz (droite, opposee a
+  l'etoile) + queue de poussiere (courbee, en retard) qui grandissent pres de l'etoile (`update_comet_tails`) ;
+  `/comete`. Planete errante : 1 systeme sur 30, derniere de `planets()` (`PlanetConfig::rogue`), loin et hors du
+  plan, immobile, physique sans etoile ; ignoree par ceintures, zones, orbites ; `/aller planete errante`.
+  PROTOCOL 26.
+  C3 = etoiles doubles et triples (`planetgen/multiple.rs`, ~1/3 des systemes) : `Multiplicity` Single / Close
+  (paire serree au centre, planetes de type P au-dela de 3 fois l'ecart, periode 1 a 200 j) / Wide (compagnon
+  lointain, planetes de type S en deca du quart de son passage au plus pres) / Triple. `sys.stellar()` (recalcule),
+  `sys.lighting()` (luminosite et masse des etoiles du centre additionnees : zone habitable, periodes),
+  `sys.star_physics_of(i)`. Compagnons stockes dans `sys.stars` avec `StarConfig::orbit` (`StarOrbit` :
+  factor x Kepler relatif, `orbit_stars`). `OrbitLimits` (min_au, max_au, exclusion, outer) passe a `system.rs`,
+  `belts.rs`, `comets.rs`. Surface : `sun_list` / `combined_sky` (ciel et jour de tous les soleils, double coucher),
+  `SurfaceSun` = une lumiere directionnelle par soleil avec ombres (cascades ~200 voxels) qui remplace la lumiere
+  ponctuelle des etoiles sur un astre solide (`dim_star_light`), le decor projette des ombres. `/aller etoile
+  double|triple`. Saisons recalees (`SEASON_REF_DAYS` 115 -> 300 : moyenne 1 h, Q2). PROTOCOL 27.
+  C4 = phenomenes du ciel (`sky.rs`) : orages magnetiques `storm(seed, activite, t)` par tranches de 15 min
+  (`Storms` : eruptions plus hautes dans `update_flare_voxels`, aurores avivees 2 min plus tard) ; eclipses :
+  `occultation` des disques, `SunDim` (lumiere de chaque soleil a la camera, passee a `sun_list`), taches d'ombre
+  des lunes sur leur planete (`shadow_spot`), voile sombre et rouge des lunes dans l'ombre de leur planete ;
+  `/eclipse [lune]` (`next_eclipse`, memes orbites que `planet.rs`, l'hote avance l'horloge). Marees :
+  `terrain::Tide` (renflement P2 vers chaque astre, 0 a 3 voxels, `tide_voxels` / `solar_tide_voxels`), mer
+  et greve dans `base_column`, recalculee par `update_tides` quand le niveau change d'un voxel sous le joueur
+  (tuiles reconstruites comme pour les saisons). Phases des lunes (`MoonPhases`, scanner). Aurores du sol :
+  rideaux (`curtain_mesh`) la nuit, enfants de la planete ; les anneaux d'aurore vus de l'espace s'effacent.
+  C5 = meteo (`weather.rs`), f(graine, horloge, lieu) : `WeatherParams::of` (air de la phase 3), vents zonaux
+  (`zonal`), nuages advectes et qui se forment / se defont (`cloud_field`, deux champs fondus), `sample` : pluie,
+  neige, grele, pluies exotiques (methane, acide, neige carbonique, verre, fer), orages + `lightning`, poussiere,
+  brouillard du matin. Couche de nuages en cubes reconstruite en arriere-plan (`rebuild_clouds`, 2 s pour l'astre
+  ou l'on est, 30 s sinon ; `rotate_clouds` ne fait plus deriver la couche). `WeatherNow` (lieu du joueur) :
+  lumiere des soleils voilee (`SunDim`), ciel gris / brun, flash des eclairs, brouillard (`gas.rs`), particules
+  autour de la camera (`particle_positions`), vent qui pousse le vaisseau en vol bas (`Surface::drift`), scanner.
+  Banc : `cargo test --release bench_cloud_layer -- --ignored --nocapture`.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

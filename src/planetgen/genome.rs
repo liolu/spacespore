@@ -17,7 +17,7 @@ pub struct SystemGenome {
 
 impl SystemGenome {
     /// Planètes et lunes autour de l'étoile `star` (voir `planetgen::system`).
-    pub fn planets(&self, star: &StarPhysics, scale: f32, star_radius: f32) -> Vec<PlanetConfig> {
-        super::system::generate(*self, star, scale, star_radius)
+    pub fn planets(&self, star: &StarPhysics, scale: f32, star_radius: f32, limits: super::system::OrbitLimits) -> Vec<PlanetConfig> {
+        super::system::generate(*self, star, scale, star_radius, limits)
     }
 }
