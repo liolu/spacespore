@@ -12,7 +12,6 @@
 //  d'un monde sans vie sont déjà nus. Les rochers et cristaux sont partout.
 // ─────────────────────────────────────────────────────────────────────────
 
-use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::render_asset::RenderAssetUsages;
@@ -368,7 +367,7 @@ impl DecorAssets {
             .iter()
             .map(|d| {
                 let material = if d.kind.glows() { self.glow.clone() } else { self.matte.clone() };
-                commands.spawn((Mesh3d(self.meshes[&d.kind].clone()), MeshMaterial3d(material), d.transform, NotShadowCaster)).id()
+                commands.spawn((Mesh3d(self.meshes[&d.kind].clone()), MeshMaterial3d(material), d.transform)).id()
             })
             .collect();
         commands.entity(tile).add_children(&children);

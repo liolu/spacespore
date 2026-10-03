@@ -171,6 +171,16 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   `/comete`. Planete errante : 1 systeme sur 30, derniere de `planets()` (`PlanetConfig::rogue`), loin et hors du
   plan, immobile, physique sans etoile ; ignoree par ceintures, zones, orbites ; `/aller planete errante`.
   PROTOCOL 26.
+  C3 = etoiles doubles et triples (`planetgen/multiple.rs`, ~1/3 des systemes) : `Multiplicity` Single / Close
+  (paire serree au centre, planetes de type P au-dela de 3 fois l'ecart, periode 1 a 200 j) / Wide (compagnon
+  lointain, planetes de type S en deca du quart de son passage au plus pres) / Triple. `sys.stellar()` (recalcule),
+  `sys.lighting()` (luminosite et masse des etoiles du centre additionnees : zone habitable, periodes),
+  `sys.star_physics_of(i)`. Compagnons stockes dans `sys.stars` avec `StarConfig::orbit` (`StarOrbit` :
+  factor x Kepler relatif, `orbit_stars`). `OrbitLimits` (min_au, max_au, exclusion, outer) passe a `system.rs`,
+  `belts.rs`, `comets.rs`. Surface : `sun_list` / `combined_sky` (ciel et jour de tous les soleils, double coucher),
+  `SurfaceSun` = une lumiere directionnelle par soleil avec ombres (cascades ~200 voxels) qui remplace la lumiere
+  ponctuelle des etoiles sur un astre solide (`dim_star_light`), le decor projette des ombres. `/aller etoile
+  double|triple`. Saison moyenne ~1,4 h depuis (planetes des paires serrees plus loin), echelle inchangee. PROTOCOL 27.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

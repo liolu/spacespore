@@ -1227,7 +1227,7 @@ pub fn body_params(settings: &GameSettings, key: &AsteroidKey) -> Option<crate::
     }
     let sys = settings.systems.get(key.sys as usize)?;
     let a = find(&Sources::for_key(sys, key), *key)?;
-    let lum = sys.star_physics().map_or(1.0, |p| p.luminosity_sun);
+    let lum = sys.lighting().map_or(1.0, |p| p.luminosity_sun);
     Some(a.body_params(lum))
 }
 

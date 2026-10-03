@@ -101,7 +101,7 @@ impl StarClass {
         })
     }
 
-    fn main_sequence(self) -> Option<(f64, f64, f64)> {
+    pub fn main_sequence(self) -> Option<(f64, f64, f64)> {
         // (masse min, masse max, facteur d'activité magnétique)
         Some(match self {
             StarClass::O => (16.0, 60.0, 0.02),
