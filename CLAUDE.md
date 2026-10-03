@@ -145,6 +145,18 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   A4 = survie a pied (`suit.rs`) : `Environment` (pression, O2, CO2, temperature locale de `LocalWeather` ou de
   la roche sous terre, radiation du sol, lave) -> `rates` (reserve d'O2 ~8 min, degats lents, alertes), `Suit`
   (O2, vie) : a 0, `Surface::request_rescue` ramene au vaisseau (abri : recharge et soins). HUD a pied.
+  C1 = ceintures d'asteroides : `planetgen/belts.rs` (`sys.belts()`, couche `Layer::Belts`) : rocheuse avant la
+  premiere geante froide (sans toucher les orbites), glacee type Kuiper apres la derniere planete ; masse, largeur,
+  epaisseur, richesse, melange C / S / M / glace (`AsteroidClass::ores` -> minerais de la phase 8). `asteroids.rs` :
+  pas de liste, cellules hachees dans le repere qui tourne avec chaque anneau (Kepler, `mu()` des planetes), 3 niveaux
+  (`LEVELS` : cailloux, rochers, gros ou l'on se pose), champs denses (`field_density`), formes `AsteroidShape`
+  (gravats, binaire de contact, allonge, metallique, fragment, crateres ; `radius_at` = maillage, collisions et
+  terrain via `BodyParams::asteroid`), rotation sur le plus petit axe. `AsteroidField` : astéroides affiches autour de
+  la camera (cible et astre visite toujours gardes), poses en PreUpdate, maillages des gros en asynchrone, bande de
+  poussiere de loin. `TargetKind::Asteroid(AsteroidKey)` : vol bas, atterrissage, marche en microgravite. Chocs (Q6) :
+  `ship_collisions` -> `AsteroidHit` (degats selon la vitesse, `combat.rs`), cailloux pousses sans degat, pilote
+  automatique qui contourne. Chat : `/ceinture`. Banc : `cargo test --release bench_asteroids -- --ignored --nocapture`.
+  PROTOCOL 25.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

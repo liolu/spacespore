@@ -531,6 +531,17 @@ impl StarSystemConfig {
         self.planets.get_or_init(|| self.generate_planets())
     }
 
+    /// Ceintures d'astéroïdes (C1) : recalculées depuis le génome et les planètes ; celles de
+    /// l'éditeur pour un système fait à la main.
+    pub fn belts(&self) -> Vec<crate::planetgen::belts::Belt> {
+        match (self.genome, self.stars.first(), self.star_physics()) {
+            (Some(genome), Some(star), Some(physics)) => {
+                crate::planetgen::belts::generate(genome, &physics, star.scale(), star.radius, &self.planets_uncached())
+            }
+            _ => self.asteroid_belts.iter().enumerate().map(|(i, c)| crate::planetgen::belts::Belt::from_config(c, i)).collect(),
+        }
+    }
+
     /// Planètes sans remplir le cache (pour parcourir tous les systèmes d'un coup).
     pub fn planets_uncached(&self) -> std::borrow::Cow<'_, [PlanetConfig]> {
         match self.planets.get() {

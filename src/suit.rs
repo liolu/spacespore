@@ -137,6 +137,8 @@ fn environment(settings: &GameSettings, surface: &Surface, weather: &LocalWeathe
     let air = match kind {
         crate::ui::TargetKind::Planet(id) => settings.systems.get(id / 1000)?.planets().get(id % 1000)?.air.clone(),
         crate::ui::TargetKind::Moon(pid, mi) => settings.systems.get(pid / 1000)?.planets().get(pid % 1000)?.moons.get(mi)?.air.clone(),
+        // Astéroïde : le vide
+        crate::ui::TargetKind::Asteroid(_) => Default::default(),
         _ => return None,
     };
     let underground = surface.underground() > 0.5;

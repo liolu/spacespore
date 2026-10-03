@@ -244,6 +244,7 @@ fn update_scanner(
     target: Res<CameraTarget>,
     weather: Res<crate::world_clock::LocalWeather>,
     cave: Res<crate::surface::NearestCave>,
+    field: Res<crate::asteroids::AsteroidField>,
     star_q: Query<&StarId, With<StarRoot>>,
     mut scanner: ResMut<Scanner>,
     mut panel: Query<&mut Visibility, With<ScannerPanel>>,
@@ -253,16 +254,35 @@ fn update_scanner(
         scanner.visible = !scanner.visible;
     }
     let loaded = matches!(target.0, crate::ui::TargetKind::Star(id) if star_q.iter().any(|s| s.0 == id));
-    let id = target_body(&target.0, loaded);
-    let key = id.map(|i| i.key());
-    // Recalcul seulement quand la cible change, ou quand le système chargé change (profils en cache)
-    if key != scanner.shown || cache.is_changed() {
-        scanner.shown = key.clone();
-        (scanner.text, scanner.danger) = match id.and_then(|i| profile_of(&settings, &cache, i)) {
-            Some(Profile::Star(s)) => star_text(&s),
-            Some(Profile::Body(b)) => body_text(&b),
-            None => (String::new(), 0),
-        };
+    if let crate::ui::TargetKind::Asteroid(k) = target.0 {
+        // Astéroïde (C1) : calculé une fois affiché
+        let key = Some(format!("{k:?}"));
+        if key != scanner.shown {
+            if let Some(a) = field.get(&k) {
+                let lum = settings.systems.get(k.sys as usize).and_then(|s| s.star_physics()).map_or(1.0, |p| p.luminosity_sun);
+                scanner.text = crate::asteroids::scanner_text(a, field.belts(k.sys as usize).get(k.belt as usize), lum);
+                scanner.danger = 0;
+                scanner.shown = key;
+            }
+        }
+    } else {
+        let id = target_body(&target.0, loaded);
+        let key = id.map(|i| i.key());
+        // Recalcul seulement quand la cible change, ou quand le système chargé change (profils en cache)
+        if key != scanner.shown || cache.is_changed() {
+            scanner.shown = key.clone();
+            (scanner.text, scanner.danger) = match id.and_then(|i| profile_of(&settings, &cache, i)) {
+                Some(Profile::Star(s)) => star_text(&s),
+                Some(Profile::Body(b)) => body_text(&b),
+                None => (String::new(), 0),
+            };
+            // Ceintures d'astéroïdes du système de l'étoile
+            if let (Some(crate::planetgen::live::BodyId::Star { system, .. }), false) = (id, scanner.text.is_empty()) {
+                if let Some(line) = settings.systems.get(system as usize).and_then(|s| crate::asteroids::belts_line(&s.belts())) {
+                    scanner.text = format!("{}\n{line}", scanner.text);
+                }
+            }
+        }
     }
     // Heure, saison et températures du jour et de l'année, en direct (0.11)
     let mut live = if weather.body.is_some() && weather.body == Some(target.0) { weather.scanner_line() } else { String::new() };
