@@ -52,7 +52,8 @@ impl Plugin for WormholePlugin {
         app.init_resource::<Wormholes>()
             .init_resource::<WormholeTravel>()
             .add_systems(Startup, (build_wormholes, setup_trip_ui))
-            .add_systems(Update, (wormhole_travel, run_wormhole_trip, draw_wormholes, draw_trip_fx, update_trip_ui).chain());
+            .add_systems(Update, (wormhole_travel, run_wormhole_trip, draw_wormholes, draw_trip_fx, update_trip_ui).chain())
+            .add_systems(Update, extend_wormholes);
     }
 }
 
@@ -182,15 +183,23 @@ fn mouth(seed: u32, sys_idx: usize, sys: &StarSystemConfig) -> (Vec3, f32) {
 
 /// Tous les trous de ver du monde, déterministes d'après sa graine.
 pub fn generate(settings: &GameSettings) -> Vec<Wormhole> {
+    // Notre galaxie et les extérieures ; les lointaines quand elles sont générées
+    // (`extend_wormholes`) : chaque galaxie a ses trous de ver, indépendamment des autres
+    let dense = (crate::settings::NUM_DISTANT_GALAXIES + 1).min(settings.galaxies.len());
+    (0..dense).flat_map(|gid| generate_galaxy(settings, gid)).collect()
+}
+
+/// Trous de ver d'une galaxie (ses systèmes sont générés si besoin).
+pub fn generate_galaxy(settings: &GameSettings, gid: usize) -> Vec<Wormhole> {
     let seed = (settings.world_seed as u32) ^ ((settings.world_seed >> 32) as u32) ^ 0x57_4F_52_4D;
     let mut out = Vec::new();
-    for (gid, gal) in settings.galaxies.iter().enumerate() {
+    if let Some(gal) = settings.galaxies.get(gid) {
         // Systèmes de cette galaxie, hors du voisinage immédiat du trou noir central
         let candidates: Vec<usize> = settings
             .systems
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| s.galaxy_id as usize == gid && s.center().distance(gal.center()) >= CORE_EXCLUSION)
+            .in_galaxy(gid as u32)
+            .into_iter()
+            .filter(|(_, s)| s.center().distance(gal.center()) >= CORE_EXCLUSION)
             .map(|(i, _)| i)
             .collect();
         let pairs = count_for(gid, gal.radius).min(candidates.len() / 2);
@@ -240,6 +249,17 @@ pub fn generate(settings: &GameSettings) -> Vec<Wormhole> {
 
 fn build_wormholes(settings: Res<GameSettings>, mut wormholes: ResMut<Wormholes>) {
     wormholes.list = generate(&settings);
+}
+
+/// Une galaxie lointaine vient d'être générée : ses trous de ver s'ajoutent.
+fn extend_wormholes(mut events: EventReader<crate::planet::FarGalaxyLoaded>, settings: Res<GameSettings>, mut wormholes: ResMut<Wormholes>) {
+    for &crate::planet::FarGalaxyLoaded(gid) in events.read() {
+        let new = generate_galaxy(&settings, gid as usize);
+        let known = new.iter().any(|w| wormholes.list.iter().any(|x| x.a == w.a));
+        if !known {
+            wormholes.list.extend(new);
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -752,12 +772,18 @@ mod tests {
         // Toujours les mêmes, pour tous les joueurs
         assert_eq!(list, generate(&settings));
 
-        // Une dizaine dans la galaxie principale, quelques-uns dans les autres
+        // Une dizaine dans la galaxie principale, quelques-uns dans les extérieures ; ceux d'une
+        // galaxie lointaine viennent quand elle est générée, toujours les mêmes
         let in_galaxy = |g: u32| list.iter().filter(|w| settings.systems[w.a].galaxy_id == g).count();
         assert_eq!(in_galaxy(0), MAIN_GALAXY_WORMHOLES);
-        for gid in 1..settings.galaxies.len() as u32 {
+        for gid in 1..=crate::settings::NUM_DISTANT_GALAXIES as u32 {
             assert!((2..=7).contains(&in_galaxy(gid)), "galaxie {gid} : {}", in_galaxy(gid));
         }
+        let far = generate_galaxy(&settings, 5_000);
+        assert!((2..=7).contains(&far.len()), "galaxie lointaine : {}", far.len());
+        assert!(far.iter().all(|w| settings.systems[w.a].galaxy_id == 5_000 && settings.systems[w.b].galaxy_id == 5_000));
+        assert_eq!(far, generate_galaxy(&settings, 5_000));
+        let list: Vec<Wormhole> = list.into_iter().chain(far).collect();
 
         for w in &list {
             // Jamais entre deux galaxies, jamais avec soi-même

@@ -33,9 +33,14 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   toutes les distances (etoiles, galaxies, orbites des planetes et lunes, applique a la fin de `system.rs`) ; tailles
   des astres (`GALAXY_SIZE_SCALE` pour les trous noirs) et physique (UA, temperatures, marees) inchangees, orbites
   plus lentes (Kepler), lumiere des etoiles compensee (`lumens`, `light_range_for`), vaisseau x5. Systemes ~19 M
-  en mediane, 52 M pour 99 %. Galaxies : la principale, 20 exterieures (`NUM_DISTANT_GALAXIES`) et 30 lointaines
-  (`NUM_OUTER_GALAXIES`, de 1,3 a 10 fois la plus lointaine, ajoutees apres : rien de connu ne change), toutes de
-  vraies galaxies. LOD (`planet.rs`) : etoiles chargees par galaxie a l'approche (`stream_galaxy_stars`, entites
+  en mediane, 52 M pour 99 %. Galaxies : 10 000 = la principale, 20 exterieures (`NUM_DISTANT_GALAXIES`) et 9 979 lointaines
+  (`NUM_OUTER_GALAXIES`, grille de cellules de 1,3 a 10 fois la plus lointaine, ajoutees apres : rien de connu ne
+  change), toutes de vraies galaxies. `settings.systems` = `systems::Systems` : les 21 premieres galaxies generees
+  au depart (`dense()`, numeros d'avant), chaque lointaine a une plage de numeros fixe (`galaxy_range`) et n'est
+  generee qu'au premier acces (`get`, `in_galaxy`, `load`) ; `iter()` = systemes deja generes AVEC leur numero.
+  Galaxie generee -> `planet::FarGalaxyLoaded` (index spatial, factions `FAR_FACTION_BASE + g x 64 + k`, trous de
+  ver `generate_galaxy`). Bras / trou noir / disque (`stream_galaxy_visuals`) et nuages (`stream_clouds`) crees a
+  l'approche seulement. `/aller` cherche dans les 21 premieres galaxies. LOD (`planet.rs`) : etoiles chargees par galaxie a l'approche (`stream_galaxy_stars`, entites
   `FarStar` creees / retirees), eclaircies avec la distance (`star_keep`, toujours les memes : elles reviennent en
   s'approchant), galaxie en point au-dela de `POINT_START` (`GalaxyPoint`, bras / trou noir / disque effaces). Les etoiles lointaines sont groupees en
   secteurs de ~100 etoiles (`StarSectors`) affiches/mis a jour ensemble.

@@ -594,7 +594,7 @@ mod tests {
         use crate::settings::{default_galaxies, default_systems, DEFAULT_WORLD_SEED};
         let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
         let systems = default_systems(&galaxies, DEFAULT_WORLD_SEED);
-        let v: Vec<f64> = systems.iter().take(3000).flat_map(|s| s.planets_uncached().iter().map(|p| season_secs(p.period_days)).collect::<Vec<_>>()).collect();
+        let v: Vec<f64> = systems.dense().iter().take(3000).flat_map(|s| s.planets_uncached().iter().map(|p| season_secs(p.period_days)).collect::<Vec<_>>()).collect();
         let mean = v.iter().sum::<f64>() / v.len() as f64;
         assert!((3000.0..4200.0).contains(&mean), "{mean}");
         assert!(v.iter().all(|s| (MIN_SEASON_SECS..=MAX_SEASON_SECS).contains(s)));

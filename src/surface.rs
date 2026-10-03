@@ -2286,7 +2286,7 @@ mod tests {
         use crate::terrain::{build_tile_mesh, select_tiles, TileKey};
         let settings = GameSettings::default();
         let mut bodies = Vec::new();
-        for sys in settings.systems.iter().take(150) {
+        for sys in settings.systems.dense().iter().take(150) {
             for p in sys.planets() {
                 // Pas de sol sur une géante gazeuse : on n'y marche pas
                 if !p.gaseous() {

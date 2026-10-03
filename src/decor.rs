@@ -426,7 +426,7 @@ mod tests {
     fn earth_like() -> BodyParams {
         let settings = crate::settings::GameSettings::default();
         // Une planète générée avec des plantes, sinon une planète faite à la main reverdie
-        for sys in settings.systems.iter().take(3000) {
+        for sys in settings.systems.dense().iter().take(3000) {
             for p in sys.planets_uncached().iter() {
                 if p.biomes.flora && !p.gaseous() && p.hydrology.ocean_fraction < 0.8 {
                     return BodyParams::planet(p);
@@ -511,7 +511,7 @@ mod bench {
     fn bench_decor() {
         let settings = crate::settings::GameSettings::default();
         let mut bodies = Vec::new();
-        for sys in settings.systems.iter().take(3000) {
+        for sys in settings.systems.dense().iter().take(3000) {
             for p in sys.planets_uncached().iter() {
                 if p.biomes.flora && !p.gaseous() && bodies.len() < 6 {
                     bodies.push(BodyParams::planet(p));

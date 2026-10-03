@@ -1673,7 +1673,7 @@ mod bench {
     fn bench_tiles() {
         let settings = crate::settings::GameSettings::default();
         let mut bodies = Vec::new();
-        for sys in settings.systems.iter().take(40) {
+        for sys in settings.systems.dense().iter().take(40) {
             for p in sys.planets() {
                 if !p.gaseous() {
                     bodies.push(BodyParams::planet(p));
@@ -1701,7 +1701,7 @@ mod bench {
     #[ignore]
     fn bench_voxel_tiles() {
         let settings = crate::settings::GameSettings::default();
-        let bodies: Vec<BodyParams> = settings.systems.iter().take(40).flat_map(|s| s.planets().iter().filter(|p| !p.gaseous()).map(BodyParams::planet).collect::<Vec<_>>()).take(20).collect();
+        let bodies: Vec<BodyParams> = settings.systems.dense().iter().take(40).flat_map(|s| s.planets().iter().filter(|p| !p.gaseous()).map(BodyParams::planet).collect::<Vec<_>>()).take(20).collect();
         let mut keys = Vec::new();
         for p in &bodies {
             let t = Terrain::new(*p);
@@ -1734,7 +1734,7 @@ mod geology_tests {
     fn relief_keeps_the_ocean_fraction() {
         let settings = crate::settings::GameSettings::default();
         let mut checked = 0;
-        for sys in settings.systems.iter().take(3000) {
+        for sys in settings.systems.dense().iter().take(3000) {
             for p in sys.planets_uncached().iter().filter(|p| !p.gaseous() && p.hydrology.ocean_fraction > 0.05) {
                 if checked >= 40 {
                     return;

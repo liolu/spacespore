@@ -500,8 +500,15 @@ pub fn world_fingerprint(settings: &GameSettings) -> u64 {
             h = h.wrapping_mul(0x100000001b3);
         }
     };
+    // Notre galaxie et les extérieures (générées au départ partout) ; les galaxies lointaines, par
+    // leur nombre et leur place (leurs systèmes en découlent)
     eat(&(settings.systems.len() as u64).to_le_bytes());
-    for sys in &settings.systems {
+    eat(&(settings.galaxies.len() as u64).to_le_bytes());
+    for g in &settings.galaxies {
+        eat(&g.abs_center.x.to_bits().to_le_bytes());
+        eat(&g.abs_center.z.to_bits().to_le_bytes());
+    }
+    for sys in settings.systems.dense() {
         eat(sys.name.as_bytes());
         eat(&(sys.stars.len() as u64).to_le_bytes());
         for st in &sys.stars {

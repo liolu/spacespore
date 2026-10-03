@@ -489,7 +489,7 @@ mod tests {
     #[test]
     fn an_impact_digs_a_crater_with_a_rim() {
         let settings = GameSettings::default();
-        let p = settings.systems.iter().take(200).flat_map(|s| s.planets().iter().filter(|p| !p.gaseous()).cloned().collect::<Vec<_>>()).next().unwrap();
+        let p = settings.systems.dense().iter().take(200).flat_map(|s| s.planets().iter().filter(|p| !p.gaseous()).cloned().collect::<Vec<_>>()).next().unwrap();
         let params = crate::terrain::BodyParams::planet(&p);
         let t = Terrain::new(params);
         let dir = Vec3::new(0.3, 0.8, -0.5).normalize();

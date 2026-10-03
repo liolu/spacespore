@@ -202,7 +202,7 @@ mod tests {
     fn zones_are_ordered_and_planets_in_the_green_band_are_habitable_distance() {
         let settings = GameSettings::default();
         let mut checked = 0;
-        for sys in settings.systems.iter().take(400) {
+        for sys in settings.systems.dense().iter().take(400) {
             let Some(z) = zones_of(sys) else { continue };
             assert!(z.star < z.habitable_inner && z.habitable_inner < z.habitable_outer && z.habitable_outer < z.edge, "{z:?}");
             let l = sys.star_physics().unwrap().luminosity_sun;
