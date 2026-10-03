@@ -67,11 +67,13 @@ pub struct OrbitCam {
     pub yaw: f32,
     pub pitch: f32,
     pub distance: f32,
+    /// Décalage du modèle vers la droite de l'écran (fraction de la distance).
+    pub shift: f32,
 }
 
 impl Default for OrbitCam {
     fn default() -> Self {
-        Self { pivot: Vec3::new(8.0, 8.0, 16.0), yaw: 0.8, pitch: 0.5, distance: 60.0 }
+        Self { pivot: Vec3::new(8.0, 8.0, 16.0), yaw: 0.8, pitch: 0.5, distance: 60.0, shift: 0.0 }
     }
 }
 
@@ -85,8 +87,9 @@ impl OrbitCam {
 
     pub fn transform(&self, anchor: Vec3) -> Transform {
         let rot = Quat::from_euler(EulerRot::YXZ, self.yaw, -self.pitch, 0.0);
-        let eye = anchor + self.pivot + rot * Vec3::new(0.0, 0.0, self.distance);
-        Transform::from_translation(eye).looking_at(anchor + self.pivot, Vec3::Y)
+        let look = anchor + self.pivot + rot * Vec3::NEG_X * self.distance * self.shift;
+        let eye = look + rot * Vec3::new(0.0, 0.0, self.distance);
+        Transform::from_translation(eye).looking_at(look, Vec3::Y)
     }
 }
 
@@ -195,7 +198,7 @@ pub fn camera_input(
     let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     if free && scroll != 0.0 && !ctrl {
-        let scalable = editor.placing.and_then(|p| editor.blocks.get(p.block)).is_some_and(|b| b.scalable);
+        let scalable = editor.placing.and_then(|p| editor.lib.blocks.get(p.block)).is_some_and(|b| b.scalable);
         if let Some(p) = editor.placing.as_mut() {
             let step = if scroll > 0.0 { 1 } else { -1 };
             if shift && scalable {
@@ -225,6 +228,7 @@ pub fn camera_input(
         cam.distance = (cam.distance * (-scroll * 0.12).exp()).clamp(2.0, 4000.0);
     }
     let (Ok(r), Ok(mut tf)) = (root.get_single(), cam_q.get_single_mut()) else { return };
+    editor.cam.shift = if editor.race_shown() { 0.24 } else { 0.0 };
     *tf = editor.cam.transform(r.translation);
 }
 
@@ -317,7 +321,7 @@ pub fn tools_input(
     // Pose d'un bloc de mouvement : le gabarit devient des zones
     if let Some(p) = editor.placing {
         if buttons.just_pressed(MouseButton::Left) {
-            if let (Some(at), Some(def)) = (place, editor.blocks.get(p.block).cloned()) {
+            if let (Some(at), Some(def)) = (place, editor.lib.blocks.get(p.block).cloned()) {
                 let mirror = editor.mirror;
                 let r = editor.doc_mut().map(|d| d.place_block(&def, at, p.place, mirror));
                 editor.placing = None;
@@ -374,16 +378,27 @@ pub fn update_mesh(
     root: Query<Entity, With<EditorRoot>>,
     mats: Option<Res<EditorMats>>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut shown: Local<Option<(bool, usize, usize)>>,
 ) {
     let (Ok(root), Some(mats)) = (root.get_single(), mats) else { return };
-    let dirty = editor.doc().is_none_or(|d| d.mesh_dirty);
+    // Passage du rig de la race à l'onglet (ou l'inverse) : tout est refait
+    let key = (editor.race_shown(), editor.current, editor.docs.len());
+    let switched = *shown != Some(key);
+    if switched {
+        *shown = Some(key);
+        if editor.preview.as_ref().is_some_and(|p| p.on_race != key.0) {
+            editor.stop_preview();
+        }
+        editor.focus();
+    }
+    let dirty = switched || editor.shown().is_none_or(|d| d.mesh_dirty);
     if !dirty {
         return;
     }
     for e in &old {
         commands.entity(e).try_despawn_recursive();
     }
-    let Some(doc) = editor.doc_mut() else {
+    let Some(doc) = editor.shown_mut() else {
         editor.zone_boxes.clear();
         return;
     };
@@ -414,7 +429,7 @@ pub fn animate(time: Res<Time>, mut editor: ResMut<Editor>, mut q: Query<(&RigPa
         p.t += dt;
         p.blend = (p.blend + dt / 0.35).min(1.0);
     }
-    let pose = match editor.doc() {
+    let pose = match editor.shown() {
         Some(d) if editor.preview.is_some() => motion::compose(&d.model, &editor.current_locals()),
         Some(d) => vec![Mat4::IDENTITY; d.model.zones.len() + 1],
         None => Vec::new(),
@@ -462,7 +477,7 @@ pub fn ghost(
         for (e, _, _) in &parts {
             commands.entity(e).try_despawn_recursive();
         }
-        let (Some((block, place, at, mirror)), Some(doc), Some(def)) = (key, editor.doc(), key.and_then(|k| editor.blocks.get(k.0))) else { return };
+        let (Some((block, place, at, mirror)), Some(doc), Some(def)) = (key, editor.doc(), key.and_then(|k| editor.lib.blocks.get(k.0))) else { return };
         let _ = block;
         // Le gabarit posé dans un modèle vide de la même grille
         let mut g = Doc::new(Model::new("gabarit", doc.model.kind, doc.model.category), None);
@@ -487,7 +502,7 @@ pub fn ghost(
     // Le gabarit joue son repos
     state.t += time.delta_secs();
     let Some(m) = &state.model else { return };
-    let pose = motion::compose(m, &motion::zone_locals(m, &editor.blocks, "repos", state.t));
+    let pose = motion::compose(m, &motion::zone_locals(m, &editor.lib, "repos", state.t, false));
     for (_, g, mut tf) in &mut parts {
         *tf = Transform::from_matrix(pose.get(g.0 as usize).copied().unwrap_or(Mat4::IDENTITY));
     }
@@ -504,7 +519,7 @@ fn zone_color(i: usize, colliding: bool) -> Color {
 
 /// Grille du sol, boîte de la grille, plan du miroir, case visée.
 pub fn draw(editor: Res<Editor>, root: Query<&Transform, With<EditorRoot>>, mut g: Gizmos<EditorGizmos>) {
-    let (Ok(r), Some(doc)) = (root.get_single(), editor.doc()) else { return };
+    let (Ok(r), Some(doc)) = (root.get_single(), editor.shown()) else { return };
     let o = r.translation;
     let s = doc.model.size.as_vec3();
     if editor.grid {

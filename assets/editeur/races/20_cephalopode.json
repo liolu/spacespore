@@ -1,0 +1,374 @@
+{
+ "id": "cephalopode",
+ "name": "Cephalopode",
+ "races": [
+  "Alien poulpe",
+  "Mind-flayer"
+ ],
+ "locomotion": "rampe / flotte",
+ "preview": "flotter",
+ "parts": [
+  {
+   "name": "tete",
+   "boxes": [
+    [
+     3,
+     14,
+     11,
+     12,
+     25,
+     20
+    ]
+   ],
+   "pivot": [
+    8,
+    14,
+    16
+   ]
+  },
+  {
+   "name": "oeil",
+   "boxes": [
+    [
+     4,
+     19,
+     21,
+     5,
+     20,
+     21
+    ]
+   ],
+   "parent": "tete",
+   "sym": true,
+   "fixed": true
+  },
+  {
+   "name": "tav_1",
+   "boxes": [
+    [
+     4,
+     11,
+     19,
+     4,
+     13,
+     19
+    ]
+   ],
+   "parent": "tete",
+   "pivot": [
+    4.5,
+    14,
+    19.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "tav_2",
+   "boxes": [
+    [
+     4,
+     8,
+     19,
+     4,
+     10,
+     19
+    ]
+   ],
+   "parent": "tav_1",
+   "pivot": [
+    4.5,
+    11,
+    19.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "tav_3",
+   "boxes": [
+    [
+     4,
+     5,
+     19,
+     4,
+     7,
+     19
+    ]
+   ],
+   "parent": "tav_2",
+   "pivot": [
+    4.5,
+    8,
+    19.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "tav_4",
+   "boxes": [
+    [
+     4,
+     2,
+     19,
+     4,
+     4,
+     19
+    ]
+   ],
+   "parent": "tav_3",
+   "pivot": [
+    4.5,
+    5,
+    19.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "tar_1",
+   "boxes": [
+    [
+     4,
+     11,
+     12,
+     4,
+     13,
+     12
+    ]
+   ],
+   "parent": "tete",
+   "pivot": [
+    4.5,
+    14,
+    12.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "tar_2",
+   "boxes": [
+    [
+     4,
+     8,
+     12,
+     4,
+     10,
+     12
+    ]
+   ],
+   "parent": "tar_1",
+   "pivot": [
+    4.5,
+    11,
+    12.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "tar_3",
+   "boxes": [
+    [
+     4,
+     5,
+     12,
+     4,
+     7,
+     12
+    ]
+   ],
+   "parent": "tar_2",
+   "pivot": [
+    4.5,
+    8,
+    12.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "tar_4",
+   "boxes": [
+    [
+     4,
+     2,
+     12,
+     4,
+     4,
+     12
+    ]
+   ],
+   "parent": "tar_3",
+   "pivot": [
+    4.5,
+    5,
+    12.5
+   ],
+   "sym": true
+  }
+ ],
+ "options": [
+  {
+   "id": "huit",
+   "name": "8 tentacules",
+   "parts": [
+    {
+     "name": "tlat_1",
+     "boxes": [
+      [
+       3,
+       11,
+       15,
+       3,
+       13,
+       15
+      ]
+     ],
+     "parent": "tete",
+     "pivot": [
+      3.5,
+      14,
+      15.5
+     ],
+     "sym": true
+    },
+    {
+     "name": "tlat_2",
+     "boxes": [
+      [
+       3,
+       8,
+       15,
+       3,
+       10,
+       15
+      ]
+     ],
+     "parent": "tlat_1",
+     "pivot": [
+      3.5,
+      11,
+      15.5
+     ],
+     "sym": true
+    },
+    {
+     "name": "tlat_3",
+     "boxes": [
+      [
+       3,
+       5,
+       15,
+       3,
+       7,
+       15
+      ]
+     ],
+     "parent": "tlat_2",
+     "pivot": [
+      3.5,
+      8,
+      15.5
+     ],
+     "sym": true
+    },
+    {
+     "name": "tlat_4",
+     "boxes": [
+      [
+       3,
+       2,
+       15,
+       3,
+       4,
+       15
+      ]
+     ],
+     "parent": "tlat_3",
+     "pivot": [
+      3.5,
+      5,
+      15.5
+     ],
+     "sym": true
+    },
+    {
+     "name": "tmil_1",
+     "boxes": [
+      [
+       6,
+       11,
+       17,
+       6,
+       13,
+       17
+      ]
+     ],
+     "parent": "tete",
+     "pivot": [
+      6.5,
+      14,
+      17.5
+     ],
+     "sym": true
+    },
+    {
+     "name": "tmil_2",
+     "boxes": [
+      [
+       6,
+       8,
+       17,
+       6,
+       10,
+       17
+      ]
+     ],
+     "parent": "tmil_1",
+     "pivot": [
+      6.5,
+      11,
+      17.5
+     ],
+     "sym": true
+    },
+    {
+     "name": "tmil_3",
+     "boxes": [
+      [
+       6,
+       5,
+       17,
+       6,
+       7,
+       17
+      ]
+     ],
+     "parent": "tmil_2",
+     "pivot": [
+      6.5,
+      8,
+      17.5
+     ],
+     "sym": true
+    },
+    {
+     "name": "tmil_4",
+     "boxes": [
+      [
+       6,
+       2,
+       17,
+       6,
+       4,
+       17
+      ]
+     ],
+     "parent": "tmil_3",
+     "pivot": [
+      6.5,
+      5,
+      17.5
+     ],
+     "sym": true
+    }
+   ]
+  }
+ ]
+}

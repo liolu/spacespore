@@ -132,7 +132,7 @@
         }
       }
     },
-    "marche": {
+    "marcher": {
       "duration": 1.2,
       "tracks": {
         "queue_1": {

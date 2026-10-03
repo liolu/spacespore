@@ -1,0 +1,60 @@
+{
+ "id": "tentacules",
+ "name": "Tentacules",
+ "group": "Procedurales",
+ "duration": 3.0,
+ "tracks": {
+  "tav_*_g": {
+   "type": "onde",
+   "axis": [
+    1,
+    0,
+    0
+   ],
+   "amplitude": 8,
+   "period": 3.0,
+   "step": 0.2,
+   "amp_step": 3
+  },
+  "tar_*_g": {
+   "type": "onde",
+   "axis": [
+    1,
+    0,
+    0
+   ],
+   "amplitude": 8,
+   "period": 3.0,
+   "phase": 0.5,
+   "step": 0.2,
+   "amp_step": 3
+  },
+  "tlat_*_g": {
+   "type": "onde",
+   "axis": [
+    0,
+    0,
+    1
+   ],
+   "amplitude": 8,
+   "period": 3.0,
+   "phase": 0.25,
+   "step": 0.2,
+   "amp_step": 3
+  },
+  "tmil_*_g": {
+   "type": "onde",
+   "axis": [
+    1,
+    0,
+    0
+   ],
+   "amplitude": 8,
+   "period": 3.0,
+   "phase": 0.75,
+   "step": 0.2,
+   "amp_step": 3
+  }
+ },
+ "mirror": 0.4
+}

@@ -1,0 +1,373 @@
+{
+ "id": "mecha",
+ "name": "Mecha / robot",
+ "races": [
+  "Robot",
+  "Mecha",
+  "Drone humanoide"
+ ],
+ "locomotion": "bipede / roues / vol",
+ "preview": "marcher",
+ "parts": [
+  {
+   "name": "bassin",
+   "boxes": [
+    [
+     5,
+     10,
+     14,
+     10,
+     11,
+     17
+    ]
+   ],
+   "pivot": [
+    8,
+    11,
+    16
+   ]
+  },
+  {
+   "name": "tronc",
+   "boxes": [
+    [
+     5,
+     12,
+     14,
+     10,
+     19,
+     17
+    ]
+   ],
+   "parent": "bassin",
+   "pivot": [
+    8,
+    12,
+    16
+   ]
+  },
+  {
+   "name": "cou",
+   "boxes": [
+    [
+     7,
+     20,
+     15,
+     8,
+     20,
+     16
+    ]
+   ],
+   "parent": "tronc",
+   "pivot": [
+    8,
+    20,
+    16
+   ]
+  },
+  {
+   "name": "tete",
+   "boxes": [
+    [
+     5,
+     21,
+     13,
+     10,
+     26,
+     18
+    ]
+   ],
+   "parent": "cou",
+   "pivot": [
+    8,
+    21,
+    16
+   ]
+  },
+  {
+   "name": "bras",
+   "boxes": [
+    [
+     3,
+     16,
+     15,
+     4,
+     19,
+     16
+    ]
+   ],
+   "parent": "tronc",
+   "pivot": [
+    4,
+    19.5,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "avant_bras",
+   "boxes": [
+    [
+     3,
+     12,
+     15,
+     4,
+     15,
+     16
+    ]
+   ],
+   "parent": "bras",
+   "pivot": [
+    4,
+    16,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "main",
+   "boxes": [
+    [
+     3,
+     10,
+     15,
+     4,
+     11,
+     16
+    ]
+   ],
+   "parent": "avant_bras",
+   "pivot": [
+    4,
+    12,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "cuisse",
+   "boxes": [
+    [
+     5,
+     6,
+     14,
+     7,
+     9,
+     17
+    ]
+   ],
+   "parent": "bassin",
+   "pivot": [
+    6.5,
+    10,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "tibia",
+   "boxes": [
+    [
+     5,
+     2,
+     15,
+     7,
+     5,
+     16
+    ]
+   ],
+   "parent": "cuisse",
+   "pivot": [
+    6.5,
+    6,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "pied",
+   "boxes": [
+    [
+     5,
+     0,
+     14,
+     7,
+     1,
+     18
+    ]
+   ],
+   "parent": "tibia",
+   "pivot": [
+    6.5,
+    2,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "antenne",
+   "boxes": [
+    [
+     8,
+     27,
+     15,
+     8,
+     29,
+     15
+    ],
+    [
+     7,
+     30,
+     15,
+     9,
+     30,
+     15
+    ]
+   ],
+   "parent": "tete",
+   "pivot": [
+    8.5,
+    27,
+    15.5
+   ]
+  },
+  {
+   "name": "reacteur",
+   "boxes": [
+    [
+     5,
+     13,
+     13,
+     6,
+     17,
+     13
+    ]
+   ],
+   "parent": "tronc",
+   "sym": true,
+   "fixed": true
+  },
+  {
+   "name": "panneau",
+   "boxes": [
+    [
+     6,
+     14,
+     18,
+     9,
+     17,
+     18
+    ]
+   ],
+   "parent": "tronc",
+   "fixed": true
+  }
+ ],
+ "options": [
+  {
+   "id": "roues",
+   "name": "Roues a la place des jambes",
+   "parts": [
+    {
+     "name": "roue",
+     "boxes": [
+      [
+       5,
+       1,
+       14,
+       7,
+       6,
+       18
+      ],
+      [
+       5,
+       0,
+       15,
+       7,
+       7,
+       17
+      ]
+     ],
+     "parent": "bassin",
+     "pivot": [
+      6.5,
+      3.5,
+      16
+     ],
+     "sym": true
+    }
+   ],
+   "replaces": [
+    "cuisse",
+    "tibia",
+    "pied"
+   ]
+  },
+  {
+   "id": "bras2",
+   "name": "Bras supplementaires",
+   "parts": [
+    {
+     "name": "bras2",
+     "boxes": [
+      [
+       3,
+       13,
+       13,
+       4,
+       15,
+       14
+      ]
+     ],
+     "parent": "tronc",
+     "pivot": [
+      4,
+      15.5,
+      14
+     ],
+     "sym": true
+    },
+    {
+     "name": "avant_bras2",
+     "boxes": [
+      [
+       3,
+       10,
+       13,
+       4,
+       12,
+       14
+      ]
+     ],
+     "parent": "bras2",
+     "pivot": [
+      4,
+      13,
+      14
+     ],
+     "sym": true
+    },
+    {
+     "name": "main2",
+     "boxes": [
+      [
+       3,
+       9,
+       13,
+       4,
+       9,
+       14
+      ]
+     ],
+     "parent": "avant_bras2",
+     "pivot": [
+      4,
+      10,
+      14
+     ],
+     "sym": true
+    }
+   ]
+  }
+ ]
+}

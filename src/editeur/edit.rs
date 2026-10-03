@@ -35,33 +35,6 @@ impl Tool {
     }
 }
 
-/// Les 23 familles de races jouables (§3.2) : leur squelette et leurs animations arrivent en E5.
-pub const RACES: [&str; 23] = [
-    "Humanoide",
-    "Humanoide animal",
-    "Reptilien",
-    "Aile celeste",
-    "Demon",
-    "Fee / insectoide aile",
-    "Harpie / homme-oiseau",
-    "Dragonoide",
-    "Drakeide sans ailes",
-    "Centaure",
-    "Drider",
-    "Lamia / naga",
-    "Sirene / triton",
-    "Slime",
-    "Spectre",
-    "Satyre / faune",
-    "Minotaure",
-    "Quadrupede animal",
-    "Insectoide",
-    "Cephalopode",
-    "Golem / geant",
-    "Dryade / sylvain",
-    "Mecha / robot",
-];
-
 /// Étiquettes proposées (adaptées de `TagCategories`).
 pub const TAG_GROUPS: [(&str, &[&str]); 5] = [
     ("Type", &["personnage", "vaisseau", "arme", "outil", "meuble", "decor", "vehicule", "creature", "plante"]),
