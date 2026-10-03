@@ -242,6 +242,21 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   de la race (golem 0,6). Repere : perso vers +z, membre en avant = rx negatif. Choix de la race : `race_view`
   anime (`Editor::shown`), options a cocher, choix de l'animation, camera decalee (`OrbitCam::shift`).
   Captures par race : `SPACESPORE_EDITOR_DEMO=race:<id>` (+ `SPACESPORE_RACE_ANIM`, `SPACESPORE_RACE_OPTIONS`).
+  E3 = grandes grilles (jusqu'a 1024³) : `format::Chunk::Full(Arc<Vec<u8>>)` (copie a l'ecriture : copier un
+  modele, garder un chunk pour annuler ou l'envoyer au maillage ne coute rien), `Sparse::data_mut/fold/put_chunk`.
+  `Doc` : lots d'annulation par chunk (`Snap` avant / apres des voxels, zones, calques ; 768 Mo au plus),
+  `dirty_chunks` (seuls ces chunks sont remailles), `revision`, calque courant `layer`, coupe `cut`.
+  `Doc::edit_region` ecrit chunk par chunk (outils de volume `Shape` boite / sphere / cylindre / ligne et `Brush`
+  ajouter (cases vides) / retirer / peindre, avec le miroir ; `flood` = pot de peinture ; `copy` / `clear` /
+  `paste` / `transform_selection` = selection et `Clip`). Les cases cachees (calque masque, au-dela de la coupe)
+  ne sont ni touchees ni visees (`raycast` prend la `mesh::Visibility`). Calques : `Model::layers` +
+  `layer_map` (`layers.bin`). `mesh.rs` : maillage glouton d'un chunk (`ChunkJob` emporte le chunk et ses 26
+  voisins), niveaux de detail 1 / 2 / 4 selon la distance ; `view::ChunkMeshes` : entites par chunk, les 6
+  premiers chunks tout de suite, le reste hors du fil principal. Poids du fichier et nombre de blocs calcules en
+  arriere-plan. Outils 5 a 0, molette pendant un trace = epaisseur, Ctrl+C/X/V, Suppr, R (Maj+R), C et Page
+  prec./suiv. (coupe). Mesures (regle 8) : `cargo test --release bench_editor -- --ignored --nocapture` ;
+  capture + images/s : `SPACESPORE_EDITOR_DEMO=croiseur` (+ `SPACESPORE_EDITOR_CUT`), ecrit `<capture>.txt`.
+  Feuille de route : hangars des porte-vaisseaux (§5.1, E6 / E7, Q8).
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

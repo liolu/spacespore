@@ -18,6 +18,7 @@
 use bevy::math::{IVec3, UVec3};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::io::{Cursor, Read, Write};
 
 /// Version du format (à augmenter si `meta.json` ou les chunks changent de sens).
@@ -144,17 +145,23 @@ pub struct Zone {
     pub scale: u8,
 }
 
-/// Un chunk de 32³ voxels.
+/// Un chunk de 32³ voxels. Les données sont partagées (copie à l'écriture, E3) : copier un modèle,
+/// garder un chunk pour l'annulation ou l'envoyer au maillage ne coûte rien tant qu'on n'y écrit pas.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Chunk {
     /// Toutes les cases ont la même valeur (non nulle).
     Uniform(u8),
     /// Cases mêlées, indexées x + 32·(y + 32·z).
-    Full(Box<[u8]>),
+    Full(Arc<Vec<u8>>),
+}
+
+/// Index d'une case dans son chunk (coordonnées locales 0..32).
+pub fn local_index(l: IVec3) -> usize {
+    (l.x + CHUNK * (l.y + CHUNK * l.z)) as usize
 }
 
 impl Chunk {
-    fn get(&self, i: usize) -> u8 {
+    pub fn get(&self, i: usize) -> u8 {
         match self {
             Chunk::Uniform(v) => *v,
             Chunk::Full(d) => d[i],
@@ -192,18 +199,22 @@ impl Sparse {
         match self.chunks.get_mut(&c) {
             None if v == 0 => {}
             None => {
-                let mut d = vec![0u8; CHUNK_VOLUME].into_boxed_slice();
+                let mut d = vec![0u8; CHUNK_VOLUME];
                 d[i] = v;
-                self.chunks.insert(c, Chunk::Full(d));
+                self.chunks.insert(c, Chunk::Full(Arc::new(d)));
             }
             Some(Chunk::Uniform(u)) if *u == v => {}
             Some(ch @ Chunk::Uniform(_)) => {
                 let Chunk::Uniform(u) = *ch else { unreachable!() };
-                let mut d = vec![u; CHUNK_VOLUME].into_boxed_slice();
+                let mut d = vec![u; CHUNK_VOLUME];
                 d[i] = v;
-                *ch = Chunk::Full(d);
+                *ch = Chunk::Full(Arc::new(d));
             }
             Some(Chunk::Full(d)) => {
+                if d[i] == v {
+                    return;
+                }
+                let d = Arc::make_mut(d);
                 d[i] = v;
                 // Chunk devenu vide ou uniforme : il se replie
                 let first = d[0];
@@ -214,6 +225,73 @@ impl Sparse {
                         self.chunks.insert(c, Chunk::Uniform(first));
                     }
                 }
+            }
+        }
+    }
+
+    /// Le chunk `c` (`None` : vide).
+    pub fn chunk(&self, c: IVec3) -> Option<&Chunk> {
+        self.chunks.get(&c)
+    }
+
+    /// Remplace un chunk entier (annuler par chunk, E3).
+    pub fn put_chunk(&mut self, c: IVec3, ch: Option<Chunk>) {
+        match ch {
+            Some(ch) => {
+                self.chunks.insert(c, ch);
+            }
+            None => {
+                self.chunks.remove(&c);
+            }
+        }
+    }
+
+    /// Positions des chunks non vides.
+    pub fn keys(&self) -> impl Iterator<Item = IVec3> + '_ {
+        self.chunks.keys().copied()
+    }
+
+    /// Les cases du chunk `c` à écrire directement (le chunk est déplié, puis `fold` le replie).
+    pub fn data_mut(&mut self, c: IVec3) -> &mut [u8] {
+        let ch = self.chunks.entry(c).or_insert_with(|| Chunk::Full(Arc::new(vec![0; CHUNK_VOLUME])));
+        if let Chunk::Uniform(u) = *ch {
+            *ch = Chunk::Full(Arc::new(vec![u; CHUNK_VOLUME]));
+        }
+        match ch {
+            Chunk::Full(d) => Arc::make_mut(d).as_mut_slice(),
+            Chunk::Uniform(_) => unreachable!(),
+        }
+    }
+
+    /// Replie le chunk `c` s'il est devenu vide ou uniforme.
+    pub fn fold(&mut self, c: IVec3) {
+        let Some(Chunk::Full(d)) = self.chunks.get(&c) else { return };
+        let first = d[0];
+        if d.iter().all(|x| *x == first) {
+            if first == 0 {
+                self.chunks.remove(&c);
+            } else {
+                self.chunks.insert(c, Chunk::Uniform(first));
+            }
+        }
+    }
+
+    /// Change toutes les valeurs par une table (palette compactée).
+    pub fn remap(&mut self, table: &[u8; 256]) {
+        let keys: Vec<IVec3> = self.chunks.keys().copied().collect();
+        for c in keys {
+            match self.chunks.get_mut(&c) {
+                Some(Chunk::Uniform(u)) => *u = table[*u as usize],
+                Some(Chunk::Full(d)) => {
+                    for x in Arc::make_mut(d).iter_mut() {
+                        *x = table[*x as usize];
+                    }
+                }
+                None => {}
+            }
+            self.fold(c);
+            if let Some(Chunk::Uniform(0)) = self.chunks.get(&c) {
+                self.chunks.remove(&c);
             }
         }
     }
@@ -309,7 +387,7 @@ impl Sparse {
                     if d.len() != CHUNK_VOLUME {
                         return Err("chunk incomplet".into());
                     }
-                    Chunk::Full(d.into_boxed_slice())
+                    Chunk::Full(Arc::new(d))
                 }
                 t => return Err(format!("chunk de type inconnu {t}")),
             };
@@ -371,7 +449,16 @@ struct Meta {
     #[serde(default)]
     zones: Vec<Zone>,
     #[serde(default)]
+    layers: Vec<Layer>,
+    #[serde(default)]
     tags: Vec<String>,
+}
+
+/// Un calque (E3) : nom et visibilité (gardée dans le fichier). Le calque 0 existe toujours.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Layer {
+    pub name: String,
+    pub visible: bool,
 }
 
 /// Un modèle voxel.
@@ -388,6 +475,10 @@ pub struct Model {
     pub zones: Vec<Zone>,
     /// Zone de chaque voxel (0 = corps fixe, sinon l'entrée `i - 1` de `zones`).
     pub zone_map: Sparse,
+    /// Calques (E3) ; vide = un seul calque « Principal ».
+    pub layers: Vec<Layer>,
+    /// Calque de chaque voxel (index dans `layers`).
+    pub layer_map: Sparse,
     pub tags: Vec<String>,
 }
 
@@ -400,7 +491,17 @@ impl Model {
             (ModelKind::Vaisseau, None) => UVec3::splat(ShipCategory::Chasseur.grid()),
             (ModelKind::Autre, _) => UVec3::splat(32),
         };
-        Self { name: name.to_string(), kind, race: None, category, size, palette: Vec::new(), voxels: Sparse::default(), zones: Vec::new(), zone_map: Sparse::default(), tags: Vec::new() }
+        Self { name: name.to_string(), kind, race: None, category, size, palette: Vec::new(), voxels: Sparse::default(), zones: Vec::new(), zone_map: Sparse::default(), layers: Vec::new(), layer_map: Sparse::default(), tags: Vec::new() }
+    }
+
+    /// Les calques (au moins « Principal »).
+    pub fn layer_list(&self) -> Vec<Layer> {
+        if self.layers.is_empty() { vec![Layer { name: "Principal".into(), visible: true }] } else { self.layers.clone() }
+    }
+
+    /// Calque `k` visible ?
+    pub fn layer_visible(&self, k: u8) -> bool {
+        self.layers.get(k as usize).is_none_or(|l| l.visible)
     }
 
     pub fn in_bounds(&self, p: IVec3) -> bool {
@@ -437,10 +538,7 @@ impl Model {
         if kept.len() == self.palette.len() {
             return;
         }
-        let cells: Vec<(IVec3, u8)> = self.voxels.iter().collect();
-        for (p, v) in cells {
-            self.voxels.set(p, remap[v as usize]);
-        }
+        self.voxels.remap(&remap);
         self.palette = kept;
     }
 
@@ -463,6 +561,7 @@ impl Model {
             size: self.size.to_array(),
             palette: self.palette.clone(),
             zones: self.zones.clone(),
+            layers: self.layers.clone(),
             tags: self.tags.clone(),
         };
         let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
@@ -472,6 +571,7 @@ impl Model {
             ("meta.json", serde_json::to_vec_pretty(&meta).map_err(|e| err(&e))?),
             ("voxels.bin", self.voxels.encode()),
             ("zones.bin", self.zone_map.encode()),
+            ("layers.bin", self.layer_map.encode()),
         ] {
             zip.start_file(name, opts).map_err(|e| err(&e))?;
             zip.write_all(&data).map_err(|e| err(&e))?;
@@ -507,6 +607,10 @@ impl Model {
             Ok(b) => Sparse::decode(&b)?,
             Err(_) => Sparse::default(),
         };
+        let layer_map = match read("layers.bin") {
+            Ok(b) => Sparse::decode(&b)?,
+            Err(_) => Sparse::default(),
+        };
         Ok(Self {
             name: meta.name,
             kind: meta.kind,
@@ -517,6 +621,8 @@ impl Model {
             voxels,
             zones: meta.zones,
             zone_map,
+            layers: meta.layers,
+            layer_map,
             tags: meta.tags,
         })
     }
@@ -548,6 +654,8 @@ mod tests {
         m.voxels.set(IVec3::new(63, 63, 63), glass);
         m.zones.push(Zone { name: "Aile gauche".into(), block: "aile".into(), part: "aile".into(), parent: None, pivot: [10.0, 3.0, 5.0], turn: 1, mirror: true, scale: 2 });
         m.zone_map.set(IVec3::new(4, 3, 5), 1);
+        m.layers = vec![Layer { name: "Principal".into(), visible: true }, Layer { name: "Interieur".into(), visible: false }];
+        m.layer_map.set(IVec3::new(5, 3, 5), 1);
         m.tags = vec!["chasseur".into(), "rouge".into()];
         m
     }

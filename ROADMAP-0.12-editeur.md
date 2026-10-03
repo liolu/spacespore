@@ -210,7 +210,7 @@ Règles :
 | **Radar / antenne** | rotation continue | toujours |
 | **Anneau rotatif** (gravité) | rotation lente continue | toujours |
 | **Panneaux solaires** | dépliés / pliés | posé / en vol |
-| **Baie de hangar** | grande porte | hangar (plus tard) |
+| **Baie de hangar** | grande porte + **emplacement de vaisseau** (§5.1) | entrée / sortie d'un vaisseau |
 | **Bras minier / grappin** | bras articulé | minage (0.14) |
 | **Feux de position** | clignotement | toujours (lumineux) |
 
@@ -218,6 +218,22 @@ Règles :
 dans quel état elle est ouverte ou fermée ; le jeu change d'état, les zones suivent.
 
 Les **propulseurs** restent visuels (Q3) : leur **direction** sert seulement à orienter les flammes.
+
+### 5.1 Porte-vaisseaux : emplacements de hangar (ajout du 03/10/2026)
+
+- Les **portes de hangar** d'un porte-vaisseau sont des **emplacements de vaisseau** : le bloc « Hangar »
+  pose une baie (grande porte animée) et une **place d'amarrage** à la taille d'une catégorie de vaisseau.
+- Chaque emplacement a son **animation d'entrée et de sortie** : approche, la porte s'ouvre, le vaisseau
+  ralentit, passe la porte et se pose sur sa place ; la porte se ferme. La sortie fait l'inverse
+  (décollage de la place, passage de la porte, accélération). Le chemin est une suite de points posés
+  dans l'éditeur (comme un bloc de mouvement), joué par le lecteur d'animations.
+- **Très gros vaisseaux** (capital) : **soutes à cargos**. Ils peuvent faire entrer des **vaisseaux cargo**
+  chargés de ressources ; à l'amarrage, la cargaison est déchargée dans le porte-vaisseau (lien avec
+  l'économie et le minage, 0.14).
+- Le vaisseau du joueur (ou d'un autre joueur) peut s'amarrer dans un emplacement libre à sa taille, puis
+  en ressortir.
+- Phases : le bloc Hangar, ses places et ses chemins dans l'éditeur en **E6** ; l'amarrage en jeu en
+  **E7** ; la cargaison des cargos avec l'économie (0.14).
 
 ---
 
@@ -256,8 +272,8 @@ Les **propulseurs** restent visuels (Q3) : leur **direction** sert seulement à 
 | **E3. Grands vaisseaux** | Chunks creux, maillage glouton asynchrone par chunk, LOD de l'aperçu. Outils de volume : **boîte, sphère, cylindre, ligne, remplissage** (pot de peinture), **sélection** (déplacer, copier, coller, tourner, miroir), **calques** masquables, coupe (voir l'intérieur, tranche par tranche). Annuler par chunk. Mesures de mémoire et de temps (règle 8). | XL |
 | **E4. Blocs de mouvement** | Le système du §4 : liste de blocs, gabarit blanc animé qui suit la souris, pose, zone colorée, remplacement des blocs, zones emboîtées, avertissement de collision, **aperçu ▶** avec choix de l'animation. Lecteur d'animations (images clés + chaînes procédurales + mélange). | L |
 | **E5. Races et animations de personnage** | Les 23 familles du §3.2 en fichiers de données (rig + gabarit + membres optionnels). Bibliothèque d'animations du §3.3 (base, interaction, émotes, vol, locomotions propres, procédurales). Écran de choix de race avec aperçu animé. | XL |
-| **E6. Animations de vaisseau** | Les blocs du §5, les **états du vaisseau** et leur déclenchement, flammes de propulseur selon la poussée, tourelles qui visent, feux clignotants. | L |
-| **E7. Dans le jeu** | Le **vaisseau du joueur** = son modèle (à la place de `ship.rs`), échelle **4 voxels = 1 bloc** (Q2), collisions (boîtes par chunk). Le **personnage à pied** = son modèle (`surface.rs`), animations pilotées par le jeu (marcher, courir, sauter, nager, piloter, apesanteur). Modèles des autres joueurs par empreinte (règle 7). Modèles fournis par défaut (1 perso par famille, 1 vaisseau par catégorie). | L |
+| **E6. Animations de vaisseau** | Les blocs du §5, les **états du vaisseau** et leur déclenchement, flammes de propulseur selon la poussée, tourelles qui visent, feux clignotants. **Hangars** (§5.1) : bloc Hangar, places d'amarrage par catégorie, chemins d'entrée et de sortie animés, soutes à cargos des capitaux. | L |
+| **E7. Dans le jeu** | Le **vaisseau du joueur** = son modèle (à la place de `ship.rs`), échelle **4 voxels = 1 bloc** (Q2), collisions (boîtes par chunk). Le **personnage à pied** = son modèle (`surface.rs`), animations pilotées par le jeu (marcher, courir, sauter, nager, piloter, apesanteur). Modèles des autres joueurs par empreinte (règle 7). Modèles fournis par défaut (1 perso par famille, 1 vaisseau par catégorie). **Amarrage** dans les hangars des porte-vaisseaux (entrée et sortie animées, §5.1). | L |
 | **E8. Mode avancé** (optionnel) | Pivot et angles modifiables, éditeur d'animation (frise des images clés), création de ses propres blocs de mouvement, import / export **MagicaVoxel `.vox`**, partage de modèles entre joueurs. | L |
 
 Ordre conseillé : E0 → E1 → E2 → E4 → E5 → E3 → E6 → E7 → E8. Le personnage (petite grille) permet de
@@ -283,6 +299,7 @@ valider le système d'animation **avant** de s'attaquer aux grilles géantes des
 |---|---|---|
 | Q5 | Les autres joueurs voient-ils **ton** modèle ? | Oui, envoyé une fois par empreinte (règle 7). |
 | Q7 | Nombre de couleurs par modèle : 255 suffisent ? | Oui (comme MagicaVoxel) ; la grande palette sert à choisir, le modèle garde ses 255. |
+| Q8 | Qui entre dans quel hangar (§5.1) ? | Croiseur : chasseurs ; capital : chasseurs et corvettes, plus des soutes à cargos (cargos jusqu'à la frégate). Une place = une catégorie au plus. |
 
 ---
 
@@ -317,7 +334,8 @@ depuis `main`. Build release. Ouvre une PR non fusionnée avec mesures (FPS, mé
   Écran de choix de race avec aperçu animé. Vérifie chaque race dans l'aperçu (capture par famille). »
 - **E6** — « Phase E6 de `ROADMAP-0.12-editeur.md` : blocs de mouvement de vaisseau du §5 (portes, verrière,
   ailes repliables, ailes en X, train, propulseurs, tourelles, radar, anneau, panneaux, feux), états du
-  vaisseau et leur déclenchement. »
+  vaisseau et leur déclenchement, hangars des porte-vaisseaux du §5.1 (places, chemins d'entrée et de
+  sortie, soutes à cargos). »
 - **E7** — « Phase E7 de `ROADMAP-0.12-editeur.md` : utilise les modèles en jeu. Vaisseau du joueur
   (`ship.rs`) et personnage à pied (`surface.rs`) tirés de leur `.ssvox`, échelle 4 voxels = 1 bloc du jeu (Q2),
   collisions, animations pilotées par le jeu, envoi des modèles aux autres joueurs par empreinte
