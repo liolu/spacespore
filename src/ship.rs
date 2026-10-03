@@ -14,6 +14,13 @@ impl Plugin for ShipPlugin {
 #[derive(Component)]
 pub struct Ship;
 
+/// Poussée demandée dans l'espace (repère du vaisseau : -z = avant ; longueur 0 à 1) : le pilote
+/// automatique en croisière, rien en stationnement. Les propulseurs du modèle la suivent (C3).
+#[derive(Component, Default)]
+pub struct ShipThrust {
+    pub push: Vec3,
+}
+
 #[derive(Resource, Debug, Clone, PartialEq)]
 pub enum ShipMode {
     Ship,
@@ -51,6 +58,7 @@ fn spawn_ship(
         Transform::from_translation(start),
         Visibility::default(),
         Ship,
+        ShipThrust::default(),
         LocalOutline(outline.clone()),
     )).with_children(|p| {
         // Le modèle du joueur (E7), choisi dans l'éditeur ; le vaisseau par défaut sinon

@@ -323,6 +323,12 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   dragon et harpie : voler / planer propres ; mecha : `voler_reacteur`. Vol : battement autour de l'axe avant du
   monde vu du tronc penche (`flap_axis` du script). Cape : 4 segments jusqu'aux mollets, fente pour la queue et
   les jambes. Flotter : la tete oscille. Test `every_family_animation_moves_something`.
+  C3 vaisseau : poussee = commandes (`Surface::pilot` / `pilot_turn` au sol et en vol bas, `ship::ShipThrust`
+  du pilote automatique en croisiere) dans `models::drive_local` (tuyeres `Inputs::steer`, manoeuvre = virage
+  demande ou mesure), jamais le deplacement monde. `main::fly_ship` + `surface::orient_ship` : nez vers la
+  destination sans roulis, passage doux a la pose de stationnement a l'approche. Vent `weather::wind` : direction
+  qui tourne (heures), force qui varie, rafales de quelques secondes (`Sample::gust`), turbulence d'orage ; plus
+  fort en altitude, roulis / tangage (`Surface::tilt`) que le pilote corrige, vent au HUD (`compass`).
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

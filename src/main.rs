@@ -1112,19 +1112,35 @@ fn hover_offset(kind: &TargetKind, net: &Net, zoom_distance: f32) -> Vec3 {
 }
 
 /// Amène le vaisseau à son point de stationnement : croisière, ou saut direct si `snap`
-/// (vaisseau caché, autre galaxie, ou déjà arrivé).
-fn steer_ship(ship_tf: &mut Transform, hover_pos: Vec3, snap: bool, dt: f32) {
+/// (vaisseau caché, autre galaxie, ou déjà arrivé). Renvoie le pas fait par ses moteurs (zéro
+/// quand il suit simplement l'astre).
+fn steer_ship(ship_tf: &mut Transform, hover_pos: Vec3, snap: bool, dt: f32) -> Vec3 {
     let to_hover = hover_pos - ship_tf.translation;
     let dist = to_hover.length();
     // Un astre en orbite se déplace de plusieurs unités par image : on le suit sans « croisière »
     if snap || dist > HYPERJUMP_DIST || dist <= (1500.0 * dt).max(30.0) {
         ship_tf.translation = hover_pos;
+        Vec3::ZERO
     } else {
         let cruise = (dist * 0.8).max(3000.0).min(50_000_000.0 * settings::SPACE_STRETCH);
-        let step = (cruise * dt).min(dist);
-        ship_tf.translation += to_hover.normalize() * step;
-        ship_tf.look_to(to_hover.normalize(), Vec3::Y);
+        let step = to_hover.normalize() * (cruise * dt).min(dist);
+        ship_tf.translation += step;
+        step
     }
+}
+
+/// Croisière puis stationnement : le vaisseau va vers son point, le nez vers la destination
+/// (virage doux, sans roulis), puis prend la pose de stationnement à l'approche ; la poussée suit.
+#[allow(clippy::too_many_arguments)]
+fn fly_ship(ship_tf: &mut Transform, thrust: &mut ship::ShipThrust, hover_pos: Vec3, target_pos: Vec3, levels: bool, snap: bool, wormhole: bool, dt: f32) {
+    if wormhole {
+        thrust.push = Vec3::NEG_Z;
+        return;
+    }
+    let before = ship_tf.rotation;
+    let step = steer_ship(ship_tf, hover_pos, snap, dt);
+    ship_tf.rotation = surface::orient_ship(before, ship_tf.translation, step, hover_pos, target_pos, levels, snap, dt);
+    thrust.push = if step == Vec3::ZERO { Vec3::ZERO } else { ship_tf.rotation.inverse() * step.normalize() };
 }
 
 fn camera_controller(
@@ -1146,7 +1162,7 @@ fn camera_controller(
 
     queries: TargetQueries,
 
-    mut ship_q: Query<(&mut Transform, &mut Visibility), With<Ship>>,
+    mut ship_q: Query<(&mut Transform, &mut Visibility, &mut ship::ShipThrust), With<Ship>>,
     mut zoom_level: ResMut<ZoomLevel>,
 
     mut cam_q:
@@ -1234,18 +1250,12 @@ fn camera_controller(
 
         let cam_rotation = Quat::from_euler(EulerRot::YXZ, ctrl.yaw, ctrl.pitch, 0.0);
 
-        let sp = if let Ok((mut ship_tf, mut ship_vis)) = ship_q.get_single_mut() {
+        let sp = if let Ok((mut ship_tf, mut ship_vis, mut thrust)) = ship_q.get_single_mut() {
             let hide_ship = matches!(*zoom_level, ZoomLevel::Galaxy | ZoomLevel::Cosmos | ZoomLevel::DeepSpace);
             let hover_pos = hover_position(target_pos, &camera_target, &settings, &queries.surface, &net, ctrl.distance, star_r, body_spin(&queries, &camera_target.0));
-            if !travel.active() {
-                // Caché (vue galaxie) : le vaisseau se place quand même sur son astre, sans croisière
-                let (before, forward) = (ship_tf.translation, *ship_tf.forward());
-                steer_ship(&mut ship_tf, hover_pos, hide_ship, time.delta_secs());
-                if surface::body_params(&settings, &camera_target.0).is_some() {
-                    let cruising = ship_tf.translation.distance(before) > 150.0;
-                    surface::level_ship(&mut ship_tf, target_pos, forward, cruising);
-                }
-            }
+            // Caché (vue galaxie) : le vaisseau se place quand même sur son astre, sans croisière
+            let levels = surface::body_params(&settings, &camera_target.0).is_some();
+            fly_ship(&mut ship_tf, &mut thrust, hover_pos, target_pos, levels, hide_ship, travel.active(), time.delta_secs());
             if hide_ship {
                 *ship_vis = Visibility::Hidden;
                 cam_tf.translation = target_pos + cam_rotation * Vec3::new(0.0, 0.0, ctrl.distance);
@@ -1330,18 +1340,12 @@ fn camera_controller(
     let cam_rotation = Quat::from_euler(EulerRot::YXZ, ctrl.yaw, ctrl.pitch, 0.0);
 
     // ── Vaisseau : croisière puis posé au-dessus de l'astre ────────
-    let ship_pos = if let Ok((mut ship_tf, mut ship_vis)) = ship_q.get_single_mut() {
+    let ship_pos = if let Ok((mut ship_tf, mut ship_vis, mut thrust)) = ship_q.get_single_mut() {
         let hide_ship = matches!(*zoom_level, ZoomLevel::Galaxy | ZoomLevel::Cosmos | ZoomLevel::DeepSpace);
         let hover_pos = hover_position(target_pos, &camera_target, &settings, &queries.surface, &net, ctrl.distance, star_r, body_spin(&queries, &camera_target.0));
-        if !travel.active() {
-            // Caché (vue galaxie) : le vaisseau se place quand même sur son astre, sans croisière
-            let (before, forward) = (ship_tf.translation, *ship_tf.forward());
-            steer_ship(&mut ship_tf, hover_pos, hide_ship, time.delta_secs());
-            if surface::body_params(&settings, &camera_target.0).is_some() {
-                let cruising = ship_tf.translation.distance(before) > 150.0;
-                surface::level_ship(&mut ship_tf, target_pos, forward, cruising);
-            }
-        }
+        // Caché (vue galaxie) : le vaisseau se place quand même sur son astre, sans croisière
+        let levels = surface::body_params(&settings, &camera_target.0).is_some();
+        fly_ship(&mut ship_tf, &mut thrust, hover_pos, target_pos, levels, hide_ship, travel.active(), time.delta_secs());
         if hide_ship {
             *ship_vis = Visibility::Hidden;
             cam_tf.translation = target_pos + cam_rotation * Vec3::new(0.0, 0.0, ctrl.distance);
