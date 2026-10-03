@@ -1,0 +1,81 @@
+{
+ "id": "ondulation",
+ "name": "Ondulation (nage)",
+ "group": "Locomotion",
+ "duration": 1.2,
+ "tracks": {
+  "queue_*": {
+   "type": "onde",
+   "axis": [
+    1,
+    0,
+    0
+   ],
+   "amplitude": 10,
+   "period": 1.2,
+   "step": 0.2,
+   "amp_step": 4
+  },
+  "nageoire": {
+   "type": "onde",
+   "axis": [
+    1,
+    0,
+    0
+   ],
+   "amplitude": 25,
+   "period": 1.2,
+   "phase": 0.8
+  },
+  "bassin": {
+   "type": "cles",
+   "rot": [
+    [
+     0.0,
+     -5.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.6,
+     5.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.2,
+     -5.0,
+     0.0,
+     0.0
+    ]
+   ]
+  },
+  "bras_g": {
+   "type": "cles",
+   "rot": [
+    [
+     0.0,
+     0.0,
+     0.0,
+     -20.0
+    ],
+    [
+     0.6,
+     -20.0,
+     0.0,
+     -40.0
+    ],
+    [
+     1.2,
+     0.0,
+     0.0,
+     -20.0
+    ]
+   ]
+  }
+ },
+ "mirror": 0.0,
+ "requires": [
+  "nageoire"
+ ]
+}

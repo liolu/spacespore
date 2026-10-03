@@ -67,7 +67,7 @@
       "duration": 1.0,
       "tracks": {}
     },
-    "marche": {
+    "marcher": {
       "duration": 1.2,
       "tracks": {
         "cuisse": {

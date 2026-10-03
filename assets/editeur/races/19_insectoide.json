@@ -1,0 +1,451 @@
+{
+ "id": "insectoide",
+ "name": "Insectoide",
+ "races": [
+  "Homme-mante",
+  "Homme-fourmi",
+  "Alien insecte"
+ ],
+ "locomotion": "bipede ou hexapode",
+ "preview": "marcher",
+ "parts": [
+  {
+   "name": "bassin",
+   "boxes": [
+    [
+     5,
+     10,
+     14,
+     10,
+     11,
+     17
+    ]
+   ],
+   "pivot": [
+    8,
+    11,
+    16
+   ]
+  },
+  {
+   "name": "tronc",
+   "boxes": [
+    [
+     5,
+     12,
+     14,
+     10,
+     19,
+     17
+    ]
+   ],
+   "parent": "bassin",
+   "pivot": [
+    8,
+    12,
+    16
+   ]
+  },
+  {
+   "name": "cou",
+   "boxes": [
+    [
+     7,
+     20,
+     15,
+     8,
+     20,
+     16
+    ]
+   ],
+   "parent": "tronc",
+   "pivot": [
+    8,
+    20,
+    16
+   ]
+  },
+  {
+   "name": "tete",
+   "boxes": [
+    [
+     5,
+     21,
+     13,
+     10,
+     26,
+     18
+    ]
+   ],
+   "parent": "cou",
+   "pivot": [
+    8,
+    21,
+    16
+   ]
+  },
+  {
+   "name": "bras",
+   "boxes": [
+    [
+     3,
+     16,
+     15,
+     4,
+     19,
+     16
+    ]
+   ],
+   "parent": "tronc",
+   "pivot": [
+    4,
+    19.5,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "avant_bras",
+   "boxes": [
+    [
+     3,
+     12,
+     15,
+     4,
+     15,
+     16
+    ]
+   ],
+   "parent": "bras",
+   "pivot": [
+    4,
+    16,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "main",
+   "boxes": [
+    [
+     3,
+     10,
+     15,
+     4,
+     11,
+     16
+    ]
+   ],
+   "parent": "avant_bras",
+   "pivot": [
+    4,
+    12,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "cuisse",
+   "boxes": [
+    [
+     5,
+     6,
+     14,
+     7,
+     9,
+     17
+    ]
+   ],
+   "parent": "bassin",
+   "pivot": [
+    6.5,
+    10,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "tibia",
+   "boxes": [
+    [
+     5,
+     2,
+     15,
+     7,
+     5,
+     16
+    ]
+   ],
+   "parent": "cuisse",
+   "pivot": [
+    6.5,
+    6,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "pied",
+   "boxes": [
+    [
+     5,
+     0,
+     14,
+     7,
+     1,
+     18
+    ]
+   ],
+   "parent": "tibia",
+   "pivot": [
+    6.5,
+    2,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "bras2",
+   "boxes": [
+    [
+     3,
+     13,
+     13,
+     4,
+     15,
+     14
+    ]
+   ],
+   "parent": "tronc",
+   "pivot": [
+    4,
+    15.5,
+    14
+   ],
+   "sym": true
+  },
+  {
+   "name": "avant_bras2",
+   "boxes": [
+    [
+     3,
+     10,
+     13,
+     4,
+     12,
+     14
+    ]
+   ],
+   "parent": "bras2",
+   "pivot": [
+    4,
+    13,
+    14
+   ],
+   "sym": true
+  },
+  {
+   "name": "main2",
+   "boxes": [
+    [
+     3,
+     9,
+     13,
+     4,
+     9,
+     14
+    ]
+   ],
+   "parent": "avant_bras2",
+   "pivot": [
+    4,
+    10,
+    14
+   ],
+   "sym": true
+  },
+  {
+   "name": "mandibule",
+   "boxes": [
+    [
+     6,
+     21,
+     19,
+     6,
+     22,
+     21
+    ]
+   ],
+   "parent": "tete",
+   "pivot": [
+    6.5,
+    22,
+    18.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "antenne",
+   "boxes": [
+    [
+     6,
+     27,
+     17,
+     6,
+     29,
+     17
+    ],
+    [
+     5,
+     30,
+     18,
+     5,
+     31,
+     18
+    ]
+   ],
+   "parent": "tete",
+   "pivot": [
+    6.5,
+    27,
+    17.5
+   ],
+   "sym": true
+  }
+ ],
+ "options": [
+  {
+   "id": "ailes",
+   "name": "Ailes",
+   "parts": [
+    {
+     "name": "aile",
+     "boxes": [
+      [
+       1,
+       17,
+       13,
+       5,
+       20,
+       13
+      ]
+     ],
+     "parent": "tronc",
+     "pivot": [
+      5.5,
+      19,
+      13.5
+     ],
+     "sym": true
+    },
+    {
+     "name": "pointe",
+     "boxes": [
+      [
+       0,
+       21,
+       13,
+       2,
+       27,
+       13
+      ]
+     ],
+     "parent": "aile",
+     "pivot": [
+      1,
+      20.5,
+      13.5
+     ],
+     "sym": true
+    }
+   ]
+  },
+  {
+   "id": "digitigrade",
+   "name": "Jambes digitigrades",
+   "parts": [
+    {
+     "name": "cuisse",
+     "boxes": [
+      [
+       5,
+       7,
+       15,
+       7,
+       9,
+       17
+      ]
+     ],
+     "parent": "bassin",
+     "pivot": [
+      6.5,
+      10,
+      16
+     ],
+     "sym": true
+    },
+    {
+     "name": "tibia",
+     "boxes": [
+      [
+       5,
+       4,
+       13,
+       7,
+       6,
+       14
+      ]
+     ],
+     "parent": "cuisse",
+     "pivot": [
+      6.5,
+      7,
+      15.5
+     ],
+     "sym": true
+    },
+    {
+     "name": "pied",
+     "boxes": [
+      [
+       5,
+       1,
+       14,
+       6,
+       3,
+       15
+      ]
+     ],
+     "parent": "tibia",
+     "pivot": [
+      6,
+      4,
+      14
+     ],
+     "sym": true
+    },
+    {
+     "name": "orteils",
+     "boxes": [
+      [
+       5,
+       0,
+       14,
+       7,
+       0,
+       18
+      ]
+     ],
+     "parent": "pied",
+     "sym": true,
+     "fixed": true
+    }
+   ],
+   "replaces": [
+    "cuisse",
+    "tibia",
+    "pied"
+   ]
+  }
+ ]
+}

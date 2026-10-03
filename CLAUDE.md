@@ -229,6 +229,17 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   meme zone seulement), poses `motion::compose(zone_locals)` (aperçu P, choix de l'animation, melange 0,35 s),
   gabarit `Ghost` qui joue son repos (rouge s'il deborde ou recouvre), contours des zones, `motion::collisions`
   (zone qui traverse le corps fixe = rouge). Captures : `SPACESPORE_EDITOR_DEMO=blocs` (apercu) ou `gabarit`.
+  E5 = races et animations : `races.rs` (`RaceDef` : os = parties nom / parent / pivot / boites, `sym` = decrit a
+  gauche « _g » et reflete « _d », `fixed` = partie fixe qui suit son parent, `options` = membres optionnels avec
+  `replaces`) ; 23 familles dans `assets/editeur/races/`, 49 animations (§3.3) dans `assets/editeur/anims/`
+  (generes par un script, `build.rs` integre blocs / anims / races ; le joueur ajoute dans `saves/editeur/`).
+  `motion::Library` (blocs + `LibAnim` + races) ; une animation vise des os par nom de zone (`bone` : espaces -> _),
+  par motif de chaine (`queue_*`, `patte_*_g` : onde decalee de `step` par maillon), cote droit = gauche reflete
+  decale de `mirror` ; `requires` (voler : os « aile ») ; groupe « Procedurales » toujours actif par-dessus ;
+  pistes de taille (slime). Pour une zone : animation de son bloc, sinon de la bibliotheque, sinon repos ; vitesse
+  de la race (golem 0,6). Repere : perso vers +z, membre en avant = rx negatif. Choix de la race : `race_view`
+  anime (`Editor::shown`), options a cocher, choix de l'animation, camera decalee (`OrbitCam::shift`).
+  Captures par race : `SPACESPORE_EDITOR_DEMO=race:<id>` (+ `SPACESPORE_RACE_ANIM`, `SPACESPORE_RACE_OPTIONS`).
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

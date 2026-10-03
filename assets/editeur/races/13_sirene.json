@@ -1,0 +1,369 @@
+{
+ "id": "sirene",
+ "name": "Sirene / triton",
+ "races": [
+  "Sirene",
+  "Triton"
+ ],
+ "locomotion": "nage",
+ "preview": "ondulation",
+ "parts": [
+  {
+   "name": "bassin",
+   "boxes": [
+    [
+     5,
+     10,
+     14,
+     10,
+     11,
+     17
+    ]
+   ],
+   "pivot": [
+    8,
+    11,
+    16
+   ]
+  },
+  {
+   "name": "tronc",
+   "boxes": [
+    [
+     5,
+     12,
+     14,
+     10,
+     19,
+     17
+    ]
+   ],
+   "parent": "bassin",
+   "pivot": [
+    8,
+    12,
+    16
+   ]
+  },
+  {
+   "name": "cou",
+   "boxes": [
+    [
+     7,
+     20,
+     15,
+     8,
+     20,
+     16
+    ]
+   ],
+   "parent": "tronc",
+   "pivot": [
+    8,
+    20,
+    16
+   ]
+  },
+  {
+   "name": "tete",
+   "boxes": [
+    [
+     5,
+     21,
+     13,
+     10,
+     26,
+     18
+    ]
+   ],
+   "parent": "cou",
+   "pivot": [
+    8,
+    21,
+    16
+   ]
+  },
+  {
+   "name": "bras",
+   "boxes": [
+    [
+     3,
+     16,
+     15,
+     4,
+     19,
+     16
+    ]
+   ],
+   "parent": "tronc",
+   "pivot": [
+    4,
+    19.5,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "avant_bras",
+   "boxes": [
+    [
+     3,
+     12,
+     15,
+     4,
+     15,
+     16
+    ]
+   ],
+   "parent": "bras",
+   "pivot": [
+    4,
+    16,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "main",
+   "boxes": [
+    [
+     3,
+     10,
+     15,
+     4,
+     11,
+     16
+    ]
+   ],
+   "parent": "avant_bras",
+   "pivot": [
+    4,
+    12,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "queue_1",
+   "boxes": [
+    [
+     6,
+     7,
+     14,
+     9,
+     9,
+     17
+    ]
+   ],
+   "parent": "bassin",
+   "pivot": [
+    8,
+    10,
+    16
+   ]
+  },
+  {
+   "name": "queue_2",
+   "boxes": [
+    [
+     6,
+     4,
+     15,
+     9,
+     6,
+     16
+    ]
+   ],
+   "parent": "queue_1",
+   "pivot": [
+    8,
+    7,
+    16
+   ]
+  },
+  {
+   "name": "queue_3",
+   "boxes": [
+    [
+     7,
+     2,
+     13,
+     8,
+     3,
+     15
+    ]
+   ],
+   "parent": "queue_2",
+   "pivot": [
+    8,
+    4,
+    15.5
+   ]
+  },
+  {
+   "name": "queue_4",
+   "boxes": [
+    [
+     7,
+     0,
+     10,
+     8,
+     1,
+     12
+    ]
+   ],
+   "parent": "queue_3",
+   "pivot": [
+    8,
+    2,
+    13
+   ]
+  },
+  {
+   "name": "nageoire",
+   "boxes": [
+    [
+     5,
+     0,
+     7,
+     10,
+     0,
+     9
+    ]
+   ],
+   "parent": "queue_4",
+   "pivot": [
+    8,
+    0.5,
+    10
+   ]
+  },
+  {
+   "name": "dorsale",
+   "boxes": [
+    [
+     7,
+     13,
+     13,
+     8,
+     17,
+     13
+    ]
+   ],
+   "parent": "tronc",
+   "fixed": true
+  }
+ ],
+ "options": [
+  {
+   "id": "bras2",
+   "name": "Bras supplementaires",
+   "parts": [
+    {
+     "name": "bras2",
+     "boxes": [
+      [
+       3,
+       13,
+       13,
+       4,
+       15,
+       14
+      ]
+     ],
+     "parent": "tronc",
+     "pivot": [
+      4,
+      15.5,
+      14
+     ],
+     "sym": true
+    },
+    {
+     "name": "avant_bras2",
+     "boxes": [
+      [
+       3,
+       10,
+       13,
+       4,
+       12,
+       14
+      ]
+     ],
+     "parent": "bras2",
+     "pivot": [
+      4,
+      13,
+      14
+     ],
+     "sym": true
+    },
+    {
+     "name": "main2",
+     "boxes": [
+      [
+       3,
+       9,
+       13,
+       4,
+       9,
+       14
+      ]
+     ],
+     "parent": "avant_bras2",
+     "pivot": [
+      4,
+      10,
+      14
+     ],
+     "sym": true
+    }
+   ]
+  },
+  {
+   "id": "cheveux",
+   "name": "Cheveux longs",
+   "parts": [
+    {
+     "name": "cheveux_1",
+     "boxes": [
+      [
+       5,
+       22,
+       12,
+       10,
+       25,
+       12
+      ]
+     ],
+     "parent": "tete",
+     "pivot": [
+      8,
+      25.5,
+      12.5
+     ]
+    },
+    {
+     "name": "cheveux_2",
+     "boxes": [
+      [
+       5,
+       18,
+       12,
+       10,
+       21,
+       12
+      ]
+     ],
+     "parent": "cheveux_1",
+     "pivot": [
+      8,
+      22,
+      12.5
+     ]
+    }
+   ]
+  }
+ ]
+}

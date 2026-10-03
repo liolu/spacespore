@@ -1,0 +1,543 @@
+{
+ "id": "dragonoide",
+ "name": "Dragonoide",
+ "races": [
+  "Dragonoide",
+  "Drakeide aile"
+ ],
+ "locomotion": "bipede + vol",
+ "preview": "voler",
+ "parts": [
+  {
+   "name": "bassin",
+   "boxes": [
+    [
+     5,
+     10,
+     14,
+     10,
+     11,
+     17
+    ]
+   ],
+   "pivot": [
+    8,
+    11,
+    16
+   ]
+  },
+  {
+   "name": "tronc",
+   "boxes": [
+    [
+     5,
+     12,
+     14,
+     10,
+     19,
+     17
+    ]
+   ],
+   "parent": "bassin",
+   "pivot": [
+    8,
+    12,
+    16
+   ]
+  },
+  {
+   "name": "cou_1",
+   "boxes": [
+    [
+     7,
+     20,
+     15,
+     8,
+     21,
+     16
+    ]
+   ],
+   "parent": "tronc",
+   "pivot": [
+    8,
+    20,
+    16
+   ]
+  },
+  {
+   "name": "cou_2",
+   "boxes": [
+    [
+     7,
+     22,
+     15,
+     8,
+     22,
+     16
+    ]
+   ],
+   "parent": "cou_1",
+   "pivot": [
+    8,
+    22,
+    16
+   ]
+  },
+  {
+   "name": "tete",
+   "boxes": [
+    [
+     5,
+     23,
+     13,
+     10,
+     27,
+     18
+    ]
+   ],
+   "parent": "cou_2",
+   "pivot": [
+    8,
+    23,
+    16
+   ]
+  },
+  {
+   "name": "bras",
+   "boxes": [
+    [
+     3,
+     16,
+     15,
+     4,
+     19,
+     16
+    ]
+   ],
+   "parent": "tronc",
+   "pivot": [
+    4,
+    19.5,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "avant_bras",
+   "boxes": [
+    [
+     3,
+     12,
+     15,
+     4,
+     15,
+     16
+    ]
+   ],
+   "parent": "bras",
+   "pivot": [
+    4,
+    16,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "main",
+   "boxes": [
+    [
+     3,
+     10,
+     15,
+     4,
+     11,
+     16
+    ]
+   ],
+   "parent": "avant_bras",
+   "pivot": [
+    4,
+    12,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "cuisse",
+   "boxes": [
+    [
+     5,
+     6,
+     14,
+     7,
+     9,
+     17
+    ]
+   ],
+   "parent": "bassin",
+   "pivot": [
+    6.5,
+    10,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "tibia",
+   "boxes": [
+    [
+     5,
+     2,
+     15,
+     7,
+     5,
+     16
+    ]
+   ],
+   "parent": "cuisse",
+   "pivot": [
+    6.5,
+    6,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "pied",
+   "boxes": [
+    [
+     5,
+     0,
+     14,
+     7,
+     1,
+     18
+    ]
+   ],
+   "parent": "tibia",
+   "pivot": [
+    6.5,
+    2,
+    16
+   ],
+   "sym": true
+  },
+  {
+   "name": "machoire",
+   "boxes": [
+    [
+     6,
+     23,
+     19,
+     9,
+     24,
+     21
+    ]
+   ],
+   "parent": "tete",
+   "pivot": [
+    8,
+    24.5,
+    19
+   ]
+  },
+  {
+   "name": "museau",
+   "boxes": [
+    [
+     6,
+     25,
+     19,
+     9,
+     26,
+     21
+    ]
+   ],
+   "parent": "tete",
+   "fixed": true
+  },
+  {
+   "name": "corne",
+   "boxes": [
+    [
+     5,
+     28,
+     17,
+     5,
+     29,
+     18
+    ],
+    [
+     4,
+     30,
+     17,
+     4,
+     31,
+     17
+    ]
+   ],
+   "parent": "tete",
+   "sym": true,
+   "fixed": true
+  },
+  {
+   "name": "aile",
+   "boxes": [
+    [
+     1,
+     17,
+     13,
+     5,
+     20,
+     13
+    ]
+   ],
+   "parent": "tronc",
+   "pivot": [
+    5.5,
+    19,
+    13.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "aile_milieu",
+   "boxes": [
+    [
+     0,
+     21,
+     13,
+     2,
+     25,
+     13
+    ]
+   ],
+   "parent": "aile",
+   "pivot": [
+    1,
+    20.5,
+    13.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "pointe",
+   "boxes": [
+    [
+     0,
+     26,
+     13,
+     1,
+     30,
+     13
+    ]
+   ],
+   "parent": "aile_milieu",
+   "pivot": [
+    1,
+    25.5,
+    13.5
+   ],
+   "sym": true
+  },
+  {
+   "name": "queue_1",
+   "boxes": [
+    [
+     6,
+     9,
+     11,
+     9,
+     11,
+     13
+    ]
+   ],
+   "parent": "bassin",
+   "pivot": [
+    8,
+    11,
+    14
+   ]
+  },
+  {
+   "name": "queue_2",
+   "boxes": [
+    [
+     6,
+     9,
+     8,
+     9,
+     11,
+     10
+    ]
+   ],
+   "parent": "queue_1",
+   "pivot": [
+    8,
+    11,
+    11
+   ]
+  },
+  {
+   "name": "queue_3",
+   "boxes": [
+    [
+     7,
+     10,
+     5,
+     8,
+     11,
+     7
+    ]
+   ],
+   "parent": "queue_2",
+   "pivot": [
+    8,
+    11,
+    8
+   ]
+  },
+  {
+   "name": "queue_4",
+   "boxes": [
+    [
+     7,
+     10,
+     2,
+     8,
+     11,
+     4
+    ]
+   ],
+   "parent": "queue_3",
+   "pivot": [
+    8,
+    11,
+    5
+   ]
+  },
+  {
+   "name": "queue_5",
+   "boxes": [
+    [
+     8,
+     9,
+     0,
+     8,
+     9,
+     1
+    ]
+   ],
+   "parent": "queue_4",
+   "pivot": [
+    8,
+    10,
+    2
+   ]
+  },
+  {
+   "name": "piquants",
+   "boxes": [
+    [
+     7,
+     14,
+     13,
+     8,
+     19,
+     13
+    ]
+   ],
+   "parent": "tronc",
+   "fixed": true
+  }
+ ],
+ "options": [
+  {
+   "id": "digitigrade",
+   "name": "Jambes digitigrades",
+   "parts": [
+    {
+     "name": "cuisse",
+     "boxes": [
+      [
+       5,
+       7,
+       15,
+       7,
+       9,
+       17
+      ]
+     ],
+     "parent": "bassin",
+     "pivot": [
+      6.5,
+      10,
+      16
+     ],
+     "sym": true
+    },
+    {
+     "name": "tibia",
+     "boxes": [
+      [
+       5,
+       4,
+       13,
+       7,
+       6,
+       14
+      ]
+     ],
+     "parent": "cuisse",
+     "pivot": [
+      6.5,
+      7,
+      15.5
+     ],
+     "sym": true
+    },
+    {
+     "name": "pied",
+     "boxes": [
+      [
+       5,
+       1,
+       14,
+       6,
+       3,
+       15
+      ]
+     ],
+     "parent": "tibia",
+     "pivot": [
+      6,
+      4,
+      14
+     ],
+     "sym": true
+    },
+    {
+     "name": "orteils",
+     "boxes": [
+      [
+       5,
+       0,
+       14,
+       7,
+       0,
+       18
+      ]
+     ],
+     "parent": "pied",
+     "sym": true,
+     "fixed": true
+    }
+   ],
+   "replaces": [
+    "cuisse",
+    "tibia",
+    "pied"
+   ]
+  }
+ ]
+}

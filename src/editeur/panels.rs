@@ -6,7 +6,7 @@ use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::ButtonState;
 use bevy::prelude::*;
 
-use super::edit::{self, Tool, RACES, TAG_GROUPS};
+use super::edit::{self, Tool, TAG_GROUPS};
 use super::format::{Material, Model, ModelKind, PaletteEntry, ShipCategory, CHARACTER_GRID, MAX_FILE_BYTES, OTHER_MAX_GRID};
 use super::palette;
 use super::{library_dir, list_models, save_model, AppState, Editor, Overlay};
@@ -22,7 +22,7 @@ const DIM: Color = Color::srgb(0.6, 0.66, 0.75);
 #[derive(Component)]
 pub struct Blocks;
 
-/// Panneau défilant : 0 = gauche (outils), 1 = droite (modèle et zones).
+/// Panneau défilant : 0 = gauche (outils), 1 = droite (modèle et zones), 2 = choix de la race.
 #[derive(Component)]
 pub struct ScrollPanel(pub usize);
 
@@ -30,7 +30,7 @@ pub struct ScrollPanel(pub usize);
 pub fn scroll_panels(mut wheel: EventReader<bevy::input::mouse::MouseWheel>, mut editor: ResMut<Editor>, mut q: Query<(&Interaction, &mut ScrollPosition, &ScrollPanel)>) {
     let lines: f32 = wheel.read().map(crate::ui::wheel_lines).sum();
     for (i, mut s, panel) in &mut q {
-        let k = panel.0.min(1);
+        let k = panel.0.min(2);
         // La mise en page ramène la position dans le contenu : on garde la vraie
         if (editor.scroll[k] - s.offset_y).abs() > 0.5 {
             editor.scroll[k] = s.offset_y;
@@ -99,6 +99,8 @@ pub enum Act {
     Preview,
     /// Animation jouée par l'aperçu (index dans `motion::model_anims`).
     Anim(usize),
+    /// Cocher / décocher un membre optionnel de la race choisie.
+    RaceOption(usize),
 }
 
 fn button(p: &mut ChildBuilder, label: &str, act: Act, on: bool) {
@@ -207,11 +209,11 @@ pub fn rebuild(mut commands: Commands, mut editor: ResMut<Editor>, old: Query<En
                     label(p, "Blocs de mouvement", 13.0, DIM);
                     wrap(p, |w| {
                         for i in blocks {
-                            button(w, &ed.blocks[i].name, Act::Block(i), ed.placing.is_some_and(|x| x.block == i));
+                            button(w, &ed.lib.blocks[i].name, Act::Block(i), ed.placing.is_some_and(|x| x.block == i));
                         }
                     });
                     if let Some(x) = ed.placing {
-                        let scale = if ed.blocks.get(x.block).is_some_and(|b| b.scalable) { format!(", taille {}", x.place.scale) } else { String::new() };
+                        let scale = if ed.lib.blocks.get(x.block).is_some_and(|b| b.scalable) { format!(", taille {}", x.place.scale) } else { String::new() };
                         let mirror = if x.place.mirror { ", reflete" } else { "" };
                         label(p, &format!("Molette : tourner ({} quart(s){scale}{mirror})", x.place.turn), 13.0, ON);
                     }
@@ -254,40 +256,43 @@ pub fn rebuild(mut commands: Commands, mut editor: ResMut<Editor>, old: Query<En
                 }
             });
 
-            // ── Bas : la grande palette OKLCH ──
-            root.spawn(panel(Node {
-                position_type: PositionType::Absolute,
-                left: Val::Px(266.0),
-                right: Val::Px(276.0),
-                bottom: Val::Px(40.0),
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(4.0),
-                padding: UiRect::all(Val::Px(8.0)),
-                ..default()
-            }))
-            .with_children(|p| {
-                wrap(p, |w| {
-                    label(w, "Palette (36 teintes x 12 clartes)", 13.0, DIM);
-                    for s in palette::Saturation::ALL {
-                        button(w, s.name(), Act::Saturation(s), ed.saturation == s);
+            // ── Bas : la grande palette OKLCH (cachée pendant le choix de la race) ──
+            if !ed.race_shown() {
+                root.spawn(panel(Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(266.0),
+                    right: Val::Px(276.0),
+                    bottom: Val::Px(40.0),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(4.0),
+                    padding: UiRect::all(Val::Px(8.0)),
+                    ..default()
+                }))
+                .with_children(|p| {
+                    wrap(p, |w| {
+                        label(w, "Palette (36 teintes x 12 clartes)", 13.0, DIM);
+                        for s in palette::Saturation::ALL {
+                            button(w, s.name(), Act::Saturation(s), ed.saturation == s);
+                        }
+                    });
+                    for row in (0..palette::LIGHTS).rev() {
+                        p.spawn(Node { flex_direction: FlexDirection::Row, ..default() }).with_children(|r| {
+                            for col in 0..palette::HUES {
+                                let rgb = palette::grid_color(ed.saturation, col, row);
+                                let e = PaletteEntry { rgb, material: ed.color.material };
+                                cell(r, &e, Act::Pick(e), e == ed.color);
+                            }
+                        });
                     }
-                });
-                for row in (0..palette::LIGHTS).rev() {
-                    p.spawn(Node { flex_direction: FlexDirection::Row, ..default() }).with_children(|r| {
-                        for col in 0..palette::HUES {
-                            let rgb = palette::grid_color(ed.saturation, col, row);
-                            let e = PaletteEntry { rgb, material: ed.color.material };
+                    p.spawn(Node { flex_direction: FlexDirection::Row, margin: UiRect::top(Val::Px(3.0)), ..default() }).with_children(|r| {
+                        for i in 0..palette::GREYS {
+                            let e = PaletteEntry { rgb: palette::grey(i), material: ed.color.material };
                             cell(r, &e, Act::Pick(e), e == ed.color);
                         }
                     });
-                }
-                p.spawn(Node { flex_direction: FlexDirection::Row, margin: UiRect::top(Val::Px(3.0)), ..default() }).with_children(|r| {
-                    for i in 0..palette::GREYS {
-                        let e = PaletteEntry { rgb: palette::grey(i), material: ed.color.material };
-                        cell(r, &e, Act::Pick(e), e == ed.color);
-                    }
                 });
-            });
+
+            }
 
             // ── Haut : onglets et fichiers ──
             root.spawn(panel(Node {
@@ -348,7 +353,7 @@ pub fn rebuild(mut commands: Commands, mut editor: ResMut<Editor>, old: Query<En
                         wrap(p, |w| button(w, if ed.preview.is_some() { "Arreter l'apercu (P)" } else { "> Apercu (P)" }, Act::Preview, ed.preview.is_some()));
                         if let Some(pv) = &ed.preview {
                             wrap(p, |w| {
-                                for (k, a) in super::motion::model_anims(&d.model, &ed.blocks).iter().enumerate() {
+                                for (k, a) in super::motion::model_anims(&d.model, &ed.lib).iter().enumerate() {
                                     button(w, a, Act::Anim(k), *a == pv.anim);
                                 }
                             });
@@ -391,19 +396,23 @@ fn hex(rgb: &[u8; 3]) -> String {
 
 /// Fenêtre au centre de l'écran.
 fn overlay(root: &mut ChildBuilder, ed: &Editor, o: &Overlay) {
+    // Choix de la race : la fenêtre à gauche, le rig animé à droite
+    let side = *o == Overlay::New && ed.new_kind == ModelKind::Personnage;
     root.spawn(panel(Node {
         position_type: PositionType::Absolute,
-        left: Val::Percent(50.0),
-        top: Val::Px(70.0),
-        width: Val::Px(760.0),
-        margin: UiRect::left(Val::Px(-380.0)),
+        left: if side { Val::Px(8.0) } else { Val::Percent(50.0) },
+        top: Val::Px(if side { 8.0 } else { 70.0 }),
+        width: Val::Px(if side { 640.0 } else { 760.0 }),
+        bottom: if side { Val::Px(40.0) } else { Val::Auto },
+        margin: UiRect::left(Val::Px(if side { 0.0 } else { -380.0 })),
         flex_direction: FlexDirection::Column,
         row_gap: Val::Px(10.0),
         padding: UiRect::all(Val::Px(16.0)),
         border: UiRect::all(Val::Px(2.0)),
+        overflow: if side { Overflow::scroll_y() } else { Overflow::DEFAULT },
         ..default()
     }))
-    .insert(BorderColor(ACCENT))
+    .insert((BorderColor(ACCENT), ScrollPosition { offset_x: 0.0, offset_y: if side { ed.scroll[2] } else { 0.0 } }, ScrollPanel(2)))
     .with_children(|p| match o {
         Overlay::New => {
             label(p, "NOUVEAU MODELE", 20.0, ACCENT);
@@ -417,12 +426,33 @@ fn overlay(root: &mut ChildBuilder, ed: &Editor, o: &Overlay) {
             });
             match ed.new_kind {
                 ModelKind::Personnage => {
-                    label(p, &format!("Race (grille {} x {} x {}) - squelette et animations : E5", CHARACTER_GRID.x, CHARACTER_GRID.y, CHARACTER_GRID.z), 14.0, DIM);
+                    label(p, &format!("Race (grille {} x {} x {}) : tu recois son squelette en blocs blancs deja animes", CHARACTER_GRID.x, CHARACTER_GRID.y, CHARACTER_GRID.z), 14.0, DIM);
                     wrap(p, |w| {
-                        for (i, r) in RACES.iter().enumerate() {
-                            button(w, r, Act::NewRace(i), ed.new_race == Some(i));
+                        for (i, r) in ed.lib.races.iter().enumerate() {
+                            button(w, &r.name, Act::NewRace(i), ed.new_race == Some(i));
                         }
                     });
+                    if let Some(r) = ed.new_race.and_then(|r| ed.lib.races.get(r)) {
+                        label(p, &format!("{} - {} ({})", r.name, r.races.join(", "), r.locomotion), 14.0, ON);
+                        if !r.options.is_empty() {
+                            label(p, "Membres optionnels", 13.0, DIM);
+                            wrap(p, |w| {
+                                for (k, o) in r.options.iter().enumerate() {
+                                    let on = ed.new_options.get(k).copied().unwrap_or(false);
+                                    button(w, &format!("{} {}", if on { "[x]" } else { "[ ]" }, o.name), Act::RaceOption(k), on);
+                                }
+                            });
+                        }
+                        if let (Some(d), Some(pv)) = (ed.race_view.as_ref(), &ed.preview) {
+                            label(p, "Apercu", 13.0, DIM);
+                            wrap(p, |w| {
+                                for (k, a) in super::motion::model_anims(&d.model, &ed.lib).iter().enumerate() {
+                                    let name = ed.lib.anim(a).map_or(a.as_str(), |x| x.name.as_str());
+                                    button(w, name, Act::Anim(k), *a == pv.anim);
+                                }
+                            });
+                        }
+                    }
                 }
                 ModelKind::Vaisseau => {
                     label(p, "Categorie (taille de la grille)", 14.0, DIM);
@@ -608,7 +638,7 @@ pub fn escape(keys: Res<ButtonInput<KeyCode>>, mut editor: ResMut<Editor>, mut n
         editor.say("Pose annulee.".into());
         return;
     }
-    if editor.preview.is_some() {
+    if editor.preview.as_ref().is_some_and(|p| !p.on_race) {
         editor.stop_preview();
         editor.say("Apercu arrete.".into());
         return;
@@ -670,7 +700,16 @@ pub fn actions(interactions: Query<(&Interaction, &Act), Changed<Interaction>>, 
             Act::Tags => ed.overlay = Some(Overlay::Tags),
             Act::CloseOverlay => ed.overlay = None,
             Act::NewKind(k) => ed.new_kind = k,
-            Act::NewRace(r) => ed.new_race = Some(r),
+            Act::NewRace(r) => ed.choose_race(r, None),
+            Act::RaceOption(k) => {
+                if let Some(r) = ed.new_race {
+                    let mut o = ed.new_options.clone();
+                    if let Some(x) = o.get_mut(k) {
+                        *x = !*x;
+                    }
+                    ed.choose_race(r, Some(o));
+                }
+            }
             Act::NewCategory(c) => ed.new_category = c,
             Act::NewSize(s) => ed.new_size = s,
             Act::Create => ed.create(),
@@ -705,7 +744,7 @@ pub fn actions(interactions: Query<(&Interaction, &Act), Changed<Interaction>>, 
                 }
             }
             Act::Anim(k) => {
-                let anim = ed.doc().and_then(|d| super::motion::model_anims(&d.model, &ed.blocks).get(k).cloned());
+                let anim = ed.shown().and_then(|d| super::motion::model_anims(&d.model, &ed.lib).get(k).cloned());
                 if let Some(a) = anim {
                     ed.start_preview(&a);
                 }
@@ -767,23 +806,31 @@ impl Editor {
         let mut taken: Vec<String> = self.docs.iter().map(|d| d.model.name.clone()).collect();
         taken.extend(list_models(&library_dir()).into_iter().map(|e| e.name));
         let category = (self.new_kind == ModelKind::Vaisseau).then_some(self.new_category);
-        let base = match (self.new_kind, self.new_race) {
-            (ModelKind::Personnage, Some(r)) => RACES[r].split(" /").next().unwrap_or("Personnage").to_string(),
+        let race = self.new_race.and_then(|r| self.lib.races.get(r)).cloned();
+        let base = match (self.new_kind, &race) {
+            (ModelKind::Personnage, Some(r)) => r.races.first().cloned().unwrap_or_else(|| r.name.clone()),
             (ModelKind::Vaisseau, _) => self.new_category.name().to_string(),
             _ => "Objet".to_string(),
         };
-        let mut m = Model::new(&fresh_name(&base, &taken), self.new_kind, category);
-        if self.new_kind == ModelKind::Personnage {
-            m.race = self.new_race.map(|r| RACES[r].to_string());
-            m.tags.push("personnage".into());
-        }
+        let name = fresh_name(&base, &taken);
+        let mut m = match (self.new_kind, &race) {
+            // Le rig de la race, en blocs blancs, avec les membres choisis
+            (ModelKind::Personnage, Some(r)) => r.build(&name, &self.new_options),
+            _ => Model::new(&name, self.new_kind, category),
+        };
         if self.new_kind == ModelKind::Autre {
             m.size = UVec3::splat(self.new_size);
         }
+        let m_zones = m.zones.len();
         super::view::open_doc(self, m, None);
         self.overlay = None;
         self.welcome = false;
-        self.say("Nouveau modele : clic gauche pour poser des blocs. Ctrl+S pour enregistrer.".into());
+        self.race_view = None;
+        self.say(if m_zones > 0 {
+            "Nouveau personnage : peins ou remplace les blocs blancs, ajoute des blocs (ils suivent la zone touchee). P : apercu.".into()
+        } else {
+            "Nouveau modele : clic gauche pour poser des blocs. Ctrl+S pour enregistrer.".into()
+        });
     }
 
     fn open_library(&mut self, k: usize) {

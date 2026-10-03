@@ -9,12 +9,15 @@
 //! - E2 : palette OKLCH et matières (`palette.rs`).
 //! - E4 : blocs de mouvement (`motion.rs` : blocs en données, placement, lecteur d'animations ;
 //!   `Doc::place_block` ; gabarit, zones et aperçu dans `view.rs`).
+//! - E5 : races (`races.rs`, 23 familles) et bibliothèque d'animations (`motion::Library`) ; au
+//!   choix de la race, son rig s'anime à côté de la fenêtre « Nouveau modèle ».
 
 pub mod edit;
 pub mod format;
 pub mod import;
 pub mod motion;
 pub mod palette;
+pub mod races;
 pub mod panels;
 pub mod view;
 
@@ -96,12 +99,14 @@ pub enum Overlay {
 pub struct Preview {
     pub anim: String,
     pub t: f32,
-    pub from: Vec<(Quat, Vec3)>,
+    pub from: Vec<motion::Pose>,
     /// Avancement du mélange depuis `from` (0 à 1).
     pub blend: f32,
+    /// Aperçu du rig de la race (fenêtre « Nouveau modèle »), pas de l'onglet.
+    pub on_race: bool,
 }
 
-/// Bloc de mouvement en cours de pose : son index dans `Editor::blocks` et son orientation.
+/// Bloc de mouvement en cours de pose : son index dans `Editor::lib.blocks` et son orientation.
 #[derive(Clone, Copy, Debug)]
 pub struct Placing {
     pub block: usize,
@@ -123,7 +128,7 @@ pub struct Editor {
     /// Le clic droit en cours a commencé dans la vue (tourner) et pas sur un panneau.
     pub orbit_ok: bool,
     /// Défilement du panneau de gauche (gardé quand l'interface est reconstruite).
-    pub scroll: [f32; 2],
+    pub scroll: [f32; 3],
     pub mirror: bool,
     pub grid: bool,
     pub cam: view::OrbitCam,
@@ -148,8 +153,12 @@ pub struct Editor {
     size_tick: u32,
     /// Échap déjà utilisé cette image (fermer la saisie du nom).
     pub escape_used: bool,
-    /// Blocs de mouvement (ceux du jeu, puis ceux de `saves/editeur/blocs/`).
-    pub blocks: Vec<motion::BlockDef>,
+    /// Blocs de mouvement, animations, races (ceux du jeu, puis ceux de `saves/editeur/`).
+    pub lib: motion::Library,
+    /// Le rig de la race choisie, animé pendant la fenêtre « Nouveau modèle ».
+    pub race_view: Option<Doc>,
+    /// Membres optionnels cochés pour la race choisie.
+    pub new_options: Vec<bool>,
     pub placing: Option<Placing>,
     pub preview: Option<Preview>,
     /// Pose actuelle des zones (repère du modèle, index 0 = corps fixe).
@@ -171,7 +180,7 @@ impl Default for Editor {
             saturation: palette::Saturation::Vif,
             theme: palette::THEMES.len() - 1,
             orbit_ok: true,
-            scroll: [0.0; 2],
+            scroll: [0.0; 3],
             mirror: true,
             grid: true,
             cam: view::OrbitCam::default(),
@@ -192,7 +201,9 @@ impl Default for Editor {
             size_bytes: None,
             size_tick: 0,
             escape_used: false,
-            blocks: Vec::new(),
+            lib: motion::Library::default(),
+            race_view: None,
+            new_options: Vec::new(),
             placing: None,
             preview: None,
             pose: Vec::new(),
@@ -216,11 +227,41 @@ impl Editor {
         matches!(self.overlay, Some(Overlay::Rename(_)) | Some(Overlay::Hex(_)))
     }
 
-    /// Blocs de mouvement proposés pour le modèle ouvert (index dans `blocks`).
+    /// Le modèle affiché : le rig de la race pendant son choix, sinon l'onglet.
+    pub fn shown(&self) -> Option<&Doc> {
+        if self.race_shown() { self.race_view.as_ref() } else { self.doc() }
+    }
+
+    pub fn shown_mut(&mut self) -> Option<&mut Doc> {
+        if self.race_shown() { self.race_view.as_mut() } else { self.doc_mut() }
+    }
+
+    /// Le rig de la race est-il affiché (choix de la race en cours) ?
+    pub fn race_shown(&self) -> bool {
+        self.overlay == Some(Overlay::New) && self.new_kind == ModelKind::Personnage && self.race_view.is_some()
+    }
+
+    /// Choisir une race (ou changer ses options) : son rig s'anime à côté.
+    pub fn choose_race(&mut self, r: usize, options: Option<Vec<bool>>) {
+        let Some(race) = self.lib.races.get(r).cloned() else { return };
+        self.new_race = Some(r);
+        self.new_options = options.unwrap_or_else(|| race.default_options());
+        let anim = self.preview.as_ref().filter(|p| p.on_race).map(|p| p.anim.clone());
+        self.stop_preview();
+        self.race_view = Some(Doc::new(race.build(&race.name, &self.new_options), None));
+        if let Some(m) = self.race_view.as_ref().map(|d| d.model.clone()) {
+            self.cam.focus(&m);
+        }
+        let anim = anim.filter(|a| self.race_view.as_ref().is_some_and(|d| motion::model_anims(&d.model, &self.lib).contains(a)));
+        self.start_preview(&anim.unwrap_or(race.preview));
+        self.ui_dirty = true;
+    }
+
+    /// Blocs de mouvement proposés pour le modèle ouvert (index dans `lib.blocks`).
     pub fn blocks_for_doc(&self) -> Vec<usize> {
         let Some(d) = self.doc() else { return Vec::new() };
         let kind = d.model.kind.name().to_lowercase();
-        (0..self.blocks.len()).filter(|i| self.blocks[*i].kinds.is_empty() || self.blocks[*i].kinds.iter().any(|k| k.to_lowercase() == kind)).collect()
+        (0..self.lib.blocks.len()).filter(|i| self.lib.blocks[*i].kinds.is_empty() || self.lib.blocks[*i].kinds.iter().any(|k| k.to_lowercase() == kind)).collect()
     }
 
     /// Choisir un bloc à poser (le gabarit suit la souris) ; le même bloc : arrêter.
@@ -232,7 +273,7 @@ impl Editor {
         }
         self.stop_preview();
         self.placing = Some(Placing { block: i, place: motion::Placement { turn: 0, mirror: false, scale: 1 } });
-        let scale = if self.blocks.get(i).is_some_and(|b| b.scalable) { "   Maj+molette : taille" } else { "" };
+        let scale = if self.lib.blocks.get(i).is_some_and(|b| b.scalable) { "   Maj+molette : taille" } else { "" };
         self.say(format!("Clic : poser   Molette : tourner{scale}   X : miroir   Echap : annuler   (Ctrl+molette : zoom)"));
     }
 
@@ -243,15 +284,20 @@ impl Editor {
             Some(_) => self.current_locals(),
             None => Vec::new(),
         };
-        let Some(d) = self.doc() else { return };
+        let on_race = self.race_shown();
+        let Some(d) = self.shown() else { return };
         if d.model.zones.is_empty() {
             self.say("Aucune zone de mouvement : pose d'abord un bloc de mouvement.".into());
             return;
         }
-        let colliding = motion::collisions(&d.model, &self.blocks, anim);
+        let colliding = motion::collisions(&d.model, &self.lib, anim);
         let names: Vec<String> = colliding.iter().filter_map(|z| d.model.zones.get(*z).map(|z| z.name.clone())).collect();
         self.colliding = colliding;
-        self.preview = Some(Preview { anim: anim.to_string(), t: 0.0, blend: if from.is_empty() { 1.0 } else { 0.0 }, from });
+        self.preview = Some(Preview { anim: anim.to_string(), t: 0.0, blend: if from.is_empty() { 1.0 } else { 0.0 }, from, on_race });
+        if on_race {
+            self.ui_dirty = true;
+            return;
+        }
         self.say(if names.is_empty() {
             format!("Apercu : {anim}. P : arreter.")
         } else {
@@ -267,9 +313,9 @@ impl Editor {
     }
 
     /// Mouvement propre des zones à cet instant de l'aperçu (mélange compris).
-    pub fn current_locals(&self) -> Vec<(Quat, Vec3)> {
-        let (Some(d), Some(p)) = (self.doc(), &self.preview) else { return Vec::new() };
-        let now = motion::zone_locals(&d.model, &self.blocks, &p.anim, p.t);
+    pub fn current_locals(&self) -> Vec<motion::Pose> {
+        let (Some(d), Some(p)) = (self.shown(), &self.preview) else { return Vec::new() };
+        let now = motion::zone_locals(&d.model, &self.lib, &p.anim, p.t, true);
         if p.blend < 1.0 && p.from.len() == now.len() {
             let f = p.blend * p.blend * (3.0 - 2.0 * p.blend);
             motion::blend(&p.from, &now, f)
@@ -301,7 +347,7 @@ impl Editor {
     }
 
     pub fn focus(&mut self) {
-        if let Some(m) = self.doc().map(|d| d.model.clone()) {
+        if let Some(m) = self.shown().map(|d| d.model.clone()) {
             self.cam.focus(&m);
         }
     }
@@ -389,9 +435,10 @@ pub fn library_dir() -> PathBuf {
     crate::settings::data_dir().join("modeles")
 }
 
-/// Blocs de mouvement du joueur (un JSON par bloc, même format que `assets/editeur/blocs/`).
-pub fn blocks_dir() -> PathBuf {
-    crate::settings::data_dir().join("editeur").join("blocs")
+/// Données de l'éditeur ajoutées par le joueur : `blocs/`, `anims/`, `races/` (un JSON par
+/// élément, même format que `assets/editeur/`).
+pub fn editor_dir() -> PathBuf {
+    crate::settings::data_dir().join("editeur")
 }
 
 pub fn import_dir() -> PathBuf {
@@ -504,10 +551,10 @@ fn test_capture(mut commands: Commands, time: Res<Time>, mut done: Local<u8>, mu
     let Ok(path) = std::env::var("SPACESPORE_CAPTURE") else { return };
     let secs: f32 = std::env::var("SPACESPORE_CAPTURE_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(12.0);
     let t = time.elapsed_secs();
-    if *done == 0 && std::env::var("SPACESPORE_EDITOR_DEMO").is_ok() && *state.get() == AppState::Editeur && t > secs * 0.5 {
+    if *done == 0 && std::env::var("SPACESPORE_EDITOR_DEMO").is_ok_and(|v| !v.starts_with("race:")) && *state.get() == AppState::Editeur && t > secs * 0.5 {
         *done = 1;
         let mut m = format::Model::new("Demo", ModelKind::Personnage, None);
-        m.race = Some(edit::RACES[0].to_string());
+        m.race = Some("Humanoide".to_string());
         let mut doc = Doc::new(m, None);
         let palette = edit::starter_palette();
         // Un petit bonhomme : jambes, corps, bras, tête (symétrie miroir)
@@ -534,8 +581,8 @@ fn test_capture(mut commands: Commands, time: Res<Time>, mut done: Local<u8>, mu
         // queue, lance l'aperçu « marche » et montre le gabarit d'une aile
         let blocks_demo = std::env::var("SPACESPORE_EDITOR_DEMO").is_ok_and(|v| v == "blocs");
         if blocks_demo {
-            let (blocks, _) = motion::load_blocks(None);
-            let get = |id: &str| blocks.iter().find(|b| b.id == id).unwrap().clone();
+            let (lib, _) = motion::Library::load(None);
+            let get = |id: &str| lib.block(id).unwrap().clone();
             let p = motion::Placement { turn: 0, mirror: false, scale: 1 };
             let _ = doc.place_block(&get("bras"), IVec3::new(2, 19, 15), p, true);
             let _ = doc.place_block(&get("tete"), IVec3::new(6, 26, 16), p, false);
@@ -546,12 +593,12 @@ fn test_capture(mut commands: Commands, time: Res<Time>, mut done: Local<u8>, mu
         let i = editor.docs.len() - 1;
         editor.select(i);
         if blocks_demo {
-            editor.start_preview("marche");
+            editor.start_preview("marcher");
         }
         // `SPACESPORE_EDITOR_DEMO=gabarit` : le gabarit d'une aile (tournée, reflétée) près du corps
         if std::env::var("SPACESPORE_EDITOR_DEMO").is_ok_and(|v| v == "gabarit") {
-            editor.blocks = motion::load_blocks(None).0;
-            if let Some(i) = editor.blocks.iter().position(|b| b.id == "aile") {
+            editor.lib = motion::Library::load(None).0;
+            if let Some(i) = editor.lib.blocks.iter().position(|b| b.id == "aile") {
                 editor.pick_block(i);
                 if let Some(p) = editor.placing.as_mut() {
                     p.place.turn = 1;
@@ -562,6 +609,22 @@ fn test_capture(mut commands: Commands, time: Res<Time>, mut done: Local<u8>, mu
         editor.hover = (Some(IVec3::new(7, 19, 15)), Some(IVec3::new(8, 19, 15)));
         if let Ok(v) = std::env::var("SPACESPORE_EDITOR_SCROLL") {
             editor.scroll[0] = v.parse().unwrap_or(0.0);
+        }
+    }
+    // `SPACESPORE_EDITOR_DEMO=race:<id>` : la fenêtre « Nouveau modèle » sur cette race (aperçu)
+    if *done == 0 && *state.get() == AppState::Editeur && t > secs * 0.5 {
+        if let Some(id) = std::env::var("SPACESPORE_EDITOR_DEMO").ok().and_then(|v| v.strip_prefix("race:").map(str::to_string)) {
+            *done = 1;
+            editor.lib = motion::Library::load(None).0;
+            editor.overlay = Some(Overlay::New);
+            editor.new_kind = ModelKind::Personnage;
+            if let Some(r) = editor.lib.races.iter().position(|r| r.id == id) {
+                let all = std::env::var("SPACESPORE_RACE_OPTIONS").is_ok().then(|| vec![true; editor.lib.races[r].options.len()]);
+                editor.choose_race(r, all);
+                if let Ok(a) = std::env::var("SPACESPORE_RACE_ANIM") {
+                    editor.start_preview(&a);
+                }
+            }
         }
     }
     if *done <= 1 && t > secs {
@@ -576,11 +639,11 @@ fn test_capture(mut commands: Commands, time: Res<Time>, mut done: Local<u8>, mu
 /// En entrant : sans modèle ouvert, la fenêtre « Nouveau modèle » (création du personnage).
 fn on_enter(mut editor: ResMut<Editor>) {
     editor.library = list_models(&library_dir());
-    let (blocks, errors) = motion::load_blocks(Some(&blocks_dir()));
-    editor.blocks = blocks;
+    let (lib, errors) = motion::Library::load(Some(&editor_dir()));
+    editor.lib = lib;
     if !errors.is_empty() {
-        warn!("Blocs de mouvement illisibles : {}", errors.join(" ; "));
-        editor.say(format!("Blocs de mouvement illisibles : {}", errors.join(" ; ")));
+        warn!("Donnees de l'editeur illisibles : {}", errors.join(" ; "));
+        editor.say(format!("Fichiers illisibles : {}", errors.join(" ; ")));
     }
     if editor.docs.is_empty() {
         editor.overlay = Some(Overlay::New);
