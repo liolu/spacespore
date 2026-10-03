@@ -61,10 +61,11 @@ struct Beam {
 }
 
 #[derive(Resource, Default)]
-struct CombatState {
+pub(crate) struct CombatState {
     epoch: u64,
-    last_shot: f64,
-    last_damage: f64,
+    /// Dernier tir et derniers dégâts (le vaisseau passe en état « combat », E7).
+    pub(crate) last_shot: f64,
+    pub(crate) last_damage: f64,
     dead_until: Option<f64>,
     regen: f32,
     /// Joueurs déjà vus dans cette partie (leurs tirs antérieurs ne comptent pas).

@@ -15,6 +15,7 @@
 //! - E5 : races (`races.rs`, 23 familles) et bibliothèque d'animations (`motion::Library`) ; au
 //!   choix de la race, son rig s'anime à côté de la fenêtre « Nouveau modèle ».
 
+pub mod defaults;
 pub mod edit;
 pub mod format;
 pub mod import;
@@ -61,6 +62,7 @@ impl Plugin for EditeurPlugin {
                     .run_if(in_state(AppState::Editeur)),
             )
             .add_systems(PostUpdate, panels::hide_game_ui.run_if(in_state(AppState::Editeur)))
+            .add_systems(Update, first_character.run_if(in_state(AppState::Editeur)))
             .add_systems(Update, test_capture);
     }
 }
@@ -978,6 +980,21 @@ fn test_capture(
     if *done == 2 && t > secs + 3.0 {
         exit.send(AppExit::Success);
     }
+}
+
+/// Création du personnage (E7) : le premier personnage enregistré devient celui du joueur.
+fn first_character(mut editor: ResMut<Editor>, mut settings: ResMut<crate::settings::GameSettings>, mut models: ResMut<crate::models::GameModels>) {
+    if settings.character_model.is_some() {
+        return;
+    }
+    let Some(d) = editor.doc().filter(|d| d.model.kind == ModelKind::Personnage && !d.dirty) else { return };
+    let Some(path) = d.path.clone() else { return };
+    let rel = path.strip_prefix(crate::settings::data_dir()).map(|p| p.to_path_buf()).unwrap_or(path);
+    settings.character_model = Some(rel.to_string_lossy().replace('\\', "/"));
+    settings.save();
+    models.reload = true;
+    let name = d.model.name.clone();
+    editor.say(format!("\"{name}\" sera ton personnage en jeu (bouton \"Utiliser comme mon personnage\" pour en changer)."));
 }
 
 /// En entrant : sans modèle ouvert, la fenêtre « Nouveau modèle » (création du personnage).

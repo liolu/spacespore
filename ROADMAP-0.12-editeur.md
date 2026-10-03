@@ -288,7 +288,7 @@ valider le système d'animation **avant** de s'attaquer aux grilles géantes des
 | # | Sujet | Décision |
 |---|---|---|
 | Q1 | **Où vit l'éditeur** | **Dans le jeu** (`AppState::Editeur`). Il est proposé à la **création du personnage**, puis accessible depuis le menu pour les vaisseaux et les objets. |
-| Q2 | **Taille d'un voxel** | **4 voxels de modèle = 1 bloc du jeu** (4 × 4 × 4 voxels par bloc). Un perso de 32 voxels de haut fait donc **8 blocs** de haut. Vaisseaux : **probablement la même échelle** (chasseur 64 = 16 blocs, capital 1024 = 256 blocs), à confirmer en E7. |
+| Q2 | **Taille d'un voxel** | **4 voxels de modèle = 1 bloc du jeu** pour les **vaisseaux**, posés et en vol bas (chasseur 64 = 16 blocs, capital 1024 = 256 blocs) ; dans l'espace, taille d'icône qui suit la caméra. **Personnage** (décision du 03/10/2026, E7) : il garde la taille du marcheur (~2 blocs), le modèle est réduit en conséquence. |
 | Q3 | **Statistiques du vaisseau** | **Aucune** : le modèle est purement visuel, il ne change ni la masse, ni la vitesse, ni les PV. |
 | Q4 | **Taille maximale d'un vaisseau** | Un modèle de vaisseau pèse au plus **10 Mo** (fichier `.ssvox` compressé), quelle que soit la catégorie. La grille n'est pas limitée, c'est le poids du fichier : compteur « x,x / 10 Mo » affiché dans l'éditeur, enregistrement refusé au-delà. C'est aussi la taille maximale envoyée aux autres joueurs (règle 7). |
 | Q6 | **Grille perso 16 × 32 × 32** | Pour toutes les races **jouables**, dragonoïdes compris. Les **vrais dragons** (quadrupèdes géants) ne sont **pas une race jouable** : ce seront des créatures (type « Autre »), plus tard. |
