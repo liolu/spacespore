@@ -16,6 +16,7 @@
 #![allow(dead_code)]
 
 pub mod atmosphere;
+pub mod belts;
 pub mod biome;
 pub mod cache;
 pub mod climate;
@@ -79,6 +80,13 @@ mod tests {
             }
             eat(sys.galaxy_id as u64);
             eat(sys.asteroid_belts.len() as u64);
+            for b in sys.belts() {
+                for v in [b.au_inner, b.au_outer, b.inner, b.outer, b.half_thickness, b.mass_earth, b.density, b.snow_au] {
+                    eat(f(v));
+                }
+                eat(b.seed as u64);
+                eat(b.kind as u64);
+            }
             for st in &sys.stars {
                 for v in [
                     st.orbit_distance, st.radius, st.intensity, st.light_range, st.light_color_r, st.light_color_g,

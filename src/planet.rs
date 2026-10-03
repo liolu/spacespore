@@ -3,7 +3,6 @@ use bevy::prelude::*;
 use crate::world_clock::{Spin, WorldClock};
 use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use rand::Rng;
 
 use std::collections::{HashMap, HashSet};
 use crate::kepler::{OrbitalElements, DEFAULT_MU};
@@ -18,7 +17,7 @@ use crate::astre::{AstreLodRoot, ReloadAstre};
 use crate::ship::Ship;
 /// Les planètes tournent plus vite que ne le voudrait la gravité d'orbites aussi larges : sans
 /// cela, un tour durerait des heures et le soleil ne bougerait jamais dans le ciel.
-const PLANET_MU_SCALE: f32 = 250.0;
+pub(crate) const PLANET_MU_SCALE: f32 = 250.0;
 const STAR_DIVISIONS: usize = 4;
 const MOON_DIVISIONS: usize = 3;
 
@@ -103,7 +102,7 @@ impl Plugin for PlanetPlugin {
             .add_systems(Startup, (build_spatial_index, generate_all).chain())
             .add_systems(
                 Update,
-                (orbit_planets, orbit_stars, orbit_moons.after(orbit_planets), orbit_asteroid_belts, update_flare_voxels, rotate_clouds.after(orbit_planets), shimmer_auroras, regenerate_all, update_lod, update_star_visibility, update_far_star_scale, update_arm_capsule_lod, stream_system_bodies, reload_stars, reload_planets, reload_moons, reload_asteroid_belts, cleanup_hidden_toplevel, rotate_accretion_disk),
+                (orbit_planets, orbit_stars, orbit_moons.after(orbit_planets), update_flare_voxels, rotate_clouds.after(orbit_planets), shimmer_auroras, regenerate_all, update_lod, update_star_visibility, update_far_star_scale, update_arm_capsule_lod, stream_system_bodies, reload_stars, reload_planets, reload_moons, cleanup_hidden_toplevel, rotate_accretion_disk),
             )
             .add_event::<FarGalaxyLoaded>()
             .init_resource::<GalaxyVisuals>()
@@ -425,12 +424,6 @@ pub struct SystemOffset(pub Vec3);
 
 #[derive(Component)]
 pub struct SystemIdx(pub usize);
-
-#[derive(Component)]
-pub struct AsteroidBeltRoot;
-
-#[derive(Component)]
-pub struct AsteroidBeltId(pub usize);
 
 #[derive(Component)]
 pub struct GalacticCore;
@@ -1724,51 +1717,6 @@ fn spawn_system_bodies(
             }
         }
     }
-
-    let asteroid_material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.45, 0.42, 0.38),
-        perceptual_roughness: 0.95,
-        ..default()
-    });
-    let mut rng = rand::thread_rng();
-
-    for (i, belt) in sys.asteroid_belts.iter().enumerate() {
-        let belt_entity = commands
-            .spawn((
-                Transform::from_translation(center),
-                Visibility::default(),
-                AsteroidBeltRoot,
-                AsteroidBeltId(id_base + i),
-                SystemIdx(sys_idx),
-                SystemOffset(center),
-                AstreLodRoot { cull_dist: 30000.0, radius: belt.distance, streamable: true, label: "AsteroidBelt" },
-            ))
-            .id();
-
-        for _ in 0..belt.count.min(500) {
-            let angle = rng.gen::<f32>() * std::f32::consts::TAU;
-            let dist_offset = (rng.gen::<f32>() - 0.5) * belt.width;
-            let dist = belt.distance + dist_offset;
-            let y_offset = (rng.gen::<f32>() - 0.5) * belt.width * 0.3;
-            let size = belt.min_size + rng.gen::<f32>() * (belt.max_size - belt.min_size);
-            let pos = Vec3::new(angle.cos() * dist, y_offset, angle.sin() * dist);
-            let rotation = Quat::from_euler(
-                EulerRot::XYZ,
-                rng.gen::<f32>() * std::f32::consts::TAU,
-                rng.gen::<f32>() * std::f32::consts::TAU,
-                rng.gen::<f32>() * std::f32::consts::TAU,
-            );
-            let mesh = Mesh::from(Cuboid::new(size, size * 0.7, size * 0.85));
-            let asteroid = commands
-                .spawn((
-                    Mesh3d(meshes.add(mesh)),
-                    MeshMaterial3d(asteroid_material.clone()),
-                    Transform::from_translation(pos).with_rotation(rotation),
-                ))
-                .id();
-            commands.entity(belt_entity).add_child(asteroid);
-        }
-    }
 }
 
 pub(crate) fn orbit_planets(
@@ -1856,15 +1804,6 @@ pub(crate) fn orbit_moons(
                 tf.rotation = Spin::moon(mcfg, p).rotation(t, -pos);
             }
         }
-    }
-}
-
-fn orbit_asteroid_belts(
-    time: Res<Time>,
-    mut belt_q: Query<&mut Transform, With<AsteroidBeltRoot>>,
-) {
-    for mut tf in &mut belt_q {
-        tf.rotate_y(time.delta_secs() * 0.005);
     }
 }
 
@@ -2084,7 +2023,6 @@ fn regenerate_all(
     moon_q: Query<Entity, With<MoonRoot>>,
     flare_q: Query<Entity, With<FlareVoxel>>,
     cloud_q: Query<Entity, With<CloudVoxel>>,
-    belt_q: Query<Entity, With<AsteroidBeltRoot>>,
     camera_q: Query<&Transform, With<Camera3d>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -2112,9 +2050,6 @@ fn regenerate_all(
         commands.entity(entity).despawn_recursive();
     }
     for entity in &cloud_q {
-        commands.entity(entity).despawn_recursive();
-    }
-    for entity in &belt_q {
         commands.entity(entity).despawn_recursive();
     }
     // Seul le système chargé est régénéré (les autres ne sont pas instanciés)
@@ -2423,55 +2358,6 @@ fn reload_moons(
     }
 }
 
-fn reload_asteroid_belts(
-    mut commands: Commands,
-    mut events: EventReader<ReloadAstre>,
-    settings: Res<GameSettings>,
-    roots: Query<(Entity, &AsteroidBeltId, &SystemIdx), With<AsteroidBeltRoot>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    use rand::Rng;
-
-    for ev in events.read() {
-        let Ok((entity, bid, si)) = roots.get(ev.0) else { continue };
-        let local_i = bid.0 % 1000;
-        let Some(sys) = settings.systems.get(si.0) else { continue };
-        let Some(belt) = sys.asteroid_belts.get(local_i) else { continue };
-
-        let asteroid_material = materials.add(StandardMaterial {
-            base_color: Color::srgb(0.45, 0.42, 0.38),
-            perceptual_roughness: 0.95,
-            ..default()
-        });
-        let mut rng = rand::thread_rng();
-
-        for _ in 0..belt.count.min(500) {
-            let angle = rng.gen::<f32>() * std::f32::consts::TAU;
-            let dist_offset = (rng.gen::<f32>() - 0.5) * belt.width;
-            let dist = belt.distance + dist_offset;
-            let y_offset = (rng.gen::<f32>() - 0.5) * belt.width * 0.3;
-            let size = belt.min_size + rng.gen::<f32>() * (belt.max_size - belt.min_size);
-            let pos = Vec3::new(angle.cos() * dist, y_offset, angle.sin() * dist);
-            let rotation = Quat::from_euler(
-                EulerRot::XYZ,
-                rng.gen::<f32>() * std::f32::consts::TAU,
-                rng.gen::<f32>() * std::f32::consts::TAU,
-                rng.gen::<f32>() * std::f32::consts::TAU,
-            );
-            let mesh = Mesh::from(Cuboid::new(size, size * 0.7, size * 0.85));
-            let asteroid = commands
-                .spawn((
-                    Mesh3d(meshes.add(mesh)),
-                    MeshMaterial3d(asteroid_material.clone()),
-                    Transform::from_translation(pos).with_rotation(rotation),
-                ))
-                .id();
-            commands.entity(entity).add_child(asteroid);
-        }
-    }
-}
-
 fn update_far_star_scale(
     camera_q: Query<(&GlobalTransform, &Transform), With<Camera3d>>,
     spawned: Res<SpawnedSystems>,
@@ -2663,7 +2549,6 @@ pub(crate) fn stream_system_bodies(
     star_q: Query<(Entity, &SystemIdx), With<StarRoot>>,
     planet_q: Query<(Entity, &SystemIdx), With<PlanetRoot>>,
     moon_q: Query<(Entity, &SystemIdx), With<MoonRoot>>,
-    belt_q: Query<(Entity, &SystemIdx), With<AsteroidBeltRoot>>,
     flare_q: Query<(Entity, &FlareVoxel)>,
     cloud_q: Query<(Entity, &CloudVoxel)>,
 ) {
@@ -2743,11 +2628,6 @@ pub(crate) fn stream_system_bodies(
             }
         }
         for (e, idx) in &moon_q {
-            if idx.0 == *si {
-                if let Some(ec) = commands.get_entity(e) { ec.try_despawn_recursive(); }
-            }
-        }
-        for (e, idx) in &belt_q {
             if idx.0 == *si {
                 if let Some(ec) = commands.get_entity(e) { ec.try_despawn_recursive(); }
             }

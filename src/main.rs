@@ -26,6 +26,7 @@ mod rocks;
 mod scanner;
 mod settings;
 mod systems;
+mod asteroids;
 mod ship;
 mod stats;
 mod suit;
@@ -99,6 +100,7 @@ use astre::Remnant_stellaire::supernova::SupernovaRoot;
 pub struct TargetQueries<'w, 's> {
     pub wormholes: Res<'w, wormhole::Wormholes>,
     pub surface: Res<'w, surface::Surface>,
+    pub asteroids: Res<'w, asteroids::AsteroidField>,
 
     pub planet_q:
         Query<'w, 's, (&'static GlobalTransform, &'static PlanetId), With<PlanetRoot>>,
@@ -266,6 +268,7 @@ fn main() {
         .add_plugins(world_clock::WorldClockPlugin)
         .add_plugins(meteors::MeteorsPlugin)
         .add_plugins(suit::SuitPlugin)
+        .add_plugins(asteroids::AsteroidsPlugin)
 
         // ── UI ──────────────────────────────────────────────────────────
         .add_plugins(UiPlugin)
@@ -573,6 +576,11 @@ fn select_world_target(
         let tolerance = body_click_tolerance(camera, camera_transform, &viewport, transform.translation(), radius);
         consider(transform.translation(), tolerance, TargetKind::Planet(id.0));
     }
+    for live in queries.asteroids.iter().filter(|l| l.ast.landable()) {
+        let center = live.pose.translation;
+        let tolerance = body_click_tolerance(camera, camera_transform, &viewport, center, live.ast.shape.radius).min(200.0);
+        consider(center, tolerance, TargetKind::Asteroid(live.ast.key));
+    }
     for (transform, id) in &queries.star_q {
         // Les étoiles sont immenses : on les sélectionne en cliquant n'importe où sur leur disque
         let radius = settings.systems.get(id.0 / 1000).and_then(|s| s.stars.get(id.0 % 1000)).map_or(0.0, |s| s.radius);
@@ -725,6 +733,7 @@ fn current_galaxy(kind: &TargetKind, queries: &TargetQueries, settings: &GameSet
         TargetKind::DistantGalaxyCore(id) => return id,
         TargetKind::Planet(id) => id / 1000,
         TargetKind::Moon(planet_idx, _) => planet_idx / 1000,
+        TargetKind::Asteroid(key) => key.sys as usize,
         // Étoile chargée : id = sys * 1000 + i ; étoile lointaine : id = index du système
         TargetKind::Star(id) => {
             if queries.star_q.iter().any(|(_, sid)| sid.0 == id) { id / 1000 } else { id }
@@ -743,6 +752,7 @@ pub(crate) fn target_system(
     match *kind {
         TargetKind::Planet(id) => Some(Some(id / 1000)),
         TargetKind::Moon(planet_idx, _) => Some(Some(planet_idx / 1000)),
+        TargetKind::Asteroid(key) => Some(Some(key.sys as usize)),
         // Étoile chargée : id = sys * 1000 + i ; étoile lointaine : id = index du système
         TargetKind::Star(id) => {
             if star_q.iter().any(|sid| sid.0 == id) {
@@ -1033,6 +1043,7 @@ fn body_spin(q: &TargetQueries, kind: &TargetKind) -> Quat {
     let gt = match *kind {
         TargetKind::Planet(id) => q.planet_q.iter().find(|(_, p)| p.0 == id).map(|(gt, _)| gt),
         TargetKind::Moon(planet_idx, moon_idx) => q.moon_q.iter().find(|(_, m)| m.planet_idx == planet_idx && m.moon_idx == moon_idx).map(|(gt, _)| gt),
+        TargetKind::Asteroid(key) => return q.asteroids.pose(&key).map_or(Quat::IDENTITY, |t| t.rotation),
         _ => None,
     };
     gt.map_or(Quat::IDENTITY, |gt| gt.to_scale_rotation_translation().1)
@@ -1331,6 +1342,8 @@ fn resolve_target(
     settings: &GameSettings,
 ) -> Vec3 {
     match target.0 {
+        TargetKind::Asteroid(key) => q.asteroids.pose(&key).map(|t| t.translation).unwrap_or_default(),
+
         TargetKind::Planet(i) =>
             q.planet_q
                 .iter()
@@ -1499,7 +1512,7 @@ fn camera_distance_range(
     star_r: Option<f32>,
 ) -> (f32, f32) {
     match target.0 {
-        TargetKind::Planet(_) | TargetKind::Moon(_, _) => {
+        TargetKind::Planet(_) | TargetKind::Moon(_, _) | TargetKind::Asteroid(_) => {
             // On peut s'approcher jusqu'à 40 du vaisseau : sous 1000, navigation autour de l'astre
             (40.0, MAX_ZOOM)
         }
@@ -1973,6 +1986,7 @@ fn update_system_hud(
     wormholes: Res<wormhole::Wormholes>,
     npcs: Res<galaxy_fx::NpcTerritories>,
     sectors: Res<planet::StarSectors>,
+    asteroids: Res<asteroids::AsteroidField>,
 ) {
     // Étoile revendiquée : on affiche son propriétaire
     let target_sys = match target_system(&camera_target.0, &star_q) {
@@ -2032,6 +2046,7 @@ fn update_system_hud(
             (Some(si), label)
         }
         TargetKind::WormholeMouth(si) => (None, settings.systems.get(si).map(|s| format!("Trou de ver de {}", s.name))),
+        TargetKind::Asteroid(key) => (Some(key.sys as usize), asteroids.get(&key).map(|a| a.title())),
         TargetKind::GalacticCore => (None, Some("Trou Noir Galactique".to_string())),
         TargetKind::DistantGalaxyCore(id) => (None, Some(match settings.galaxies.get(id as usize) {
             Some(g) => format!("Galaxie {} - {}", id, ascii(g.kind.name())),

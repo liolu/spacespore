@@ -22,10 +22,12 @@ pub enum Layer {
     Resources = 11,
     Gameplay = 12,
     Traits = 13,
+    /// Ceintures d'astéroïdes du système (C1 de la 0.11).
+    Belts = 14,
 }
 
 impl Layer {
-    pub const ALL: [Layer; 13] = [
+    pub const ALL: [Layer; 14] = [
         Layer::Star,
         Layer::Orbit,
         Layer::Physics,
@@ -39,6 +41,7 @@ impl Layer {
         Layer::Resources,
         Layer::Gameplay,
         Layer::Traits,
+        Layer::Belts,
     ];
 
     pub fn name(self) -> &'static str {
@@ -56,6 +59,7 @@ impl Layer {
             Layer::Resources => "ressources",
             Layer::Gameplay => "gameplay",
             Layer::Traits => "traits",
+            Layer::Belts => "ceintures",
         }
     }
 }

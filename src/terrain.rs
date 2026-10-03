@@ -78,6 +78,8 @@ pub struct BodyParams {
     pub relief: Relief,
     /// Sols et biomes (phase 6).
     pub biomes: BiomeParams,
+    /// Astéroïde (C1) : sa forme remplace le relief (même fonction que son maillage lointain).
+    pub asteroid: Option<crate::asteroids::AsteroidShape>,
 }
 
 /// Ciel d'une planète faite à la main (sans atmosphère calculée) : celui de la Terre.
@@ -109,6 +111,7 @@ impl BodyParams {
             hydro: if p.gaseous() { Hydro::DRY } else { p.hydrology.hydro },
             relief: p.geology.relief,
             biomes: p.biomes,
+            asteroid: None,
         }
     }
 
@@ -137,6 +140,7 @@ impl BodyParams {
             hydro: Hydro::DRY,
             relief: m.relief.unwrap_or_else(|| moon_relief(m.seed)),
             biomes: BiomeParams::default(),
+            asteroid: None,
         }
     }
 
@@ -329,7 +333,7 @@ impl Terrain {
             biomes: BiomeField::new(params.biomes),
             overhang: None,
             voxels: None,
-            caves: CaveStyle::of(&params).map(|s| Arc::new(Caves::new(s, params.seed, params.layout().voxel))),
+            caves: CaveStyle::of(&params).filter(|_| params.asteroid.is_none()).map(|s| Arc::new(Caves::new(s, params.seed, params.layout().voxel))),
             // Seulement là où le vent et l'eau sculptent la roche
             min_crater: std::sync::atomic::AtomicU32::new((2.0 * params.layout().voxel / params.radius.max(1.0)).to_bits()),
             rocks: (params.atmosphere && !params.airless && !params.gaseous && params.pressure >= 0.05)
@@ -378,6 +382,9 @@ impl Terrain {
     }
 
     fn with_overhang(mut self) -> Self {
+        if self.params.asteroid.is_some() {
+            return self;
+        }
         self.overhang = Overhang::find(&self);
         self
     }
@@ -395,6 +402,11 @@ impl Terrain {
     /// Comme `raw_height`, avec la nature du relief (éboulis, coulées, falaises).
     fn raw_height_full(&self, dir: Vec3) -> (f32, f32, ReliefSample) {
         let p = &self.params;
+        // Astéroïde : sa forme (bosses et cratères compris)
+        if let Some(shape) = &p.asteroid {
+            let h = shape.radius_at(dir);
+            return (h, ((h / p.radius.max(1e-3) - 0.6) / 0.8).clamp(0.0, 1.0), ReliefSample::default());
+        }
         let s = dir * p.noise_scale;
         let continent = self.continent.get([s.x as f64, s.y as f64, s.z as f64]) as f32;
         let ds = p.detail_scale as f64;
@@ -458,6 +470,19 @@ impl Terrain {
         // Géante gazeuse : pas de relief, seulement le cœur où le vol s'arrête
         if p.gaseous {
             return Column { dir, top: p.radius * GAS_CORE, kind: VoxelType::Stone, color: [0.3, 0.25, 0.2, 1.0] };
+        }
+        // Astéroïde : roche de son type, couleurs de son maillage
+        if let Some(shape) = &p.asteroid {
+            use crate::planetgen::belts::AsteroidClass;
+            let h = shape.radius_at(dir);
+            let top = p.radius + ((h - p.radius) / quantum).round() * quantum;
+            let kind = match shape.class {
+                AsteroidClass::C => VoxelType::Basalt,
+                AsteroidClass::S => VoxelType::Stone,
+                AsteroidClass::M => VoxelType::Ore,
+                AsteroidClass::Ice => VoxelType::Ice,
+            };
+            return Column { dir, top, kind, color: shape.color_at(dir) };
         }
         let (h, hv, relief) = self.raw_height_full(dir);
         let rel = ((h - p.radius) / quantum).round();
@@ -1256,6 +1281,7 @@ mod tests {
             hydro: Hydro::default(),
             relief: Relief::default(),
             biomes: BiomeParams::default(),
+            asteroid: None,
         }
     }
 
@@ -1659,6 +1685,7 @@ mod sea_level_tests {
             hydro: Hydro::default(),
             relief: Relief::default(),
             biomes: BiomeParams::default(),
+            asteroid: None,
         }
     }
 }

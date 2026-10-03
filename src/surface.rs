@@ -114,12 +114,17 @@ pub fn body_params(settings: &GameSettings, kind: &TargetKind) -> Option<BodyPar
             let planet = settings.systems.get(planet_id / 1000)?.planets().get(planet_id % 1000)?;
             Some(BodyParams::moon(planet.moons.get(moon)?, planet))
         }
+        TargetKind::Asteroid(key) => crate::asteroids::body_params(settings, &key),
         _ => None,
     }
 }
 
 /// Rayon (depuis le centre) auquel le vaisseau stationne au-dessus d'un astre.
 pub fn hover_radius(p: &BodyParams) -> f32 {
+    // Astéroïde : juste au-dessus de sa plus grande bosse
+    if let Some(s) = &p.asteroid {
+        return s.max_radius() * 1.5 + 150.0;
+    }
     p.radius + p.terrain_height * 0.6 + p.radius * 0.15 + 150.0
 }
 
@@ -307,9 +312,14 @@ impl Walker {
         self.in_water = ground.kind.is_liquid();
         self.liquid = ground.kind;
         // Vraie gravité de l'astre : sur une lune à 0,16 g, on saute six fois plus haut
-        let gravity = GRAVITY * t.params.gravity.clamp(MIN_GRAVITY, 4.0) * v;
+        let min_gravity = if t.params.asteroid.is_some() { MIN_GRAVITY_ASTEROID } else { MIN_GRAVITY };
+        let gravity = GRAVITY * t.params.gravity.clamp(min_gravity, 4.0) * v;
         if self.on_ground && inp.jump {
             self.vr = JUMP_VOXELS * v;
+            // Microgravité : on saute haut et longtemps, sans quitter le petit astre
+            if t.params.asteroid.is_some() {
+                self.vr = self.vr.min((2.0 * gravity * t.params.radius * 0.15).sqrt());
+            }
             self.on_ground = false;
         } else if self.on_ground {
             // On monte une marche seulement s'il y a la place pour la tête
@@ -367,6 +377,8 @@ const JUMP_VOXELS: f32 = 7.5;
 const GRAVITY: f32 = 22.0;
 /// Sous cette gravité (g), on garde un minimum de poids : sinon un saut ne retomberait jamais.
 const MIN_GRAVITY: f32 = 0.05;
+/// Sur un astéroïde (C1) : microgravité, un saut dure de longues secondes.
+const MIN_GRAVITY_ASTEROID: f32 = 0.01;
 
 // ─────────────────────────────────────────────────────────────────────────
 //  État de l'atterrissage
@@ -435,6 +447,8 @@ pub struct Surface {
     underground: f32,
     /// Le marcheur a perdu connaissance : retour automatique au vaisseau (A4).
     rescue: bool,
+    /// Repère de l'astre à la dernière image (chocs contre les astéroïdes).
+    frame: Option<Frame>,
 }
 
 impl Default for Surface {
@@ -474,6 +488,7 @@ impl Default for Surface {
             night_told: false,
             underground: 0.0,
             rescue: false,
+            frame: None,
         }
     }
 }
@@ -487,6 +502,22 @@ impl Surface {
     /// Atterrissage, séjour ou décollage en cours : la caméra n'est plus pilotée par l'orbite.
     pub fn active(&self) -> bool {
         self.phase != Phase::Orbit
+    }
+
+    /// Navigation à basse altitude autour de l'astre.
+    pub fn flying(&self) -> bool {
+        self.phase == Phase::Flying
+    }
+
+    /// En vol : le vaisseau est repoussé de `push` (monde) par un choc contre un astéroïde ; il
+    /// rebondit s'il fonçait dessus.
+    pub fn bump(&mut self, push: Vec3, bounce: bool) {
+        let (Phase::Flying, Some(frame)) = (self.phase, self.frame) else { return };
+        self.fpos += frame.vector(push);
+        if bounce {
+            self.fspeed *= -0.35;
+            self.fvert *= -0.35;
+        }
     }
 
     /// Le marcheur, s'il est à pied hors du vaisseau.
@@ -725,18 +756,20 @@ struct Ctx<'w, 's> {
     moons: Query<'w, 's, (&'static Transform, &'static MoonId), (With<MoonRoot>, Without<Ship>, Without<Camera3d>)>,
     stars: Query<'w, 's, &'static Transform, (With<StarRoot>, Without<Ship>, Without<Camera3d>)>,
     windows: Query<'w, 's, &'static mut Window, With<PrimaryWindow>>,
+    asteroids: Res<'w, crate::asteroids::AsteroidField>,
 }
 
 impl Ctx<'_, '_> {
     /// Centre (monde) et orientation d'un astre chargé : son repère fixe tourne avec lui.
     fn pose(&self, kind: &TargetKind) -> Option<Frame> {
         let tf = match *kind {
-            TargetKind::Planet(id) => self.planets.iter().find(|(_, p)| p.0 == id).map(|(t, _)| t),
+            TargetKind::Planet(id) => self.planets.iter().find(|(_, p)| p.0 == id).map(|(t, _)| *t),
             TargetKind::Moon(planet_idx, moon_idx) => self
                 .moons
                 .iter()
                 .find(|(_, m)| m.planet_idx == planet_idx && m.moon_idx == moon_idx)
-                .map(|(t, _)| t),
+                .map(|(t, _)| *t),
+            TargetKind::Asteroid(key) => self.asteroids.pose(&key),
             _ => None,
         }?;
         Some(Frame { center: tf.translation, rot: tf.rotation })
@@ -853,6 +886,8 @@ fn surface_control(
                     *ship_vis = Visibility::Inherited;
                     if params.gaseous {
                         net.notify("Geante gazeuse : Ctrl pour descendre dans l'atmosphere. Attention, la pression y abime la coque !", now);
+                    } else if params.asteroid.is_some() {
+                        net.notify("Champ d'asteroides : ZQSD/WASD voler, Maj accelerer (attention aux chocs : degats selon la vitesse), V se poser, molette pour revenir.", now);
                     } else {
                         net.notify("Navigation : ZQSD/WASD voler, Maj accelerer, Espace/Ctrl monter/descendre, V atterrir, molette pour revenir.", now);
                     }
@@ -864,7 +899,7 @@ fn surface_control(
             return;
         }
         let Some(params) = body_params(&ctx.settings, &kind) else {
-            net.notify("Selectionnez une planete ou une lune pour atterrir.", now);
+            net.notify("Selectionnez une planete, une lune ou un gros asteroide pour atterrir.", now);
             return;
         };
         let Some(frame) = ctx.pose(&kind) else {
@@ -900,6 +935,7 @@ fn surface_control(
     };
     *zoom = ZoomLevel::Planet;
     *ship_vis = Visibility::Inherited;
+    surface.frame = Some(frame);
     let center = frame.center;
     // Tout ce qui suit est calculé dans le repère fixe de l'astre (centre à l'origine), puis placé
     // dans le monde à la fin ; la pose de départ des fondus (`cam_from`) est aussi dans ce repère
@@ -1057,7 +1093,11 @@ fn surface_control(
             // Voxels 3D : le sol sous le vaisseau (on peut passer sous une arche) et le plafond
             let ground = terrain.floor(next, r).top;
             let roof = terrain.ceiling(next, ground + 1.0);
-            let ceiling = hover_radius(&params);
+            // Astéroïde : on peut s'éloigner davantage pour circuler dans le champ
+            let ceiling = match &params.asteroid {
+                Some(s) => s.max_radius() * 3.0 + 1500.0,
+                None => hover_radius(&params),
+            };
             // Entrée en navigation : on descend d'abord à 150 au-dessus du relief
             let mut r = r + surface.fvert * dt;
             if surface.fdescend {
@@ -1213,6 +1253,7 @@ fn update_galaxy_dim(
     settings: Res<GameSettings>,
     planets: Query<(&Transform, &PlanetId), With<PlanetRoot>>,
     moons: Query<(&Transform, &MoonId), With<MoonRoot>>,
+    asteroids: Res<crate::asteroids::AsteroidField>,
     cam_q: Query<&Transform, (With<Camera3d>, Without<PlanetRoot>, Without<MoonRoot>)>,
     mut dim: ResMut<GalaxyDim>,
 ) {
@@ -1220,6 +1261,7 @@ fn update_galaxy_dim(
     let body = match target.0 {
         TargetKind::Planet(id) => planets.iter().find(|(_, p)| p.0 == id).map(|(t, _)| t.translation),
         TargetKind::Moon(pid, mi) => moons.iter().find(|(_, m)| m.planet_idx == pid && m.moon_idx == mi).map(|(t, _)| t.translation),
+        TargetKind::Asteroid(key) => asteroids.pose(&key).map(|t| t.translation),
         _ => None,
     };
     let radius = body_params(&settings, &target.0).map(|p| p.radius);
@@ -1252,6 +1294,7 @@ fn surface_light(
     planets: Query<(&Transform, &PlanetId), With<PlanetRoot>>,
     moons: Query<(&Transform, &MoonId), With<MoonRoot>>,
     stars: Query<&Transform, With<StarRoot>>,
+    asteroids: Res<crate::asteroids::AsteroidField>,
     cam_q: Query<&Transform, (With<Camera3d>, Without<PlanetRoot>, Without<MoonRoot>, Without<StarRoot>)>,
     mut was_active: Local<bool>,
 ) {
@@ -1271,6 +1314,7 @@ fn surface_light(
             .iter()
             .find(|(_, m)| m.planet_idx == planet_idx && m.moon_idx == moon_idx)
             .map(|(t, _)| t.translation),
+        TargetKind::Asteroid(key) => asteroids.pose(&key).map(|t| t.translation),
         _ => None,
     };
     let Some(center) = center else { return };
@@ -1535,6 +1579,7 @@ fn fade_indicators(
     surface: Res<Surface>,
     planets: Query<(&Transform, &PlanetId), With<PlanetRoot>>,
     moons: Query<(&Transform, &MoonId), With<MoonRoot>>,
+    asteroids: Res<crate::asteroids::AsteroidField>,
     cam_q: Query<&Transform, (With<Camera3d>, Without<PlanetRoot>, Without<MoonRoot>)>,
     mut store: ResMut<GizmoConfigStore>,
     mut fade: Local<Option<f32>>,
@@ -1544,6 +1589,7 @@ fn fade_indicators(
     let body = match kind {
         TargetKind::Planet(id) => planets.iter().find(|(_, p)| p.0 == id).map(|(t, _)| t.translation),
         TargetKind::Moon(pid, mi) => moons.iter().find(|(_, m)| m.planet_idx == pid && m.moon_idx == mi).map(|(t, _)| t.translation),
+        TargetKind::Asteroid(key) => asteroids.pose(&key).map(|t| t.translation),
         _ => None,
     };
     // Altitude en rayons de l'astre : tout disparaît sous 0,3 rayon, tout revient au-dessus de 2
@@ -1710,6 +1756,7 @@ fn update_tiles(
     cam_q: Query<&Transform, With<Camera3d>>,
     planets: Query<(Entity, &PlanetId, &Transform), (With<PlanetRoot>, Without<Camera3d>)>,
     moons: Query<(Entity, &MoonId, &Transform), (With<MoonRoot>, Without<Camera3d>)>,
+    asteroids: Res<crate::asteroids::AsteroidField>,
     children: Query<&Children>,
     far: Query<(), With<FarMesh>>,
     mut vis: Query<&mut Visibility>,
@@ -1720,7 +1767,7 @@ fn update_tiles(
     // Changement (ou fin) de séjour : on jette les tuiles et on rend le maillage lointain
     if store.body != wanted {
         if let Some(old) = store.body {
-            let root = find_root(&old, &planets, &moons).map(|(e, _)| e);
+            let root = find_root(&old, &planets, &moons, &asteroids).map(|(e, _)| e);
             for (_, entry) in store.built.drain() {
                 commands.entity(entry.entity).despawn_recursive();
             }
@@ -1736,7 +1783,7 @@ fn update_tiles(
     }
     let Some(kind) = store.body else { return };
     let (Some(terrain), Ok(cam)) = (surface.terrain.as_ref(), cam_q.get_single()) else { return };
-    let Some((root, root_tf)) = find_root(&kind, &planets, &moons) else { return };
+    let Some((root, root_tf)) = find_root(&kind, &planets, &moons, &asteroids) else { return };
     let params = terrain.params;
     let layout = terrain.layout;
     let now = time.elapsed_secs_f64();
@@ -1911,6 +1958,7 @@ fn find_root(
     kind: &TargetKind,
     planets: &Query<(Entity, &PlanetId, &Transform), (With<PlanetRoot>, Without<Camera3d>)>,
     moons: &Query<(Entity, &MoonId, &Transform), (With<MoonRoot>, Without<Camera3d>)>,
+    asteroids: &crate::asteroids::AsteroidField,
 ) -> Option<(Entity, Transform)> {
     match *kind {
         TargetKind::Planet(id) => planets.iter().find(|(_, p, _)| p.0 == id).map(|(e, _, t)| (e, *t)),
@@ -1918,6 +1966,7 @@ fn find_root(
             .iter()
             .find(|(_, m, _)| m.planet_idx == planet_idx && m.moon_idx == moon_idx)
             .map(|(e, _, t)| (e, *t)),
+        TargetKind::Asteroid(key) => asteroids.root(&key),
         _ => None,
     }
 }
@@ -2049,6 +2098,7 @@ mod tests {
             hydro: crate::planetgen::hydrology::Hydro::default(),
             relief: crate::planetgen::geology::Relief::default(),
             biomes: crate::planetgen::biome::BiomeParams::default(),
+            asteroid: None,
         })
     }
 
