@@ -192,7 +192,7 @@ impl Plugin for UiPlugin {
             .add_systems(
                 Update,
                 (
-                    toggle_menu,
+                    toggle_menu.run_if(crate::editeur::in_game),
                     handle_options_button,
                     handle_astres_tabs,
                     update_menu_visibility,
@@ -997,7 +997,22 @@ fn setup_game_ui(mut commands: Commands, settings: Res<GameSettings>) {
     ];
     commands.entity(gfx_content).add_children(&gfx_rows);
 
-    commands.entity(menu_root).add_children(&[title, columns]);
+    // Éditeur de modèles (0.12) : personnages, vaisseaux, objets
+    let editor = commands
+        .spawn(Node { width: Val::Percent(100.0), padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)), justify_content: JustifyContent::Center, ..default() })
+        .with_children(|p| {
+            p.spawn((
+                Button,
+                Node { padding: UiRect::axes(Val::Px(16.0), Val::Px(6.0)), border: UiRect::all(Val::Px(2.0)), ..default() },
+                BackgroundColor(BG_DARK),
+                BorderColor(ACCENT),
+                BorderRadius::all(Val::Px(6.0)),
+                crate::editeur::EditorMenuButton,
+            ))
+            .with_child((Text::new("Editeur de modeles (personnage, vaisseau, objets)"), TextFont { font_size: 16.0, ..default() }, TextColor(TEXT_COLOR)));
+        })
+        .id();
+    commands.entity(menu_root).add_children(&[title, editor, columns]);
 
 }
 

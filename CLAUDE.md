@@ -198,6 +198,14 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   lumiere des soleils voilee (`SunDim`), ciel gris / brun, flash des eclairs, brouillard (`gas.rs`), particules
   autour de la camera (`particle_positions`), vent qui pousse le vaisseau en vol bas (`Surface::drift`), scanner.
   Banc : `cargo test --release bench_cloud_layer -- --ignored --nocapture`.
+- 0.12 (`ROADMAP-0.12-editeur.md`) : editeur de modeles voxel, module `src/editeur/`. E0 = fondations : etat
+  `AppState` (Jeu / Editeur, `editeur::in_game` coupe le clavier et la souris du jeu), ouvert au premier lancement
+  (`GameSettings::first_launch`, creation du personnage), par le bouton du menu (`EditorMenuButton`) et `/editeur`.
+  Format `.ssvox` (`format.rs`) : archive zip (meta.json + voxels.bin + zones.bin), palette 255 couleurs +
+  matiere (mate, metal, verre, lumineuse), `Sparse` = chunks 32^3 creux (absent / uniforme / plein, RLE), 10 Mo au
+  plus (Q4), grilles : perso 16 x 32 x 32, vaisseau 64 a 1024 (`ShipCategory`), autre <= 64. Bibliotheque
+  `saves/modeles/`, import Pixel World (`import.rs`, depuis `saves/import/`, couleurs de `BlockData.cs`). Test des
+  vrais modeles : `cargo test --release real_pixel_world -- --ignored --nocapture`. PROTOCOL inchange.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 
