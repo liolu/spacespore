@@ -206,6 +206,13 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   plus (Q4), grilles : perso 16 x 32 x 32, vaisseau 64 a 1024 (`ShipCategory`), autre <= 64. Bibliotheque
   `saves/modeles/`, import Pixel World (`import.rs`, depuis `saves/import/`, couleurs de `BlockData.cs`). Test des
   vrais modeles : `cargo test --release real_pixel_world -- --ignored --nocapture`. PROTOCOL inchange.
+  E1 = l'editeur : `edit.rs` (`Doc` : modele + historique, un trait de souris = un lot annulable, `Tool`
+  ajouter / retirer / peindre / pipette, symetrie miroir en x par defaut pour les persos, `raycast` DDA, maillage des
+  faces visibles), `view.rs` (la camera du jeu passe sur le calque `EDITOR_LAYER` = le monde disparait sans etre
+  decharge ; lumiere et gizmos `EditorGizmos` sur ce calque ; camera orbitale ; raccourcis 1-4, X, G, F, Ctrl+Z (W ou
+  Z physique), Ctrl+Y, Ctrl+S, fleches), `panels.rs` (interface reconstruite quand `ui_dirty`, fenetres Nouveau /
+  Bibliotheque / Renommer / Etiquettes, interface du jeu masquee). Tests visuels : `SPACESPORE_CAPTURE=x.png`
+  (+ `SPACESPORE_EDITOR_DEMO=1`, `SPACESPORE_CAPTURE_SECS`) fait une capture puis ferme le jeu.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

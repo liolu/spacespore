@@ -1,23 +1,24 @@
 //! Éditeur de modèles voxel (0.12, `ROADMAP-0.12-editeur.md`) : personnages, vaisseaux, objets.
 //!
-//! Phase E0 (fondations) :
-//! - l'état du jeu `AppState` (Jeu / Editeur) : en éditeur, le jeu ne réagit plus au clavier ni à la
-//!   souris ; Échap ramène au jeu ;
-//! - l'éditeur s'ouvre de lui-même à la **création du personnage** (premier lancement : aucune
-//!   sauvegarde), sur le type Personnage, et depuis le menu du jeu (bouton « Éditeur de modèles ») ou
-//!   `/editeur` ;
-//! - le format `.ssvox` (`format.rs`), la bibliothèque `saves/modeles/` et l'import des modèles de
-//!   Pixel World (`import.rs`, depuis `saves/import/`).
-//!
-//! L'édition elle-même (grille, caméra, outils) vient en E1.
+//! - E0 : l'état du jeu `AppState` (Jeu / Editeur : en éditeur, le jeu ne lit plus le clavier ni la
+//!   souris), ouverture à la **création du personnage** (premier lancement), depuis le menu et par
+//!   `/editeur` ; le format `.ssvox` (`format.rs`), la bibliothèque `saves/modeles/`, l'import de
+//!   Pixel World (`import.rs`).
+//! - E1 : l'éditeur (`edit.rs` : outils, miroir, annuler, rayon, maillage ; `view.rs` : scène et
+//!   caméra ; `panels.rs` : interface), porté de `VoxelEditorManager.cs`.
 
+pub mod edit;
 pub mod format;
 pub mod import;
+pub mod panels;
+pub mod view;
 
+use bevy::math::IVec3;
 use bevy::prelude::*;
 use std::path::{Path, PathBuf};
 
-use format::{Model, ModelKind, ShipCategory, CHARACTER_GRID, OTHER_MAX_GRID};
+use edit::{Doc, Tool};
+use format::{Model, ModelKind, PaletteEntry, ShipCategory};
 
 /// Le jeu ou l'éditeur.
 #[derive(States, Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -32,13 +33,21 @@ pub struct EditeurPlugin;
 impl Plugin for EditeurPlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<AppState>()
-            .init_resource::<EditorSession>()
+            .init_resource::<Editor>()
             .add_event::<OpenEditor>()
-            .add_systems(Startup, open_on_first_launch)
+            .init_gizmo_group::<view::EditorGizmos>()
+            .add_systems(Startup, (open_on_first_launch, view::setup_gizmos))
             .add_systems(Update, (open_editor, menu_button))
-            .add_systems(OnEnter(AppState::Editeur), (refresh_library, spawn_screen).chain())
-            .add_systems(OnExit(AppState::Editeur), despawn_screen)
-            .add_systems(Update, (screen_buttons, refresh_texts, leave_editor).chain().run_if(in_state(AppState::Editeur)));
+            .add_systems(OnEnter(AppState::Editeur), (view::enter_scene, on_enter).chain())
+            .add_systems(OnExit(AppState::Editeur), (view::exit_scene, panels::show_game_ui))
+            .add_systems(
+                Update,
+                (panels::typing, panels::escape, panels::actions, view::camera_input, view::tools_input, view::update_mesh, panels::rebuild, panels::live_texts, view::draw)
+                    .chain()
+                    .run_if(in_state(AppState::Editeur)),
+            )
+            .add_systems(PostUpdate, panels::hide_game_ui.run_if(in_state(AppState::Editeur)))
+            .add_systems(Update, test_capture);
     }
 }
 
@@ -58,8 +67,6 @@ pub struct EditorMenuButton;
 /// Un modèle de la bibliothèque.
 #[derive(Clone, Debug)]
 pub struct LibraryEntry {
-    /// Fichier (ouvrir, renommer, supprimer : E1).
-    #[allow(dead_code)]
     pub path: PathBuf,
     pub name: String,
     pub kind: ModelKind,
@@ -67,15 +74,186 @@ pub struct LibraryEntry {
     pub bytes: usize,
 }
 
-/// Ce que l'éditeur affiche.
-#[derive(Resource, Default)]
-pub struct EditorSession {
-    pub kind: ModelKind,
-    pub category: Option<ShipCategory>,
-    pub library: Vec<LibraryEntry>,
+/// Fenêtre ouverte au milieu de l'éditeur.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Overlay {
+    New,
+    Library,
+    /// Nom en cours de saisie.
+    Rename(String),
+    Tags,
+}
+
+/// L'éditeur : onglets ouverts, outil, couleur, caméra, fenêtres.
+#[derive(Resource)]
+pub struct Editor {
+    pub docs: Vec<Doc>,
+    pub current: usize,
+    pub tool: Tool,
+    pub color: PaletteEntry,
+    pub palette: Vec<PaletteEntry>,
+    pub mirror: bool,
+    pub grid: bool,
+    pub cam: view::OrbitCam,
+    /// Case pleine visée, case vide devant elle.
+    pub hover: (Option<IVec3>, Option<IVec3>),
+    pub last_cell: Option<IVec3>,
+    pub overlay: Option<Overlay>,
     pub message: String,
     /// Ouvert pour la création du personnage (premier lancement).
     pub welcome: bool,
+    pub library: Vec<LibraryEntry>,
+    pub pending_delete: Option<usize>,
+    pub new_kind: ModelKind,
+    pub new_race: Option<usize>,
+    pub new_category: ShipCategory,
+    pub new_size: u32,
+    pub saved: view::SavedCamera,
+    pub ui_dirty: bool,
+    pub hidden_ui: Vec<Entity>,
+    /// Poids du fichier (recalculé de temps en temps).
+    pub size_bytes: Option<usize>,
+    size_tick: u32,
+    /// Échap déjà utilisé cette image (fermer la saisie du nom).
+    pub escape_used: bool,
+}
+
+impl Default for Editor {
+    fn default() -> Self {
+        Self {
+            docs: Vec::new(),
+            current: 0,
+            tool: Tool::Add,
+            color: panels::default_color(),
+            palette: edit::starter_palette(),
+            mirror: true,
+            grid: true,
+            cam: view::OrbitCam::default(),
+            hover: (None, None),
+            last_cell: None,
+            overlay: None,
+            message: String::new(),
+            welcome: false,
+            library: Vec::new(),
+            pending_delete: None,
+            new_kind: ModelKind::Personnage,
+            new_race: None,
+            new_category: ShipCategory::Chasseur,
+            new_size: 32,
+            saved: Default::default(),
+            ui_dirty: true,
+            hidden_ui: Vec::new(),
+            size_bytes: None,
+            size_tick: 0,
+            escape_used: false,
+        }
+    }
+}
+
+impl Editor {
+    pub fn doc(&self) -> Option<&Doc> {
+        self.docs.get(self.current)
+    }
+
+    pub fn doc_mut(&mut self) -> Option<&mut Doc> {
+        self.docs.get_mut(self.current)
+    }
+
+    /// Une saisie de texte est en cours (les raccourcis ne comptent pas).
+    pub fn typing(&self) -> bool {
+        matches!(self.overlay, Some(Overlay::Rename(_)))
+    }
+
+    pub fn say(&mut self, msg: String) {
+        self.message = msg;
+        self.ui_dirty = true;
+    }
+
+    /// Onglet `i` : cadré, remaillé.
+    pub fn select(&mut self, i: usize) {
+        if let Some(d) = self.docs.get_mut(self.current) {
+            d.end();
+        }
+        self.current = i.min(self.docs.len().saturating_sub(1));
+        if let Some(d) = self.docs.get_mut(self.current) {
+            d.mesh_dirty = true;
+        }
+        self.focus();
+        self.size_bytes = None;
+        self.size_tick = 0;
+        self.ui_dirty = true;
+    }
+
+    pub fn focus(&mut self) {
+        if let Some(m) = self.doc().map(|d| d.model.clone()) {
+            self.cam.focus(&m);
+        }
+    }
+
+    pub fn undo(&mut self) {
+        let done = self.doc_mut().is_some_and(|d| d.undo());
+        self.say(if done { "Annule.".into() } else { "Rien a annuler.".into() });
+    }
+
+    pub fn redo(&mut self) {
+        let done = self.doc_mut().is_some_and(|d| d.redo());
+        self.say(if done { "Retabli.".into() } else { "Rien a retablir.".into() });
+    }
+
+    pub fn set_color(&mut self, c: PaletteEntry) {
+        self.color = c;
+        view::remember_color(self, c);
+        self.ui_dirty = true;
+    }
+
+    /// Enregistre l'onglet : dans son fichier, sinon un nouveau dans la bibliothèque.
+    pub fn save(&mut self) {
+        let Some(d) = self.docs.get_mut(self.current) else { return };
+        d.end();
+        let r = match &d.path {
+            Some(p) => d.model.to_bytes().and_then(|b| std::fs::write(p, b).map_err(|e| e.to_string())).map(|_| p.clone()),
+            None => save_model(&library_dir(), &d.model),
+        };
+        let msg = match r {
+            Ok(p) => {
+                d.path = Some(p.clone());
+                d.dirty = false;
+                format!("Enregistre : {}", p.display())
+            }
+            Err(e) => format!("Non enregistre : {e}"),
+        };
+        self.size_bytes = None;
+        self.size_tick = 0;
+        self.say(msg);
+    }
+
+    /// Poids du fichier (Q4 : 10 Mo au plus), recalculé toutes les ~2 s.
+    pub fn refresh_size(&mut self) {
+        self.size_tick = self.size_tick.saturating_sub(1);
+        if self.size_tick > 0 && self.size_bytes.is_some() {
+            return;
+        }
+        self.size_tick = 120;
+        self.size_bytes = self.doc().map(|d| match d.model.to_bytes() {
+            Ok(b) => b.len(),
+            Err(_) => format::MAX_FILE_BYTES + 1,
+        });
+    }
+
+    /// Importe les JSON de Pixel World de `saves/import/`.
+    pub fn import(&mut self) {
+        let from = import_dir();
+        let msg = match import_folder(&from, &library_dir()) {
+            Ok(r) if r.models == 0 => format!("Aucun JSON de Pixel World dans {} : copiez-y vos modeles (.json).", from.display()),
+            Ok(r) => format!("{} modele(s) importe(s), {} voxels ({} blocs inconnus, {} hors de la grille).", r.models, r.voxels, r.unknown, r.outside),
+            Err(e) => {
+                let _ = std::fs::create_dir_all(&from);
+                format!("Import impossible : {e}. Copiez vos JSON de Pixel World dans {}.", from.display())
+            }
+        };
+        self.library = list_models(&library_dir());
+        self.say(msg);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -167,19 +345,16 @@ pub fn import_folder(from: &Path, to: &Path) -> Result<import::ImportReport, Str
 //  Ouverture et fermeture
 // ─────────────────────────────────────────────────────────────────────────
 
-fn open_on_first_launch(settings: Res<crate::settings::GameSettings>, mut open: EventWriter<OpenEditor>, mut session: ResMut<EditorSession>) {
+fn open_on_first_launch(settings: Res<crate::settings::GameSettings>, mut open: EventWriter<OpenEditor>, mut editor: ResMut<Editor>) {
     if settings.first_launch {
-        session.welcome = true;
+        editor.welcome = true;
         open.send(OpenEditor(ModelKind::Personnage));
     }
 }
 
-fn open_editor(mut events: EventReader<OpenEditor>, mut session: ResMut<EditorSession>, mut next: ResMut<NextState<AppState>>, mut menu: ResMut<crate::ui::MenuState>) {
+fn open_editor(mut events: EventReader<OpenEditor>, mut editor: ResMut<Editor>, mut next: ResMut<NextState<AppState>>, mut menu: ResMut<crate::ui::MenuState>) {
     for OpenEditor(kind) in events.read() {
-        session.kind = *kind;
-        if *kind == ModelKind::Vaisseau && session.category.is_none() {
-            session.category = Some(ShipCategory::Chasseur);
-        }
+        editor.new_kind = *kind;
         menu.open = false;
         info!("Editeur de modeles ouvert ({})", kind.name());
         next.set(AppState::Editeur);
@@ -192,222 +367,59 @@ fn menu_button(interactions: Query<&Interaction, (Changed<Interaction>, With<Edi
     }
 }
 
-fn refresh_library(mut session: ResMut<EditorSession>) {
-    session.library = list_models(&library_dir());
-}
-
-fn leave_editor(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<AppState>>, mut session: ResMut<EditorSession>, quit: Query<&Interaction, (Changed<Interaction>, With<QuitButton>)>) {
-    if keys.just_pressed(KeyCode::Escape) || quit.iter().any(|i| *i == Interaction::Pressed) {
-        session.welcome = false;
-        next.set(AppState::Jeu);
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-//  Écran de l'éditeur (E0 : choix du type, bibliothèque, import)
-// ─────────────────────────────────────────────────────────────────────────
-
-const BG: Color = Color::srgba(0.03, 0.04, 0.07, 0.97);
-const PANEL: Color = Color::srgb(0.08, 0.1, 0.15);
-const ACCENT: Color = Color::srgb(0.35, 0.65, 1.0);
-const TEXT: Color = Color::srgb(0.88, 0.92, 1.0);
-const DIM: Color = Color::srgb(0.6, 0.66, 0.75);
-
-#[derive(Component)]
-struct EditorScreen;
-
-#[derive(Component, Clone, Copy, PartialEq)]
-enum ScreenButton {
-    Kind(ModelKind),
-    Category(ShipCategory),
-    New,
-    Import,
-}
-
-#[derive(Component)]
-struct QuitButton;
-
-#[derive(Component)]
-enum ScreenText {
-    Header,
-    Grid,
-    Library,
-    Message,
-}
-
-fn button(p: &mut ChildBuilder, label: &str, marker: impl Bundle) {
-    p.spawn((
-        Button,
-        Node { padding: UiRect::axes(Val::Px(14.0), Val::Px(7.0)), border: UiRect::all(Val::Px(2.0)), ..default() },
-        BackgroundColor(PANEL),
-        BorderColor(ACCENT),
-        BorderRadius::all(Val::Px(6.0)),
-        marker,
-    ))
-    .with_child((Text::new(label), TextFont { font_size: 16.0, ..default() }, TextColor(TEXT)));
-}
-
-fn text(p: &mut ChildBuilder, size: f32, color: Color, marker: ScreenText) {
-    p.spawn((Text::new(""), TextFont { font_size: size, ..default() }, TextColor(color), marker));
-}
-
-fn row(p: &mut ChildBuilder, f: impl FnOnce(&mut ChildBuilder)) {
-    p.spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(10.0), flex_wrap: FlexWrap::Wrap, ..default() }).with_children(f);
-}
-
-fn spawn_screen(mut commands: Commands) {
-    commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                flex_direction: FlexDirection::Column,
-                padding: UiRect::all(Val::Px(36.0)),
-                row_gap: Val::Px(16.0),
-                ..default()
-            },
-            BackgroundColor(BG),
-            GlobalZIndex(50),
-            // Les clics ne traversent pas vers le jeu
-            Interaction::default(),
-            EditorScreen,
-        ))
-        .with_children(|p| {
-            p.spawn((Text::new("EDITEUR DE MODELES"), TextFont { font_size: 30.0, ..default() }, TextColor(ACCENT)));
-            text(p, 17.0, TEXT, ScreenText::Header);
-            row(p, |r| {
-                for k in ModelKind::ALL {
-                    button(r, k.name(), ScreenButton::Kind(k));
-                }
-            });
-            row(p, |r| {
-                for c in ShipCategory::ALL {
-                    button(r, &format!("{} ({}³)", c.name(), c.grid()), ScreenButton::Category(c));
-                }
-            });
-            text(p, 15.0, DIM, ScreenText::Grid);
-            row(p, |r| {
-                button(r, "Nouveau modele", ScreenButton::New);
-                button(r, "Importer Pixel World", ScreenButton::Import);
-                button(r, "Retour au jeu (Echap)", QuitButton);
-            });
-            text(p, 15.0, Color::srgb(1.0, 0.85, 0.5), ScreenText::Message);
-            text(p, 15.0, TEXT, ScreenText::Library);
-        });
-}
-
-fn despawn_screen(mut commands: Commands, q: Query<Entity, With<EditorScreen>>) {
-    for e in &q {
-        commands.entity(e).try_despawn_recursive();
-    }
-}
-
-fn grid_text(kind: ModelKind, category: Option<ShipCategory>) -> String {
-    match kind {
-        ModelKind::Personnage => format!(
-            "Personnage : grille fixe {} de large x {} de haut x {} de long (queues, centaures, lamias). La race et son squelette anime arrivent en E1 et E5.",
-            CHARACTER_GRID.x, CHARACTER_GRID.y, CHARACTER_GRID.z
-        ),
-        ModelKind::Vaisseau => {
-            let c = category.unwrap_or(ShipCategory::Chasseur);
-            format!("Vaisseau {} : grille {g} x {g} x {g} (stockage creux par blocs de 32, 10 Mo au plus par fichier).", c.name(), g = c.grid())
-        }
-        ModelKind::Autre => format!("Autre (objet, arme, meuble, decor) : grille libre jusqu'a {m} x {m} x {m}.", m = OTHER_MAX_GRID),
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn screen_buttons(
-    interactions: Query<(&Interaction, &ScreenButton), Changed<Interaction>>,
-    mut session: ResMut<EditorSession>,
-) {
-    for (i, b) in &interactions {
-        if *i != Interaction::Pressed {
-            continue;
-        }
-        match *b {
-            ScreenButton::Kind(k) => {
-                session.kind = k;
-                if k == ModelKind::Vaisseau && session.category.is_none() {
-                    session.category = Some(ShipCategory::Chasseur);
-                }
-            }
-            ScreenButton::Category(c) => {
-                session.kind = ModelKind::Vaisseau;
-                session.category = Some(c);
-            }
-            ScreenButton::New => {
-                let n = session.library.iter().filter(|e| e.kind == session.kind).count() + 1;
-                let name = format!("{} {n}", session.kind.name());
-                let model = Model::new(&name, session.kind, (session.kind == ModelKind::Vaisseau).then_some(session.category.unwrap_or(ShipCategory::Chasseur)));
-                session.message = match save_model(&library_dir(), &model) {
-                    Ok(p) => format!("Modele vide \"{name}\" cree : {}. L'edition arrive en E1.", p.display()),
-                    Err(e) => e,
-                };
-                session.library = list_models(&library_dir());
-            }
-            ScreenButton::Import => {
-                let from = import_dir();
-                session.message = match import_folder(&from, &library_dir()) {
-                    Ok(r) if r.models == 0 => format!("Aucun JSON de Pixel World dans {} : copiez-y vos modeles (.json).", from.display()),
-                    Ok(r) => format!(
-                        "{} modele(s) importe(s), {} voxels ({} blocs inconnus, {} hors de la grille).",
-                        r.models, r.voxels, r.unknown, r.outside
-                    ),
-                    Err(e) => {
-                        let _ = std::fs::create_dir_all(&from);
-                        format!("Import impossible : {e}. Copiez vos JSON de Pixel World dans {}.", from.display())
+/// Tests (développement) : `SPACESPORE_CAPTURE=fichier.png` fait une capture d'écran après
+/// `SPACESPORE_CAPTURE_SECS` secondes (12 par défaut), puis ferme le jeu ; avec
+/// `SPACESPORE_EDITOR_DEMO=1`, l'éditeur s'ouvre sur un petit personnage de démonstration.
+fn test_capture(mut commands: Commands, time: Res<Time>, mut done: Local<u8>, mut editor: ResMut<Editor>, state: Res<State<AppState>>, mut exit: EventWriter<AppExit>) {
+    let Ok(path) = std::env::var("SPACESPORE_CAPTURE") else { return };
+    let secs: f32 = std::env::var("SPACESPORE_CAPTURE_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(12.0);
+    let t = time.elapsed_secs();
+    if *done == 0 && std::env::var("SPACESPORE_EDITOR_DEMO").is_ok() && *state.get() == AppState::Editeur && t > secs * 0.5 {
+        *done = 1;
+        let mut m = format::Model::new("Demo", ModelKind::Personnage, None);
+        m.race = Some(edit::RACES[0].to_string());
+        let mut doc = Doc::new(m, None);
+        let palette = edit::starter_palette();
+        // Un petit bonhomme : jambes, corps, bras, tête (symétrie miroir)
+        let mut put = |x0: i32, y0: i32, z0: i32, x1: i32, y1: i32, z1: i32, c: PaletteEntry| {
+            for x in x0..=x1 {
+                for y in y0..=y1 {
+                    for z in z0..=z1 {
+                        let i = doc.model.color_index(c).unwrap();
+                        doc.set(IVec3::new(x, y, z), i, true);
                     }
-                };
-                session.library = list_models(&library_dir());
+                }
             }
-        }
+        };
+        put(5, 0, 14, 6, 9, 16, palette[30]);
+        put(4, 10, 13, 7, 19, 17, palette[8]);
+        put(2, 11, 14, 3, 18, 16, palette[10]);
+        put(5, 20, 13, 7, 25, 18, palette[3]);
+        put(6, 22, 18, 6, 22, 18, palette[38]);
+        editor.docs.push(doc);
+        editor.overlay = None;
+        let i = editor.docs.len() - 1;
+        editor.select(i);
+        editor.hover = (Some(IVec3::new(7, 19, 15)), Some(IVec3::new(8, 19, 15)));
+    }
+    if *done <= 1 && t > secs {
+        *done = 2;
+        commands.spawn(bevy::render::view::screenshot::Screenshot::primary_window()).observe(bevy::render::view::screenshot::save_to_disk(path));
+    }
+    if *done == 2 && t > secs + 3.0 {
+        exit.send(AppExit::Success);
     }
 }
 
-fn refresh_texts(
-    session: Res<EditorSession>,
-    mut texts: Query<(&ScreenText, &mut Text)>,
-    mut buttons: Query<(&ScreenButton, &mut BorderColor)>,
-) {
-    if !session.is_changed() {
-        return;
+/// En entrant : sans modèle ouvert, la fenêtre « Nouveau modèle » (création du personnage).
+fn on_enter(mut editor: ResMut<Editor>) {
+    editor.library = list_models(&library_dir());
+    if editor.docs.is_empty() {
+        editor.overlay = Some(Overlay::New);
+    } else {
+        editor.focus();
     }
-    for (which, mut t) in &mut texts {
-        let s = match which {
-            ScreenText::Header => {
-                if session.welcome {
-                    "Bienvenue ! Cree ton personnage : choisis le type de modele, puis construis-le (l'edition arrive en E1).".to_string()
-                } else {
-                    "Choisis le type de modele.".to_string()
-                }
-            }
-            ScreenText::Grid => grid_text(session.kind, session.category),
-            ScreenText::Message => session.message.clone(),
-            ScreenText::Library => {
-                let mut lines = vec![format!("Bibliotheque ({}) : {} modele(s)", library_dir().display(), session.library.len())];
-                for e in session.library.iter().take(14) {
-                    lines.push(format!("  {}  -  {}, {} voxels, {:.1} Ko", e.name, e.kind.name(), e.voxels, e.bytes as f64 / 1024.0));
-                }
-                if session.library.len() > 14 {
-                    lines.push(format!("  ... et {} autres", session.library.len() - 14));
-                }
-                lines.join("\n")
-            }
-        };
-        if t.0 != s {
-            t.0 = s;
-        }
-    }
-    for (b, mut border) in &mut buttons {
-        let on = match *b {
-            ScreenButton::Kind(k) => k == session.kind,
-            ScreenButton::Category(c) => session.kind == ModelKind::Vaisseau && session.category == Some(c),
-            _ => false,
-        };
-        border.0 = if on { Color::srgb(1.0, 0.8, 0.3) } else { ACCENT };
-    }
+    editor.ui_dirty = true;
 }
 
 #[cfg(test)]
