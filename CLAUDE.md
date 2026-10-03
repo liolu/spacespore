@@ -310,6 +310,13 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   0,12 a 0,24 de la largeur, Kuiper plate). `StarOrbit::period` = vraie periode (paire serree 1 a 200 j =
   24 min a 80 h de jeu, compagnon lointain en siecles) ; paire serree a un quart de la premiere orbite permise.
   PROTOCOL 30.
+- 0.11.4 correctifs (`ROADMAP-0.11.4-correctifs.md`, une PR par phase C1..C8). C1 editeur : outil Ajouter =
+  un clic un bloc, le trait reste sur le plan du premier bloc (`Editor::add_plane`, `view::plane_cell`) ;
+  panneaux qui defilent jusqu'au bout du contenu des que la souris est dedans, barre `ScrollThumb` tirable ;
+  `view::UiHover` (panneaux + boutons) ; lumiere d'atelier qui suit la camera + contre-jour (`follow_light`,
+  touche L = lumiere du jeu) ; bibliotheque : « Modeles fournis » (`defaults::all_ids`, copie a enregistrer) ;
+  `OrbitCam::focus` cadre le contenu (`Sparse::chunk_bounds`) ou toute la grille. Captures :
+  `SPACESPORE_EDITOR_DEMO=vide:<categorie>` / `fourni:<k>` (+ `SPACESPORE_TEST_CMD=/editeur`).
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 
