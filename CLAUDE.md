@@ -332,6 +332,11 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   C4 personnage : F5 = 1re personne -> de dos -> de face (`Surface::view`), molette = distance de la camera
   (3 a 12 voxels, 6 par defaut, `GameSettings::walker_cam`, `remember_walker_cam`) ; lampe tenue dans la main
   droite (`Rig::hand` = pivot de `main_d` a la pose de l'image), elle eclaire ou l'on regarde.
+  C5 scanner : panneau en sections (`scanner::Section` : titre + lignes libelle / valeur en colonnes), « Ici et
+  maintenant » en haut (`live_rows`, valeurs a largeur fixe, mises a jour a 1 Hz dans `LiveCell` sans
+  reconstruire tant que les libelles ne changent pas). « Rotation et orbite » : jour et annee reels et en temps
+  de jeu (`OrbitSection::day_game_s / year_game_s / orbit_game_s`, aussi dans `/profil`). Point de mesure de
+  `LocalWeather` dans l'espace = point de stationnement (`Surface::hover_dir`), plus sous le vaisseau.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 
