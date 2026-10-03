@@ -207,7 +207,9 @@ mod tests {
         assert!(!sys.planets_cached(), "planetes explicites : pas un cache");
     }
 
-    /// Mémoire de la liste des systèmes : 68,9 Mo avant la phase 0 (planètes stockées).
+    /// Mémoire de la liste des systèmes : 68,9 Mo avant la phase 0 (planètes stockées) pour
+    /// ~144 000 systèmes, soit ~480 octets chacun ; moins de la moitié par système depuis (il y a
+    /// davantage de galaxies depuis la 0.11).
     #[test]
     fn the_system_list_is_much_lighter() {
         use crate::planetgen::memory::retained_by;
@@ -215,7 +217,7 @@ mod tests {
         let (systems, bytes) = retained_by(|| default_systems(&galaxies, DEFAULT_WORLD_SEED));
         let per_system = bytes as f64 / systems.len() as f64;
         println!("liste des systemes : {} octets ({per_system:.0} par systeme)", bytes);
-        assert!(bytes < 68_889_502 / 2, "{bytes} octets");
+        assert!(per_system < 480.0 / 2.0, "{per_system:.0} octets par systeme ({bytes} en tout)");
         // Un système chargé (planètes, lunes et toute leur chaîne) ne pèse que quelques Ko, et
         // seuls les systèmes proches du vaisseau sont en mémoire
         let (_, one) = retained_by(|| systems[10].planets().len());

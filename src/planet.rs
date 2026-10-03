@@ -27,6 +27,46 @@ const LOD_STARS_GONE: f32 = 120_000_000.0 * GALAXY_SCALE;
 const LOD_CAPS_START: f32 = 70_000_000.0 * GALAXY_SCALE;
 const LOD_CAPS_FULL: f32 = 110_000_000.0 * GALAXY_SCALE;
 const LOD_STEPS: usize = 10;
+/// Éclaircissement des étoiles : toutes affichées jusqu'à cette distance de la caméra, puis de
+/// moins en moins (jamais moins de `MIN_STAR_KEEP`) ; elles reviennent toutes en s'approchant.
+const THIN_FULL: f32 = 15_000_000.0 * GALAXY_SCALE;
+const MIN_STAR_KEEP: f32 = 0.12;
+/// Une galaxie devient un point (comme une étoile) au-delà de cette distance de la caméra :
+/// fondu entre `POINT_START` et `POINT_FULL` (bras, trou noir et disque s'effacent).
+pub const POINT_START: f32 = 300_000_000.0 * GALAXY_SCALE;
+pub const POINT_FULL: f32 = 400_000_000.0 * GALAXY_SCALE;
+
+/// Part des étoiles affichées à `dist` de la caméra (1 de près).
+pub fn star_keep(dist: f32) -> f32 {
+    if dist <= THIN_FULL {
+        1.0
+    } else {
+        (THIN_FULL / dist).powf(1.2).max(MIN_STAR_KEEP)
+    }
+}
+
+/// Une étoile reste affichée quand la part gardée dépasse son tirage (toujours le même pour une
+/// étoile : en s'approchant, celles qui avaient disparu reviennent).
+pub fn star_kept(sys_idx: usize, keep: f32) -> bool {
+    if keep >= 1.0 {
+        return true;
+    }
+    let mut x = (sys_idx as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    x ^= x >> 31;
+    x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    ((x >> 40) as f32 / (1u64 << 24) as f32) < keep
+}
+
+/// Fondu vers le point (0 : galaxie complète, 1 : un simple point) à `dist` de la caméra.
+pub fn point_fade(dist: f32) -> f32 {
+    smoothstep(((dist - POINT_START) / (POINT_FULL - POINT_START)).clamp(0.0, 1.0))
+}
+
+/// Distance (caméra → centre de la galaxie) sous laquelle ses étoiles sont chargées : au-delà de
+/// `LOD_STARS_GONE` (mesurée au centre), elles sont de toute façon effacées.
+pub fn galaxy_star_reach(_g: &GalaxyConfig) -> f32 {
+    LOD_STARS_GONE * 1.05
+}
 const STAR_BRIGHTNESS_STEPS: usize = 10;
 const ARM_COLORS: usize = 5;
 
@@ -64,7 +104,8 @@ impl Plugin for PlanetPlugin {
             .add_systems(
                 Update,
                 (orbit_planets, orbit_stars, orbit_moons.after(orbit_planets), orbit_asteroid_belts, update_flare_voxels, rotate_clouds.after(orbit_planets), shimmer_auroras, regenerate_all, update_lod, update_star_visibility, update_far_star_scale, update_arm_capsule_lod, stream_system_bodies, reload_stars, reload_planets, reload_moons, reload_asteroid_belts, cleanup_hidden_toplevel, rotate_accretion_disk),
-            );
+            )
+            .add_systems(Update, (stream_galaxy_stars, update_galaxy_points));
     }
 }
 
@@ -126,6 +167,22 @@ pub struct StarSectors {
     pub list: Vec<Sector>,
     /// Secteur de chaque système (par indice de système).
     of_system: HashMap<usize, usize>,
+    /// Galaxies dont les étoiles sont chargées (entités `FarStar`).
+    pub loaded: HashSet<u32>,
+}
+
+/// Maillages et matériau des étoiles lointaines (pour charger une galaxie à la demande).
+#[derive(Resource)]
+pub struct FarStarAssets {
+    quads: Vec<Handle<Mesh>>,
+    material: Handle<StandardMaterial>,
+}
+
+/// Un point qui représente une galaxie très lointaine.
+#[derive(Component)]
+pub struct GalaxyPoint {
+    pub galaxy_id: u32,
+    size: f32,
 }
 
 type FarStarItem = (u32, usize, Vec3, Entity);
@@ -135,6 +192,35 @@ impl StarSectors {
     pub fn sector_of(&self, sys: usize) -> Option<(usize, usize)> {
         let i = *self.of_system.get(&sys)?;
         Some((i, self.list[i].systems.len()))
+    }
+
+    /// Ajoute les étoiles (déjà créées) d'une galaxie qui vient d'être chargée.
+    fn add_galaxy(&mut self, gid: u32, stars: Vec<FarStarItem>) {
+        let built = Self::build(stars);
+        self.list.extend(built.list);
+        self.loaded.insert(gid);
+        self.reindex();
+    }
+
+    /// Retire une galaxie dont on s'est éloigné : ses étoiles disparaissent.
+    fn remove_galaxy(&mut self, gid: u32, commands: &mut Commands) {
+        for sector in self.list.iter().filter(|s| s.galaxy == gid) {
+            for &e in &sector.members {
+                commands.entity(e).despawn();
+            }
+        }
+        self.list.retain(|s| s.galaxy != gid);
+        self.loaded.remove(&gid);
+        self.reindex();
+    }
+
+    fn reindex(&mut self) {
+        self.of_system.clear();
+        for (i, sector) in self.list.iter().enumerate() {
+            for &sys in &sector.systems {
+                self.of_system.insert(sys, i);
+            }
+        }
     }
 
     /// Découpe récursivement les étoiles de chaque galaxie (médiane sur l'axe le plus long)
@@ -187,7 +273,123 @@ impl StarSectors {
                 of_system.insert(sys, i);
             }
         }
-        Self { list, of_system }
+        Self { list, of_system, loaded: HashSet::new() }
+    }
+}
+
+/// Crée les étoiles (billboards) d'une galaxie.
+fn load_galaxy_stars(commands: &mut Commands, settings: &GameSettings, assets: &FarStarAssets, gid: u32) -> Vec<FarStarItem> {
+    let Some(gal) = settings.galaxies.get(gid as usize) else { return Vec::new() };
+    let gal_center = gal.center();
+    let mut out = Vec::new();
+    for (si, sys) in settings.systems.iter().enumerate() {
+        if sys.galaxy_id != gid {
+            continue;
+        }
+        let center = sys.center();
+        if center.distance(gal_center) < CORE_EXCLUSION {
+            continue;
+        }
+        let Some(star_cfg) = sys.stars.first() else { continue };
+        let group = star_color_group(star_cfg.light_color_r, star_cfg.light_color_g, star_cfg.light_color_b);
+        let entity = commands
+            .spawn((
+                Mesh3d(assets.quads[group].clone()),
+                MeshMaterial3d(assets.material.clone()),
+                Transform::from_translation(center).with_scale(Vec3::splat(star_cfg.radius * 0.5)),
+                Visibility::Hidden,
+                NotShadowCaster,
+                FarStar { sys_idx: si, radius: star_cfg.radius, glow: star_cfg.glow(), galaxy_id: sys.galaxy_id },
+            ))
+            .id();
+        out.push((sys.galaxy_id, si, sys.abs_center(), entity));
+    }
+    out
+}
+
+/// Les étoiles d'une galaxie ne sont créées que quand on s'en approche, et retirées quand on s'en
+/// éloigne (au plus deux galaxies chargées par passage, deux fois par seconde).
+pub(crate) fn stream_galaxy_stars(
+    mut commands: Commands,
+    time: Res<Time>,
+    settings: Res<GameSettings>,
+    assets: Option<Res<FarStarAssets>>,
+    camera_q: Query<&GlobalTransform, With<Camera3d>>,
+    mut sectors: ResMut<StarSectors>,
+    mut last: Local<f64>,
+) {
+    let Some(assets) = assets else { return };
+    let now = time.elapsed_secs_f64();
+    if now - *last < 0.5 {
+        return;
+    }
+    *last = now;
+    let Ok(cam) = camera_q.get_single() else { return };
+    let cam_pos = cam.translation();
+    let mut loads = 0;
+    for (gid, g) in settings.galaxies.iter().enumerate() {
+        let gid = gid as u32;
+        let d = cam_pos.distance(g.center());
+        let reach = galaxy_star_reach(g);
+        let loaded = sectors.loaded.contains(&gid);
+        if !loaded && d < reach && loads < 2 {
+            let items = load_galaxy_stars(&mut commands, &settings, &assets, gid);
+            sectors.add_galaxy(gid, items);
+            loads += 1;
+        } else if loaded && d > reach * 1.25 {
+            sectors.remove_galaxy(gid, &mut commands);
+        }
+    }
+}
+
+/// De très loin, une galaxie n'est plus qu'un point (comme une étoile) ; ses bras, son trou noir
+/// et son disque s'effacent. En s'approchant, tout revient.
+#[allow(clippy::type_complexity)]
+pub(crate) fn update_galaxy_points(
+    camera_q: Query<&GlobalTransform, With<Camera3d>>,
+    settings: Res<GameSettings>,
+    mats: Option<Res<StarBrightnessMaterials>>,
+    mut points: Query<(&GalaxyPoint, &mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>)>,
+    mut cores: Query<(Option<&DistantGalaxyCore>, Has<GalacticCore>, &mut Visibility), (Without<GalaxyPoint>, Or<(With<DistantGalaxyCore>, With<GalacticCore>, With<AccretionDisk>)>)>,
+) {
+    let Some(mats) = mats else { return };
+    let Ok(cam) = camera_q.get_single() else { return };
+    let cam_pos = cam.translation();
+    let fades: Vec<(f32, f32)> = settings.galaxies.iter().map(|g| {
+        let d = cam_pos.distance(g.center());
+        (d, point_fade(d))
+    }).collect();
+    for (point, mut tf, mut vis, mut mat) in &mut points {
+        let Some(&(d, fade)) = fades.get(point.galaxy_id as usize) else { continue };
+        if fade <= 0.0 {
+            if *vis != Visibility::Hidden {
+                *vis = Visibility::Hidden;
+            }
+            continue;
+        }
+        if *vis != Visibility::Inherited {
+            *vis = Visibility::Inherited;
+        }
+        let Some(g) = settings.galaxies.get(point.galaxy_id as usize) else { continue };
+        let center = g.center();
+        // Taille apparente constante (un point net), un peu plus gros pour une grande galaxie
+        tf.translation = center;
+        tf.scale = Vec3::splat(d * 0.004 * point.size);
+        let to = (center - cam_pos).normalize_or(Vec3::Z);
+        tf.look_to(to, Vec3::Y);
+        let step = ((fade * (STAR_BRIGHTNESS_STEPS - 1) as f32).round() as usize).clamp(1, STAR_BRIGHTNESS_STEPS - 1);
+        if mat.0 != mats.steps[step] {
+            mat.0 = mats.steps[step].clone();
+        }
+    }
+    for (distant, main, mut vis) in &mut cores {
+        let gid = distant.map_or(0, |d| d.galaxy_id) as usize;
+        let _ = main;
+        let hidden = fades.get(gid).is_some_and(|f| f.1 > 0.98);
+        let wanted = if hidden { Visibility::Hidden } else { Visibility::Inherited };
+        if *vis != wanted {
+            *vis = wanted;
+        }
     }
 }
 
@@ -480,31 +682,32 @@ fn generate_all(
         .map(|i| make_atlas_quad(&mut meshes, i))
         .collect();
 
-    // Toutes les galaxies (principale et extérieures) : un billboard par système
-    let mut far_stars: Vec<FarStarItem> = Vec::with_capacity(settings.systems.len());
-    for (si, sys) in settings.systems.iter().enumerate() {
-        let center = sys.center();
-        let gal_center = settings.galaxies.get(sys.galaxy_id as usize).map_or(Vec3::ZERO, |g| g.center());
-        if center.distance(gal_center) < CORE_EXCLUSION { continue; }
-        if let Some(star_cfg) = sys.stars.first() {
-            let group = star_color_group(
-                star_cfg.light_color_r,
-                star_cfg.light_color_g,
-                star_cfg.light_color_b,
-            );
-            let entity = commands
-                .spawn((
-                    Mesh3d(quad_meshes[group].clone()),
-                    MeshMaterial3d(atlas_mat.clone()),
-                    Transform::from_translation(center).with_scale(Vec3::splat(star_cfg.radius * 0.5)),
-                    NotShadowCaster,
-                    FarStar { sys_idx: si, radius: star_cfg.radius, glow: star_cfg.glow(), galaxy_id: sys.galaxy_id },
-                ))
-                .id();
-            far_stars.push((sys.galaxy_id, si, sys.abs_center(), entity));
+    // Étoiles des galaxies (un billboard par système) : seulement celles des galaxies proches du
+    // départ ; les autres sont chargées en s'en approchant (`stream_galaxy_stars`)
+    let assets = FarStarAssets { quads: quad_meshes.clone(), material: atlas_mat.clone() };
+    let mut sectors = StarSectors::default();
+    let start = settings.systems.first().map_or(Vec3::ZERO, |s| s.center());
+    for (gid, g) in settings.galaxies.iter().enumerate() {
+        if start.distance(g.center()) < galaxy_star_reach(g) {
+            let items = load_galaxy_stars(&mut commands, &settings, &assets, gid as u32);
+            sectors.add_galaxy(gid as u32, items);
         }
     }
-    commands.insert_resource(StarSectors::build(far_stars));
+    commands.insert_resource(sectors);
+    commands.insert_resource(assets);
+
+    // Un point par galaxie, affiché de très loin
+    for (gid, g) in settings.galaxies.iter().enumerate() {
+        let group = if gid == 0 { 1 } else { (crate::settings::pseudo_rand(gid as u32 * 31 + 7) * 5.0) as usize % 5 };
+        commands.spawn((
+            Mesh3d(quad_meshes[group].clone()),
+            MeshMaterial3d(atlas_mat.clone()),
+            Transform::from_translation(g.center()),
+            Visibility::Hidden,
+            NotShadowCaster,
+            GalaxyPoint { galaxy_id: gid as u32, size: (g.radius / crate::settings::GALAXY_RADIUS).sqrt().clamp(0.6, 1.5) },
+        ));
+    }
 
     if let Some(sys) = settings.systems.first() {
         let center = sys.center();
@@ -2254,6 +2457,12 @@ fn update_far_star_scale(
                 continue;
             }
 
+            // Éclaircissement : de loin, une partie seulement des étoiles (toujours les mêmes)
+            let keep = star_keep(dist);
+            if !star_kept(fs.sys_idx, keep) {
+                if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
+                continue;
+            }
             if *vis != Visibility::Inherited { *vis = Visibility::Inherited; }
             let min_scale = fs.radius * 0.5;
             // Une étoile lumineuse paraît plus grosse qu'une naine rouge ou brune
@@ -2261,6 +2470,8 @@ fn update_far_star_scale(
             let dist_shrink = (20_000_000.0 * GALAXY_SCALE / gal_dist.max(1.0)).clamp(0.05, 1.0);
             let mut scale = angular_scale.max(min_scale) * dist_shrink;
             if lod_fade > 0.0 { scale *= 1.0 - lod_fade; }
+            // Les étoiles gardées grossissent un peu : la galaxie garde son éclat
+            scale *= keep.powf(-0.5);
             tf.scale = Vec3::splat(scale);
 
             if mat.0 != brightness_mats.steps[step] {
@@ -2301,7 +2512,8 @@ fn update_arm_capsule_lod(
         }
 
         let raw = ((dist - LOD_CAPS_START) / (LOD_CAPS_FULL - LOD_CAPS_START)).clamp(0.0, 1.0);
-        let t = smoothstep(raw);
+        // De très loin, la galaxie devient un point : ses bras s'effacent
+        let t = smoothstep(raw) * (1.0 - point_fade(dist));
 
         if t <= 0.0 {
             if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
@@ -2481,5 +2693,62 @@ mod moon_bench {
             }
         }
         println!("LUNES {n} chunks en {:.0} ms", start.elapsed().as_secs_f64() * 1000.0);
+    }
+}
+
+#[cfg(test)]
+mod galaxy_lod_tests {
+    use super::*;
+
+    /// De près, toutes les étoiles ; de loin, une partie (toujours les mêmes), jamais aucune ; en
+    /// s'approchant, celles qui avaient disparu reviennent.
+    #[test]
+    fn far_stars_thin_out_and_come_back() {
+        assert_eq!(star_keep(THIN_FULL * 0.5), 1.0);
+        assert_eq!(star_keep(THIN_FULL), 1.0);
+        let (a, b) = (star_keep(THIN_FULL * 2.0), star_keep(THIN_FULL * 6.0));
+        assert!(a < 1.0 && b < a && b >= MIN_STAR_KEEP, "{a} {b}");
+        assert_eq!(star_keep(THIN_FULL * 1000.0), MIN_STAR_KEEP);
+        // Monotone : gardée de loin => gardée de plus près
+        for sys in 0..5_000 {
+            if star_kept(sys, b) {
+                assert!(star_kept(sys, a));
+            }
+            assert!(star_kept(sys, 1.0));
+        }
+        let kept = (0..10_000).filter(|&s| star_kept(s, 0.3)).count();
+        assert!((2_700..3_300).contains(&kept), "{kept}");
+    }
+
+    /// Une galaxie très lointaine devient un point ; plus près, elle redevient complète.
+    #[test]
+    fn far_galaxies_become_points() {
+        assert_eq!(point_fade(POINT_START * 0.9), 0.0);
+        assert_eq!(point_fade(POINT_FULL * 1.1), 1.0);
+        let mid = point_fade((POINT_START + POINT_FULL) * 0.5);
+        assert!(mid > 0.2 && mid < 0.8);
+        let settings = GameSettings::default();
+        let start = settings.systems[0].center();
+        // Au départ : notre galaxie est chargée (et les extérieures assez proches, comme avant) ;
+        // les galaxies lointaines sont des points, sans étoiles chargées
+        let n = crate::settings::NUM_DISTANT_GALAXIES;
+        let mut loaded = 0;
+        let mut points = 0;
+        for (gid, g) in settings.galaxies.iter().enumerate() {
+            let d = start.distance(g.center());
+            loaded += (d < galaxy_star_reach(g)) as usize;
+            if gid == 0 {
+                assert!(d < galaxy_star_reach(g));
+            }
+            if gid > n {
+                assert!(d > galaxy_star_reach(g), "galaxie lointaine {gid} chargee au depart");
+                points += (point_fade(d) >= 1.0) as usize;
+            }
+        }
+        // Les plus proches des lointaines gardent leurs bras, les autres sont des points
+        assert!(points * 2 > crate::settings::NUM_OUTER_GALAXIES, "{points} points");
+        // (les extérieures proches ont des étoiles visibles, en fondu, comme avant)
+        assert!(loaded <= n + 1, "{loaded} galaxies chargees au depart");
+        assert!(settings.galaxies[1..=n].iter().any(|g| point_fade(start.distance(g.center())) < 1.0));
     }
 }

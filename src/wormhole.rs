@@ -174,7 +174,10 @@ fn count_for(galaxy_id: usize, radius: f32) -> usize {
 fn mouth(seed: u32, sys_idx: usize, sys: &StarSystemConfig) -> (Vec3, f32) {
     let angle = mix(seed ^ 0xA41, sys_idx as u32, 7) as f32 / u32::MAX as f32 * std::f32::consts::TAU;
     let offset = system_extent(sys) * 1.25 + 4_000.0;
-    (sys.abs_center() + Vec3::new(angle.cos(), 0.0, angle.sin()) * offset, offset + USE_MARGIN)
+    // Loin du centre de l'univers (galaxies lointaines), une position absolue en f32 n'est
+    // précise qu'à ~1e-7 près : la marge d'usage en tient compte
+    let precision = sys.abs_center().length() * 4.0e-7;
+    (sys.abs_center() + Vec3::new(angle.cos(), 0.0, angle.sin()) * offset, offset + USE_MARGIN + precision)
 }
 
 /// Tous les trous de ver du monde, déterministes d'après sa graine.

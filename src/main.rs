@@ -389,7 +389,9 @@ fn setup_scene(
     commands.spawn((
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
-            far: 4_000_000_000.0 * settings::GALAXY_SCALE,
+            // Les galaxies lointaines vont jusqu'à ~2 G x GALAXY_SCALE du centre : de quoi les voir
+            // de l'autre bout de l'univers
+            far: 12_000_000_000.0 * settings::GALAXY_SCALE,
             ..default()
         }),
 

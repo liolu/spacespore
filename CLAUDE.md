@@ -33,7 +33,11 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   toutes les distances (etoiles, galaxies, orbites des planetes et lunes, applique a la fin de `system.rs`) ; tailles
   des astres (`GALAXY_SIZE_SCALE` pour les trous noirs) et physique (UA, temperatures, marees) inchangees, orbites
   plus lentes (Kepler), lumiere des etoiles compensee (`lumens`, `light_range_for`), vaisseau x5. Systemes ~19 M
-  en mediane, 52 M pour 99 %. Les etoiles lointaines sont groupees en
+  en mediane, 52 M pour 99 %. Galaxies : la principale, 20 exterieures (`NUM_DISTANT_GALAXIES`) et 30 lointaines
+  (`NUM_OUTER_GALAXIES`, de 1,3 a 10 fois la plus lointaine, ajoutees apres : rien de connu ne change), toutes de
+  vraies galaxies. LOD (`planet.rs`) : etoiles chargees par galaxie a l'approche (`stream_galaxy_stars`, entites
+  `FarStar` creees / retirees), eclaircies avec la distance (`star_keep`, toujours les memes : elles reviennent en
+  s'approchant), galaxie en point au-dela de `POINT_START` (`GalaxyPoint`, bras / trou noir / disque effaces). Les etoiles lointaines sont groupees en
   secteurs de ~100 etoiles (`StarSectors`) affiches/mis a jour ensemble.
 - Proportions d'un systeme (generees depuis la graine du monde, `settings.rs`) : echelle G du systeme
   600 000 a 1 500 000 (`StarConfig::scale()`) ; 1 R_terre = echelle/109. 1 a 8 planetes (`planetgen/system.rs`) :

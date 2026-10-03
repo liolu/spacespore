@@ -618,6 +618,11 @@ pub const GALAXY_RADIUS: f32 = 9_000_000.0 * GALAXY_SCALE;
 /// et des centaines de milliers d'entités à afficher). 20 galaxies : une de chaque type (voir
 /// `GalaxyKind`), soit ~160 000 systèmes.
 pub const NUM_DISTANT_GALAXIES: usize = 20;
+/// Galaxies lointaines (ids après les extérieures) : de 1,3 à 10 fois la distance de la plus
+/// lointaine des galaxies extérieures. De vraies galaxies (systèmes, trous noirs, trous de ver,
+/// factions) ; de très loin, de simples points comme des étoiles. Leurs étoiles ne sont affichées
+/// (entités) que quand on s'en approche (`planet::stream_galaxy_stars`).
+pub const NUM_OUTER_GALAXIES: usize = 30;
 
 /// Nombre d'étoiles d'une galaxie, le même intervalle pour toutes : (étoiles de bras, dispersées).
 pub fn star_budget(seed: u32) -> (usize, usize) {
@@ -667,7 +672,7 @@ pub fn default_galaxies(world_seed: u64) -> Vec<GalaxyConfig> {
         let x = (world_seed as u32) ^ ((world_seed >> 32) as u32);
         (pseudo_rand(x ^ 0x6A09_E667) * 65_535.0) as u32 * 2 + (x & 1)
     };
-    let mut galaxies = Vec::with_capacity(NUM_DISTANT_GALAXIES + 1);
+    let mut galaxies = Vec::with_capacity(NUM_DISTANT_GALAXIES + NUM_OUTER_GALAXIES + 1);
     galaxies.push(GalaxyConfig {
         abs_center: Vec3::ZERO,
         tilt: Quat::IDENTITY,
@@ -732,6 +737,49 @@ pub fn default_galaxies(world_seed: u64) -> Vec<GalaxyConfig> {
             num_arms: 2 + (rk(9) * 5.0) as usize,
             twist: 1.5 + rk(11) * 7.5,
             kind: crate::galaxy_shape::GalaxyKind::for_index(gi, world_hash),
+            core_radius: (10_000.0 + rk(23) * 20_000.0) * GALAXY_SIZE_SCALE,
+            seed: gs * 1000,
+            arm_stars: star_budget(gs).0,
+            scatter_stars: star_budget(gs).1,
+        });
+    }
+
+    // Galaxies lointaines : au-delà des extérieures (jusqu'à 10 fois la plus lointaine), dans
+    // toutes les directions (un peu aplaties), à l'écart les unes des autres. Ajoutées après les
+    // autres : les galaxies et les systèmes déjà connus ne changent pas.
+    let farthest = galaxies.iter().map(|g| g.abs_center.length()).fold(0.0f32, f32::max);
+    for gi in 0..NUM_OUTER_GALAXIES {
+        let gs = gi as u32 + 700_000 + world_hash % 90_000;
+        let rk = |k: u32| pseudo_rand(gs * 13 + k);
+        let rk_k = |n: u32, k: u32| pseudo_rand((gs * 13 + n).wrapping_add(k));
+        let radius = (1_300_000.0 + (rk(7) * 0.6 + rk(27) * 0.4).powf(1.3) * 6_000_000.0) * GALAXY_SCALE;
+        let mut best: Option<(Vec3, f32)> = None;
+        for attempt in 0..80u32 {
+            let k = attempt.wrapping_mul(100_003);
+            let r = farthest * (1.3 + 8.7 * rk_k(1, k).powf(1.2));
+            let z = 2.0 * rk_k(3, k) - 1.0;
+            let a = rk_k(5, k) * tau;
+            let ring = (1.0 - z * z).max(0.0).sqrt();
+            let c = Vec3::new(ring * a.cos(), z * 0.35, ring * a.sin()).normalize() * r;
+            let slack = galaxies
+                .iter()
+                .map(|g| c.distance(g.abs_center) - SPACING * (g.radius + radius))
+                .fold(f32::MAX, f32::min);
+            if best.map_or(true, |(_, s)| slack > s) {
+                best = Some((c, slack));
+            }
+            if slack >= 0.0 {
+                break;
+            }
+        }
+        let center = best.map_or(Vec3::X * farthest * 2.0, |(c, _)| c);
+        galaxies.push(GalaxyConfig {
+            abs_center: center,
+            tilt: Quat::from_euler(EulerRot::XYZ, (rk(13) - 0.5) * 1.5, rk(15) * tau, (rk(17) - 0.5) * 1.0),
+            radius,
+            num_arms: 2 + (rk(9) * 5.0) as usize,
+            twist: 1.5 + rk(11) * 7.5,
+            kind: crate::galaxy_shape::GalaxyKind::for_index(NUM_DISTANT_GALAXIES + gi, world_hash),
             core_radius: (10_000.0 + rk(23) * 20_000.0) * GALAXY_SIZE_SCALE,
             seed: gs * 1000,
             arm_stars: star_budget(gs).0,
@@ -1296,6 +1344,35 @@ impl SystemSpatialIndex {
 mod tests {
     use super::*;
 
+    /// Galaxies lointaines : après les autres (rien de déjà connu ne change), de 1,3 à 10 fois la
+    /// plus lointaine des galaxies extérieures, à l'écart les unes des autres, avec leurs systèmes.
+    #[test]
+    fn outer_galaxies_are_far_real_galaxies() {
+        let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
+        assert_eq!(galaxies.len(), 1 + NUM_DISTANT_GALAXIES + NUM_OUTER_GALAXIES);
+        let farthest = galaxies[..=NUM_DISTANT_GALAXIES].iter().map(|g| g.abs_center.length()).fold(0.0f32, f32::max);
+        let outer = &galaxies[NUM_DISTANT_GALAXIES + 1..];
+        for g in outer {
+            let d = g.abs_center.length();
+            assert!(d >= farthest * 1.29 && d <= farthest * 10.01, "{d} pour {farthest}");
+        }
+        assert!(outer.iter().any(|g| g.abs_center.length() > farthest * 5.0), "aucune vraiment lointaine");
+        for (i, a) in galaxies.iter().enumerate() {
+            for b in &galaxies[i + 1..] {
+                assert!(a.abs_center.distance(b.abs_center) > a.radius + b.radius, "galaxies qui se touchent");
+            }
+        }
+        // Les galaxies déjà connues ne bougent pas (elles sont placées avant)
+        let again = default_galaxies(DEFAULT_WORLD_SEED);
+        assert!(galaxies.iter().zip(&again).all(|(a, b)| a.abs_center == b.abs_center));
+        // Chacune a ses systèmes
+        let systems = default_systems(&galaxies, DEFAULT_WORLD_SEED);
+        for gid in NUM_DISTANT_GALAXIES + 1..galaxies.len() {
+            let n = systems.iter().filter(|s| s.galaxy_id as usize == gid).count();
+            assert!(n > 3_000, "galaxie {gid} : {n} systemes");
+        }
+    }
+
     #[test]
     fn galaxies_do_not_touch_each_other() {
         let g = default_galaxies(DEFAULT_WORLD_SEED);
@@ -1430,4 +1507,5 @@ mod tests {
         }
     }
 }
+
 
