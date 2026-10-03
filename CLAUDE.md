@@ -212,7 +212,13 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   decharge ; lumiere et gizmos `EditorGizmos` sur ce calque ; camera orbitale ; raccourcis 1-4, X, G, F, Ctrl+Z (W ou
   Z physique), Ctrl+Y, Ctrl+S, fleches), `panels.rs` (interface reconstruite quand `ui_dirty`, fenetres Nouveau /
   Bibliotheque / Renommer / Etiquettes, interface du jeu masquee). Tests visuels : `SPACESPORE_CAPTURE=x.png`
-  (+ `SPACESPORE_EDITOR_DEMO=1`, `SPACESPORE_CAPTURE_SECS`) fait une capture puis ferme le jeu.
+  (+ `SPACESPORE_EDITOR_DEMO=1`, `SPACESPORE_CAPTURE_SECS`, `SPACESPORE_EDITOR_SCROLL`) fait une capture puis ferme le jeu.
+  E2 = palette (`palette.rs`) : OKLCH (`oklch_to_rgb8` ramene la saturation dans l'ecran), grille 36 teintes x 12
+  clartes x 4 `Saturation`, 16 gris, `THEMES` (peaux, cheveux, metaux, coques, militaire, neons, Pixel World),
+  `parse_hex`, `sorted` (palette du modele : gris, teinte, clarte). Recentes (16), couleur libre (Hex...), matiere de
+  la couleur ; clic droit sur une couleur du modele = `Doc::replace_color` (un lot annulable). Rendu par matiere :
+  `edit::build_meshes` (4 maillages) et `view::material_of` (mate, metal, verre transparent, lumineuse sans ombre).
+  A l'enregistrement, `Model::compact_palette` sur une copie (l'onglet garde ses index pour l'annulation).
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

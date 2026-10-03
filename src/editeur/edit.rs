@@ -173,6 +173,21 @@ impl Doc {
         true
     }
 
+    /// Remplace partout la couleur d'index `from` (1..=255) par `to` (un seul lot annulable).
+    pub fn replace_color(&mut self, from: u8, to: PaletteEntry) -> usize {
+        let Some(new) = self.model.color_index(to) else { return 0 };
+        if new == from {
+            return 0;
+        }
+        let cells: Vec<IVec3> = self.model.voxels.iter().filter(|(_, v)| *v == from).map(|(p, _)| p).collect();
+        self.begin();
+        for p in &cells {
+            self.set(*p, new, false);
+        }
+        self.end();
+        cells.len()
+    }
+
     /// Applique un outil à la case visée `hit` (case pleine) et `place` (case vide devant elle).
     /// Renvoie la couleur prise par la pipette.
     pub fn apply(&mut self, tool: Tool, hit: Option<IVec3>, place: Option<IVec3>, color: PaletteEntry, mirror: bool) -> Option<PaletteEntry> {
@@ -274,9 +289,21 @@ pub fn raycast(m: &Model, origin: Vec3, dir: Vec3, max_steps: usize) -> (Option<
     (None, ground)
 }
 
+/// Maillages des faces visibles, un par matière (mate, métal, verre, lumineuse), dans l'ordre de
+/// `Material` : chacun a son rendu (E2).
+pub fn build_meshes(m: &Model) -> [Mesh; 4] {
+    [Material::Mate, Material::Metal, Material::Verre, Material::Lumineuse].map(|mat| build_mesh_of(m, Some(mat)))
+}
+
 /// Maillage des faces visibles du modèle (une case = un cube unité), couleurs aux sommets.
 /// (Maillage glouton par chunk, hors du fil principal : E3.)
+#[cfg(test)]
 pub fn build_mesh(m: &Model) -> Mesh {
+    build_mesh_of(m, None)
+}
+
+/// Maillage d'une seule matière (`None` : toutes).
+fn build_mesh_of(m: &Model, only: Option<Material>) -> Mesh {
     const FACES: [(IVec3, [[f32; 3]; 4]); 6] = [
         (IVec3::X, [[1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [1.0, 1.0, 1.0], [1.0, 0.0, 1.0]]),
         (IVec3::NEG_X, [[0.0, 0.0, 1.0], [0.0, 1.0, 1.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]]),
@@ -288,6 +315,9 @@ pub fn build_mesh(m: &Model) -> Mesh {
     let (mut pos, mut nor, mut col, mut idx) = (Vec::new(), Vec::new(), Vec::new(), Vec::<u32>::new());
     for (p, v) in m.voxels.iter() {
         let Some(e) = m.palette.get(v as usize - 1) else { continue };
+        if only.is_some_and(|o| o != e.material) {
+            continue;
+        }
         let c = srgb(e);
         for (k, (n, quad)) in FACES.iter().enumerate() {
             // Face cachée par un voisin opaque (le verre laisse voir ce qui est derrière)
@@ -416,6 +446,27 @@ mod tests {
         let g = m.color_index(PaletteEntry { rgb: [100, 200, 255], material: Material::Verre }).unwrap();
         m.voxels.set(IVec3::X, g);
         assert_eq!(build_mesh(&m).count_vertices(), 44);
+    }
+
+    #[test]
+    fn replace_a_color_everywhere_in_one_undo() {
+        let mut d = Doc::new(Model::new("p", ModelKind::Autre, None), None);
+        let blue = PaletteEntry { rgb: [0, 0, 200], material: Material::Metal };
+        d.begin();
+        for x in 0..6 {
+            d.apply(Tool::Add, None, Some(IVec3::new(x, 0, 0)), if x % 2 == 0 { red() } else { blue }, false);
+        }
+        d.end();
+        let from = d.model.color_index(red()).unwrap();
+        let gold = PaletteEntry { rgb: [212, 175, 55], material: Material::Metal };
+        assert_eq!(d.replace_color(from, gold), 3);
+        assert_eq!(d.model.color_at(IVec3::new(2, 0, 0)), Some(gold));
+        assert_eq!(d.model.color_at(IVec3::new(1, 0, 0)), Some(blue));
+        assert!(d.undo());
+        assert_eq!(d.model.color_at(IVec3::new(2, 0, 0)), Some(red()));
+        // Les maillages par matière se partagent les faces
+        let total: usize = build_meshes(&d.model).iter().map(|m| m.count_vertices()).sum();
+        assert_eq!(total, build_mesh(&d.model).count_vertices());
     }
 
     #[test]

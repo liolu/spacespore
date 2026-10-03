@@ -10,6 +10,7 @@
 pub mod edit;
 pub mod format;
 pub mod import;
+pub mod palette;
 pub mod panels;
 pub mod view;
 
@@ -42,7 +43,7 @@ impl Plugin for EditeurPlugin {
             .add_systems(OnExit(AppState::Editeur), (view::exit_scene, panels::show_game_ui))
             .add_systems(
                 Update,
-                (panels::typing, panels::escape, panels::actions, view::camera_input, view::tools_input, view::update_mesh, panels::rebuild, panels::live_texts, view::draw)
+                (panels::typing, panels::escape, panels::actions, panels::replace_on_right_click, panels::scroll_left, view::camera_input, view::tools_input, view::update_mesh, panels::rebuild, panels::live_texts, view::draw)
                     .chain()
                     .run_if(in_state(AppState::Editeur)),
             )
@@ -81,6 +82,8 @@ pub enum Overlay {
     Library,
     /// Nom en cours de saisie.
     Rename(String),
+    /// Couleur libre : code hexadécimal en cours de saisie.
+    Hex(String),
     Tags,
 }
 
@@ -91,7 +94,15 @@ pub struct Editor {
     pub current: usize,
     pub tool: Tool,
     pub color: PaletteEntry,
-    pub palette: Vec<PaletteEntry>,
+    /// Les 16 dernières couleurs choisies.
+    pub recent: Vec<PaletteEntry>,
+    pub saturation: palette::Saturation,
+    /// Palette thématique affichée.
+    pub theme: usize,
+    /// Le clic droit en cours a commencé dans la vue (tourner) et pas sur un panneau.
+    pub orbit_ok: bool,
+    /// Défilement du panneau de gauche (gardé quand l'interface est reconstruite).
+    pub left_scroll: f32,
     pub mirror: bool,
     pub grid: bool,
     pub cam: view::OrbitCam,
@@ -125,7 +136,11 @@ impl Default for Editor {
             current: 0,
             tool: Tool::Add,
             color: panels::default_color(),
-            palette: edit::starter_palette(),
+            recent: Vec::new(),
+            saturation: palette::Saturation::Vif,
+            theme: palette::THEMES.len() - 1,
+            orbit_ok: true,
+            left_scroll: 0.0,
             mirror: true,
             grid: true,
             cam: view::OrbitCam::default(),
@@ -161,7 +176,7 @@ impl Editor {
 
     /// Une saisie de texte est en cours (les raccourcis ne comptent pas).
     pub fn typing(&self) -> bool {
-        matches!(self.overlay, Some(Overlay::Rename(_)))
+        matches!(self.overlay, Some(Overlay::Rename(_)) | Some(Overlay::Hex(_)))
     }
 
     pub fn say(&mut self, msg: String) {
@@ -202,7 +217,10 @@ impl Editor {
 
     pub fn set_color(&mut self, c: PaletteEntry) {
         self.color = c;
-        view::remember_color(self, c);
+        // Récentes : la plus récente devant, sans doublon, 16 au plus
+        self.recent.retain(|r| *r != c);
+        self.recent.insert(0, c);
+        self.recent.truncate(16);
         self.ui_dirty = true;
     }
 
@@ -210,9 +228,13 @@ impl Editor {
     pub fn save(&mut self) {
         let Some(d) = self.docs.get_mut(self.current) else { return };
         d.end();
+        // Le fichier ne garde que les couleurs utilisées (l'onglet garde les siennes : l'historique
+        // d'annulation en dépend)
+        let mut saved = d.model.clone();
+        saved.compact_palette();
         let r = match &d.path {
-            Some(p) => d.model.to_bytes().and_then(|b| std::fs::write(p, b).map_err(|e| e.to_string())).map(|_| p.clone()),
-            None => save_model(&library_dir(), &d.model),
+            Some(p) => saved.to_bytes().and_then(|b| std::fs::write(p, b).map_err(|e| e.to_string())).map(|_| p.clone()),
+            None => save_model(&library_dir(), &saved),
         };
         let msg = match r {
             Ok(p) => {
@@ -396,11 +418,18 @@ fn test_capture(mut commands: Commands, time: Res<Time>, mut done: Local<u8>, mu
         put(2, 11, 14, 3, 18, 16, palette[10]);
         put(5, 20, 13, 7, 25, 18, palette[3]);
         put(6, 22, 18, 6, 22, 18, palette[38]);
+        // Matières (E2) : visière de verre, épaulettes de métal, ceinture lumineuse
+        put(5, 23, 18, 7, 23, 18, PaletteEntry { rgb: [120, 200, 255], material: format::Material::Verre });
+        put(2, 19, 13, 3, 19, 17, PaletteEntry { rgb: [212, 175, 55], material: format::Material::Metal });
+        put(4, 10, 17, 7, 10, 17, PaletteEntry { rgb: [255, 60, 200], material: format::Material::Lumineuse });
         editor.docs.push(doc);
         editor.overlay = None;
         let i = editor.docs.len() - 1;
         editor.select(i);
         editor.hover = (Some(IVec3::new(7, 19, 15)), Some(IVec3::new(8, 19, 15)));
+        if let Ok(v) = std::env::var("SPACESPORE_EDITOR_SCROLL") {
+            editor.left_scroll = v.parse().unwrap_or(0.0);
+        }
     }
     if *done <= 1 && t > secs {
         *done = 2;

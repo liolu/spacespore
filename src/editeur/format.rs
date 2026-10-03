@@ -404,6 +404,31 @@ impl Model {
         Some(self.palette.len() as u8)
     }
 
+    /// Retire de la palette les couleurs qui ne servent plus (à l'enregistrement) ; les voxels
+    /// suivent leur nouvel index.
+    pub fn compact_palette(&mut self) {
+        let mut used = [false; 256];
+        for (_, v) in self.voxels.iter() {
+            used[v as usize] = true;
+        }
+        let mut remap = [0u8; 256];
+        let mut kept = Vec::new();
+        for (i, e) in self.palette.iter().enumerate() {
+            if used[i + 1] {
+                kept.push(*e);
+                remap[i + 1] = kept.len() as u8;
+            }
+        }
+        if kept.len() == self.palette.len() {
+            return;
+        }
+        let cells: Vec<(IVec3, u8)> = self.voxels.iter().collect();
+        for (p, v) in cells {
+            self.voxels.set(p, remap[v as usize]);
+        }
+        self.palette = kept;
+    }
+
     /// Couleur du voxel `p` (`None` : vide).
     pub fn color_at(&self, p: IVec3) -> Option<PaletteEntry> {
         match self.voxels.get(p) {
@@ -559,6 +584,21 @@ mod tests {
         let bytes = m.to_bytes().unwrap();
         assert!(bytes.len() < 200_000, "{}", bytes.len());
         assert_eq!(Model::from_bytes(&bytes).unwrap().voxels.count(), 512 * 512 * 512);
+    }
+
+    #[test]
+    fn unused_colors_are_dropped_on_save() {
+        let mut m = Model::new("P", ModelKind::Autre, None);
+        let a = m.color_index(PaletteEntry { rgb: [1, 1, 1], material: Material::Mate }).unwrap();
+        let b = m.color_index(PaletteEntry { rgb: [2, 2, 2], material: Material::Mate }).unwrap();
+        let c = m.color_index(PaletteEntry { rgb: [3, 3, 3], material: Material::Verre }).unwrap();
+        m.voxels.set(IVec3::ZERO, a);
+        m.voxels.set(IVec3::X, c);
+        let _ = b;
+        m.compact_palette();
+        assert_eq!(m.palette.len(), 2);
+        assert_eq!(m.color_at(IVec3::X).unwrap().material, Material::Verre);
+        assert_eq!(m.color_at(IVec3::ZERO).unwrap().rgb, [1, 1, 1]);
     }
 
     #[test]
