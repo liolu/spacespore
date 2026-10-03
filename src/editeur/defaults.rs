@@ -175,6 +175,10 @@ fn ship(cat: ShipCategory, lib: &Library) -> Model {
         }
     };
     let ex = (r * 0.45) as i32;
+    // Le cockpit : une verrière qui s'ouvre quand le vaisseau est posé (on y monte)
+    let canopy = ((gf / 64.0).round() as u8).clamp(1, 8);
+    let cz = bz + bw + 1;
+    put("verriere", IVec3::new(cx - 2 * canopy as i32, top, cz), Placement { scale: canopy, ..p(0) }, false);
     put("propulseur", IVec3::new(cx - ex, cy, z0 - 1), p(0), true);
     put("feu", IVec3::new((gf * 0.12) as i32, cy + wing + 1, (gf * 0.42) as i32), Placement { scale: 1, ..p(0) }, true);
     put("tourelle", IVec3::new(cx, top + 1, (gf * 0.4) as i32), p(0), false);

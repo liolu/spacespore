@@ -295,6 +295,14 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   avance » (zone choisie, pivot +- 0,5 ou au clic, animations, frise de 21 cases, angles +-15, cle, duree,
   lecture / pause : `Preview::paused`). Partage (`Msg::Share`, `Net::share_out`) : le modele arrive chez les
   autres par empreinte, dans `saves/modeles/partages/`. Capture : `SPACESPORE_EDITOR_DEMO=avance`.
+- Correctifs apres 0.12 : nuages (`weather::cloud_field`) : chaque champ n'est pousse par le vent que depuis sa
+  naissance (deux periodes de `MORPH_SECS` = 15 min) ; avant, le cisaillement depuis le debut de la partie
+  faisait des bandes de Jupiter. `CLOUD_DRIFT` (x6) pour voir bouger les nuages, taille des nuages propre a chaque
+  monde. Eclairs seulement sous un nuage d'orage (au-dessus du joueur et de l'impact). PROTOCOL 29.
+  Embarquement (`surface.rs`) : `Phase::Boarding` / `Disembarking` : le cockpit (bloc verriere, rampe ou porte du
+  modele : `cockpit`) s'ouvre (etat « pose »), le personnage saute dedans puis le vaisseau decolle ; a
+  l'atterrissage il en descend. Les vaisseaux par defaut ont une verriere. `SPACESPORE_TEST_LAND=<s>,<s>` (V a
+  plusieurs instants). L'editeur rend la souris (`Surface::release_cursor`).
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 
