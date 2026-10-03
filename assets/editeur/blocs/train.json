@@ -1,0 +1,87 @@
+{
+  "id": "train",
+  "name": "Train d'atterrissage",
+  "kinds": [
+    "vaisseau"
+  ],
+  "scalable": true,
+  "parts": [
+    {
+      "name": "jambe",
+      "pivot": [
+        0.5,
+        0,
+        0.5
+      ],
+      "boxes": [
+        [
+          0,
+          -4,
+          0,
+          0,
+          -1,
+          0
+        ]
+      ]
+    },
+    {
+      "name": "roue",
+      "parent": "jambe",
+      "pivot": [
+        0.5,
+        -4.5,
+        0.5
+      ],
+      "boxes": [
+        [
+          0,
+          -5,
+          -1,
+          0,
+          -5,
+          1
+        ]
+      ]
+    }
+  ],
+  "anims": {
+    "repos": {
+      "duration": 1.0,
+      "tracks": {}
+    },
+    "rentrer": {
+      "duration": 4.0,
+      "tracks": {
+        "jambe": {
+          "type": "cles",
+          "rot": [
+            [
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              1.5,
+              90,
+              0,
+              0
+            ],
+            [
+              2.5,
+              90,
+              0,
+              0
+            ],
+            [
+              4,
+              0,
+              0,
+              0
+            ]
+          ]
+        }
+      }
+    }
+  }
+}

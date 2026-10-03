@@ -221,6 +221,16 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   la couleur ; clic droit sur une couleur du modele = `Doc::replace_color` (un lot annulable). Rendu par matiere :
   `edit::build_meshes` (4 maillages) et `view::material_of` (mate, metal, verre transparent, lumineuse sans ombre).
   A l'enregistrement, `Model::compact_palette` sur une copie (l'onglet garde ses index pour l'annulation).
+  E4 = blocs de mouvement (`motion.rs`) : un JSON par bloc dans `assets/editeur/blocs/` (integres par `build.rs`,
+  regle 4 ; le joueur peut en ajouter ou remplacer dans `saves/editeur/blocs/`) : parties (parent, pivot, boites de
+  cases) et animations (`cles` : [t, rx, ry, rz] degres / [t, x, y, z] ; `onde` : axe, amplitude, periode, dephasage),
+  « repos » obligatoire. `Placement` (quarts de tour en y, miroir x, taille) ; `Doc::place_block` = blocs blancs
+  (`BLOCK_WHITE`) + une `format::Zone` par partie (bloc, partie, parent, pivot, orientation), symetrie = bloc
+  reflete en face ; Ajouter contre une zone l'y fait entrer, Retirer l'en sort ; `remove_zone` (blocs gardes).
+  Lots d'annulation avec zones (`Batch`). Rendu : une entite par (zone, matiere) (`RigPart`, faces cachees par la
+  meme zone seulement), poses `motion::compose(zone_locals)` (aperçu P, choix de l'animation, melange 0,35 s),
+  gabarit `Ghost` qui joue son repos (rouge s'il deborde ou recouvre), contours des zones, `motion::collisions`
+  (zone qui traverse le corps fixe = rouge). Captures : `SPACESPORE_EDITOR_DEMO=blocs` (apercu) ou `gabarit`.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

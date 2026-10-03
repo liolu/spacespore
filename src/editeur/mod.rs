@@ -6,15 +6,18 @@
 //!   Pixel World (`import.rs`).
 //! - E1 : l'éditeur (`edit.rs` : outils, miroir, annuler, rayon, maillage ; `view.rs` : scène et
 //!   caméra ; `panels.rs` : interface), porté de `VoxelEditorManager.cs`.
+//! - E2 : palette OKLCH et matières (`palette.rs`).
+//! - E4 : blocs de mouvement (`motion.rs` : blocs en données, placement, lecteur d'animations ;
+//!   `Doc::place_block` ; gabarit, zones et aperçu dans `view.rs`).
 
 pub mod edit;
 pub mod format;
 pub mod import;
+pub mod motion;
 pub mod palette;
 pub mod panels;
 pub mod view;
 
-use bevy::math::IVec3;
 use bevy::prelude::*;
 use std::path::{Path, PathBuf};
 
@@ -43,7 +46,7 @@ impl Plugin for EditeurPlugin {
             .add_systems(OnExit(AppState::Editeur), (view::exit_scene, panels::show_game_ui))
             .add_systems(
                 Update,
-                (panels::typing, panels::escape, panels::actions, panels::replace_on_right_click, panels::scroll_left, view::camera_input, view::tools_input, view::update_mesh, panels::rebuild, panels::live_texts, view::draw)
+                (panels::typing, panels::escape, panels::actions, panels::replace_on_right_click, panels::scroll_panels, view::camera_input, view::tools_input, view::update_mesh, view::animate, view::ghost, panels::rebuild, panels::live_texts, view::draw)
                     .chain()
                     .run_if(in_state(AppState::Editeur)),
             )
@@ -87,6 +90,24 @@ pub enum Overlay {
     Tags,
 }
 
+/// Aperçu ▶ (touche P) : l'animation jouée, son temps, et la pose d'avant pour un changement en
+/// douceur.
+#[derive(Clone, Debug, Default)]
+pub struct Preview {
+    pub anim: String,
+    pub t: f32,
+    pub from: Vec<(Quat, Vec3)>,
+    /// Avancement du mélange depuis `from` (0 à 1).
+    pub blend: f32,
+}
+
+/// Bloc de mouvement en cours de pose : son index dans `Editor::blocks` et son orientation.
+#[derive(Clone, Copy, Debug)]
+pub struct Placing {
+    pub block: usize,
+    pub place: motion::Placement,
+}
+
 /// L'éditeur : onglets ouverts, outil, couleur, caméra, fenêtres.
 #[derive(Resource)]
 pub struct Editor {
@@ -102,7 +123,7 @@ pub struct Editor {
     /// Le clic droit en cours a commencé dans la vue (tourner) et pas sur un panneau.
     pub orbit_ok: bool,
     /// Défilement du panneau de gauche (gardé quand l'interface est reconstruite).
-    pub left_scroll: f32,
+    pub scroll: [f32; 2],
     pub mirror: bool,
     pub grid: bool,
     pub cam: view::OrbitCam,
@@ -127,6 +148,16 @@ pub struct Editor {
     size_tick: u32,
     /// Échap déjà utilisé cette image (fermer la saisie du nom).
     pub escape_used: bool,
+    /// Blocs de mouvement (ceux du jeu, puis ceux de `saves/editeur/blocs/`).
+    pub blocks: Vec<motion::BlockDef>,
+    pub placing: Option<Placing>,
+    pub preview: Option<Preview>,
+    /// Pose actuelle des zones (repère du modèle, index 0 = corps fixe).
+    pub pose: Vec<Mat4>,
+    /// Zones qui traversent le corps pendant l'aperçu.
+    pub colliding: Vec<usize>,
+    /// Boîte de chaque zone au repos (min, max), pour son contour.
+    pub zone_boxes: Vec<(Vec3, Vec3)>,
 }
 
 impl Default for Editor {
@@ -140,7 +171,7 @@ impl Default for Editor {
             saturation: palette::Saturation::Vif,
             theme: palette::THEMES.len() - 1,
             orbit_ok: true,
-            left_scroll: 0.0,
+            scroll: [0.0; 2],
             mirror: true,
             grid: true,
             cam: view::OrbitCam::default(),
@@ -161,6 +192,12 @@ impl Default for Editor {
             size_bytes: None,
             size_tick: 0,
             escape_used: false,
+            blocks: Vec::new(),
+            placing: None,
+            preview: None,
+            pose: Vec::new(),
+            colliding: Vec::new(),
+            zone_boxes: Vec::new(),
         }
     }
 }
@@ -179,6 +216,68 @@ impl Editor {
         matches!(self.overlay, Some(Overlay::Rename(_)) | Some(Overlay::Hex(_)))
     }
 
+    /// Blocs de mouvement proposés pour le modèle ouvert (index dans `blocks`).
+    pub fn blocks_for_doc(&self) -> Vec<usize> {
+        let Some(d) = self.doc() else { return Vec::new() };
+        let kind = d.model.kind.name().to_lowercase();
+        (0..self.blocks.len()).filter(|i| self.blocks[*i].kinds.is_empty() || self.blocks[*i].kinds.iter().any(|k| k.to_lowercase() == kind)).collect()
+    }
+
+    /// Choisir un bloc à poser (le gabarit suit la souris) ; le même bloc : arrêter.
+    pub fn pick_block(&mut self, i: usize) {
+        if self.placing.is_some_and(|p| p.block == i) {
+            self.placing = None;
+            self.say("Pose annulee.".into());
+            return;
+        }
+        self.stop_preview();
+        self.placing = Some(Placing { block: i, place: motion::Placement { turn: 0, mirror: false, scale: 1 } });
+        let scale = if self.blocks.get(i).is_some_and(|b| b.scalable) { "   Maj+molette : taille" } else { "" };
+        self.say(format!("Clic : poser   Molette : tourner{scale}   X : miroir   Echap : annuler   (Ctrl+molette : zoom)"));
+    }
+
+    /// Lance l'aperçu (ou change d'animation) et vérifie les collisions.
+    pub fn start_preview(&mut self, anim: &str) {
+        self.placing = None;
+        let from = match &self.preview {
+            Some(_) => self.current_locals(),
+            None => Vec::new(),
+        };
+        let Some(d) = self.doc() else { return };
+        if d.model.zones.is_empty() {
+            self.say("Aucune zone de mouvement : pose d'abord un bloc de mouvement.".into());
+            return;
+        }
+        let colliding = motion::collisions(&d.model, &self.blocks, anim);
+        let names: Vec<String> = colliding.iter().filter_map(|z| d.model.zones.get(*z).map(|z| z.name.clone())).collect();
+        self.colliding = colliding;
+        self.preview = Some(Preview { anim: anim.to_string(), t: 0.0, blend: if from.is_empty() { 1.0 } else { 0.0 }, from });
+        self.say(if names.is_empty() {
+            format!("Apercu : {anim}. P : arreter.")
+        } else {
+            format!("Attention : {} traverse le corps pendant \"{anim}\" (en rouge).", names.join(", "))
+        });
+    }
+
+    pub fn stop_preview(&mut self) {
+        if self.preview.take().is_some() {
+            self.colliding.clear();
+            self.ui_dirty = true;
+        }
+    }
+
+    /// Mouvement propre des zones à cet instant de l'aperçu (mélange compris).
+    pub fn current_locals(&self) -> Vec<(Quat, Vec3)> {
+        let (Some(d), Some(p)) = (self.doc(), &self.preview) else { return Vec::new() };
+        let now = motion::zone_locals(&d.model, &self.blocks, &p.anim, p.t);
+        if p.blend < 1.0 && p.from.len() == now.len() {
+            let f = p.blend * p.blend * (3.0 - 2.0 * p.blend);
+            motion::blend(&p.from, &now, f)
+        } else {
+            now
+        }
+    }
+
     pub fn say(&mut self, msg: String) {
         self.message = msg;
         self.ui_dirty = true;
@@ -190,6 +289,8 @@ impl Editor {
             d.end();
         }
         self.current = i.min(self.docs.len().saturating_sub(1));
+        self.placing = None;
+        self.stop_preview();
         if let Some(d) = self.docs.get_mut(self.current) {
             d.mesh_dirty = true;
         }
@@ -206,11 +307,13 @@ impl Editor {
     }
 
     pub fn undo(&mut self) {
+        self.stop_preview();
         let done = self.doc_mut().is_some_and(|d| d.undo());
         self.say(if done { "Annule.".into() } else { "Rien a annuler.".into() });
     }
 
     pub fn redo(&mut self) {
+        self.stop_preview();
         let done = self.doc_mut().is_some_and(|d| d.redo());
         self.say(if done { "Retabli.".into() } else { "Rien a retablir.".into() });
     }
@@ -284,6 +387,11 @@ impl Editor {
 
 pub fn library_dir() -> PathBuf {
     crate::settings::data_dir().join("modeles")
+}
+
+/// Blocs de mouvement du joueur (un JSON par bloc, même format que `assets/editeur/blocs/`).
+pub fn blocks_dir() -> PathBuf {
+    crate::settings::data_dir().join("editeur").join("blocs")
 }
 
 pub fn import_dir() -> PathBuf {
@@ -422,13 +530,38 @@ fn test_capture(mut commands: Commands, time: Res<Time>, mut done: Local<u8>, mu
         put(5, 23, 18, 7, 23, 18, PaletteEntry { rgb: [120, 200, 255], material: format::Material::Verre });
         put(2, 19, 13, 3, 19, 17, PaletteEntry { rgb: [212, 175, 55], material: format::Material::Metal });
         put(4, 10, 17, 7, 10, 17, PaletteEntry { rgb: [255, 60, 200], material: format::Material::Lumineuse });
+        // Blocs de mouvement (E4) : `SPACESPORE_EDITOR_DEMO=blocs` pose des bras, une tête et une
+        // queue, lance l'aperçu « marche » et montre le gabarit d'une aile
+        let blocks_demo = std::env::var("SPACESPORE_EDITOR_DEMO").is_ok_and(|v| v == "blocs");
+        if blocks_demo {
+            let (blocks, _) = motion::load_blocks(None);
+            let get = |id: &str| blocks.iter().find(|b| b.id == id).unwrap().clone();
+            let p = motion::Placement { turn: 0, mirror: false, scale: 1 };
+            let _ = doc.place_block(&get("bras"), IVec3::new(2, 19, 15), p, true);
+            let _ = doc.place_block(&get("tete"), IVec3::new(6, 26, 16), p, false);
+            let _ = doc.place_block(&get("queue"), IVec3::new(5, 11, 12), p, false);
+        }
         editor.docs.push(doc);
         editor.overlay = None;
         let i = editor.docs.len() - 1;
         editor.select(i);
+        if blocks_demo {
+            editor.start_preview("marche");
+        }
+        // `SPACESPORE_EDITOR_DEMO=gabarit` : le gabarit d'une aile (tournée, reflétée) près du corps
+        if std::env::var("SPACESPORE_EDITOR_DEMO").is_ok_and(|v| v == "gabarit") {
+            editor.blocks = motion::load_blocks(None).0;
+            if let Some(i) = editor.blocks.iter().position(|b| b.id == "aile") {
+                editor.pick_block(i);
+                if let Some(p) = editor.placing.as_mut() {
+                    p.place.turn = 1;
+                }
+            }
+            editor.hover = (Some(IVec3::new(4, 18, 13)), Some(IVec3::new(4, 18, 12)));
+        }
         editor.hover = (Some(IVec3::new(7, 19, 15)), Some(IVec3::new(8, 19, 15)));
         if let Ok(v) = std::env::var("SPACESPORE_EDITOR_SCROLL") {
-            editor.left_scroll = v.parse().unwrap_or(0.0);
+            editor.scroll[0] = v.parse().unwrap_or(0.0);
         }
     }
     if *done <= 1 && t > secs {
@@ -443,6 +576,12 @@ fn test_capture(mut commands: Commands, time: Res<Time>, mut done: Local<u8>, mu
 /// En entrant : sans modèle ouvert, la fenêtre « Nouveau modèle » (création du personnage).
 fn on_enter(mut editor: ResMut<Editor>) {
     editor.library = list_models(&library_dir());
+    let (blocks, errors) = motion::load_blocks(Some(&blocks_dir()));
+    editor.blocks = blocks;
+    if !errors.is_empty() {
+        warn!("Blocs de mouvement illisibles : {}", errors.join(" ; "));
+        editor.say(format!("Blocs de mouvement illisibles : {}", errors.join(" ; ")));
+    }
     if editor.docs.is_empty() {
         editor.overlay = Some(Overlay::New);
     } else {
