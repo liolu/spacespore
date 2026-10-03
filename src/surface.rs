@@ -61,11 +61,18 @@ const TILE_KEEP_SECS: f64 = 8.0;
 /// du jeu n'utilise pas (C, E, F, G, L, M, N, P et T servent déjà).
 pub const ENTER_SHIP_KEY: KeyCode = KeyCode::KeyV;
 
-/// Tests (développement) : `SPACESPORE_TEST_LAND=<s>` appuie une fois sur V (atterrir) à cet instant.
+/// Tests (développement) : `SPACESPORE_TEST_LAND=<s>[,<s>...]` appuie sur V à ces instants (atterrir,
+/// puis remonter dans le vaisseau...).
 fn test_land(now: f64) -> bool {
-    static DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    let Some(at) = std::env::var("SPACESPORE_TEST_LAND").ok().and_then(|s| s.parse::<f64>().ok()) else { return false };
-    now > at && !DONE.swap(true, std::sync::atomic::Ordering::Relaxed)
+    static DONE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let Ok(list) = std::env::var("SPACESPORE_TEST_LAND") else { return false };
+    let times: Vec<f64> = list.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+    let k = DONE.load(std::sync::atomic::Ordering::Relaxed);
+    let due = times.get(k).is_some_and(|at| now > *at);
+    if due {
+        DONE.store(k + 1, std::sync::atomic::Ordering::Relaxed);
+    }
+    due
 }
 
 /// À pied : vue à la troisième personne (on voit son personnage, E7) ou à la première.
@@ -429,7 +436,16 @@ enum Phase {
     Ascending,
     /// Navigation à basse altitude autour de l'astre (zoom sous `FLIGHT_ZOOM`).
     Flying,
+    /// Le personnage monte dans le vaisseau (cockpit ouvert), puis le vaisseau décolle.
+    Boarding,
+    /// Après l'atterrissage, le cockpit s'ouvre et le personnage descend du vaisseau.
+    Disembarking,
 }
+
+/// Monter dans le vaisseau ou en descendre : attente (le cockpit s'ouvre), trajet (s).
+const BOARD_WAIT: f32 = 0.5;
+const UNBOARD_WAIT: f32 = 1.0;
+const BOARD_SECS: f32 = 1.6;
 
 /// En zoomant sous cette distance du vaisseau, on passe en navigation autour de l'astre ;
 /// en dézoomant au-delà, on revient à la vue orbitale.
@@ -493,6 +509,12 @@ pub struct Surface {
     walker_local: Option<Transform>,
     walker_world: Option<Transform>,
     walker_anim: &'static str,
+    /// Montée / descente du vaisseau : instant, d'où et vers où (repère de l'astre), pose du
+    /// personnage.
+    board_t: f32,
+    board_from: Vec3,
+    board_to: Vec3,
+    board_pose: Option<Transform>,
 }
 
 impl Default for Surface {
@@ -538,6 +560,10 @@ impl Default for Surface {
             walker_local: None,
             walker_world: None,
             walker_anim: "repos",
+            board_t: 0.0,
+            board_from: Vec3::ZERO,
+            board_to: Vec3::ZERO,
+            board_pose: None,
         }
     }
 }
@@ -546,6 +572,11 @@ impl Surface {
     /// Recentrage de l'origine flottante : la pose de caméra mémorisée est en repère monde.
     pub fn shift(&mut self, delta: Vec3) {
         self.cam_from.translation -= delta;
+    }
+
+    /// La souris est rendue (éditeur, menus) : elle sera recapturée au retour à pied.
+    pub fn release_cursor(&mut self) {
+        self.cursor_locked = false;
     }
 
     /// Atterrissage, séjour ou décollage en cours : la caméra n'est plus pilotée par l'orbite.
@@ -613,7 +644,7 @@ impl Surface {
     /// État du vaisseau pour ses animations (E6) : posé, décollage, atterrissage, vol.
     pub fn ship_state(&self) -> &'static str {
         match self.phase {
-            Phase::Walking => "pose",
+            Phase::Walking | Phase::Boarding | Phase::Disembarking => "pose",
             Phase::Descending => "atterrissage",
             Phase::Ascending => "decollage",
             Phase::Flying | Phase::Orbit => "vol",
@@ -623,18 +654,21 @@ impl Surface {
     /// Le personnage du joueur à afficher (à pied, vue à la troisième personne) : pose (monde,
     /// échelle = un voxel du terrain) et animation.
     pub fn walker_view(&self) -> Option<(Transform, &'static str)> {
-        if self.phase != Phase::Walking || !self.third_person {
-            return None;
+        match self.phase {
+            Phase::Walking if self.third_person => self.walker_world.map(|t| (t, self.walker_anim)),
+            // On voit toujours le personnage monter dans le vaisseau ou en descendre
+            Phase::Boarding | Phase::Disembarking => self.walker_world.map(|t| (t, "marcher")),
+            _ => None,
         }
-        self.walker_world.map(|t| (t, self.walker_anim))
     }
 
     /// Le marcheur (repère de l'astre, réseau) : astre, pose, animation.
     pub fn walker_state(&self) -> Option<(TargetKind, Transform, &'static str)> {
-        if self.phase != Phase::Walking {
-            return None;
+        match self.phase {
+            Phase::Walking => Some((self.body?, self.walker_local?, self.walker_anim)),
+            Phase::Boarding | Phase::Disembarking => Some((self.body?, self.board_pose?, "marcher")),
+            _ => None,
         }
-        Some((self.body?, self.walker_local?, self.walker_anim))
     }
 
     /// En vol : le vaisseau est repoussé de `push` (monde) par un choc contre un astéroïde ; il
@@ -674,7 +708,7 @@ impl Surface {
     pub fn local_point(&self) -> Option<Vec3> {
         match self.phase {
             Phase::Orbit => None,
-            Phase::Walking => Some(self.walker.pos),
+            Phase::Walking | Phase::Boarding | Phase::Disembarking => Some(self.walker.pos),
             Phase::Flying => Some(self.fpos),
             Phase::Descending | Phase::Ascending => Some(self.dir1),
         }
@@ -764,6 +798,37 @@ impl Surface {
         self.night_told = false;
         self.underground = 0.0;
     }
+}
+
+/// Le vaisseau posé décolle (le personnage est à bord).
+fn start_ascent(surface: &mut Surface, params: &BodyParams, fz: f32, cam_from: Transform) {
+    let dir = surface.ship_local.normalize();
+    surface.dir0 = dir;
+    surface.dir1 = dir;
+    surface.r0 = surface.ship_local.length();
+    surface.r1 = hover_radius(params);
+    surface.scale0 = surface.ship_scale;
+    surface.scale1 = fz * 1.2 * 0.008;
+    surface.heading = tangent(surface.ship_rot * Vec3::NEG_Z, dir);
+    surface.t = 0.0;
+    surface.dur = (2.5 + (surface.r1 - surface.r0) / 8000.0).clamp(2.5, 6.0);
+    surface.cam_from = cam_from;
+    surface.cam_blend = 0.0;
+    surface.phase = Phase::Ascending;
+}
+
+/// Où l'on monte dans le vaisseau posé (repère de l'astre) : sa verrière, sinon sa rampe ou sa
+/// porte (blocs de mouvement de son modèle), sinon le dessus du vaisseau, vers l'avant.
+fn cockpit(surface: &Surface, models: &crate::models::GameModels) -> Vec3 {
+    let ship = Transform { translation: surface.ship_local, rotation: surface.ship_rot, scale: Vec3::splat(surface.ship_scale) };
+    let Some(l) = models.peek(&models.ship) else { return surface.ship_local };
+    let m = ship.compute_matrix() * crate::models::fit_transform(l, crate::models::Fit::Ship).compute_matrix();
+    let entry = ["verriere", "rampe", "porte_pivotante", "porte_coulissante"]
+        .iter()
+        .find_map(|b| l.model.zones.iter().find(|z| z.block == *b))
+        .map(|z| Vec3::from_array(z.pivot))
+        .unwrap_or(Vec3::new(l.center().x, l.hi.y, l.center().z + l.size().z * 0.25));
+    m.transform_point3(entry)
 }
 
 /// Lance la descente du vaisseau vers `dir1` depuis (`dir0`, `r0`).
@@ -1114,8 +1179,11 @@ fn surface_control(
                     surface.walker = walker;
                     surface.cam_from = cam_local_tf;
                     surface.cam_blend = 0.0;
-                    surface.phase = Phase::Walking;
-                    net.notify("ZQSD/WASD : marcher  Maj : courir  Espace : sauter  V : decoller", now);
+                    // Le cockpit s'ouvre et le personnage en descend
+                    surface.board_from = cockpit(&surface, &ctx.models);
+                    surface.board_to = walker.pos;
+                    surface.board_t = 0.0;
+                    surface.phase = Phase::Disembarking;
                 } else {
                     // De retour en orbite : le vaisseau stationne au-dessus du point de décollage
                     surface.hover = Some((kind, dir));
@@ -1198,22 +1266,57 @@ fn surface_control(
             surface.cam_blend = (surface.cam_blend + dt / 0.8).min(1.0);
             cam_local_tf = blend_pose(&surface.cam_from, fps, smoothstep(surface.cam_blend));
 
-            if enter || surface.rescue {
+            if surface.rescue {
+                // Secours (A4) : directement au vaisseau
                 surface.rescue = false;
-                let dir = surface.ship_local.normalize();
-                surface.dir0 = dir;
-                surface.dir1 = dir;
-                surface.r0 = surface.ship_local.length();
-                surface.r1 = hover_radius(&params);
-                surface.scale0 = surface.ship_scale;
-                surface.scale1 = fz * 1.2 * 0.008;
-                surface.heading = tangent(surface.ship_rot * Vec3::NEG_Z, dir);
-                surface.t = 0.0;
-                surface.dur = (2.5 + (surface.r1 - surface.r0) / 8000.0).clamp(2.5, 6.0);
+                start_ascent(&mut surface, &params, fz, cam_local_tf);
+                net.notify("Decollage...", now);
+            } else if enter {
+                // Le cockpit s'ouvre, le personnage y monte, puis le vaisseau décolle
+                surface.board_from = surface.walker.pos;
+                surface.board_to = cockpit(&surface, &ctx.models);
+                surface.board_t = 0.0;
                 surface.cam_from = cam_local_tf;
                 surface.cam_blend = 0.0;
-                surface.phase = Phase::Ascending;
-                net.notify("Decollage...", now);
+                surface.phase = Phase::Boarding;
+            }
+        }
+        // ── Monter dans le vaisseau / en descendre ───────────────────────
+        Phase::Boarding | Phase::Disembarking => {
+            set_cursor(&mut ctx.windows, false);
+            let boarding = surface.phase == Phase::Boarding;
+            surface.board_t += dt;
+            let wait = if boarding { BOARD_WAIT } else { UNBOARD_WAIT };
+            let u = ((surface.board_t - wait) / BOARD_SECS).clamp(0.0, 1.0);
+            let e = smoothstep(u);
+            let (a, b) = (surface.board_from, surface.board_to);
+            let up = ((a + b) * 0.5).normalize_or(Vec3::Y);
+            let v = surface.terrain.as_ref().map_or(1.0, |t| t.voxel());
+            // Un petit saut entre le sol et le cockpit ; le personnage disparaît dans le vaisseau
+            let hop = v * 0.8 + a.distance(b) * 0.12;
+            let p = a.lerp(b, e) + up * (std::f32::consts::PI * e).sin() * hop;
+            let shown = if boarding { 1.0 - smoothstep((u - 0.8) / 0.2) } else { smoothstep(u / 0.2) };
+            let heading = tangent(if boarding { b - a } else { surface.walker.heading }, up);
+            surface.board_pose = Some(Transform { translation: p, rotation: look(Vec3::ZERO, heading, up).rotation, scale: Vec3::splat(v * shown.max(0.001)) });
+            surface.walker_local = surface.board_pose;
+            ship_local = Transform { translation: surface.ship_local, rotation: surface.ship_rot, scale: Vec3::splat(surface.ship_scale) };
+            // Caméra de côté, qui voit le personnage et le cockpit
+            let mid = (a + b) * 0.5;
+            let side = (b - a).cross(up).normalize_or(up.any_orthonormal_vector());
+            let dist = (a.distance(b) * 1.4).max(v * 8.0);
+            let cam = mid + side * dist + up * (dist * 0.45);
+            surface.cam_blend = (surface.cam_blend + dt / 0.8).min(1.0);
+            cam_local_tf = blend_pose(&surface.cam_from, look(cam, mid - cam, up), smoothstep(surface.cam_blend));
+            if surface.board_t >= wait + BOARD_SECS + 0.25 {
+                if boarding {
+                    start_ascent(&mut surface, &params, fz, cam_local_tf);
+                    net.notify("Decollage...", now);
+                } else {
+                    surface.cam_from = cam_local_tf;
+                    surface.cam_blend = 0.0;
+                    surface.phase = Phase::Walking;
+                    net.notify("ZQSD/WASD : marcher  Maj : courir  Espace : sauter  V : decoller", now);
+                }
             }
         }
         // ── Navigation à basse altitude ──────────────────────────────────
@@ -1328,7 +1431,7 @@ fn surface_control(
         *cam_tf = frame.to_world(cam_local_tf);
     }
     surface.walker_world = match (surface.phase, surface.walker_local) {
-        (Phase::Walking, Some(w)) => Some(frame.to_world(w)),
+        (Phase::Walking | Phase::Boarding | Phase::Disembarking, Some(w)) => Some(frame.to_world(w)),
         _ => None,
     };
 
@@ -2330,6 +2433,8 @@ fn update_hud(
         ),
         Phase::Descending => "Atterrissage en cours...".to_string(),
         Phase::Ascending => "Decollage en cours...".to_string(),
+        Phase::Boarding => "Embarquement...".to_string(),
+        Phase::Disembarking => "Le cockpit s'ouvre...".to_string(),
         Phase::Walking => {
             let w = &surface.walker;
             let up = w.up();

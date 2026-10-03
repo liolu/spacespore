@@ -122,6 +122,8 @@ pub fn setup_gizmos(mut store: ResMut<GizmoConfigStore>) {
 
 #[allow(clippy::too_many_arguments)]
 pub fn enter_scene(
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+    mut surface: Option<ResMut<crate::surface::Surface>>,
     mut commands: Commands,
     mut editor: ResMut<Editor>,
     mut clear: ResMut<ClearColor>,
@@ -129,6 +131,14 @@ pub fn enter_scene(
     mut materials: ResMut<Assets<StandardMaterial>>,
     cam_q: Query<(Entity, &Transform, Option<&RenderLayers>, Option<&DistanceFog>), With<Camera3d>>,
 ) {
+    // La souris peut être capturée par le jeu (à pied) : l'éditeur en a besoin
+    if let Ok(mut w) = windows.get_single_mut() {
+        w.cursor_options.grab_mode = bevy::window::CursorGrabMode::None;
+        w.cursor_options.visible = true;
+    }
+    if let Some(s) = surface.as_mut() {
+        s.release_cursor();
+    }
     let Ok((cam, tf, layers, fog)) = cam_q.get_single() else { return };
     // La caméra du jeu ne voit plus que le calque de l'éditeur (sans brouillard)
     editor.saved = SavedCamera { layers: layers.cloned(), fog: fog.cloned(), clear: Some(clear.0), transform: Some(*tf) };
