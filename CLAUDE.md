@@ -180,7 +180,9 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   `belts.rs`, `comets.rs`. Surface : `sun_list` / `combined_sky` (ciel et jour de tous les soleils, double coucher),
   `SurfaceSun` = une lumiere directionnelle par soleil avec ombres (cascades ~200 voxels) qui remplace la lumiere
   ponctuelle des etoiles sur un astre solide (`dim_star_light`), le decor projette des ombres. `/aller etoile
-  double|triple`. Saisons recalees (`SEASON_REF_DAYS` 115 -> 300 : moyenne 1 h, Q2). PROTOCOL 27.
+  double|triple`. Etoile cliquee de loin (`Star(indice du systeme)`) : `promote_star_target` (main.rs) la change en
+  `Star(systeme * 1000)` une fois le systeme charge (sinon le vaisseau reste au centre de masse, vide) ; `star_parts`.
+  Tests : `SPACESPORE_TEST_CMD` (commande du chat a 6 s), `SPACESPORE_TEST_STAR=k|sys` (`test_cmd::dev_script`). Saisons recalees (`SEASON_REF_DAYS` 115 -> 300 : moyenne 1 h, Q2). PROTOCOL 27.
   C4 = phenomenes du ciel (`sky.rs`) : orages magnetiques `storm(seed, activite, t)` par tranches de 15 min
   (`Storms` : eruptions plus hautes dans `update_flare_voxels`, aurores avivees 2 min plus tard) ; eclipses :
   `occultation` des disques, `SunDim` (lumiere de chaque soleil a la camera, passee a `sun_list`), taches d'ombre
