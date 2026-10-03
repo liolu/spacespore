@@ -72,7 +72,8 @@ pub fn display_for(sys: &StarSystemConfig, au: f64, hz: f64) -> f32 {
 
 /// Zones d'un système généré (`None` : étoile faite à la main, sans physique).
 pub fn zones_of(sys: &StarSystemConfig) -> Option<Zones> {
-    let physics = sys.star_physics()?;
+    // Zone habitable recalculée avec les étoiles du centre (C3)
+    let physics = sys.lighting()?;
     let star = sys.stars.first()?;
     let hz = physics.luminosity_sun.max(1e-7).sqrt();
     let (inner, outer) = habitable_au(physics.luminosity_sun);
@@ -206,7 +207,7 @@ mod tests {
         for sys in settings.systems.dense().iter().take(400) {
             let Some(z) = zones_of(sys) else { continue };
             assert!(z.star < z.habitable_inner && z.habitable_inner < z.habitable_outer && z.habitable_outer < z.edge, "{z:?}");
-            let l = sys.star_physics().unwrap().luminosity_sun;
+            let l = sys.lighting().unwrap().luminosity_sun;
             let (inner, outer) = habitable_au(l);
             for p in sys.planets() {
                 let au = p.semi_major_au as f64;

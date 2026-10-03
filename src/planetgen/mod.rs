@@ -27,6 +27,7 @@ pub mod habitability;
 pub mod hydrology;
 pub mod life;
 pub mod live;
+pub mod multiple;
 pub mod profile;
 pub mod resources;
 pub mod seed_code;
@@ -235,8 +236,9 @@ mod tests {
         let (systems, bytes) = retained_by(|| default_systems(&galaxies, DEFAULT_WORLD_SEED));
         let per_system = bytes as f64 / systems.dense().len() as f64;
         println!("liste des systemes : {} octets ({per_system:.0} par systeme)", bytes);
-        // (avec la table des 10 000 galaxies, quelques octets de plus par système du départ)
-        assert!(per_system < 260.0, "{per_system:.0} octets par systeme ({bytes} en tout)");
+        // (avec la table des 10 000 galaxies, quelques octets de plus par système du départ ; un
+        // système sur trois a deux ou trois étoiles depuis C3)
+        assert!(per_system < 330.0, "{per_system:.0} octets par systeme ({bytes} en tout)");
         // Un système chargé (planètes, lunes et toute leur chaîne) ne pèse que quelques Ko, et
         // seuls les systèmes proches du vaisseau sont en mémoire
         let (_, one) = retained_by(|| systems[10].planets().len());

@@ -330,6 +330,8 @@ pub struct StarConfig {
     /// Rayon qu'aurait une étoile G dans ce système (600 000 à 1 500 000) : l'échelle des orbites,
     /// des planètes et de la lumière, quel que soit le type. 0 = le rayon de l'étoile.
     #[serde(default)]                                 pub orbit_scale:    f32,
+    /// Étoile double ou triple (C3) : son orbite autour du centre du système ; `None` : au centre.
+    #[serde(default)]                                 pub orbit:          Option<crate::planetgen::multiple::StarOrbit>,
 }
 fn default_star_intensity()     -> f32 { 20.0 }
 fn default_star_light_range()   -> f32 { 10000.0 }
@@ -415,7 +417,7 @@ impl Default for StarConfig {
             light_color_r: 1.0, light_color_g: 0.92, light_color_b: 0.65,
             flare_count: 5, flare_height: 60.0, flare_speed: 1.0,
             flare_size: 6.0, flare_distance: 15.0,
-            class: StarClass::G, temperature_k: 0.0, orbit_scale: 0.0,
+            class: StarClass::G, temperature_k: 0.0, orbit_scale: 0.0, orbit: None,
         }
     }
 }
@@ -518,15 +520,48 @@ impl Default for StarSystemConfig {
 }
 
 impl StarSystemConfig {
-    fn generated(name: String, position: [f32; 3], galaxy_id: u32, star: StarConfig, genome: SystemGenome) -> Self {
-        Self { name, position, galaxy_id, stars: vec![star], asteroid_belts: Vec::new(), genome: Some(genome), planets: OnceLock::new() }
+    fn generated(name: String, position: [f32; 3], galaxy_id: u32, star: (StarConfig, StarPhysics), genome: SystemGenome) -> Self {
+        let (mut primary, physics) = star;
+        // Étoiles doubles et triples (C3) : compagnons d'après la graine et l'étoile principale
+        let st = crate::planetgen::multiple::generate(genome.seed as u64, &physics, primary.scale() as f64, primary.radius as f64);
+        primary.orbit = st.primary;
+        let g = primary.scale();
+        let mut stars = Vec::with_capacity(1 + st.companions.len());
+        stars.push(primary);
+        stars.extend(st.companions.iter().map(|c| StarConfig { orbit: Some(c.orbit), ..StarConfig::from_physics(&c.physics, g) }));
+        Self { name, position, galaxy_id, stars, asteroid_belts: Vec::new(), genome: Some(genome), planets: OnceLock::new() }
     }
 
     fn generate_planets(&self) -> Vec<PlanetConfig> {
-        let (Some(genome), Some(star), Some(physics)) = (self.genome, self.stars.first(), self.star_physics()) else {
+        let (Some(genome), Some(star), Some(light), Some(st)) = (self.genome, self.stars.first(), self.lighting(), self.stellar()) else {
             return Vec::new();
         };
-        genome.planets(&physics, star.scale(), star.radius)
+        genome.planets(&light, star.scale(), star.radius, st.limits())
+    }
+
+    /// Étoiles du système (C3) : double, triple, et ce qu'elles imposent aux orbites.
+    pub fn stellar(&self) -> Option<crate::planetgen::multiple::Stellar> {
+        let (physics, star) = (self.star_physics()?, self.stars.first()?);
+        Some(crate::planetgen::multiple::generate(self.genome?.seed as u64, &physics, star.scale() as f64, star.radius as f64))
+    }
+
+    /// La lumière que reçoivent les planètes : l'étoile principale, avec la luminosité des étoiles
+    /// du centre additionnées (paire serrée, C3).
+    pub fn lighting(&self) -> Option<StarPhysics> {
+        let mut p = self.star_physics()?;
+        if let Some(st) = self.stellar() {
+            p.luminosity_sun = st.luminosity;
+            p.mass_sun = st.mass;
+        }
+        Some(p)
+    }
+
+    /// Physique de l'étoile `i` (0 : la principale, puis les compagnons).
+    pub fn star_physics_of(&self, i: usize) -> Option<StarPhysics> {
+        if i == 0 {
+            return self.star_physics();
+        }
+        self.stellar()?.companions.get(i - 1).map(|c| c.physics.clone())
     }
 
     /// Planètes du système (et leurs lunes), recalculées à la première demande.
@@ -537,9 +572,9 @@ impl StarSystemConfig {
     /// Ceintures d'astéroïdes (C1) : recalculées depuis le génome et les planètes ; celles de
     /// l'éditeur pour un système fait à la main.
     pub fn belts(&self) -> Vec<crate::planetgen::belts::Belt> {
-        match (self.genome, self.stars.first(), self.star_physics()) {
-            (Some(genome), Some(star), Some(physics)) => {
-                crate::planetgen::belts::generate(genome, &physics, star.scale(), star.radius, &self.planets_uncached())
+        match (self.genome, self.stars.first(), self.lighting(), self.stellar()) {
+            (Some(genome), Some(star), Some(physics), Some(st)) => {
+                crate::planetgen::belts::generate(genome, &physics, star.scale(), star.radius, &self.planets_uncached(), st.limits())
             }
             _ => self.asteroid_belts.iter().enumerate().map(|(i, c)| crate::planetgen::belts::Belt::from_config(c, i)).collect(),
         }
@@ -555,9 +590,9 @@ impl StarSystemConfig {
 
     /// Comètes (C2) : orbites très excentriques.
     pub fn comets(&self) -> Vec<crate::planetgen::comets::Comet> {
-        match (self.genome, self.stars.first(), self.star_physics()) {
-            (Some(genome), Some(star), Some(physics)) => {
-                crate::planetgen::comets::generate(genome, &physics, star.scale(), star.radius, &self.planets_uncached(), &self.belts())
+        match (self.genome, self.stars.first(), self.lighting(), self.stellar()) {
+            (Some(genome), Some(star), Some(physics), Some(st)) => {
+                crate::planetgen::comets::generate(genome, &physics, star.scale(), star.radius, &self.planets_uncached(), &self.belts(), st.limits())
             }
             _ => Vec::new(),
         }
@@ -871,11 +906,12 @@ impl SystemMaker {
     // Échelle G du système : 600 000 à 1 500 000, au moins 100 fois ses planètes (4 200 à 14 000).
     // L'étoile a un type tiré au sort (voir `planetgen::star`) : une G garde ce rayon, les autres
     // ont les proportions réelles. Aucun type imposé : le système de départ est tiré comme les autres.
-    fn make_star(&self, seed: u32) -> StarConfig {
+    fn make_star(&self, seed: u32) -> (StarConfig, StarPhysics) {
         let seed = self.mixed(seed);
         let r_f = pseudo_rand(seed.wrapping_mul(5).wrapping_add(31));
         let g_radius = 600_000.0 + r_f * 900_000.0;
-        StarConfig::from_physics(&StarPhysics::generate(seed as u64, r_f as f64, None), g_radius)
+        let physics = StarPhysics::generate(seed as u64, r_f as f64, None);
+        (StarConfig::from_physics(&physics, g_radius), physics)
     }
 
     // Planètes et lunes : seulement leur génome, recalculées à la demande (`planetgen::genome`).

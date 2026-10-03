@@ -236,7 +236,7 @@ fn reach(p: &PlanetConfig) -> f64 {
 }
 
 /// Ceintures du système d'étoile `star` (échelle G `scale`) dont les planètes sont `planets`.
-pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radius: f32, planets: &[PlanetConfig]) -> Vec<Belt> {
+pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radius: f32, planets: &[PlanetConfig], limits: super::system::OrbitLimits) -> Vec<Belt> {
     // La planète errante (C2) n'est pas sur une orbite : elle ne compte pas
     let planets = &planets[..planets.iter().position(|p| p.rogue).unwrap_or(planets.len())];
     let mut rng = LayerRng::new(genome.seed as u64, Layer::Belts);
@@ -280,8 +280,10 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
             }
         };
         // Bords affichés : la même échelle que les planètes, sans jamais toucher leurs orbites
-        let lo_limit = prev.map_or(star_radius as f64 * 2.0, |i| extent(&planets[i]).1) + margin;
-        let hi_limit = next.map_or(f64::INFINITY, |i| extent(&planets[i]).0) - margin;
+        let lo_limit = prev.map_or((star_radius as f64 * 2.0).max(limits.exclusion), |i| extent(&planets[i]).1) + margin;
+        let hi_limit = next.map_or(f64::INFINITY, |i| extent(&planets[i]).0).min(limits.outer) - margin;
+        // Pas d'orbite stable au-delà de la limite du compagnon lointain (C3)
+        let au_hi = au_hi.min(limits.max_au);
         let inner = to_display(au_lo).max(lo_limit);
         let outer = to_display(au_hi).min(hi_limit);
         if au_hi > au_lo * 1.12 && outer - inner > 0.03 * scale * stretch {
@@ -316,6 +318,8 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
         // Même largeur affichée qu'en échelle logarithmique, partant du bord réel
         let outer = inner + (to_display(au_hi) - to_display(au_lo)).max(0.3 * scale * stretch);
         let mid = 0.5 * (inner + outer);
+        // Compagnon lointain trop proche : pas de ceinture glacée (C3)
+        if au_hi <= limits.max_au && outer <= limits.outer {
         belts.push(Belt {
             kind: BeltKind::Kuiper,
             seed,
@@ -329,6 +333,7 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
             density: q(((mass.log10() + 3.0) / 2.5).clamp(0.3, 1.2), 1e-3),
             snow_au: qs(snow),
         });
+        }
     }
     belts
 }

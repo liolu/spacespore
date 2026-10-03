@@ -64,7 +64,7 @@ impl Comet {
 }
 
 /// Comètes du système : 0 à 6, d'après la graine.
-pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radius: f32, planets: &[PlanetConfig], belts: &[Belt]) -> Vec<Comet> {
+pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radius: f32, planets: &[PlanetConfig], belts: &[Belt], limits: super::system::OrbitLimits) -> Vec<Comet> {
     let mut rng = LayerRng::new(genome.seed as u64 ^ 0x434F_4D45, Layer::Belts);
     let scale = scale as f64;
     let stretch = SPACE_STRETCH as f64;
@@ -81,7 +81,7 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
     let count = rng.weighted(&[0.15, 0.2, 0.2, 0.2, 0.15, 0.1]);
     let active_at = to_display(3.0 * hz);
     (0..count)
-        .map(|_| {
+        .filter_map(|_| {
             let short = giant.is_some() && rng.unit() < 0.35;
             let q_au = hz * 10f64.powf(rng.range(-0.7, 0.4));
             let q = to_display(q_au).max(star_radius as f64 * 3.0);
@@ -89,24 +89,28 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
                 (true, Some(g)) => g * rng.range(0.9, 1.3),
                 _ => edge * rng.range(1.0, 2.5),
             }
-            .max(q * 5.0);
+            .max(q * 5.0)
+            // Compagnon lointain (C3) : les comètes restent en deçà
+            .min(limits.outer);
             let inc = if short { rng.range(0.0, 25f64.to_radians()) } else { (rng.range(-1.0, 1.0)).acos() };
             let u = rng.unit();
-            Comet {
-                seed: rng.next_u64() as u32,
+            let seed = rng.next_u64() as u32;
+            let (node, peri, m0) = (rng.range(0.0, std::f64::consts::TAU), rng.range(0.0, std::f64::consts::TAU), rng.range(0.0, std::f64::consts::TAU));
+            (big_q >= q * 5.0).then_some(Comet {
+                seed,
                 a: 0.5 * (q + big_q),
                 e: (big_q - q) / (big_q + q),
                 inc,
-                node: rng.range(0.0, std::f64::consts::TAU),
-                peri: rng.range(0.0, std::f64::consts::TAU),
-                m0: rng.range(0.0, std::f64::consts::TAU),
+                node,
+                peri,
+                m0,
                 // Noyaux de 2 à 25 unités (beaucoup de petits)
                 radius: (2.0 * (12.5f64).powf(u * u)) as f32,
                 q_au: q_au as f32,
                 active_at: active_at as f32,
                 tail: (active_at * 0.25) as f32,
                 short,
-            }
+            })
         })
         .collect()
 }

@@ -16,7 +16,7 @@ use bevy::window::{CursorGrabMode, PrimaryWindow};
 
 use crate::net::Net;
 use crate::net_ui::NetPanel;
-use crate::planet::{MoonId, MoonRoot, PlanetId, PlanetRoot, StarRoot};
+use crate::planet::{MoonId, MoonRoot, PlanetId, PlanetRoot, StarId, StarRoot};
 use crate::settings::GameSettings;
 use crate::ship::Ship;
 use crate::terrain::{select_tiles, BodyParams, Terrain, TileKey, build_tile_mesh_with};
@@ -75,12 +75,12 @@ impl Plugin for SurfacePlugin {
             .add_event::<CaveCommand>()
             .init_resource::<NearestCave>()
             .add_systems(Update, (go_cave.before(SurfaceControl), find_nearest_cave))
-            .add_systems(Startup, (setup_hud, spawn_lamps))
+            .add_systems(Startup, (setup_hud, spawn_lamps, spawn_suns))
             .add_systems(Update, go_overhang.before(SurfaceControl))
             .add_systems(Update, update_galaxy_dim)
             .add_systems(
                 Update,
-                (surface_control.in_set(SurfaceControl), update_underground, dim_star_light, surface_light, update_lamps, update_season, refresh_voxels, update_tiles, update_hud)
+                (surface_control.in_set(SurfaceControl), update_underground, dim_star_light, update_suns, surface_light, update_lamps, update_season, refresh_voxels, update_tiles, update_hud)
                     .chain()
                     .after(crate::planet::orbit_planets)
                     .after(crate::planet::orbit_moons),
@@ -504,6 +504,17 @@ impl Surface {
         self.phase != Phase::Orbit
     }
 
+    /// Les soleils directionnels (ombres, C3) remplacent la lumière des étoiles : séjour sur un astre
+    /// solide.
+    pub fn suns_on(&self) -> bool {
+        self.active() && !self.gaseous()
+    }
+
+    /// Centre de l'astre où l'on séjourne (monde, dernière image).
+    pub fn center(&self) -> Option<Vec3> {
+        self.frame.filter(|_| self.active()).map(|f| f.center)
+    }
+
     /// Navigation à basse altitude autour de l'astre.
     pub fn flying(&self) -> bool {
         self.phase == Phase::Flying
@@ -754,7 +765,7 @@ struct Ctx<'w, 's> {
     target: Res<'w, CameraTarget>,
     planets: Query<'w, 's, (&'static Transform, &'static PlanetId), (With<PlanetRoot>, Without<Ship>, Without<Camera3d>)>,
     moons: Query<'w, 's, (&'static Transform, &'static MoonId), (With<MoonRoot>, Without<Ship>, Without<Camera3d>)>,
-    stars: Query<'w, 's, &'static Transform, (With<StarRoot>, Without<Ship>, Without<Camera3d>)>,
+    stars: Query<'w, 's, (&'static Transform, &'static StarId), (With<StarRoot>, Without<Ship>, Without<Camera3d>)>,
     windows: Query<'w, 's, &'static mut Window, With<PrimaryWindow>>,
     asteroids: Res<'w, crate::asteroids::AsteroidField>,
 }
@@ -1163,20 +1174,17 @@ fn surface_control(
         let cam_local = cam_tf.translation - center;
         let up = cam_local.normalize_or(Vec3::Y);
         let altitude = cam_local.length() - params.radius;
-        let sun = ctx
-            .stars
-            .iter()
-            .map(|t| t.translation - center)
-            .min_by(|a, b| a.length_squared().total_cmp(&b.length_squared()))
-            .map(|d| d.normalize_or(Vec3::Y));
-        let height = sun.map_or(-1.0, |s| up.dot(s));
+        // Tous les soleils (étoiles doubles, C3) : chacun teinte le ciel selon sa hauteur et son
+        // éclat ; deux couchers de soleil se suivent
+        let suns = sun_list(&ctx.settings, ctx.stars.iter().map(|(t, id)| (t.translation, id.0)), center);
         let air = (1.0 - altitude / atmosphere_depth(&params)).clamp(0.0, 1.0);
         let space = SPACE_SKY.to_srgba();
-        let c = sky_color(&params, height, air, [space.red, space.green, space.blue]);
+        let space = [space.red, space.green, space.blue];
+        let (c, day, height) = combined_sky(&params, &suns, up, air, space);
         // Sous terre : noir (on ne voit plus le ciel)
         let dark = 1.0 - surface.underground;
         clear.0 = Color::srgb(c[0] * dark, c[1] * dark, c[2] * dark);
-        surface.daylight = daylight(&params, height, air);
+        surface.daylight = day;
         surface.sun_height = height;
         if surface.dark() && !surface.night_told && !params.gaseous {
             surface.night_told = true;
@@ -1187,6 +1195,107 @@ fn surface_control(
             surface.lamps = !surface.lamps;
             net.notify(if surface.lamps { "Lampe et phares : automatiques (allumes dans le noir)." } else { "Lampe et phares eteints." }, now);
         }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Plusieurs soleils (C3)
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Éclairement (lux) d'une étoile à la distance `d` : celui de sa lumière ponctuelle (même portée).
+pub fn star_lux(cfg: &crate::settings::StarConfig, d: f32) -> f32 {
+    let x = (d / cfg.light_range.max(1.0)).min(1.0);
+    let window = (1.0 - x.powi(4)).max(0.0).powi(2);
+    cfg.lumens() / (4.0 * std::f32::consts::PI * d.max(1.0).powi(2)) * window
+}
+
+/// Soleils vus depuis `center` : (direction vers l'étoile, éclat relatif au plus brillant, lux),
+/// du plus brillant au plus faible.
+pub fn sun_list(settings: &GameSettings, stars: impl Iterator<Item = (Vec3, usize)>, center: Vec3) -> Vec<(Vec3, f32, f32)> {
+    let mut out: Vec<(Vec3, f32, f32)> = stars
+        .filter_map(|(pos, id)| {
+            let cfg = settings.systems.get(id / 1000)?.stars.get(id % 1000)?;
+            let d = pos - center;
+            Some((d.normalize_or(Vec3::Y), 0.0, star_lux(cfg, d.length())))
+        })
+        .collect();
+    out.sort_by(|a, b| b.2.total_cmp(&a.2));
+    let max = out.first().map_or(1.0, |s| s.2.max(1e-6));
+    for s in &mut out {
+        s.1 = s.2 / max;
+    }
+    out
+}
+
+/// Ciel de tous les soleils : couleur, jour (0..1) et hauteur du plus haut soleil qui compte.
+pub fn combined_sky(p: &BodyParams, suns: &[(Vec3, f32, f32)], up: Vec3, air: f32, space: [f32; 3]) -> ([f32; 3], f32, f32) {
+    let (mut c, mut day, mut height) = (space, 0.0f32, -1.0f32);
+    for &(dir, w, _) in suns {
+        let h = up.dot(dir);
+        let ci = sky_color(p, h, air, space);
+        for k in 0..3 {
+            c[k] += (ci[k] - space[k]) * w;
+        }
+        day += daylight(p, h, air) * w;
+        if w > 0.15 {
+            height = height.max(h);
+        }
+    }
+    (c.map(|x| x.clamp(0.0, 1.0)), day.min(1.0), height)
+}
+
+/// Lumières directionnelles des soleils près d'un astre : une par étoile, avec ombres.
+#[derive(Component)]
+struct SurfaceSun(usize);
+
+const MAX_SUNS: usize = 3;
+
+fn spawn_suns(mut commands: Commands) {
+    for i in 0..MAX_SUNS {
+        commands.spawn((DirectionalLight { illuminance: 0.0, shadows_enabled: false, ..default() }, Transform::default(), SurfaceSun(i)));
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn update_suns(
+    mut commands: Commands,
+    surface: Res<Surface>,
+    settings: Res<GameSettings>,
+    stars: Query<(&Transform, &StarId), (With<StarRoot>, Without<SurfaceSun>)>,
+    mut suns: Query<(Entity, &SurfaceSun, &mut DirectionalLight, &mut Transform)>,
+    mut cascades: Local<f32>,
+) {
+    let list = match (surface.suns_on(), surface.center()) {
+        (true, Some(center)) => sun_list(&settings, stars.iter().map(|(t, id)| (t.translation, id.0)), center),
+        _ => Vec::new(),
+    };
+    // Ombres jusqu'à ~200 voxels autour de la caméra (le marcheur, le vaisseau posé, le décor)
+    let voxel = surface.terrain.as_ref().map_or(10.0, |t| t.voxel());
+    let reshape = (*cascades - voxel).abs() > 1e-3;
+    let k = 1.0 - 0.985 * surface.underground();
+    for (e, sun, mut light, mut tf) in &mut suns {
+        if reshape {
+            commands.entity(e).try_insert(
+                bevy::pbr::CascadeShadowConfigBuilder { num_cascades: 3, minimum_distance: voxel * 0.5, first_cascade_far_bound: voxel * 25.0, maximum_distance: voxel * 200.0, overlap_proportion: 0.2 }.build(),
+            );
+        }
+        let (illuminance, shadows) = match list.get(sun.0) {
+            Some(&(dir, w, lux)) if w > 0.02 => {
+                // La lumière va de l'étoile vers l'astre
+                *tf = Transform::default().looking_to(-dir, if dir.y.abs() > 0.99 { Vec3::X } else { Vec3::Y });
+                (lux * k, settings.shadows)
+            }
+            _ => (0.0, false),
+        };
+        if (light.illuminance - illuminance).abs() > light.illuminance.max(illuminance) * 1e-3 {
+            light.illuminance = illuminance;
+        }
+        if light.shadows_enabled != shadows {
+            light.shadows_enabled = shadows;
+        }
+    }
+    if reshape {
+        *cascades = voxel;
     }
 }
 
@@ -1293,7 +1402,7 @@ fn surface_light(
     mut ambient: ResMut<AmbientLight>,
     planets: Query<(&Transform, &PlanetId), With<PlanetRoot>>,
     moons: Query<(&Transform, &MoonId), With<MoonRoot>>,
-    stars: Query<&Transform, With<StarRoot>>,
+    stars: Query<(&Transform, &StarId), With<StarRoot>>,
     asteroids: Res<crate::asteroids::AsteroidField>,
     cam_q: Query<&Transform, (With<Camera3d>, Without<PlanetRoot>, Without<MoonRoot>, Without<StarRoot>)>,
     mut was_active: Local<bool>,
@@ -1318,19 +1427,14 @@ fn surface_light(
         _ => None,
     };
     let Some(center) = center else { return };
-    let Some(to_star) = stars
-        .iter()
-        .map(|t| t.translation - center)
-        .min_by(|a, b| a.length_squared().total_cmp(&b.length_squared()))
-        .and_then(|d| d.try_normalize())
-    else {
-        return;
-    };
+    let suns = sun_list(&settings, stars.iter().map(|(t, id)| (t.translation, id.0)), center);
+    // Le plus brillant des soleils (clair de lune : la lumière vient surtout de lui)
+    let Some(&(to_star, _, _)) = suns.first() else { return };
     let cam_local = cam.translation - center;
     let up = cam_local.normalize_or(Vec3::Y);
     let altitude = cam_local.length() - params.radius;
     let air = (1.0 - altitude / atmosphere_depth(&params)).clamp(0.0, 1.0);
-    let day = daylight(&params, up.dot(to_star), air);
+    let (_, day, _) = combined_sky(&params, &suns, up, air, [0.0; 3]);
     // Au sol, la nuit est noire (lueur des étoiles) ; en s'élevant, on retrouve l'éclairage de
     // l'espace. Le clair de lune s'y ajoute.
     let ground = (1.0 - altitude / (params.radius * 0.5).max(1.0)).clamp(0.0, 1.0);
@@ -1406,7 +1510,7 @@ fn spawn_lamps(mut commands: Commands) {
 #[allow(clippy::type_complexity)]
 fn update_lamps(
     surface: Res<Surface>,
-    stars: Query<(&GlobalTransform, &PointLight), Without<Lamp>>,
+    stars: Query<(&GlobalTransform, &PointLight, Option<&StarLightBase>), Without<Lamp>>,
     ship_q: Query<&Transform, (With<Ship>, Without<Lamp>, Without<Camera3d>)>,
     cam_q: Query<&Transform, (With<Camera3d>, Without<Lamp>, Without<Ship>)>,
     mut lamps: Query<(&Lamp, &mut SpotLight, &mut Transform, &mut Visibility), (Without<Ship>, Without<Camera3d>)>,
@@ -1418,7 +1522,7 @@ fn update_lamps(
     // Éclairement de l'étoile au niveau de la planète (lux), d'après la plus brillante
     let sun = stars
         .iter()
-        .map(|(gt, l)| l.intensity / (4.0 * std::f32::consts::PI * gt.translation().distance_squared(cam.translation).max(1.0)))
+        .map(|(gt, l, base)| base.map_or(l.intensity, |b| b.0) / (4.0 * std::f32::consts::PI * gt.translation().distance_squared(cam.translation).max(1.0)))
         .fold(0.0f32, f32::max)
         .max(20.0);
     for (lamp, mut light, mut tf, mut vis) in &mut lamps {
@@ -1470,14 +1574,21 @@ fn update_underground(time: Res<Time>, mut surface: ResMut<Surface>) {
 #[derive(Component)]
 struct StarLightBase(f32);
 
-fn dim_star_light(mut commands: Commands, surface: Res<Surface>, mut lights: Query<(Entity, &mut PointLight, Option<&StarLightBase>)>) {
+fn dim_star_light(
+    mut commands: Commands,
+    surface: Res<Surface>,
+    roots: Query<(), With<StarRoot>>,
+    mut lights: Query<(Entity, &mut PointLight, Option<&StarLightBase>, Option<&Parent>)>,
+) {
     let k = 1.0 - 0.985 * surface.underground();
-    for (e, mut light, base) in &mut lights {
+    for (e, mut light, base, parent) in &mut lights {
         let Some(base) = base else {
             commands.entity(e).try_insert(StarLightBase(light.intensity));
             continue;
         };
-        let wanted = base.0 * k;
+        // Près d'un astre solide, les soleils directionnels (avec ombres) éclairent à la place
+        let star = parent.is_some_and(|p| roots.contains(p.get()));
+        let wanted = if star && surface.suns_on() { 0.0 } else { base.0 * k };
         if (light.intensity - wanted).abs() > base.0 * 1e-4 {
             light.intensity = wanted;
         }
@@ -2100,6 +2211,23 @@ mod tests {
             biomes: crate::planetgen::biome::BiomeParams::default(),
             asteroid: None,
         })
+    }
+
+    #[test]
+    fn two_suns_light_the_sky_and_set_one_after_the_other() {
+        let p = world().params;
+        let up = Vec3::Y;
+        let space = [0.0, 0.0, 0.02];
+        let high = Vec3::new(0.0, 1.0, 0.2).normalize();
+        let low = Vec3::new(1.0, 0.05, 0.0).normalize();
+        let below = Vec3::new(1.0, -0.6, 0.0).normalize();
+        // Un seul soleil couché : nuit ; le second encore haut : jour
+        let (_, night, _) = combined_sky(&p, &[(below, 1.0, 1.0)], up, 1.0, space);
+        let (_, day, h) = combined_sky(&p, &[(below, 1.0, 1.0), (high, 0.8, 0.8)], up, 1.0, space);
+        assert!(night < 0.05 && day > 0.5 && h > 0.9, "{night} {day} {h}");
+        // Deux soleils bas : ciel de coucher (plus rouge que bleu)
+        let (c, _, _) = combined_sky(&p, &[(low, 1.0, 1.0), (Vec3::new(0.9, 0.12, 0.3).normalize(), 0.7, 0.7)], up, 1.0, space);
+        assert!(c[0] > c[2], "{c:?}");
     }
 
     fn settle(w: &mut Walker, t: &Terrain, secs: f32) {

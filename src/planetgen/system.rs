@@ -81,6 +81,8 @@ fn q(x: f64, step: f64) -> f32 {
     ((x / step).round() * step) as f32
 }
 
+const SPACE_STRETCH_F64: f64 = crate::settings::SPACE_STRETCH as f64;
+
 /// Une planète errante sur 30 systèmes.
 pub const ROGUE_CHANCE: f64 = 1.0 / 30.0;
 /// « Distance » d'une planète errante à l'étoile pour la physique (pas de lumière, pas d'orbite).
@@ -93,6 +95,23 @@ const SUN_RADIUS_AU: f64 = 0.004_65;
 pub fn display_distance(a: f64, hz: f64) -> f64 {
     let x = (a / hz).log2();
     if x >= -1.0 { 3.2 + 0.9 * x } else { 2.3 + 0.3 * (x + 1.0) }.max(1.25)
+}
+
+/// Ce que les étoiles imposent aux orbites (C3) : planètes au-delà de `min_au` (paire serrée au
+/// centre) et du rayon affiché `exclusion`, en deçà de `max_au` (compagnon lointain) ; ceintures et
+/// comètes en deçà du rayon affiché `outer`.
+#[derive(Clone, Copy, Debug)]
+pub struct OrbitLimits {
+    pub min_au: f64,
+    pub max_au: f64,
+    pub exclusion: f64,
+    pub outer: f64,
+}
+
+impl Default for OrbitLimits {
+    fn default() -> Self {
+        Self { min_au: 0.0, max_au: f64::INFINITY, exclusion: 0.0, outer: f64::INFINITY }
+    }
 }
 
 /// Une planète en cours de génération (unités réelles).
@@ -108,7 +127,7 @@ struct Draft {
 ///
 /// `scale` : échelle G du système (rayon d'une G, 600 000 à 1 500 000) ; `star_radius` : rayon
 /// affiché de l'étoile (les orbites restent hors d'elle).
-pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radius: f32) -> Vec<PlanetConfig> {
+pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radius: f32, limits: OrbitLimits) -> Vec<PlanetConfig> {
     let scale = scale as f64;
     let earth = scale / 109.0;
     let lum = star.luminosity_sun.max(1e-7);
@@ -129,10 +148,19 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
     let mut a = hz * 10f64.powf(orbit.range(-1.1, -0.35));
     // Jamais dans l'étoile (une géante rouge a englouti ses planètes proches)
     a = a.max(star.radius_sun * SUN_RADIUS_AU * 3.0);
+    // Étoile double serrée : au-delà de la zone instable autour de la paire (C3)
+    a = a.max(limits.min_au * 1.1);
     let mut drafts = Vec::with_capacity(n);
     for pi in 0..n {
         if pi > 0 {
             a *= orbit.range(1.4, 2.3);
+        }
+        // Compagnon lointain : pas d'orbite stable au-delà (C3)
+        if a > limits.max_au {
+            if pi > 0 {
+                break;
+            }
+            a = (limits.max_au * 0.6).max(limits.min_au * 1.1);
         }
         let seed = genome.planet_base.wrapping_add(pi as u32);
         let mut phys = LayerRng::new(seed as u64, Layer::Physics);
@@ -383,9 +411,13 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
         p.moons.iter().map(|m| (m.orbit_distance + m.radius) as f64).fold((p.radius as f64).max(ring), f64::max)
     };
     let margin = 0.08 * scale;
-    let mut previous_apoapsis = star_radius as f64 * 1.3;
+    // (les limites des étoiles sont en distances affichées, étirement compris)
+    let mut previous_apoapsis = (star_radius as f64 * 1.3).max(limits.exclusion / SPACE_STRETCH_F64);
     let mut previous_reach = 0.0;
-    for (p, d) in planets.iter_mut().zip(&drafts) {
+    // Compagnon lointain (C3) : rien ne tourne au-delà de la moitié de son passage au plus près
+    let count = planets.len();
+    let mut keep = count;
+    for (k, (p, d)) in planets.iter_mut().zip(&drafts).enumerate() {
         if d.au >= ROGUE_AU {
             // Planète errante : bien au-delà de tout le reste, hors du plan des orbites, immobile
             p.rogue = true;
@@ -406,9 +438,18 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
             e = p.eccentricity as f64;
         }
         let distance = wanted.max(min_periapsis / (1.0 - e));
+        if k > 0 && keep == count && (distance * (1.0 + e) + r) * SPACE_STRETCH_F64 > limits.outer {
+            keep = k;
+        }
         p.orbit_distance = q(distance, 10.0);
         previous_apoapsis = p.orbit_distance as f64 * (1.0 + e);
         previous_reach = r;
+    }
+    if keep < planets.len() {
+        // La planète errante reste (elle est ailleurs, loin de tout)
+        let rogue = planets.pop().filter(|p| p.rogue);
+        planets.truncate(keep);
+        planets.extend(rogue);
     }
     // Étirement visuel (×5) : toute la disposition du système s'agrandit d'un bloc, après la
     // physique (marées, anneaux, espacement) calculée sur les distances d'origine

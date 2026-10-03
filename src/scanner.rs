@@ -262,7 +262,7 @@ fn update_scanner(
         let key = Some(format!("{k:?}"));
         if key != scanner.shown {
             if let Some(a) = field.get(&k) {
-                let lum = settings.systems.get(k.sys as usize).and_then(|s| s.star_physics()).map_or(1.0, |p| p.luminosity_sun);
+                let lum = settings.systems.get(k.sys as usize).and_then(|s| s.lighting()).map_or(1.0, |p| p.luminosity_sun);
                 scanner.text = crate::asteroids::scanner_text(a, field.sources(k.sys as usize), lum);
                 scanner.danger = 0;
                 scanner.shown = key;
@@ -283,6 +283,10 @@ fn update_scanner(
             if let (Some(crate::planetgen::live::BodyId::Star { system, .. }), false) = (id, scanner.text.is_empty()) {
                 if let Some(line) = settings.systems.get(system as usize).and_then(|s| crate::asteroids::belts_line(&crate::asteroids::Sources::of(s))) {
                     scanner.text = format!("{}\n{line}", scanner.text);
+                }
+                // Étoile double ou triple (C3)
+                if let Some(st) = settings.systems.get(system as usize).and_then(|s| s.stellar()).filter(|st| !st.companions.is_empty()) {
+                    scanner.text = format!("{}\nSysteme : {}, zone habitable pour {:.2} L sol", scanner.text, st.kind.name(), st.luminosity);
                 }
             }
         }

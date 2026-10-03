@@ -61,7 +61,7 @@ struct GoState {
     pending: Option<(usize, BodyId, f64)>,
 }
 
-pub const STAR_TYPES: &str = "o, b, a, f, g, k, m, blanche, brune, sous-geante, geante";
+pub const STAR_TYPES: &str = "o, b, a, f, g, k, m, blanche, brune, sous-geante, geante, double, triple";
 pub const PLANET_TYPES: &str = "rocheuse, mini-neptune, neptune, gazeuse, jupiter-chaud, minuscule, petite, terrestre, \
 super-terre, ocean, glace, lave, methane, ammoniac, venus, titan, mars, oxygene, sans-air, vie, plantes, complexe, \
 anneaux, aurores, errante, plaques, volcans, crateres, habitable, rare, legendaire";
@@ -171,6 +171,11 @@ pub fn moon_matches(m: &MoonConfig, kind: &str) -> Option<bool> {
 fn match_in(sys: &StarSystemConfig, si: usize, family: Family, kind: &str) -> Result<Option<BodyId>, ()> {
     let system = si as u32;
     match family {
+        // Étoiles doubles et triples (C3)
+        Family::Star if matches!(kind, "double" | "triple") => {
+            let n = if kind == "double" { 2 } else { 3 };
+            Ok((sys.stars.len() == n).then_some(BodyId::Star { system, index: 0 }))
+        }
         Family::Star => match sys.stars.first().map(|s| star_matches(s, kind)) {
             Some(None) => Err(()),
             Some(Some(true)) => Ok(Some(BodyId::Star { system, index: 0 })),
@@ -244,7 +249,7 @@ fn find_in(candidates: &[(usize, StarSystemConfig)], family: Family, kind: &str)
 /// Type compris pour cette famille ?
 fn known_type(family: Family, kind: &str) -> bool {
     match family {
-        Family::Star => star_matches(&StarConfig::default(), kind).is_some(),
+        Family::Star => matches!(kind, "double" | "triple") || star_matches(&StarConfig::default(), kind).is_some(),
         Family::Planet => planet_matches(&PlanetConfig::default(), kind).is_some(),
         Family::Moon => moon_matches(&MoonConfig::default(), kind).is_some(),
     }
@@ -455,7 +460,7 @@ mod tests {
     #[test]
     fn every_listed_type_is_understood() {
         for t in STAR_TYPES.split(", ") {
-            assert!(star_matches(&StarConfig::default(), t).is_some(), "etoile {t}");
+            assert!(known_type(Family::Star, t), "etoile {t}");
         }
         for t in PLANET_TYPES.split(", ") {
             assert!(planet_matches(&PlanetConfig::default(), t).is_some(), "planete {t}");

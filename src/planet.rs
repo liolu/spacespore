@@ -1584,7 +1584,9 @@ fn spawn_system_bodies(
         });
         let star_color_low: [f32; 4] = [r * 0.85, g * 0.4, b * 0.15, 1.0];
         let star_color_high: [f32; 4] = [r, g, b, 1.0];
-        let pos = center + if star_cfg.orbit_distance > 1.0 {
+        let pos = center + if let Some(o) = star_cfg.orbit {
+            o.position(0.0).as_vec3()
+        } else if star_cfg.orbit_distance > 1.0 {
             Vec3::new(star_cfg.orbit_distance, 0.0, 0.0)
         } else {
             Vec3::ZERO
@@ -1746,7 +1748,10 @@ fn orbit_stars(
         let Some(sys) = settings.systems.get(si.0) else { continue };
         let local_idx = sid.0 - si.0 * 1000;
         let Some(cfg) = sys.stars.get(local_idx) else { continue };
-        if cfg.orbit_distance > 1.0 {
+        // Étoile double ou triple (C3) : orbite autour du centre de masse, d'après l'horloge
+        if let Some(o) = cfg.orbit {
+            tf.translation = (sys.abs_center().as_dvec3() + o.position(t) - crate::settings::origin()).as_vec3();
+        } else if cfg.orbit_distance > 1.0 {
             let sc = sys.center();
             let sn = sys.stars.len().max(1) as f32;
             let elems = OrbitalElements::circular(
@@ -2523,7 +2528,7 @@ fn system_reach(sys: &crate::settings::StarSystemConfig) -> f32 {
         let moons = p.moons.iter().map(|m| m.orbit_distance + m.radius).fold(0.0_f32, f32::max);
         p.orbit_distance + p.radius.max(moons)
     });
-    let stars = sys.stars.iter().map(|st| st.orbit_distance + st.radius);
+    let stars = sys.stars.iter().map(|st| st.orbit.map_or(st.orbit_distance, |o| o.reach()) + st.radius);
     planets.chain(stars).fold(10_000.0_f32, f32::max) * 1.2 + 10_000.0
 }
 

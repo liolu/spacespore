@@ -89,7 +89,7 @@ impl StarProfile {
         let seed = sys.body_seed();
         let id = BodyId::Star { system: sys_idx as u32, index: star_idx as u16 };
         // Seule l'étoile principale d'un système généré a une physique complète
-        let physics = if star_idx == 0 { sys.star_physics() } else { None };
+        let physics = sys.star_physics_of(star_idx);
         let p = physics.as_ref();
         Self {
             id: id.key(),
