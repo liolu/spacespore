@@ -22,24 +22,24 @@ const DIM: Color = Color::srgb(0.6, 0.66, 0.75);
 #[derive(Component)]
 pub struct Blocks;
 
-/// Panneau de gauche (défilant).
+/// Panneau défilant : 0 = gauche (outils), 1 = droite (modèle et zones).
 #[derive(Component)]
-pub struct LeftPanel;
+pub struct ScrollPanel(pub usize);
 
-/// La molette fait défiler le panneau de gauche quand la souris est dessus.
-pub fn scroll_left(mut wheel: EventReader<bevy::input::mouse::MouseWheel>, mut editor: ResMut<Editor>, mut q: Query<(&Interaction, &mut ScrollPosition), With<LeftPanel>>) {
+/// La molette fait défiler le panneau sous la souris.
+pub fn scroll_panels(mut wheel: EventReader<bevy::input::mouse::MouseWheel>, mut editor: ResMut<Editor>, mut q: Query<(&Interaction, &mut ScrollPosition, &ScrollPanel)>) {
     let lines: f32 = wheel.read().map(crate::ui::wheel_lines).sum();
-    for (i, mut s) in &mut q {
+    for (i, mut s, panel) in &mut q {
+        let k = panel.0.min(1);
         // La mise en page ramène la position dans le contenu : on garde la vraie
-        if (editor.left_scroll - s.offset_y).abs() > 0.5 {
-            editor.left_scroll = s.offset_y;
+        if (editor.scroll[k] - s.offset_y).abs() > 0.5 {
+            editor.scroll[k] = s.offset_y;
         }
         if *i == Interaction::None || lines == 0.0 {
             continue;
         }
-        // (la mise en page ramène la position dans le contenu)
         s.offset_y = (s.offset_y - lines * 40.0).clamp(0.0, 2_000.0);
-        editor.left_scroll = s.offset_y;
+        editor.scroll[k] = s.offset_y;
     }
 }
 
@@ -91,6 +91,14 @@ pub enum Act {
     Tag(&'static str),
     RenameOk,
     Import,
+    /// Bloc de mouvement à poser (index dans `Editor::blocks`).
+    Block(usize),
+    /// Retirer une zone de mouvement (ses blocs restent).
+    RemoveZone(usize),
+    /// Aperçu ▶ (P).
+    Preview,
+    /// Animation jouée par l'aperçu (index dans `motion::model_anims`).
+    Anim(usize),
 }
 
 fn button(p: &mut ChildBuilder, label: &str, act: Act, on: bool) {
@@ -177,7 +185,7 @@ pub fn rebuild(mut commands: Commands, mut editor: ResMut<Editor>, old: Query<En
                 overflow: Overflow::scroll_y(),
                 ..default()
             }))
-            .insert((ScrollPosition { offset_x: 0.0, offset_y: ed.left_scroll }, LeftPanel))
+            .insert((ScrollPosition { offset_x: 0.0, offset_y: ed.scroll[0] }, ScrollPanel(0)))
             .with_children(|p| {
                 label(p, "EDITEUR", 20.0, ACCENT);
                 wrap(p, |w| {
@@ -194,6 +202,20 @@ pub fn rebuild(mut commands: Commands, mut editor: ResMut<Editor>, old: Query<En
                     button(w, "Annuler (Ctrl+Z)", Act::Undo, false);
                     button(w, "Retablir (Ctrl+Y)", Act::Redo, false);
                 });
+                let blocks = ed.blocks_for_doc();
+                if !blocks.is_empty() {
+                    label(p, "Blocs de mouvement", 13.0, DIM);
+                    wrap(p, |w| {
+                        for i in blocks {
+                            button(w, &ed.blocks[i].name, Act::Block(i), ed.placing.is_some_and(|x| x.block == i));
+                        }
+                    });
+                    if let Some(x) = ed.placing {
+                        let scale = if ed.blocks.get(x.block).is_some_and(|b| b.scalable) { format!(", taille {}", x.place.scale) } else { String::new() };
+                        let mirror = if x.place.mirror { ", reflete" } else { "" };
+                        label(p, &format!("Molette : tourner ({} quart(s){scale}{mirror})", x.place.turn), 13.0, ON);
+                    }
+                }
                 label(p, &format!("Couleur : {} ({})", hex(&ed.color.rgb), ed.color.material.name()), 14.0, TEXT);
                 p.spawn((Node { width: Val::Px(226.0), height: Val::Px(20.0), ..default() }, BackgroundColor(swatch(&ed.color)), BorderRadius::all(Val::Px(4.0))));
                 wrap(p, |w| {
@@ -299,12 +321,15 @@ pub fn rebuild(mut commands: Commands, mut editor: ResMut<Editor>, old: Query<En
                 position_type: PositionType::Absolute,
                 right: Val::Px(8.0),
                 top: Val::Px(8.0),
+                bottom: Val::Px(40.0),
                 width: Val::Px(260.0),
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(8.0),
                 padding: UiRect::all(Val::Px(10.0)),
+                overflow: Overflow::scroll_y(),
                 ..default()
             }))
+            .insert((ScrollPosition { offset_x: 0.0, offset_y: ed.scroll[1] }, ScrollPanel(1)))
             .with_children(|p| {
                 label(p, "MODELE", 18.0, ACCENT);
                 p.spawn((Text::new(""), TextFont { font_size: 14.0, ..default() }, TextColor(TEXT), Live::Info));
@@ -313,6 +338,33 @@ pub fn rebuild(mut commands: Commands, mut editor: ResMut<Editor>, old: Query<En
                         button(w, "Renommer", Act::Rename, false);
                         button(w, "Etiquettes", Act::Tags, false);
                     });
+                }
+                if let Some(d) = ed.doc() {
+                    let zones = &d.model.zones;
+                    label(p, &format!("ZONES DE MOUVEMENT ({})", zones.len()), 15.0, ACCENT);
+                    if zones.is_empty() {
+                        label(p, "Choisis un bloc de mouvement a gauche et pose-le.", 13.0, DIM);
+                    } else {
+                        wrap(p, |w| button(w, if ed.preview.is_some() { "Arreter l'apercu (P)" } else { "> Apercu (P)" }, Act::Preview, ed.preview.is_some()));
+                        if let Some(pv) = &ed.preview {
+                            wrap(p, |w| {
+                                for (k, a) in super::motion::model_anims(&d.model, &ed.blocks).iter().enumerate() {
+                                    button(w, a, Act::Anim(k), *a == pv.anim);
+                                }
+                            });
+                        }
+                        for (i, z) in zones.iter().enumerate().take(64) {
+                            let depth = std::iter::successors(z.parent, |k| zones.get(*k as usize).and_then(|x| x.parent)).take(8).count();
+                            p.spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(6.0), align_items: AlignItems::Center, ..default() }).with_children(|r| {
+                                let color = if ed.colliding.contains(&i) { Color::srgb(1.0, 0.35, 0.3) } else { TEXT };
+                                label(r, &format!("{}{}", "  ".repeat(depth), z.name), 13.0, color);
+                                button(r, "Retirer", Act::RemoveZone(i), false);
+                            });
+                        }
+                        if zones.len() > 64 {
+                            label(p, &format!("... et {} autres", zones.len() - 64), 13.0, DIM);
+                        }
+                    }
                 }
             });
 
@@ -475,13 +527,14 @@ pub fn live_texts(mut editor: ResMut<Editor>, mut q: Query<(&Live, &mut Text)>) 
                     let size = ed.size_bytes.map_or("?".into(), |b| format!("{:.2}", b as f64 / (1024.0 * 1024.0)));
                     let full = ed.size_bytes.is_some_and(|b| b > MAX_FILE_BYTES);
                     format!(
-                        "{}\n{what}\nGrille {} x {} x {}\n{} voxels, {} couleurs\nFichier : {size} / 10 Mo{}\nEtiquettes : {}\n{}",
+                        "{}\n{what}\nGrille {} x {} x {}\n{} voxels, {} couleurs, {} zones\nFichier : {size} / 10 Mo{}\nEtiquettes : {}\n{}",
                         m.name,
                         m.size.x,
                         m.size.y,
                         m.size.z,
                         m.voxels.count(),
                         m.palette.len(),
+                        m.zones.len(),
                         if full { "  TROP LOURD" } else { "" },
                         if m.tags.is_empty() { "aucune".into() } else { m.tags.join(", ") },
                         d.path.as_ref().map_or("pas encore enregistre".into(), |p| p.file_name().map_or(String::new(), |f| f.to_string_lossy().to_string())),
@@ -549,6 +602,15 @@ pub fn escape(keys: Res<ButtonInput<KeyCode>>, mut editor: ResMut<Editor>, mut n
         return;
     }
     if std::mem::take(&mut editor.escape_used) {
+        return;
+    }
+    if editor.placing.take().is_some() {
+        editor.say("Pose annulee.".into());
+        return;
+    }
+    if editor.preview.is_some() {
+        editor.stop_preview();
+        editor.say("Apercu arrete.".into());
         return;
     }
     if editor.overlay.is_some() && !(editor.welcome && editor.docs.is_empty()) {
@@ -626,6 +688,28 @@ pub fn actions(interactions: Query<(&Interaction, &Act), Changed<Interaction>>, 
                 }
             }
             Act::Import => ed.import(),
+            Act::Block(k) => ed.pick_block(k),
+            Act::RemoveZone(z) => {
+                ed.stop_preview();
+                let name = ed.doc().and_then(|d| d.model.zones.get(z)).map(|z| z.name.clone()).unwrap_or_default();
+                if let Some(d) = ed.doc_mut() {
+                    d.remove_zone(z);
+                }
+                ed.say(format!("Zone \"{name}\" retiree : ses blocs restent (Ctrl+Z pour annuler)."));
+            }
+            Act::Preview => {
+                if ed.preview.is_some() {
+                    ed.stop_preview();
+                } else {
+                    ed.start_preview("repos");
+                }
+            }
+            Act::Anim(k) => {
+                let anim = ed.doc().and_then(|d| super::motion::model_anims(&d.model, &ed.blocks).get(k).cloned());
+                if let Some(a) = anim {
+                    ed.start_preview(&a);
+                }
+            }
             Act::RenameOk => match ed.overlay.clone() {
                 Some(Overlay::Rename(name)) => ed.rename(name),
                 Some(Overlay::Hex(code)) => ed.apply_hex(&code),

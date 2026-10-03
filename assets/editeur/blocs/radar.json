@@ -1,0 +1,100 @@
+{
+  "id": "radar",
+  "name": "Radar (antenne qui tourne)",
+  "kinds": [
+    "vaisseau",
+    "autre"
+  ],
+  "scalable": true,
+  "parts": [
+    {
+      "name": "mat",
+      "pivot": [
+        0.5,
+        0,
+        0.5
+      ],
+      "boxes": [
+        [
+          0,
+          0,
+          0,
+          0,
+          2,
+          0
+        ]
+      ]
+    },
+    {
+      "name": "antenne",
+      "parent": "mat",
+      "pivot": [
+        0.5,
+        3,
+        0.5
+      ],
+      "boxes": [
+        [
+          -2,
+          3,
+          0,
+          2,
+          3,
+          0
+        ],
+        [
+          -2,
+          4,
+          0,
+          -2,
+          4,
+          0
+        ],
+        [
+          2,
+          4,
+          0,
+          2,
+          4,
+          0
+        ]
+      ]
+    }
+  ],
+  "anims": {
+    "repos": {
+      "duration": 4.0,
+      "tracks": {
+        "antenne": {
+          "type": "cles",
+          "rot": [
+            [
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              1.333,
+              0,
+              120,
+              0
+            ],
+            [
+              2.667,
+              0,
+              240,
+              0
+            ],
+            [
+              4,
+              0,
+              360,
+              0
+            ]
+          ]
+        }
+      }
+    }
+  }
+}

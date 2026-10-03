@@ -119,14 +119,29 @@ pub struct PaletteEntry {
     pub material: Material,
 }
 
-/// Zone de mouvement (blocs de mouvement, E4) : nom du bloc, parent (zones emboîtées), pivot.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// Zone de mouvement (blocs de mouvement, E4, `motion.rs`) : une partie d'un bloc posé, avec son
+/// parent (zones emboîtées), son pivot (repère du modèle) et l'orientation du bloc (ses animations
+/// sont tournées et reflétées de même).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Zone {
+    /// Nom affiché.
     pub name: String,
-    /// Bloc de mouvement d'origine (« bras_g », « aile_x »...).
+    /// Bloc de mouvement d'origine (« bras », « porte_pivotante »...).
     pub block: String,
+    /// Partie du bloc (ses pistes d'animation).
+    #[serde(default)]
+    pub part: String,
+    /// Zone parente (index dans `zones`).
     pub parent: Option<u16>,
     pub pivot: [f32; 3],
+    /// Quarts de tour autour de y.
+    #[serde(default)]
+    pub turn: u8,
+    #[serde(default)]
+    pub mirror: bool,
+    /// Taille (1 = celle du gabarit ; 0 lu comme 1).
+    #[serde(default)]
+    pub scale: u8,
 }
 
 /// Un chunk de 32³ voxels.
@@ -531,7 +546,7 @@ mod tests {
             m.voxels.set(IVec3::new(x, 3, 5), if x % 3 == 0 { glass } else { red });
         }
         m.voxels.set(IVec3::new(63, 63, 63), glass);
-        m.zones.push(Zone { name: "Aile gauche".into(), block: "aile_x".into(), parent: None, pivot: [10.0, 3.0, 5.0] });
+        m.zones.push(Zone { name: "Aile gauche".into(), block: "aile".into(), part: "aile".into(), parent: None, pivot: [10.0, 3.0, 5.0], turn: 1, mirror: true, scale: 2 });
         m.zone_map.set(IVec3::new(4, 3, 5), 1);
         m.tags = vec!["chasseur".into(), "rouge".into()];
         m
