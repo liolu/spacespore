@@ -337,6 +337,10 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   reconstruire tant que les libelles ne changent pas). « Rotation et orbite » : jour et annee reels et en temps
   de jeu (`OrbitSection::day_game_s / year_game_s / orbit_game_s`, aussi dans `/profil`). Point de mesure de
   `LocalWeather` dans l'espace = point de stationnement (`Surface::hover_dir`), plus sous le vaisseau.
+  C6 cercles : `main::clickables` = la seule regle « cliquable » (zoom permis, distances de clic, etoiles
+  lointaines, trous de ver, galaxies...), utilisee par `select_world_target` et `draw_body_markers` (un cercle
+  par astre cliquable, fondu 0,2 s, couleur par type `marker_color`, cible en jaune, 60 etoiles lointaines au
+  plus, rien autour d'un astre deja grand a l'ecran ; groupe de gizmos par defaut, pas `IndicatorGizmos`).
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 
