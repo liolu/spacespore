@@ -81,6 +81,11 @@ fn q(x: f64, step: f64) -> f32 {
     ((x / step).round() * step) as f32
 }
 
+/// Une planète errante sur 30 systèmes.
+pub const ROGUE_CHANCE: f64 = 1.0 / 30.0;
+/// « Distance » d'une planète errante à l'étoile pour la physique (pas de lumière, pas d'orbite).
+const ROGUE_AU: f64 = 5000.0;
+
 /// Rayon du Soleil en UA.
 const SUN_RADIUS_AU: f64 = 0.004_65;
 
@@ -156,6 +161,20 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
             radius *= 1.2; // gonflée par la chaleur
         }
         drafts.push(Draft { kind, au: a, mass, radius, hot: hot_jupiter });
+    }
+
+    // ── Planète errante (C2, rare) : loin de toute étoile, sans lumière ──
+    let mut rogue = LayerRng::new(genome.seed as u64 ^ 0x524F_4755, Layer::Belts);
+    if rogue.unit() < ROGUE_CHANCE {
+        let roll = rogue.unit();
+        let kind = if roll < 0.6 { PlanetKind::Rocky } else if roll < 0.85 { PlanetKind::IceGiant } else { PlanetKind::GasGiant };
+        let u = rogue.unit();
+        let mass = match kind {
+            PlanetKind::Rocky => 10f64.powf(-1.0 + 1.8 * u),
+            PlanetKind::IceGiant => 10.0 * 3f64.powf(u),
+            _ => 40.0 * 100f64.powf(u.powf(1.5)),
+        };
+        drafts.push(Draft { kind, au: ROGUE_AU, mass, radius: radius_from_mass(kind, mass), hot: false });
     }
 
     // ── Planètes et lunes : toute la chaîne (atmosphère → biomes), anneaux, aurores ──
@@ -279,11 +298,27 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
             if let Some(first) = moons.first() {
                 outer = outer.min((first.orbit_distance - 2.0 * first.radius) as f64);
             }
+            let opacity = spin.range(0.35, 0.8) as f32;
+            // Glace, divisions (C2) : tirages à part, les autres ne bougent pas
+            let mut look = LayerRng::new(seed as u64 ^ 0x5249_4E47, Layer::Belts);
+            let ice = if icy { look.range(0.7, 1.0) } else { look.range(0.0, 0.3) } as f32;
+            let mut gaps = [[0.0f32; 2]; 3];
+            for (k, g) in gaps.iter_mut().enumerate() {
+                if k == 0 || look.unit() < 0.5 {
+                    *g = [look.range(0.25, 0.85) as f32, look.range(0.015, 0.06) as f32];
+                }
+            }
+            let rock = [0.48, 0.43, 0.38];
+            let frost = [0.9, 0.86, 0.78];
+            let color = [0, 1, 2].map(|i| rock[i] + (frost[i] - rock[i]) * ice);
             (outer > inner * 1.15).then(|| Ring {
                 inner: q(inner, 1.0),
                 outer: q(outer, 1.0),
-                color: if icy { [0.86, 0.82, 0.74] } else { [0.5, 0.45, 0.4] },
-                opacity: spin.range(0.35, 0.8) as f32,
+                color,
+                opacity,
+                ice,
+                gaps,
+                seed: look.next_u64() as u32,
             })
         } else {
             None
@@ -351,6 +386,14 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
     let mut previous_apoapsis = star_radius as f64 * 1.3;
     let mut previous_reach = 0.0;
     for (p, d) in planets.iter_mut().zip(&drafts) {
+        if d.au >= ROGUE_AU {
+            // Planète errante : bien au-delà de tout le reste, hors du plan des orbites, immobile
+            p.rogue = true;
+            p.orbit_distance = q((previous_apoapsis * rogue.range(2.5, 3.5)).max(4.0 * scale), 10.0);
+            p.eccentricity = 0.0;
+            p.inclination = q(rogue.range(0.5, 1.3) * if rogue.unit() < 0.5 { -1.0 } else { 1.0 }, 1e-4);
+            continue;
+        }
         let wanted = display_distance(d.au, hz) * scale;
         let mut e = p.eccentricity as f64;
         let r = reach(p);
@@ -614,6 +657,51 @@ pub struct Ring {
     pub outer: f32,
     pub color: [f32; 3],
     pub opacity: f32,
+    /// Part de glace (0 : roche sombre, 1 : glace claire comme Saturne) (C2).
+    #[serde(default)]
+    pub ice: f32,
+    /// Divisions (comme celle de Cassini) : centre et largeur, en fraction de la largeur.
+    #[serde(default)]
+    pub gaps: [[f32; 2]; 3],
+    #[serde(default)]
+    pub seed: u32,
+}
+
+impl Ring {
+    /// Opacité à la fraction `f` (0 : bord intérieur, 1 : extérieur) : bandes, divisions vides,
+    /// bords adoucis. La même fonction dessine l'anneau, son ombre et ses particules.
+    pub fn profile(&self, f: f32) -> f32 {
+        if !(0.0..=1.0).contains(&f) {
+            return 0.0;
+        }
+        let h = |i: u32| {
+            let mut x = self.seed ^ i.wrapping_mul(0x9E37_79B9);
+            x ^= x >> 16;
+            x = x.wrapping_mul(0x7FEB_352D);
+            x ^= x >> 15;
+            x = x.wrapping_mul(0x846C_A68B);
+            x ^= x >> 16;
+            (x >> 8) as f32 / (1u32 << 24) as f32
+        };
+        // Bandes : bruit de valeur lissé à deux échelles
+        let band = |cells: f32, salt: u32| {
+            let x = f * cells;
+            let (i, t) = (x.floor(), x.fract());
+            let s = t * t * (3.0 - 2.0 * t);
+            let a = h(i as u32 ^ salt);
+            let b = h((i as u32 + 1) ^ salt);
+            a + (b - a) * s
+        };
+        let mut v = 0.45 + 0.35 * band(9.0, 0x100) + 0.2 * band(41.0, 0x200);
+        for [c, w] in self.gaps {
+            if w > 0.0 {
+                let d = ((f - c).abs() / (w * 0.5)).min(1.0);
+                v *= d * d * (3.0 - 2.0 * d);
+            }
+        }
+        let edge = (f / 0.04).min((1.0 - f) / 0.03).clamp(0.0, 1.0);
+        (v * self.opacity * edge).clamp(0.0, 1.0)
+    }
 }
 
 /// Aurores polaires : force (0..1), couleur, latitude (degrés).

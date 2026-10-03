@@ -184,6 +184,7 @@ impl MoonConfig {
             traits: self.traits.clone(),
             life: self.life.clone(),
             resources: self.resources.clone(),
+            rogue: false,
         }
     }
 }
@@ -261,6 +262,8 @@ pub struct PlanetConfig {
     #[serde(default)] pub life:           Life,
     /// Composition globale et gisements (phase 8).
     #[serde(default)] pub resources:      crate::planetgen::resources::Resources,
+    /// Planète errante (C2) : loin de toute étoile, elle ne tourne pas autour (dernière de la liste).
+    #[serde(default)] pub rogue:          bool,
 }
 fn default_gravity() -> f32 { 1.0 }
 fn default_star_radius()    -> f32 { 250.0 }
@@ -279,7 +282,7 @@ impl Default for PlanetConfig {
             kind: PlanetKind::Rocky, hot: false, mass_earth: 0.0, radius_earth: 0.0,
             semi_major_au: 0.0, period_days: 0.0, rotation_h: 0.0, axial_tilt: 0.0,
             tidally_locked: false, gravity_g: 1.0, temperature_c: None, climate: None, air: Air::default(), hydrology: Hydrology::default(), geology: Geology::default(), biomes: BiomeParams::default(),
-            ring: None, aurora: None, habitability: Habitability::default(), traits: Vec::new(), life: Life::default(), resources: Default::default(),
+            ring: None, aurora: None, habitability: Habitability::default(), traits: Vec::new(), life: Life::default(), resources: Default::default(), rogue: false,
         }
     }
 }
@@ -539,6 +542,24 @@ impl StarSystemConfig {
                 crate::planetgen::belts::generate(genome, &physics, star.scale(), star.radius, &self.planets_uncached())
             }
             _ => self.asteroid_belts.iter().enumerate().map(|(i, c)| crate::planetgen::belts::Belt::from_config(c, i)).collect(),
+        }
+    }
+
+    /// Troyens (C2) : essaims aux points L4 / L5 des géantes.
+    pub fn swarms(&self) -> Vec<crate::planetgen::belts::Swarm> {
+        match self.genome {
+            Some(genome) => crate::planetgen::belts::trojans(genome, &self.planets_uncached()),
+            None => Vec::new(),
+        }
+    }
+
+    /// Comètes (C2) : orbites très excentriques.
+    pub fn comets(&self) -> Vec<crate::planetgen::comets::Comet> {
+        match (self.genome, self.stars.first(), self.star_physics()) {
+            (Some(genome), Some(star), Some(physics)) => {
+                crate::planetgen::comets::generate(genome, &physics, star.scale(), star.radius, &self.planets_uncached(), &self.belts())
+            }
+            _ => Vec::new(),
         }
     }
 
@@ -1514,7 +1535,10 @@ mod tests {
                 assert!((star.radius - scale).abs() <= 5.0, "une G garde l'echelle d'avant");
             }
             let planets = sys.planets();
-            assert!((1..=8).contains(&planets.len()), "{} planetes", planets.len());
+            // 1 à 8 planètes en orbite, plus parfois une planète errante (C2) au bout de la liste
+            let orbiting = planets.iter().filter(|p| !p.rogue).count();
+            assert!((1..=8).contains(&orbiting), "{orbiting} planetes");
+            assert!(planets.len() <= orbiting + 1 && planets.iter().take(orbiting).all(|p| !p.rogue));
             let earth = scale / 109.0;
             let mut previous_edge = star.radius;
             let mut previous_au = 0.0;

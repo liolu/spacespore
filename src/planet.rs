@@ -1394,25 +1394,15 @@ fn spawn_ring_and_aurora(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     pcfg: &PlanetConfig,
+    planet_id: usize,
     root: Entity,
 ) {
     // La racine de la planète porte déjà l'inclinaison de l'axe (et la rotation) : anneaux et
     // aurores sont dans son plan équatorial
     let tilt = Quat::IDENTITY;
     if let Some(ring) = pcfg.ring {
-        let c = ring.color;
-        let material = materials.add(StandardMaterial {
-            base_color: Color::srgba(c[0], c[1], c[2], ring.opacity),
-            alpha_mode: AlphaMode::Blend,
-            cull_mode: None,
-            double_sided: true,
-            perceptual_roughness: 1.0,
-            ..default()
-        });
-        let child = commands
-            .spawn((Mesh3d(meshes.add(annulus_mesh(ring.inner, ring.outer, 160))), MeshMaterial3d(material), Transform::from_rotation(tilt), NotShadowCaster))
-            .id();
-        commands.entity(root).add_child(child);
+        // Profil, divisions et ombres (C2) : `rings.rs`
+        crate::rings::spawn_ring(commands, meshes, materials, &ring, pcfg.radius, pcfg.terrain_height, planet_id, root);
     }
     if let Some(aurora) = pcfg.aurora {
         let r = pcfg.radius * 1.04;
@@ -1472,7 +1462,7 @@ fn spawn_planet_meshes(
     divs: usize,
     rock_material: &Handle<StandardMaterial>,
 ) {
-    spawn_ring_and_aurora(commands, meshes, materials, pcfg, root);
+    spawn_ring_and_aurora(commands, meshes, materials, pcfg, planet_id, root);
     if pcfg.gaseous() {
         // Visible des deux côtés : on peut y plonger
         let material = materials.add(StandardMaterial {
@@ -1738,7 +1728,8 @@ pub(crate) fn orbit_planets(
             omega: cfg.arg_periapsis,
             m0: cfg.mean_anomaly_0,
         };
-        let pos = elems.position(t, DEFAULT_MU * PLANET_MU_SCALE);
+        // Planète errante : immobile, loin de l'étoile
+        let pos = elems.position(if cfg.rogue { 0.0 } else { t }, DEFAULT_MU * PLANET_MU_SCALE);
         tf.translation = sc + pos;
         // Rotation autour de l'axe incliné (repère fixe de l'astre, règle 10)
         tf.rotation = Spin::planet(cfg).rotation(t, -pos);

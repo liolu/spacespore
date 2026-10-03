@@ -27,6 +27,7 @@ mod scanner;
 mod settings;
 mod systems;
 mod asteroids;
+mod rings;
 mod ship;
 mod stats;
 mod suit;
@@ -269,6 +270,7 @@ fn main() {
         .add_plugins(meteors::MeteorsPlugin)
         .add_plugins(suit::SuitPlugin)
         .add_plugins(asteroids::AsteroidsPlugin)
+        .add_plugins(rings::RingsPlugin)
 
         // ── UI ──────────────────────────────────────────────────────────
         .add_plugins(UiPlugin)
@@ -2352,6 +2354,7 @@ fn draw_orbits(
     cam_q: Query<&GlobalTransform, With<Camera3d>>,
     spatial: Res<settings::SystemSpatialIndex>,
     spawned: Res<planet::SpawnedSystems>,
+    asteroids: Res<asteroids::AsteroidField>,
 
     planet_q:
         Query<
@@ -2520,7 +2523,8 @@ fn draw_orbits(
         let sc = sys.center();
 
         for (pi, pcfg) in sys.planets().iter().enumerate() {
-            if pcfg.orbit_distance >= 1.0 {
+            // Une planète errante n'a pas d'orbite
+            if pcfg.orbit_distance >= 1.0 && !pcfg.rogue {
                 let elems = OrbitalElements {
                     a: pcfg.orbit_distance,
                     e: pcfg.eccentricity,
@@ -2560,11 +2564,16 @@ fn draw_orbits(
             }
         }
 
-        for belt in &sys.asteroid_belts {
-            let r_inner = belt.distance - belt.width * 1.5;
-            let r_outer = belt.distance + belt.width * 1.5;
-            draw_ring(&mut gizmos, r_inner, belt_color, sc);
-            draw_ring(&mut gizmos, r_outer, belt_color, sc);
+        // Ceintures (C1) et orbites des comètes (C2)
+        if let Some(src) = asteroids.sources(si) {
+            for belt in &src.belts {
+                draw_ring(&mut gizmos, belt.inner, belt_color, sc);
+                draw_ring(&mut gizmos, belt.outer, belt_color, sc);
+            }
+            for c in &src.comets {
+                let elems = OrbitalElements { a: c.a as f32, e: c.e as f32, i: c.inc as f32, omega_big: c.node as f32, omega: c.peri as f32, m0: 0.0 };
+                draw_ellipse(&mut gizmos, &elems, comet_color, sc);
+            }
         }
     }
 

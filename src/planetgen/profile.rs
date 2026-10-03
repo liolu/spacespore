@@ -361,6 +361,8 @@ pub struct GameplaySection {
     pub aurora: Option<String>,
     pub tidal_heating: Option<f64>,
     pub subsurface_ocean: bool,
+    /// Planète errante (C2) : sans étoile.
+    pub rogue: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -496,7 +498,8 @@ fn gameplay_section(p: &PlanetConfig) -> GameplaySection {
         },
         hazards,
         danger_level: h.danger_level,
-        ring: p.ring.map(|r| format!("de {:.0} a {:.0} (rayon {:.0})", r.inner, r.outer, p.radius)),
+        ring: p.ring.map(|r| format!("de {:.0} a {:.0} (rayon {:.0}), {:.0} % de glace", r.inner, r.outer, p.radius, r.ice * 100.0)),
+        rogue: p.rogue,
         aurora: p.aurora.map(|a| format!("force {:.2} vers {:.0} degres de latitude", a.strength, a.latitude)),
         tidal_heating: None,
         subsurface_ocean: p.hydrology.subsurface_ocean,

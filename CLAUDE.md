@@ -157,6 +157,20 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   `ship_collisions` -> `AsteroidHit` (degats selon la vitesse, `combat.rs`), cailloux pousses sans degat, pilote
   automatique qui contourne. Chat : `/ceinture`. Banc : `cargo test --release bench_asteroids -- --ignored --nocapture`.
   PROTOCOL 25.
+  C2 = anneaux, Troyens, cometes, planetes errantes. Anneaux (`rings.rs`) : `Ring` a `ice`, `gaps` (divisions),
+  `profile(f)` (bandes, divisions vides) ; maillage polaire a couleurs de sommets, ombre de la planete sur l'anneau
+  (`ring_light`) et de l'anneau sur la planete (coquille `ring_shadow`), dans un repere `RingFrame` qui garde
+  l'etoile a l'azimut 0 (couleurs recalculees seulement quand sa hauteur change). Les petits corps passent par
+  `asteroids.rs` (`Sources::of` : ceintures, essaims, anneaux, cometes ; `AsteroidKey::belt` = code de source,
+  `SWARM_BASE`/`RING_BASE`/`COMET_SOURCE` ; `Path` : ceinture, point de Lagrange, comete, anneau ; `Elements` =
+  Kepler f64, meme formule que `kepler.rs`). Troyens : `planetgen/belts.rs::trojans` (L4/L5 des geantes, cellules
+  cubiques dans le repere du point de Lagrange). Particules d'anneau : cellules qui tournent avec l'anneau autour de
+  la planete (`planet_mu`), absentes des divisions. Cometes : `planetgen/comets.rs` (famille de Jupiter / longue
+  periode, `activity(r)`), toujours affichees dans le systeme charge, chevelure + queue de gaz (droite, opposee a
+  l'etoile) + queue de poussiere (courbee, en retard) qui grandissent pres de l'etoile (`update_comet_tails`) ;
+  `/comete`. Planete errante : 1 systeme sur 30, derniere de `planets()` (`PlanetConfig::rogue`), loin et hors du
+  plan, immobile, physique sans etoile ; ignoree par ceintures, zones, orbites ; `/aller planete errante`.
+  PROTOCOL 26.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

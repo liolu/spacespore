@@ -108,6 +108,9 @@ fn secondary(p: &PlanetProfile) -> String {
     let liquid = h.ocean_liquid.as_deref().unwrap_or("aucun");
     let pressure = p.atmosphere.surface_pressure_bar.unwrap_or(0.0);
     let t = p.climate.mean_temperature_c;
+    if p.gameplay.rogue {
+        return "planete errante : aucune etoile, nuit eternelle".into();
+    }
     if !p.gameplay.walkable {
         return "pas de sol, nuages a perte de vue".into();
     }
@@ -260,7 +263,7 @@ fn update_scanner(
         if key != scanner.shown {
             if let Some(a) = field.get(&k) {
                 let lum = settings.systems.get(k.sys as usize).and_then(|s| s.star_physics()).map_or(1.0, |p| p.luminosity_sun);
-                scanner.text = crate::asteroids::scanner_text(a, field.belts(k.sys as usize).get(k.belt as usize), lum);
+                scanner.text = crate::asteroids::scanner_text(a, field.sources(k.sys as usize), lum);
                 scanner.danger = 0;
                 scanner.shown = key;
             }
@@ -278,7 +281,7 @@ fn update_scanner(
             };
             // Ceintures d'astéroïdes du système de l'étoile
             if let (Some(crate::planetgen::live::BodyId::Star { system, .. }), false) = (id, scanner.text.is_empty()) {
-                if let Some(line) = settings.systems.get(system as usize).and_then(|s| crate::asteroids::belts_line(&s.belts())) {
+                if let Some(line) = settings.systems.get(system as usize).and_then(|s| crate::asteroids::belts_line(&crate::asteroids::Sources::of(s))) {
                     scanner.text = format!("{}\n{line}", scanner.text);
                 }
             }

@@ -50,7 +50,7 @@ pub fn display_for(sys: &StarSystemConfig, au: f64, hz: f64) -> f32 {
     let mut pts: Vec<(f64, f64)> = sys
         .planets()
         .iter()
-        .filter(|p| p.semi_major_au > 0.0)
+        .filter(|p| p.semi_major_au > 0.0 && !p.rogue)
         .map(|p| ((p.semi_major_au as f64).ln(), p.orbit_distance as f64))
         .collect();
     pts.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -82,6 +82,7 @@ pub fn zones_of(sys: &StarSystemConfig) -> Option<Zones> {
     let last = sys
         .planets()
         .iter()
+        .filter(|p| !p.rogue)
         .map(|p| p.orbit_distance * (1.0 + p.eccentricity) + p.radius)
         .fold(0.0_f32, f32::max);
     Some(Zones { star: star_r, habitable_inner: hi, habitable_outer: ho, edge: (last * 1.15).max(ho * 1.6) })
@@ -218,7 +219,7 @@ mod tests {
                     panic!("planete chaude ({au} UA) dessinee dans la zone habitable");
                 }
             }
-            assert!(z.edge >= sys.planets().iter().map(|p| p.orbit_distance).fold(0.0, f32::max));
+            assert!(z.edge >= sys.planets().iter().filter(|p| !p.rogue).map(|p| p.orbit_distance).fold(0.0, f32::max));
         }
         assert!(checked > 10, "{checked}");
     }
