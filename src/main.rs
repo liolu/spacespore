@@ -30,6 +30,7 @@ mod asteroids;
 mod rings;
 mod sky;
 mod weather;
+mod editeur;
 mod ship;
 mod stats;
 mod suit;
@@ -275,6 +276,7 @@ fn main() {
         .add_plugins(rings::RingsPlugin)
         .add_plugins(sky::SkyPlugin)
         .add_plugins(weather::WeatherPlugin)
+        .add_plugins(editeur::EditeurPlugin)
 
         // ── UI ──────────────────────────────────────────────────────────
         .add_plugins(UiPlugin)
@@ -321,7 +323,9 @@ fn main() {
                 profiling_snapshot,
                 astre_lod_cull,
                 process_pending_reloads,
-            ),
+            )
+                // Pendant l'éditeur (0.12), le jeu ne lit plus le clavier ni la souris
+                .run_if(editeur::in_game),
         )
 
         .run();

@@ -80,7 +80,7 @@ impl Plugin for SurfacePlugin {
             .add_systems(Update, update_galaxy_dim)
             .add_systems(
                 Update,
-                (surface_control.in_set(SurfaceControl), update_underground, dim_star_light, update_suns, surface_light, update_lamps, update_season, refresh_voxels, update_tiles, update_hud)
+                (surface_control.in_set(SurfaceControl).run_if(crate::editeur::in_game), update_underground, dim_star_light, update_suns, surface_light, update_lamps, update_season, refresh_voxels, update_tiles, update_hud)
                     .chain()
                     .after(crate::planet::orbit_planets)
                     .after(crate::planet::orbit_moons),
