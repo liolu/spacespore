@@ -6,7 +6,7 @@ use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::ButtonState;
 use bevy::prelude::*;
 
-use super::edit::{self, Tool, TAG_GROUPS};
+use super::edit::{self, Brush, ClipTransform, Tool, TAG_GROUPS};
 use super::format::{Material, Model, ModelKind, PaletteEntry, ShipCategory, CHARACTER_GRID, MAX_FILE_BYTES, OTHER_MAX_GRID};
 use super::palette;
 use super::{library_dir, list_models, save_model, AppState, Editor, Overlay};
@@ -101,6 +101,28 @@ pub enum Act {
     Anim(usize),
     /// Cocher / décocher un membre optionnel de la race choisie.
     RaceOption(usize),
+    /// Mode des outils de volume.
+    Brush(Brush),
+    /// Sélection et presse-papiers.
+    Clip(ClipAct),
+    /// Calque courant, calque montré / caché, nouveau calque.
+    Layer(u8),
+    LayerVisible(u8),
+    AddLayer,
+    /// Coupe : axe (aucune = `None`), déplacer.
+    Cut(Option<usize>),
+    CutMove(i32),
+}
+
+/// Ce qu'on fait de la sélection.
+#[derive(Clone, Copy, PartialEq)]
+pub enum ClipAct {
+    Copy,
+    Cut,
+    Paste,
+    Delete,
+    Transform(ClipTransform),
+    Deselect,
 }
 
 fn button(p: &mut ChildBuilder, label: &str, act: Act, on: bool) {
@@ -195,6 +217,36 @@ pub fn rebuild(mut commands: Commands, mut editor: ResMut<Editor>, old: Query<En
                         button(w, t.name(), Act::Tool(t), ed.tool == t);
                     }
                 });
+                label(p, "Volumes (molette pendant le trace : epaisseur)", 13.0, DIM);
+                wrap(p, |w| {
+                    for t in Tool::VOLUME {
+                        button(w, t.name(), Act::Tool(t), ed.tool == t);
+                    }
+                });
+                if Tool::VOLUME.contains(&ed.tool) && ed.tool != Tool::Select {
+                    wrap(p, |w| {
+                        label(w, "Mode :", 13.0, DIM);
+                        for b in Brush::ALL {
+                            button(w, b.name(), Act::Brush(b), ed.brush == b);
+                        }
+                    });
+                }
+                if ed.tool == Tool::Select || ed.selection.is_some() || ed.pasting {
+                    label(p, "Selection", 13.0, DIM);
+                    wrap(p, |w| {
+                        button(w, "Copier (Ctrl+C)", Act::Clip(ClipAct::Copy), false);
+                        button(w, "Couper (Ctrl+X)", Act::Clip(ClipAct::Cut), false);
+                        button(w, "Coller (Ctrl+V)", Act::Clip(ClipAct::Paste), ed.pasting);
+                        button(w, "Effacer (Suppr)", Act::Clip(ClipAct::Delete), false);
+                        for (a, n) in ["x", "y", "z"].iter().enumerate() {
+                            button(w, &format!("Tourner {n}{}", if a == 1 { " (R)" } else { "" }), Act::Clip(ClipAct::Transform(ClipTransform::Turn(a))), false);
+                        }
+                        for (a, n) in ["x", "y", "z"].iter().enumerate() {
+                            button(w, &format!("Retourner {n}"), Act::Clip(ClipAct::Transform(ClipTransform::Mirror(a))), false);
+                        }
+                        button(w, "Deselectionner", Act::Clip(ClipAct::Deselect), false);
+                    });
+                }
                 wrap(p, |w| {
                     button(w, "Miroir (X)", Act::Mirror, ed.mirror);
                     button(w, "Grille (G)", Act::Grid, ed.grid);
@@ -204,6 +256,29 @@ pub fn rebuild(mut commands: Commands, mut editor: ResMut<Editor>, old: Query<En
                     button(w, "Annuler (Ctrl+Z)", Act::Undo, false);
                     button(w, "Retablir (Ctrl+Y)", Act::Redo, false);
                 });
+                if let Some(d) = ed.doc() {
+                    label(p, "Calques (clic : calque courant)", 13.0, DIM);
+                    for (k, l) in d.model.layer_list().iter().enumerate() {
+                        p.spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(6.0), ..default() }).with_children(|r| {
+                            button(r, if l.visible { "Vu" } else { "Cache" }, Act::LayerVisible(k as u8), !l.visible);
+                            button(r, &l.name, Act::Layer(k as u8), d.layer as usize == k);
+                        });
+                    }
+                    wrap(p, |w| button(w, "+ Calque", Act::AddLayer, false));
+                    let axis = d.cut.map(|c| c.axis);
+                    wrap(p, |w| {
+                        label(w, "Coupe (C) :", 13.0, DIM);
+                        button(w, "aucune", Act::Cut(None), axis.is_none());
+                        for (a, n) in ["x", "y", "z"].iter().enumerate() {
+                            button(w, n, Act::Cut(Some(a)), axis == Some(a));
+                        }
+                        if let Some(c) = d.cut {
+                            button(w, "-", Act::CutMove(-1), false);
+                            label(w, &c.pos.to_string(), 14.0, ON);
+                            button(w, "+", Act::CutMove(1), false);
+                        }
+                    });
+                }
                 let blocks = ed.blocks_for_doc();
                 if !blocks.is_empty() {
                     label(p, "Blocs de mouvement", 13.0, DIM);
@@ -533,7 +608,7 @@ fn overlay(root: &mut ChildBuilder, ed: &Editor, o: &Overlay) {
 }
 
 /// Textes qui changent à chaque image.
-pub fn live_texts(mut editor: ResMut<Editor>, mut q: Query<(&Live, &mut Text)>) {
+pub fn live_texts(mut editor: ResMut<Editor>, chunks: Res<super::view::ChunkMeshes>, mut q: Query<(&Live, &mut Text)>) {
     editor.refresh_size();
     let ed = &*editor;
     for (which, mut t) in &mut q {
@@ -557,17 +632,18 @@ pub fn live_texts(mut editor: ResMut<Editor>, mut q: Query<(&Live, &mut Text)>) 
                     let size = ed.size_bytes.map_or("?".into(), |b| format!("{:.2}", b as f64 / (1024.0 * 1024.0)));
                     let full = ed.size_bytes.is_some_and(|b| b > MAX_FILE_BYTES);
                     format!(
-                        "{}\n{what}\nGrille {} x {} x {}\n{} voxels, {} couleurs, {} zones\nFichier : {size} / 10 Mo{}\nEtiquettes : {}\n{}",
+                        "{}\n{what}\nGrille {} x {} x {}\n{} voxels, {} couleurs, {} zones\nFichier : {size} / 10 Mo{}\nEtiquettes : {}\n{}{}",
                         m.name,
                         m.size.x,
                         m.size.y,
                         m.size.z,
-                        m.voxels.count(),
+                        ed.voxel_count,
                         m.palette.len(),
                         m.zones.len(),
                         if full { "  TROP LOURD" } else { "" },
                         if m.tags.is_empty() { "aucune".into() } else { m.tags.join(", ") },
                         d.path.as_ref().map_or("pas encore enregistre".into(), |p| p.file_name().map_or(String::new(), |f| f.to_string_lossy().to_string())),
+                        if chunks.busy() > 0 { format!("\nMaillage : {} chunks en attente", chunks.busy()) } else { String::new() },
                     )
                 }
                 None => "Aucun modele ouvert : Nouveau ou Bibliotheque.".into(),
@@ -638,6 +714,14 @@ pub fn escape(keys: Res<ButtonInput<KeyCode>>, mut editor: ResMut<Editor>, mut n
         editor.say("Pose annulee.".into());
         return;
     }
+    if editor.drag.take().is_some() || std::mem::take(&mut editor.pasting) {
+        editor.say("Annule.".into());
+        return;
+    }
+    if editor.overlay.is_none() && editor.selection.take().is_some() {
+        editor.say("Selection retiree.".into());
+        return;
+    }
     if editor.preview.as_ref().is_some_and(|p| !p.on_race) {
         editor.stop_preview();
         editor.say("Apercu arrete.".into());
@@ -663,7 +747,41 @@ pub fn actions(interactions: Query<(&Interaction, &Act), Changed<Interaction>>, 
             ed.pending_delete = None;
         }
         match *act {
-            Act::Tool(t) => ed.tool = t,
+            Act::Tool(t) => ed.set_tool(t),
+            Act::Brush(b) => ed.brush = b,
+            Act::Clip(c) => match c {
+                ClipAct::Copy => ed.copy_selection(false),
+                ClipAct::Cut => ed.copy_selection(true),
+                ClipAct::Paste => ed.start_paste(),
+                ClipAct::Delete => ed.delete_selection(),
+                ClipAct::Transform(t) => ed.transform(t),
+                ClipAct::Deselect => {
+                    ed.selection = None;
+                    ed.pasting = false;
+                }
+            },
+            Act::Layer(k) => {
+                if let Some(d) = ed.doc_mut() {
+                    d.layer = k;
+                }
+            }
+            Act::LayerVisible(k) => {
+                if let Some(d) = ed.doc_mut() {
+                    d.toggle_layer(k);
+                }
+            }
+            Act::AddLayer => {
+                if let Some(d) = ed.doc_mut() {
+                    d.add_layer();
+                }
+            }
+            Act::Cut(axis) => {
+                if let Some(d) = ed.doc_mut() {
+                    let cut = axis.map(|a| super::mesh::Cut { axis: a, pos: d.cut.filter(|c| c.axis == a).map_or(d.model.size.as_ivec3()[a] / 2, |c| c.pos) });
+                    d.set_cut(cut);
+                }
+            }
+            Act::CutMove(by) => ed.move_cut(by),
             Act::Mirror => ed.mirror = !ed.mirror,
             Act::Grid => ed.grid = !ed.grid,
             Act::Undo => ed.undo(),
