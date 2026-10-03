@@ -1113,6 +1113,10 @@ pub struct GameSettings {
     // ── Multijoueur ──────────────────────────────────────────────────────
     #[serde(default = "default_player_name")] pub player_name: String,
     #[serde(default = "default_aura_color")]  pub aura_color:  [f32; 3],
+    /// Modèles de l'éditeur utilisés en jeu (E7) : fichiers `.ssvox` (relatifs au dossier des
+    /// sauvegardes) ; aucun = le modèle par défaut.
+    #[serde(default)]                         pub ship_model: Option<String>,
+    #[serde(default)]                         pub character_model: Option<String>,
     #[serde(default)]                         pub last_join_address: String,
     /// Tag de clan / guilde affiché entre crochets devant le pseudo (vide = sans guilde).
     #[serde(default)]                         pub clan_tag: String,
@@ -1185,6 +1189,8 @@ impl Default for GameSettings {
             world_seed: DEFAULT_WORLD_SEED,
             player_name: default_player_name(),
             aura_color: default_aura_color(),
+            ship_model: None,
+            character_model: None,
             last_join_address: String::new(),
             clan_tag: String::new(),
             claims: Vec::new(),

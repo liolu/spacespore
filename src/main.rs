@@ -3,6 +3,7 @@ mod claims;
 mod combat;
 mod decor;
 mod diplomacy;
+mod dock;
 mod caves;
 mod chat_cmd;
 mod galaxy_fx;
@@ -17,7 +18,9 @@ mod kepler;
 mod lod;
 mod meteors;
 mod mesher;
+mod models;
 mod net;
+mod net_models;
 mod net_ui;
 mod origin;
 mod planet;
@@ -229,6 +232,8 @@ fn main() {
         .add_plugins(test_cmd::TestCmdPlugin)
         .add_plugins(stats::StatsPlugin)
         .add_plugins(zones::ZonesPlugin)
+        .add_plugins(models::ModelsPlugin)
+        .add_plugins(dock::DockPlugin)
 
         // ── Legacy astre plugins désactivés — la galaxie gère tout ──
         // Ressources + events vides pour l'UI (pas de Startup spawn)

@@ -35,7 +35,7 @@ use crate::voxel::{BodyVoxels, Cell, BLOCK};
 pub const TILE_CELLS: usize = 32;
 
 /// Taille maximale d'un voxel au niveau le plus fin.
-const MAX_VOXEL: f32 = 11.0;
+pub const MAX_VOXEL: f32 = 11.0;
 
 /// Une tuile est subdivisée tant que la caméra est plus proche que ce multiple de sa taille.
 pub const SPLIT_FACTOR: f32 = 1.8;

@@ -270,6 +270,23 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   fregate), apercu `hangar:entree` / `hangar:sortie` (`HANGAR_SECS`, porte qui joue « ouverture »,
   `hangar_ship` = vaisseau fantome), chemin prolonge au clic (`extend_path`). Captures :
   `SPACESPORE_EDITOR_DEMO=vaisseau` (etat combat) ou `hangar`.
+  E7 = les modeles en jeu (`models.rs`) : `ModelKey` (defaut `vaisseau:chasseur` / `perso:<race>` fabrique par
+  `editeur::defaults`, ou empreinte d'un `.ssvox`), `GameModels` (charge et maille hors du fil principal, fichiers
+  par empreinte, `saves/cache_modeles/`), `Rig` (enfant : une entite par zone et matiere, `RigPart`, anime par
+  `zone_locals_with` + `Inputs`, `play` = passage en douceur), `Fit::Ship` (nez +z du modele vers -Z, longueur
+  `icon_length` a l'echelle 1) / `Fit::Character` (hauteur du marcheur, ~2 blocs : decision du 03/10).
+  Choix : `GameSettings::ship_model` / `character_model` (bouton « Utiliser comme mon vaisseau / personnage » ;
+  le premier personnage enregistre est pris). Vaisseau : vraie taille pose et en vol bas (`surface::ShipDims`,
+  4 voxels = 1 bloc), icone dans l'espace ; zoom de vol bas `Surface::flight_zoom` ; etat (pose, decollage,
+  vol, combat via `combat::CombatState::last_shot`, detruit) et poussee pour les blocs (`models::drive_local`).
+  A pied : F5 = 3e personne (par defaut), personnage anime (`walker_anim`), le marcheur ne traverse pas le
+  vaisseau pose (`collision_boxes` par chunk, `push_out`). Reseau (`net_models.rs`, PROTOCOL 28) : `Looks` dans
+  `PlayerState` (modeles, etat du vaisseau, marcheur `WalkState`, amarrage `DockState`), fichiers demandes par
+  empreinte en morceaux de 16 Kio via l'hote (`Transfers`, `Msg::ModelWant/ModelPart`), autres joueurs : vaisseau
+  avec leur modele (vraie taille pres de nous sur un astre), personnage a pied (`sync_remote_walkers`).
+  Amarrage (`dock.rs`, touche H, dans l'espace) : hangar libre a notre taille d'un autre joueur, entree / amarre /
+  sortie, portes animees chez tous (`carrier_sequence`). Tests : `SPACESPORE_TEST_LAND=<s>` (V), 
+  `SPACESPORE_TEST_PEER=marcheur|croiseur|capital` (faux joueur), `SPACESPORE_TEST_DOCK=<s>`.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

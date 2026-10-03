@@ -114,6 +114,8 @@ pub enum Act {
     CutMove(i32),
     /// Poussée simulée dans l'aperçu (pas de 10 %).
     Thrust(i32),
+    /// Ce modèle devient le vaisseau ou le personnage du joueur (E7).
+    UseInGame,
     /// Hangars : prolonger le chemin (clics), le raccourcir, retirer le hangar.
     PathEdit(usize),
     PathShorten(usize),
@@ -424,6 +426,10 @@ pub fn rebuild(mut commands: Commands, mut editor: ResMut<Editor>, old: Query<En
                         button(w, "Renommer", Act::Rename, false);
                         button(w, "Etiquettes", Act::Tags, false);
                     });
+                    if let Some(d) = ed.doc().filter(|d| d.model.kind != ModelKind::Autre) {
+                        let what = if d.model.kind == ModelKind::Vaisseau { "Utiliser comme mon vaisseau" } else { "Utiliser comme mon personnage" };
+                        wrap(p, |w| button(w, what, Act::UseInGame, false));
+                    }
                 }
                 if let Some(d) = ed.doc().filter(|d| !d.model.hangars.is_empty()) {
                     label(p, &format!("HANGARS ({})", d.model.hangars.len()), 15.0, ACCENT);
@@ -759,7 +765,13 @@ pub fn escape(keys: Res<ButtonInput<KeyCode>>, mut editor: ResMut<Editor>, mut n
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn actions(interactions: Query<(&Interaction, &Act), Changed<Interaction>>, mut editor: ResMut<Editor>, mut next: ResMut<NextState<AppState>>) {
+pub fn actions(
+    interactions: Query<(&Interaction, &Act), Changed<Interaction>>,
+    mut editor: ResMut<Editor>,
+    mut next: ResMut<NextState<AppState>>,
+    mut settings: ResMut<crate::settings::GameSettings>,
+    mut models: ResMut<crate::models::GameModels>,
+) {
     for (i, act) in &interactions {
         if *i != Interaction::Pressed {
             continue;
@@ -805,6 +817,26 @@ pub fn actions(interactions: Query<(&Interaction, &Act), Changed<Interaction>>, 
                 }
             }
             Act::CutMove(by) => ed.move_cut(by),
+            Act::UseInGame => {
+                // Enregistré d'abord (le jeu lit le fichier), puis choisi
+                if ed.doc().is_some_and(|d| d.dirty || d.path.is_none()) {
+                    ed.save();
+                }
+                if let Some(d) = ed.doc().filter(|d| !d.dirty) {
+                    let path = d.path.clone().unwrap_or_default();
+                    let rel = path.strip_prefix(crate::settings::data_dir()).map(|p| p.to_path_buf()).unwrap_or(path);
+                    let rel = rel.to_string_lossy().replace('\\', "/");
+                    let ship = d.model.kind == ModelKind::Vaisseau;
+                    if ship {
+                        settings.ship_model = Some(rel);
+                    } else {
+                        settings.character_model = Some(rel);
+                    }
+                    settings.save();
+                    models.reload = true;
+                    ed.say(format!("\"{}\" est maintenant ton {} en jeu.", d.model.name, if ship { "vaisseau" } else { "personnage" }));
+                }
+            }
             Act::Thrust(d) => ed.thrust = (ed.thrust + d as f32 * 0.1).clamp(0.0, 1.0),
             Act::PathEdit(i) => {
                 ed.path_edit = if ed.path_edit == Some(i) { None } else { Some(i) };
