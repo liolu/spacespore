@@ -7,7 +7,8 @@ use bevy::input::ButtonState;
 use bevy::prelude::*;
 
 use super::edit::{self, Tool, RACES, TAG_GROUPS};
-use super::format::{Material, Model, ModelKind, ShipCategory, CHARACTER_GRID, MAX_FILE_BYTES, OTHER_MAX_GRID};
+use super::format::{Material, Model, ModelKind, PaletteEntry, ShipCategory, CHARACTER_GRID, MAX_FILE_BYTES, OTHER_MAX_GRID};
+use super::palette;
 use super::{library_dir, list_models, save_model, AppState, Editor, Overlay};
 
 const PANEL: Color = Color::srgba(0.05, 0.06, 0.1, 0.94);
@@ -20,6 +21,27 @@ const DIM: Color = Color::srgb(0.6, 0.66, 0.75);
 /// Un panneau de l'éditeur : la souris y est hors de la vue 3D.
 #[derive(Component)]
 pub struct Blocks;
+
+/// Panneau de gauche (défilant).
+#[derive(Component)]
+pub struct LeftPanel;
+
+/// La molette fait défiler le panneau de gauche quand la souris est dessus.
+pub fn scroll_left(mut wheel: EventReader<bevy::input::mouse::MouseWheel>, mut editor: ResMut<Editor>, mut q: Query<(&Interaction, &mut ScrollPosition), With<LeftPanel>>) {
+    let lines: f32 = wheel.read().map(crate::ui::wheel_lines).sum();
+    for (i, mut s) in &mut q {
+        // La mise en page ramène la position dans le contenu : on garde la vraie
+        if (editor.left_scroll - s.offset_y).abs() > 0.5 {
+            editor.left_scroll = s.offset_y;
+        }
+        if *i == Interaction::None || lines == 0.0 {
+            continue;
+        }
+        // (la mise en page ramène la position dans le contenu)
+        s.offset_y = (s.offset_y - lines * 40.0).clamp(0.0, 2_000.0);
+        editor.left_scroll = s.offset_y;
+    }
+}
 
 /// Racine de l'interface de l'éditeur.
 #[derive(Component)]
@@ -41,7 +63,14 @@ pub enum Act {
     Undo,
     Redo,
     Focus,
-    Color(usize),
+    /// Choisir une couleur (de la grille, d'un thème, des récentes).
+    Pick(PaletteEntry),
+    /// Une couleur du modèle (index de palette) : clic = la choisir, clic droit = la remplacer.
+    ModelColor(u8),
+    Material(Material),
+    Saturation(palette::Saturation),
+    Theme(usize),
+    Hex,
     Tab(usize),
     CloseTab,
     New,
@@ -88,6 +117,35 @@ fn panel(node: Node) -> impl Bundle {
     (node, BackgroundColor(PANEL), BorderRadius::all(Val::Px(8.0)), Interaction::default(), Blocks)
 }
 
+/// Pastille de couleur (avec la lettre de sa matière).
+fn chip(w: &mut ChildBuilder, e: &PaletteEntry, act: Act, on: bool) {
+    swatch_button(w, e, act, on, 22.0, 22.0, true);
+}
+
+/// Case de la grande palette.
+fn cell(w: &mut ChildBuilder, e: &PaletteEntry, act: Act, on: bool) {
+    swatch_button(w, e, act, on, 17.0, 12.0, false);
+}
+
+fn swatch_button(w: &mut ChildBuilder, e: &PaletteEntry, act: Act, on: bool, width: f32, height: f32, mark: bool) {
+    let letter = match e.material {
+        Material::Mate => "",
+        Material::Metal => "M",
+        Material::Verre => "V",
+        Material::Lumineuse => "L",
+    };
+    let mut b = w.spawn((
+        Button,
+        Node { width: Val::Px(width), height: Val::Px(height), border: UiRect::all(Val::Px(if on { 2.0 } else { if mark { 1.0 } else { 0.0 } })), justify_content: JustifyContent::Center, ..default() },
+        BackgroundColor(swatch(e)),
+        BorderColor(if on { ON } else { Color::srgba(0.0, 0.0, 0.0, 0.5) }),
+        act,
+    ));
+    if mark && !letter.is_empty() {
+        b.with_child((Text::new(letter), TextFont { font_size: 11.0, ..default() }, TextColor(Color::srgba(0.0, 0.0, 0.0, 0.8))));
+    }
+}
+
 /// Couleur d'affichage d'une entrée de palette.
 fn swatch(e: &super::format::PaletteEntry) -> Color {
     Color::srgb_u8(e.rgb[0], e.rgb[1], e.rgb[2])
@@ -106,7 +164,7 @@ pub fn rebuild(mut commands: Commands, mut editor: ResMut<Editor>, old: Query<En
     commands
         .spawn((Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() }, GlobalZIndex(60), EditorUi))
         .with_children(|root| {
-            // ── Gauche : outils et couleurs ──
+            // ── Gauche : outils et couleurs (défile à la molette) ──
             root.spawn(panel(Node {
                 position_type: PositionType::Absolute,
                 left: Val::Px(8.0),
@@ -116,9 +174,10 @@ pub fn rebuild(mut commands: Commands, mut editor: ResMut<Editor>, old: Query<En
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(8.0),
                 padding: UiRect::all(Val::Px(10.0)),
-                overflow: Overflow::clip_y(),
+                overflow: Overflow::scroll_y(),
                 ..default()
             }))
+            .insert((ScrollPosition { offset_x: 0.0, offset_y: ed.left_scroll }, LeftPanel))
             .with_children(|p| {
                 label(p, "EDITEUR", 20.0, ACCENT);
                 wrap(p, |w| {
@@ -136,24 +195,74 @@ pub fn rebuild(mut commands: Commands, mut editor: ResMut<Editor>, old: Query<En
                     button(w, "Retablir (Ctrl+Y)", Act::Redo, false);
                 });
                 label(p, &format!("Couleur : {} ({})", hex(&ed.color.rgb), ed.color.material.name()), 14.0, TEXT);
-                p.spawn((Node { width: Val::Px(226.0), height: Val::Px(22.0), ..default() }, BackgroundColor(swatch(&ed.color)), BorderRadius::all(Val::Px(4.0))));
-                label(p, "Couleurs (Maj+clic : pipette)", 13.0, DIM);
+                p.spawn((Node { width: Val::Px(226.0), height: Val::Px(20.0), ..default() }, BackgroundColor(swatch(&ed.color)), BorderRadius::all(Val::Px(4.0))));
                 wrap(p, |w| {
-                    for (i, e) in ed.palette.iter().enumerate() {
-                        let mark = match e.material {
-                            Material::Mate => "",
-                            Material::Metal => "M",
-                            Material::Verre => "V",
-                            Material::Lumineuse => "L",
-                        };
-                        w.spawn((
-                            Button,
-                            Node { width: Val::Px(22.0), height: Val::Px(22.0), border: UiRect::all(Val::Px(2.0)), justify_content: JustifyContent::Center, ..default() },
-                            BackgroundColor(swatch(e)),
-                            BorderColor(if *e == ed.color { ON } else { Color::srgba(0.0, 0.0, 0.0, 0.5) }),
-                            Act::Color(i),
-                        ))
-                        .with_child((Text::new(mark), TextFont { font_size: 11.0, ..default() }, TextColor(Color::srgba(0.0, 0.0, 0.0, 0.8))));
+                    for m in [Material::Mate, Material::Metal, Material::Verre, Material::Lumineuse] {
+                        button(w, m.name(), Act::Material(m), ed.color.material == m);
+                    }
+                    button(w, "Hex...", Act::Hex, false);
+                });
+                if !ed.recent.is_empty() {
+                    label(p, "Recentes", 13.0, DIM);
+                    wrap(p, |w| {
+                        for e in &ed.recent {
+                            chip(w, e, Act::Pick(*e), *e == ed.color);
+                        }
+                    });
+                }
+                label(p, "Palettes", 13.0, DIM);
+                wrap(p, |w| {
+                    for (i, (name, _)) in palette::THEMES.iter().enumerate() {
+                        button(w, name, Act::Theme(i), ed.theme == i);
+                    }
+                });
+                wrap(p, |w| {
+                    for e in palette::theme(ed.theme) {
+                        chip(w, &e, Act::Pick(e), e == ed.color);
+                    }
+                });
+                if let Some(d) = ed.doc() {
+                    label(p, "Couleurs du modele (clic droit : remplacer partout)", 13.0, DIM);
+                    wrap(p, |w| {
+                        for i in palette::sorted(&d.model.palette) {
+                            let e = d.model.palette[i];
+                            chip(w, &e, Act::ModelColor(i as u8 + 1), e == ed.color);
+                        }
+                    });
+                }
+            });
+
+            // ── Bas : la grande palette OKLCH ──
+            root.spawn(panel(Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(266.0),
+                right: Val::Px(276.0),
+                bottom: Val::Px(40.0),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(4.0),
+                padding: UiRect::all(Val::Px(8.0)),
+                ..default()
+            }))
+            .with_children(|p| {
+                wrap(p, |w| {
+                    label(w, "Palette (36 teintes x 12 clartes)", 13.0, DIM);
+                    for s in palette::Saturation::ALL {
+                        button(w, s.name(), Act::Saturation(s), ed.saturation == s);
+                    }
+                });
+                for row in (0..palette::LIGHTS).rev() {
+                    p.spawn(Node { flex_direction: FlexDirection::Row, ..default() }).with_children(|r| {
+                        for col in 0..palette::HUES {
+                            let rgb = palette::grid_color(ed.saturation, col, row);
+                            let e = PaletteEntry { rgb, material: ed.color.material };
+                            cell(r, &e, Act::Pick(e), e == ed.color);
+                        }
+                    });
+                }
+                p.spawn(Node { flex_direction: FlexDirection::Row, margin: UiRect::top(Val::Px(3.0)), ..default() }).with_children(|r| {
+                    for i in 0..palette::GREYS {
+                        let e = PaletteEntry { rgb: palette::grey(i), material: ed.color.material };
+                        cell(r, &e, Act::Pick(e), e == ed.color);
                     }
                 });
             });
@@ -309,6 +418,14 @@ fn overlay(root: &mut ChildBuilder, ed: &Editor, o: &Overlay) {
                 button(w, "Fermer", Act::CloseOverlay, false);
             });
         }
+        Overlay::Hex(_) => {
+            label(p, "COULEUR LIBRE : code hexadecimal (ex. FF8000), Entree : valider", 18.0, ACCENT);
+            p.spawn((Text::new(""), TextFont { font_size: 18.0, ..default() }, TextColor(ON), Live::Rename));
+            wrap(p, |w| {
+                button(w, "Valider", Act::RenameOk, true);
+                button(w, "Annuler", Act::CloseOverlay, false);
+            });
+        }
         Overlay::Rename(_) => {
             label(p, "RENOMMER (Entree : valider, Echap : annuler)", 18.0, ACCENT);
             p.spawn((Text::new(""), TextFont { font_size: 18.0, ..default() }, TextColor(ON), Live::Rename));
@@ -373,7 +490,7 @@ pub fn live_texts(mut editor: ResMut<Editor>, mut q: Query<(&Live, &mut Text)>) 
                 None => "Aucun modele ouvert : Nouveau ou Bibliotheque.".into(),
             },
             Live::Rename => match &ed.overlay {
-                Some(Overlay::Rename(s)) => format!("{s}_"),
+                Some(Overlay::Rename(s)) | Some(Overlay::Hex(s)) => format!("{s}_"),
                 _ => String::new(),
             },
         };
@@ -385,9 +502,13 @@ pub fn live_texts(mut editor: ResMut<Editor>, mut q: Query<(&Live, &mut Text)>) 
 
 /// Saisie du nouveau nom (clavier logique : AZERTY compris).
 pub fn typing(mut events: EventReader<KeyboardInput>, mut editor: ResMut<Editor>) {
-    let Some(Overlay::Rename(mut name)) = editor.overlay.clone() else {
-        events.clear();
-        return;
+    let (mut name, hex_mode) = match editor.overlay.clone() {
+        Some(Overlay::Rename(s)) => (s, false),
+        Some(Overlay::Hex(s)) => (s, true),
+        _ => {
+            events.clear();
+            return;
+        }
     };
     let mut done = None;
     for ev in events.read() {
@@ -410,12 +531,14 @@ pub fn typing(mut events: EventReader<KeyboardInput>, mut editor: ResMut<Editor>
         }
     }
     match done {
+        Some(true) if hex_mode => editor.apply_hex(&name),
         Some(true) => editor.rename(name),
         Some(false) => {
             editor.overlay = None;
             editor.ui_dirty = true;
             editor.escape_used = true;
         }
+        None if hex_mode => editor.overlay = Some(Overlay::Hex(name)),
         None => editor.overlay = Some(Overlay::Rename(name)),
     }
 }
@@ -454,11 +577,19 @@ pub fn actions(interactions: Query<(&Interaction, &Act), Changed<Interaction>>, 
             Act::Undo => ed.undo(),
             Act::Redo => ed.redo(),
             Act::Focus => ed.focus(),
-            Act::Color(k) => {
-                if let Some(c) = ed.palette.get(k).copied() {
+            Act::Pick(c) => ed.set_color(c),
+            Act::ModelColor(k) => {
+                if let Some(c) = ed.doc().and_then(|d| d.model.palette.get(k as usize - 1).copied()) {
                     ed.set_color(c);
                 }
             }
+            Act::Material(m) => {
+                let c = PaletteEntry { rgb: ed.color.rgb, material: m };
+                ed.set_color(c);
+            }
+            Act::Saturation(s) => ed.saturation = s,
+            Act::Theme(t) => ed.theme = t,
+            Act::Hex => ed.overlay = Some(Overlay::Hex(hex(&ed.color.rgb))),
             Act::Tab(k) => ed.select(k),
             Act::CloseTab => ed.close_tab(),
             Act::New => {
@@ -495,11 +626,11 @@ pub fn actions(interactions: Query<(&Interaction, &Act), Changed<Interaction>>, 
                 }
             }
             Act::Import => ed.import(),
-            Act::RenameOk => {
-                if let Some(Overlay::Rename(name)) = ed.overlay.clone() {
-                    ed.rename(name);
-                }
-            }
+            Act::RenameOk => match ed.overlay.clone() {
+                Some(Overlay::Rename(name)) => ed.rename(name),
+                Some(Overlay::Hex(code)) => ed.apply_hex(&code),
+                _ => {}
+            },
         }
     }
 }
@@ -625,6 +756,19 @@ impl Editor {
         self.library = list_models(&library_dir());
     }
 
+    fn apply_hex(&mut self, code: &str) {
+        self.overlay = None;
+        self.ui_dirty = true;
+        self.escape_used = true;
+        match palette::parse_hex(code) {
+            Some(rgb) => {
+                let c = PaletteEntry { rgb, material: self.color.material };
+                self.set_color(c);
+            }
+            None => self.say(format!("Code de couleur invalide : \"{code}\" (6 chiffres hexadecimaux, ex. FF8000).")),
+        }
+    }
+
     fn rename(&mut self, name: String) {
         let name = name.trim().to_string();
         self.overlay = None;
@@ -657,4 +801,20 @@ impl Editor {
 /// Couleur de départ de l'éditeur.
 pub fn default_color() -> super::format::PaletteEntry {
     edit::starter_palette()[0]
+}
+
+/// Clic droit sur une couleur du modèle : elle est remplacée partout par la couleur choisie.
+pub fn replace_on_right_click(buttons: Res<ButtonInput<MouseButton>>, chips: Query<(&Interaction, &Act)>, mut editor: ResMut<Editor>) {
+    if !buttons.just_pressed(MouseButton::Right) {
+        return;
+    }
+    let Some(k) = chips.iter().find_map(|(i, a)| match (i, a) {
+        (Interaction::Hovered | Interaction::Pressed, Act::ModelColor(k)) => Some(*k),
+        _ => None,
+    }) else {
+        return;
+    };
+    let to = editor.color;
+    let n = editor.doc_mut().map_or(0, |d| d.replace_color(k, to));
+    editor.say(if n > 0 { format!("{n} voxels repeints d'un coup (Ctrl+Z pour annuler).") } else { "Rien a remplacer (meme couleur).".into() });
 }

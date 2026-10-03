@@ -10,7 +10,7 @@ use bevy::render::view::RenderLayers;
 use bevy::window::PrimaryWindow;
 
 use super::edit::{self, Doc, Tool};
-use super::format::{Model, PaletteEntry};
+use super::format::Model;
 use super::Editor;
 
 /// Calque de rendu de l'éditeur.
@@ -24,9 +24,20 @@ pub struct EditorGizmos;
 #[derive(Component)]
 pub struct EditorScene;
 
-/// Le modèle affiché.
+/// Le modèle affiché : une partie par matière (index dans `edit::build_meshes`).
 #[derive(Component)]
-pub struct ModelMesh;
+pub struct ModelMesh(pub usize);
+
+/// Rendu de chaque matière (E2) : mate, métal, verre, lumineuse.
+pub fn material_of(k: usize) -> StandardMaterial {
+    match k {
+        1 => StandardMaterial { base_color: Color::WHITE, metallic: 0.85, perceptual_roughness: 0.3, reflectance: 0.6, ..default() },
+        2 => StandardMaterial { base_color: Color::srgba(1.0, 1.0, 1.0, 0.42), alpha_mode: AlphaMode::Blend, perceptual_roughness: 0.05, reflectance: 0.5, ..default() },
+        // Lumineuse : toujours sa pleine couleur, même dans l'ombre
+        3 => StandardMaterial { base_color: Color::WHITE, unlit: true, ..default() },
+        _ => StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.9, ..default() },
+    }
+}
 
 /// Racine de la scène : le coin (0, 0, 0) de la grille.
 #[derive(Component)]
@@ -95,14 +106,16 @@ pub fn enter_scene(
     let anchor = tf.translation + *tf.forward() * 200.0;
     let layer = RenderLayers::layer(EDITOR_LAYER);
     commands.spawn((Transform::from_translation(anchor), Visibility::default(), EditorRoot, EditorScene, layer.clone())).with_children(|p| {
-        p.spawn((
-            Mesh3d(meshes.add(Mesh::from(Cuboid::new(0.0, 0.0, 0.0)))),
-            MeshMaterial3d(materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.85, ..default() })),
-            Transform::IDENTITY,
-            NotShadowCaster,
-            ModelMesh,
-            layer.clone(),
-        ));
+        for k in 0..4 {
+            p.spawn((
+                Mesh3d(meshes.add(Mesh::from(Cuboid::new(0.0, 0.0, 0.0)))),
+                MeshMaterial3d(materials.add(material_of(k))),
+                Transform::IDENTITY,
+                NotShadowCaster,
+                ModelMesh(k),
+                layer.clone(),
+            ));
+        }
     });
     commands.spawn((
         DirectionalLight { illuminance: 9_000.0, shadows_enabled: false, ..default() },
@@ -164,8 +177,12 @@ pub fn camera_input(
     let delta: Vec2 = motion.read().map(|m| m.delta).sum();
     let scroll: f32 = wheel.read().map(crate::ui::wheel_lines).sum();
     let free = !over_ui(&ui);
+    if buttons.just_pressed(MouseButton::Right) {
+        editor.orbit_ok = free;
+    }
+    let orbit = editor.orbit_ok;
     let cam = &mut editor.cam;
-    if buttons.pressed(MouseButton::Right) {
+    if buttons.pressed(MouseButton::Right) && orbit {
         cam.yaw -= delta.x * 0.006;
         cam.pitch = (cam.pitch + delta.y * 0.006).clamp(-1.5, 1.5);
     }
@@ -288,17 +305,20 @@ fn end_stroke(editor: &mut Editor, buttons: &ButtonInput<MouseButton>) {
 }
 
 /// Remaille le modèle quand il change (ou quand on change d'onglet).
-pub fn update_mesh(mut editor: ResMut<Editor>, mut q: Query<&mut Mesh3d, With<ModelMesh>>, mut meshes: ResMut<Assets<Mesh>>) {
-    let Ok(mut m) = q.get_single_mut() else { return };
-    let Some(doc) = editor.doc_mut() else {
-        m.0 = meshes.add(Mesh::from(Cuboid::new(0.0, 0.0, 0.0)));
-        return;
+pub fn update_mesh(mut editor: ResMut<Editor>, mut q: Query<(&mut Mesh3d, &ModelMesh)>, mut meshes: ResMut<Assets<Mesh>>) {
+    let built = match editor.doc_mut() {
+        Some(doc) if doc.mesh_dirty => {
+            doc.mesh_dirty = false;
+            Some(edit::build_meshes(&doc.model))
+        }
+        Some(_) => return,
+        None => None,
     };
-    if !doc.mesh_dirty {
-        return;
+    let mut built = built.map(|b| b.map(Some));
+    for (mut m, part) in &mut q {
+        let mesh = built.as_mut().and_then(|b| b[part.0].take()).unwrap_or_else(|| Mesh::from(Cuboid::new(0.0, 0.0, 0.0)));
+        m.0 = meshes.add(mesh);
     }
-    doc.mesh_dirty = false;
-    m.0 = meshes.add(edit::build_mesh(&doc.model));
 }
 
 /// Grille du sol, boîte de la grille, plan du miroir, case visée.
@@ -347,11 +367,4 @@ pub fn open_doc(editor: &mut Editor, model: Model, path: Option<std::path::PathB
     editor.docs.push(Doc::new(model, path));
     let i = editor.docs.len() - 1;
     editor.select(i);
-}
-
-/// Couleur sélectionnée : elle rejoint la palette de l'éditeur si elle n'y est pas.
-pub fn remember_color(editor: &mut Editor, c: PaletteEntry) {
-    if !editor.palette.contains(&c) {
-        editor.palette.push(c);
-    }
 }
