@@ -122,6 +122,7 @@ fn gas_atmosphere(
     mut commands: Commands,
     state: Res<GasState>,
     surface: Res<crate::surface::Surface>,
+    weather: Res<crate::weather::WeatherNow>,
     mut clear: ResMut<ClearColor>,
     cam_q: Query<(Entity, Has<DistanceFog>), With<Camera3d>>,
 ) {
@@ -150,7 +151,10 @@ fn gas_atmosphere(
                     sky.green * 0.5 + haze[1] * l * 0.5,
                     sky.blue * 0.5 + haze[2] * l * 0.5,
                 );
-                let visibility = (40_000.0 / pressure.max(0.01).sqrt()).clamp(3_000.0, 120_000.0);
+                // Météo (C5) : brouillard, pluie et poussière rapprochent l'horizon
+                let visibility = (40_000.0 / pressure.max(0.01).sqrt()).clamp(3_000.0, 120_000.0) * weather.visibility();
+                let dust = weather.sample.dust;
+                let c = Color::srgb(c.to_srgba().red + (0.55 - c.to_srgba().red) * dust * 0.7, c.to_srgba().green + (0.42 - c.to_srgba().green) * dust * 0.7, c.to_srgba().blue + (0.28 - c.to_srgba().blue) * dust * 0.7);
                 // La nuit, la brume ne cache plus les lunes, les planètes ni les étoiles
                 let c = c.with_alpha(surface.haze_opacity());
                 commands.entity(cam).insert(DistanceFog { color: c, falloff: FogFalloff::from_visibility(visibility), ..default() });

@@ -2020,9 +2020,10 @@ fn rotate_clouds(
         };
         let Some(&(planet_pos, spin)) = planet_positions.get(&cloud.planet_idx) else { continue };
 
-        // Toute la couche tourne avec la planète, et dérive d'un bloc autour de son axe
+        // Toute la couche tourne avec la planète ; avec une vraie météo (C5), les vents déplacent
+        // les nuages dans le maillage lui-même, sinon la couche dérive d'un bloc
         tf.translation = planet_pos;
-        tf.rotation = spin * Quat::from_rotation_y(-t * pcfg.cloud_speed);
+        tf.rotation = if crate::weather::WeatherParams::of(pcfg).is_some() { spin } else { spin * Quat::from_rotation_y(-t * pcfg.cloud_speed) };
     }
 }
 
