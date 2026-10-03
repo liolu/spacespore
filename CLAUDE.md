@@ -329,6 +329,9 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   destination sans roulis, passage doux a la pose de stationnement a l'approche. Vent `weather::wind` : direction
   qui tourne (heures), force qui varie, rafales de quelques secondes (`Sample::gust`), turbulence d'orage ; plus
   fort en altitude, roulis / tangage (`Surface::tilt`) que le pilote corrige, vent au HUD (`compass`).
+  C4 personnage : F5 = 1re personne -> de dos -> de face (`Surface::view`), molette = distance de la camera
+  (3 a 12 voxels, 6 par defaut, `GameSettings::walker_cam`, `remember_walker_cam`) ; lampe tenue dans la main
+  droite (`Rig::hand` = pivot de `main_d` a la pose de l'image), elle eclaire ou l'on regarde.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

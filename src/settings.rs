@@ -1117,6 +1117,8 @@ pub struct GameSettings {
     /// sauvegardes) ; aucun = le modèle par défaut.
     #[serde(default)]                         pub ship_model: Option<String>,
     #[serde(default)]                         pub character_model: Option<String>,
+    /// Distance de la caméra derrière le personnage (voxels, 3 à 12 ; molette en 3e personne).
+    #[serde(default = "default_walker_cam")]  pub walker_cam: f32,
     #[serde(default)]                         pub last_join_address: String,
     /// Tag de clan / guilde affiché entre crochets devant le pseudo (vide = sans guilde).
     #[serde(default)]                         pub clan_tag: String,
@@ -1191,6 +1193,7 @@ impl Default for GameSettings {
             aura_color: default_aura_color(),
             ship_model: None,
             character_model: None,
+            walker_cam: default_walker_cam(),
             last_join_address: String::new(),
             clan_tag: String::new(),
             claims: Vec::new(),
@@ -1690,3 +1693,8 @@ mod tests {
 }
 
 
+
+/// Caméra à pied : 6 voxels derrière le personnage (C4, Q1).
+fn default_walker_cam() -> f32 {
+    6.0
+}

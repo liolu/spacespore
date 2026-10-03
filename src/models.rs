@@ -324,11 +324,14 @@ pub struct Rig {
     blend_secs: f32,
     last: Vec<Pose>,
     built: Option<ModelKey>,
+    /// Personnage : la main droite (pivot du poignet, sinon avant-bras, bras, tronc) dans le repère
+    /// du modèle, à la pose de l'image ; la lampe part de là (C4).
+    pub hand: Option<Vec3>,
 }
 
 impl Rig {
     pub fn new(key: ModelKey, fit: Fit, anim: &str) -> Self {
-        Self { key, fit, anim: anim.into(), t: 0.0, inputs: Inputs::default(), from: Vec::new(), blend: 1.0, blend_secs: 0.3, last: Vec::new(), built: None }
+        Self { key, fit, anim: anim.into(), t: 0.0, inputs: Inputs::default(), from: Vec::new(), blend: 1.0, blend_secs: 0.3, last: Vec::new(), built: None, hand: None }
     }
 
     /// Change d'animation (en douceur ; plus lentement entre deux états du vaisseau).
@@ -392,6 +395,13 @@ fn animate_rigs(time: Res<Time>, models: Res<GameModels>, mut rigs: Query<(&mut 
         };
         let mats = motion::compose(&l.model, &pose);
         rig.last = pose;
+        if l.model.kind == ModelKind::Personnage {
+            let names = ["main_d", "avant_bras_d", "bras_d", "tronc"];
+            rig.hand = names.iter().find_map(|n| {
+                let i = l.model.zones.iter().position(|z| motion::bone(z) == *n)?;
+                Some(mats.get(i + 1)?.transform_point3(Vec3::from_array(l.model.zones[i].pivot)))
+            });
+        }
         for c in children {
             if let Ok((part, mut tf)) = parts.get_mut(*c) {
                 let t = Transform::from_matrix(mats.get(part.0 as usize).copied().unwrap_or(Mat4::IDENTITY));
