@@ -162,8 +162,10 @@ impl Sample {
 
 /// Le temps de jeu va 60 fois plus vite que le temps réel des planètes (A1).
 const GAME_SPEEDUP: f64 = 60.0;
-/// Les nuages se forment et se défont en ~40 min de jeu.
-const MORPH_SECS: f64 = 2400.0;
+/// Les nuages se forment et se défont en ~15 min de jeu.
+const MORPH_SECS: f64 = 900.0;
+/// Les nuages vus de l'espace avancent plus vite que le vent réel (sinon on ne les voit pas bouger).
+const CLOUD_DRIFT: f64 = 6.0;
 
 /// Vent zonal (fraction du vent moyen, + = vers l'est) : alizés vers l'ouest sous 30°, vents
 /// d'ouest aux latitudes moyennes, vents polaires d'est.
@@ -176,19 +178,23 @@ pub fn zonal(lat: f32) -> f32 {
 pub fn cloud_field(w: &WeatherParams, dir: Vec3, t: f64) -> (f32, f32) {
     let lat = dir.y.clamp(-1.0, 1.0).asin();
     // Advection : chaque latitude tourne à la vitesse de son vent
-    let omega = zonal(lat) as f64 * w.wind as f64 / w.radius_m as f64 * GAME_SPEEDUP;
-    let ang = (omega * t).rem_euclid(std::f64::consts::TAU) as f32;
-    let p = Quat::from_rotation_y(ang) * dir;
-    // Formation et dissipation : deux champs fondus
+    let omega = zonal(lat) as f64 * w.wind as f64 / w.radius_m as f64 * GAME_SPEEDUP * CLOUD_DRIFT;
+    // Formation et dissipation : deux champs fondus. Chaque champ ne vit que deux périodes : il
+    // n'est poussé par le vent que depuis sa naissance (sinon, depuis le début de la partie, les
+    // latitudes voisines finissent décalées de dizaines de tours : des bandes comme sur Jupiter)
     let tau = t / MORPH_SECS;
     let k = tau.floor();
     let f = (tau - k) as f32;
-    let off = |k: f64| {
+    // Taille des nuages propre à chaque monde
+    let scale = 2.6 + 1.8 * (splitmix64(w.seed as u64 ^ 0x5CA1E) % 1000) as f32 / 1000.0;
+    let field = |k: f64| {
         let h = splitmix64(w.seed as u64 ^ (k as i64 as u64).wrapping_mul(0xA24B_AED4_963E_E407));
-        Vec3::new((h & 0xFFFF) as f32 / 650.0, ((h >> 16) & 0xFFFF) as f32 / 650.0, ((h >> 32) & 0xFFFF) as f32 / 650.0)
+        let o = Vec3::new((h & 0xFFFF) as f32 / 650.0, ((h >> 16) & 0xFFFF) as f32 / 650.0, ((h >> 32) & 0xFFFF) as f32 / 650.0);
+        let age = t - (k - 1.0) * MORPH_SECS;
+        let p = Quat::from_rotation_y((omega * age) as f32) * dir;
+        fbm(p * scale + o, w.seed, 4)
     };
-    let n = |o: Vec3| fbm(p * 3.2 + o, w.seed, 4);
-    let raw = n(off(k)) * (1.0 - smooth(0.0, 1.0, f)) + n(off(k + 1.0)) * smooth(0.0, 1.0, f);
+    let raw = field(k) * (1.0 - smooth(0.0, 1.0, f)) + field(k + 1.0) * smooth(0.0, 1.0, f);
     // Plus de nuages à l'équateur et vers 60°, moins vers 30° (déserts)
     let band = 0.05 * (6.0 * lat).cos();
     let thr = 0.62 - 0.26 * w.cover - band;
@@ -247,7 +253,8 @@ pub fn sample(w: &WeatherParams, dir: Vec3, t: f64, temp_c: f32, hour: f32) -> S
 }
 
 /// Éclair près du point `dir` dans la tranche d'une demi-seconde qui contient `t` : direction de
-/// l'impact (repère fixe) s'il y en a un.
+/// l'impact (repère fixe) s'il y en a un. Jamais sans nuage d'orage : il faut un nuage épais
+/// au-dessus du point et au-dessus de l'impact.
 pub fn lightning(w: &WeatherParams, dir: Vec3, storm: f32, t: f64, spread: f32) -> Option<Vec3> {
     if storm < 0.15 {
         return None;
@@ -263,7 +270,12 @@ pub fn lightning(w: &WeatherParams, dir: Vec3, storm: f32, t: f64, spread: f32) 
     let r = ((h >> 24) & 0xFFFF) as f32 / 65536.0 * spread;
     let e1 = dir.any_orthonormal_vector();
     let e2 = dir.cross(e1);
-    Some((dir + (e1 * a.cos() + e2 * a.sin()) * r).normalize())
+    let hit = (dir + (e1 * a.cos() + e2 * a.sin()) * r).normalize();
+    let stormy = |d: Vec3| {
+        let (c, thick) = cloud_field(w, d, t);
+        c > 0.6 && thick > 0.25
+    };
+    (stormy(dir) && stormy(hit)).then_some(hit)
 }
 
 /// Paramètres météo de l'astre `kind` (planète ou lune).
@@ -740,6 +752,10 @@ mod tests {
             let t = 1000.0 + k as f64 * 371.3;
             assert_eq!(sample(&w, d, t, 12.0, 7.5), sample(&w, d, t, 12.0, 7.5));
             assert_eq!(lightning(&w, d, 0.8, t, 0.02), lightning(&w, d, 0.8, t, 0.02));
+            // Pas d'éclair sous un ciel clair
+            if let Some(hit) = lightning(&w, d, 0.8, t, 0.02) {
+                assert!(cloud_field(&w, hit, t).0 > 0.6 && cloud_field(&w, d, t).0 > 0.6);
+            }
         }
     }
 
@@ -759,6 +775,26 @@ mod tests {
         assert!(changed > 200, "{changed}");
         // Alizés vers l'ouest, vents d'ouest aux latitudes moyennes
         assert!(zonal(0.0) < 0.0 && zonal(0.8) > 0.0);
+    }
+
+    #[test]
+    fn clouds_never_stretch_into_bands() {
+        // Longtemps après le début de la partie : pas de traînées est-ouest
+        let w = earth_like();
+        let at = |lat: f32, lon: f32| Vec3::new(lat.cos() * lon.cos(), lat.sin(), lat.cos() * lon.sin());
+        let d = 0.03;
+        for t in [5_000.0, 3.0e6, 9.0e7] {
+            let (mut ew, mut ns) = (0.0, 0.0);
+            for i in 0..60 {
+                for j in 0..60 {
+                    let (lat, lon) = (-1.2 + i as f32 * 0.04, j as f32 * 0.1);
+                    let c = cloud_field(&w, at(lat, lon), t).0;
+                    ew += (c - cloud_field(&w, at(lat, lon + d), t).0).abs();
+                    ns += (c - cloud_field(&w, at(lat + d, lon), t).0).abs();
+                }
+            }
+            assert!(ns < ew * 2.5, "t {t} : bandes (nord-sud {ns}, est-ouest {ew})");
+        }
     }
 
     #[test]
