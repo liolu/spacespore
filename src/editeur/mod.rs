@@ -111,6 +111,8 @@ pub struct Preview {
     pub blend: f32,
     /// Aperçu du rig de la race (fenêtre « Nouveau modèle »), pas de l'onglet.
     pub on_race: bool,
+    /// Durée du passage depuis la pose d'avant (s) : plus longue entre deux états du vaisseau.
+    pub blend_secs: f32,
 }
 
 /// Un outil de volume tiré à la souris : départ, arrivée, normale de la face de départ,
@@ -209,6 +211,9 @@ pub struct Editor {
     pub clip: Option<Clip>,
     pub clip_rev: u64,
     pub pasting: bool,
+    /// Poussée simulée dans l'aperçu (0 à 1) ; hangar dont on prolonge le chemin.
+    pub thrust: f32,
+    pub path_edit: Option<usize>,
     /// Échap déjà utilisé cette image (fermer la saisie du nom).
     pub escape_used: bool,
     /// Blocs de mouvement, animations, races (ceux du jeu, puis ceux de `saves/editeur/`).
@@ -267,6 +272,8 @@ impl Default for Editor {
             clip: None,
             clip_rev: 0,
             pasting: false,
+            thrust: 0.6,
+            path_edit: None,
             escape_used: false,
             lib: motion::Library::default(),
             race_view: None,
@@ -360,15 +367,16 @@ impl Editor {
         let colliding = motion::collisions(&d.model, &self.lib, anim);
         let names: Vec<String> = colliding.iter().filter_map(|z| d.model.zones.get(*z).map(|z| z.name.clone())).collect();
         self.colliding = colliding;
-        self.preview = Some(Preview { anim: anim.to_string(), t: 0.0, blend: if from.is_empty() { 1.0 } else { 0.0 }, from, on_race });
+        let blend_secs = if anim.starts_with(motion::STATE_PREFIX) { 1.5 } else { 0.35 };
+        self.preview = Some(Preview { anim: anim.to_string(), t: 0.0, blend: if from.is_empty() { 1.0 } else { 0.0 }, from, on_race, blend_secs });
         if on_race {
             self.ui_dirty = true;
             return;
         }
         self.say(if names.is_empty() {
-            format!("Apercu : {anim}. P : arreter.")
+            format!("Apercu : {}. P : arreter.", motion::anim_label(&self.lib, anim))
         } else {
-            format!("Attention : {} traverse le corps pendant \"{anim}\" (en rouge).", names.join(", "))
+            format!("Attention : {} traverse le corps pendant \"{}\" (en rouge).", names.join(", "), motion::anim_label(&self.lib, anim))
         });
     }
 
@@ -382,12 +390,28 @@ impl Editor {
     /// Mouvement propre des zones à cet instant de l'aperçu (mélange compris).
     pub fn current_locals(&self) -> Vec<motion::Pose> {
         let (Some(d), Some(p)) = (self.shown(), &self.preview) else { return Vec::new() };
-        let now = motion::zone_locals(&d.model, &self.lib, &p.anim, p.t, true);
+        let now = motion::zone_locals_with(&d.model, &self.lib, &p.anim, p.t, true, &self.inputs());
         if p.blend < 1.0 && p.from.len() == now.len() {
             let f = p.blend * p.blend * (3.0 - 2.0 * p.blend);
             motion::blend(&p.from, &now, f)
         } else {
             now
+        }
+    }
+
+    /// Ce que le jeu donnera aux blocs pilotés (E7), simulé dans l'aperçu : la poussée choisie,
+    /// une cible qui tourne autour du modèle, une direction de poussée qui oscille.
+    pub fn inputs(&self) -> motion::Inputs {
+        let (Some(d), Some(p)) = (self.shown(), &self.preview) else { return motion::Inputs::default() };
+        let s = d.model.size.as_vec3();
+        let t = p.t;
+        let r = s.max_element() * 0.8;
+        motion::Inputs {
+            thrust: self.thrust,
+            speed: self.thrust,
+            maneuver: 0.5 + 0.5 * (t * 2.0).sin(),
+            target: s * 0.5 + Vec3::new(r * (t * 0.4).cos(), r * (0.35 + 0.25 * (t * 0.3).sin()), r * (t * 0.4).sin()),
+            steer: Vec3::new((t * 0.7).sin() * 0.4, (t * 0.5).cos() * 0.3, 1.0).normalize(),
         }
     }
 
@@ -808,11 +832,42 @@ fn test_capture(
         frames.2 = frames.2.max(time.delta_secs());
     }
     // `SPACESPORE_EDITOR_DEMO=croiseur` : le croiseur 512³ de démonstration
-    if *done == 0 && std::env::var("SPACESPORE_EDITOR_DEMO").is_ok_and(|v| v == "croiseur") && *state.get() == AppState::Editeur && t > secs * 0.3 {
+    let demo = std::env::var("SPACESPORE_EDITOR_DEMO").unwrap_or_default();
+    if *done == 0 && matches!(demo.as_str(), "croiseur" | "hangar" | "vaisseau") && *state.get() == AppState::Editeur && t > secs * 0.3 {
         *done = 1;
         let t0 = std::time::Instant::now();
-        let d = edit::demo_cruiser();
-        info!("croiseur de demo construit en {:.0} ms", t0.elapsed().as_secs_f64() * 1000.0);
+        editor.lib = motion::Library::load(None).0;
+        let get = |lib: &motion::Library, id: &str| lib.block(id).cloned().unwrap();
+        let p0 = motion::Placement { turn: 0, mirror: false, scale: 1 };
+        let mut d = if demo == "vaisseau" {
+            // `vaisseau` : un chasseur et ses blocs de vaisseau, état « combat »
+            let mut d = Doc::new(format::Model::new("Chasseur de demo", ModelKind::Vaisseau, Some(format::ShipCategory::Chasseur)), None);
+            let hull = PaletteEntry { rgb: [120, 125, 135], material: format::Material::Metal };
+            let _ = d.apply_shape(Shape::Box { a: IVec3::new(26, 20, 12), b: IVec3::new(37, 27, 50) }, Brush::Add, hull, false);
+            let _ = d.apply_shape(Shape::Box { a: IVec3::new(29, 28, 38), b: IVec3::new(34, 30, 46) }, Brush::Add, hull, false);
+            let lib = editor.lib.clone();
+            for (id, at, place, mirror) in [
+                ("ailes_x", IVec3::new(38, 23, 25), p0, true),
+                ("propulseur", IVec3::new(31, 23, 11), motion::Placement { scale: 2, ..p0 }, false),
+                ("tourelle", IVec3::new(31, 28, 30), motion::Placement { scale: 2, ..p0 }, false),
+                ("train", IVec3::new(29, 19, 20), motion::Placement { scale: 2, ..p0 }, true),
+                ("radar", IVec3::new(31, 31, 40), p0, false),
+                ("feu", IVec3::new(57, 24, 30), p0, true),
+                ("tuyere_orientable", IVec3::new(28, 24, 11), p0, true),
+            ] {
+                let _ = d.place_block(&get(&lib, id), at, place, mirror);
+            }
+            d
+        } else {
+            let mut d = edit::demo_cruiser();
+            if demo == "hangar" {
+                // `hangar` : un hangar à chasseur sur le flanc du croiseur, entrée en cours
+                let _ = d.place_block(&get(&editor.lib, "hangar_chasseur"), IVec3::new(256 + 70, 180, 150), motion::Placement { turn: 1, ..p0 }, false);
+            }
+            d
+        };
+        d.end();
+        info!("demo construite en {:.0} ms", t0.elapsed().as_secs_f64() * 1000.0);
         editor.docs.push(d);
         editor.overlay = None;
         let i = editor.docs.len() - 1;
@@ -820,8 +875,21 @@ fn test_capture(
         if std::env::var("SPACESPORE_EDITOR_CUT").is_ok() {
             editor.cycle_cut();
         }
+        let anim = match demo.as_str() {
+            "hangar" => Some((motion::HANGAR_IN, 4.5)),
+            "vaisseau" => Some(("etat:combat", 3.0)),
+            _ => None,
+        };
+        if let Some((a, at)) = anim {
+            editor.start_preview(a);
+            // L'instant voulu de l'animation tombe au moment de la capture
+            if let Some(p) = editor.preview.as_mut() {
+                p.t = at - (secs - t);
+                p.blend = 1.0;
+            }
+        }
     }
-    if *done == 0 && std::env::var("SPACESPORE_EDITOR_DEMO").is_ok_and(|v| !v.starts_with("race:") && v != "croiseur") && *state.get() == AppState::Editeur && t > secs * 0.5 {
+    if *done == 0 && std::env::var("SPACESPORE_EDITOR_DEMO").is_ok_and(|v| !v.starts_with("race:") && !matches!(v.as_str(), "croiseur" | "hangar" | "vaisseau")) && *state.get() == AppState::Editeur && t > secs * 0.5 {
         *done = 1;
         let mut m = format::Model::new("Demo", ModelKind::Personnage, None);
         m.race = Some("Humanoide".to_string());

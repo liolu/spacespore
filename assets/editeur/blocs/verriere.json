@@ -1,17 +1,16 @@
 {
-  "id": "porte_coulissante",
-  "name": "Porte coulissante",
+  "id": "verriere",
+  "name": "Verriere de cockpit",
   "kinds": [
-    "vaisseau",
-    "autre"
+    "vaisseau"
   ],
   "scalable": true,
   "parts": [
     {
-      "name": "porte",
+      "name": "verriere",
       "pivot": [
-        0.5,
-        0,
+        2.5,
+        2,
         0
       ],
       "boxes": [
@@ -19,11 +18,25 @@
           0,
           0,
           0,
-          0,
-          7,
-          4
+          4,
+          1,
+          6
+        ],
+        [
+          1,
+          2,
+          1,
+          3,
+          2,
+          5
         ]
-      ]
+      ],
+      "color": [
+        150,
+        210,
+        255
+      ],
+      "material": "Verre"
     }
   ],
   "anims": {
@@ -34,20 +47,20 @@
     "ouverte": {
       "duration": 1.0,
       "tracks": {
-        "porte": {
+        "verriere": {
           "type": "cles",
-          "pos": [
+          "rot": [
             [
               0.0,
+              -45,
               0,
-              0,
-              -5
+              0
             ],
             [
               1.0,
+              -45,
               0,
-              0,
-              -5
+              0
             ]
           ]
         }
@@ -56,9 +69,9 @@
     "ouverture": {
       "duration": 4.0,
       "tracks": {
-        "porte": {
+        "verriere": {
           "type": "cles",
-          "pos": [
+          "rot": [
             [
               0,
               0,
@@ -67,15 +80,15 @@
             ],
             [
               1,
+              -45,
               0,
-              0,
-              -5
+              0
             ],
             [
               3,
+              -45,
               0,
-              0,
-              -5
+              0
             ],
             [
               4,

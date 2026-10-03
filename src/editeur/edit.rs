@@ -13,7 +13,7 @@ use bevy::render::mesh::Mesh;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
-use super::format::{Chunk, Layer, Material, Model, ModelKind, PaletteEntry, Zone, CHUNK};
+use super::format::{Chunk, Hangar, Layer, Material, Model, ModelKind, PaletteEntry, ShipCategory, Zone, CHUNK};
 use super::mesh::{Cut, Visibility};
 use super::motion::{self, BlockDef, Placement};
 
@@ -117,11 +117,12 @@ struct Batch {
     chunks: HashMap<IVec3, Snap>,
     zones: Option<(Vec<Zone>, Vec<Zone>)>,
     layers: Option<(Vec<Layer>, Vec<Layer>)>,
+    hangars: Option<(Vec<Hangar>, Vec<Hangar>)>,
 }
 
 impl Batch {
     fn is_empty(&self) -> bool {
-        self.chunks.is_empty() && self.zones.is_none() && self.layers.is_none()
+        self.chunks.is_empty() && self.zones.is_none() && self.layers.is_none() && self.hangars.is_none()
     }
 
     /// Mémoire gardée (octets, environ : les chunks pleins).
@@ -312,6 +313,9 @@ impl Doc {
         if let Some((before, after)) = &b.layers {
             self.model.layers = if forward { after.clone() } else { before.clone() };
             self.mesh_dirty = true;
+        }
+        if let Some((before, after)) = &b.hangars {
+            self.model.hangars = if forward { after.clone() } else { before.clone() };
         }
         self.dirty = true;
         self.revision += 1;
@@ -700,14 +704,26 @@ impl Doc {
         if self.model.zones.len() + def.parts.len() * instances.len() > 255 {
             return Err("Trop de zones de mouvement (255 au plus).".into());
         }
-        let white = self.model.color_index(BLOCK_WHITE).ok_or("Palette pleine (255 couleurs) : impossible de poser des blocs blancs.")?;
+        if let Some(h) = &def.hangar {
+            hangar_allowed(self.model.category, h.category, h.cargo)?;
+        }
+        let mut colors = Vec::new();
+        for part in &def.parts {
+            let e = match part.color {
+                Some(rgb) => PaletteEntry { rgb, material: part.material.unwrap_or(Material::Mate) },
+                None => BLOCK_WHITE,
+            };
+            colors.push(self.model.color_index(e).ok_or("Palette pleine (255 couleurs) : impossible de poser le bloc.")?);
+        }
         self.end();
         let before = self.model.zones.clone();
+        let hangars_before = self.model.hangars.clone();
         self.stroke = Some(Batch::default());
         let mut made = 0;
         for (at, place, side) in instances {
             let base = self.model.zones.len();
-            for part in &def.parts {
+            for (k, part) in def.parts.iter().enumerate() {
+                let white = colors[k];
                 let parent = part.parent.as_ref().and_then(|n| def.parts.iter().position(|p| &p.name == n)).map(|k| (base + k) as u16);
                 let pivot = place.point(def, at, Vec3::from_array(part.pivot));
                 self.model.zones.push(Zone {
@@ -728,9 +744,27 @@ impl Doc {
                 }
                 made += 1;
             }
+            // Bloc de hangar : sa place et son chemin, dans le repère du modèle
+            if let Some(h) = &def.hangar {
+                let door = def.parts.iter().position(|p| p.name == h.door).map(|k| (base + k) as u16);
+                let n = self.model.hangars.iter().filter(|x| x.category == h.category && x.cargo == h.cargo).count() + 1;
+                let what = if h.cargo { "Soute a cargos" } else { "Hangar" };
+                self.model.hangars.push(Hangar {
+                    name: format!("{what} {} {n}", h.category.name().to_lowercase()),
+                    category: h.category,
+                    cargo: h.cargo,
+                    door,
+                    slot: place.point(def, at, Vec3::from_array(h.slot)).to_array(),
+                    facing: place.vector(Vec3::from_array(h.facing)).to_array(),
+                    path: h.path.iter().map(|p| place.point(def, at, Vec3::from_array(*p)).to_array()).collect(),
+                });
+            }
         }
         if let Some(b) = self.stroke.as_mut() {
             b.zones = Some((before, self.model.zones.clone()));
+            if def.hangar.is_some() {
+                b.hangars = Some((hangars_before, self.model.hangars.clone()));
+            }
         }
         self.end();
         self.mesh_dirty = true;
@@ -773,12 +807,93 @@ impl Doc {
             }
         }
         self.model.zones = zones.clone();
+        let hangars_before = self.model.hangars.clone();
+        for h in &mut self.model.hangars {
+            h.door = match h.door {
+                Some(d) if d as usize == z => None,
+                Some(d) if d as usize > z => Some(d - 1),
+                other => other,
+            };
+        }
+        let hangars_after = self.model.hangars.clone();
         if let Some(b) = self.stroke.as_mut() {
             b.zones = Some((before, zones));
+            if hangars_after != hangars_before {
+                b.hangars = Some((hangars_before, hangars_after));
+            }
         }
         self.end();
         self.mesh_dirty = true;
     }
+}
+
+impl Doc {
+    /// Change les hangars (un lot annulable).
+    fn edit_hangars(&mut self, f: impl FnOnce(&mut Vec<Hangar>)) {
+        self.end();
+        let before = self.model.hangars.clone();
+        f(&mut self.model.hangars);
+        if self.model.hangars != before {
+            let after = self.model.hangars.clone();
+            self.push(Batch { hangars: Some((before, after)), ..Default::default() });
+            self.dirty = true;
+            self.revision += 1;
+        }
+    }
+
+    /// Retire un hangar (sa porte reste une zone de mouvement).
+    pub fn remove_hangar(&mut self, i: usize) {
+        self.edit_hangars(|h| {
+            if i < h.len() {
+                h.remove(i);
+            }
+        });
+    }
+
+    /// Ajoute un point au bout extérieur du chemin d'un hangar (le vaisseau arrive de plus loin).
+    pub fn extend_path(&mut self, i: usize, p: Vec3) {
+        self.edit_hangars(|h| {
+            if let Some(h) = h.get_mut(i) {
+                h.path.insert(0, p.to_array());
+            }
+        });
+    }
+
+    /// Retire le point extérieur du chemin (il en reste au moins deux).
+    pub fn shorten_path(&mut self, i: usize) {
+        self.edit_hangars(|h| {
+            if let Some(h) = h.get_mut(i) {
+                if h.path.len() > 2 {
+                    h.path.remove(0);
+                }
+            }
+        });
+    }
+}
+
+/// Qui entre dans quel hangar (Q8, proposition) : un croiseur accueille des chasseurs ; un capital
+/// des chasseurs et des corvettes, et des cargos jusqu'à la frégate dans ses soutes.
+pub fn hangar_allowed(ship: Option<ShipCategory>, guest: ShipCategory, cargo: bool) -> Result<(), String> {
+    use ShipCategory::*;
+    let ok = match ship {
+        Some(Croiseur) => guest == Chasseur && !cargo,
+        Some(Capital) => {
+            if cargo {
+                matches!(guest, Chasseur | Corvette | Fregate)
+            } else {
+                matches!(guest, Chasseur | Corvette)
+            }
+        }
+        _ => false,
+    };
+    if ok {
+        return Ok(());
+    }
+    Err(match ship {
+        Some(Croiseur) => "Un croiseur n'accueille que des chasseurs (pas de soute a cargos).".into(),
+        Some(Capital) => "Trop grand : un capital accueille chasseurs et corvettes, et des cargos jusqu'a la fregate.".into(),
+        _ => "Les hangars sont pour les croiseurs et les capitaux.".into(),
+    })
 }
 
 /// Un volume tiré à la souris (E3), en cases du modèle.

@@ -27,7 +27,6 @@
     },
     {
       "name": "antenne",
-      "parent": "mat",
       "pivot": [
         0.5,
         3,
@@ -58,7 +57,8 @@
           4,
           0
         ]
-      ]
+      ],
+      "parent": "mat"
     }
   ],
   "anims": {
@@ -95,6 +95,13 @@
           ]
         }
       }
+    },
+    "arret": {
+      "duration": 1.0,
+      "tracks": {}
     }
+  },
+  "states": {
+    "detruit": "arret"
   }
 }

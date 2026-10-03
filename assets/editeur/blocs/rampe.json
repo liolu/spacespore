@@ -1,27 +1,26 @@
 {
-  "id": "porte_coulissante",
-  "name": "Porte coulissante",
+  "id": "rampe",
+  "name": "Rampe",
   "kinds": [
-    "vaisseau",
-    "autre"
+    "vaisseau"
   ],
   "scalable": true,
   "parts": [
     {
-      "name": "porte",
+      "name": "rampe",
       "pivot": [
-        0.5,
+        3,
         0,
-        0
+        0.5
       ],
       "boxes": [
         [
           0,
           0,
           0,
-          0,
+          5,
           7,
-          4
+          0
         ]
       ]
     }
@@ -34,20 +33,20 @@
     "ouverte": {
       "duration": 1.0,
       "tracks": {
-        "porte": {
+        "rampe": {
           "type": "cles",
-          "pos": [
+          "rot": [
             [
               0.0,
+              75,
               0,
-              0,
-              -5
+              0
             ],
             [
               1.0,
+              75,
               0,
-              0,
-              -5
+              0
             ]
           ]
         }
@@ -56,9 +55,9 @@
     "ouverture": {
       "duration": 4.0,
       "tracks": {
-        "porte": {
+        "rampe": {
           "type": "cles",
-          "pos": [
+          "rot": [
             [
               0,
               0,
@@ -67,15 +66,15 @@
             ],
             [
               1,
+              75,
               0,
-              0,
-              -5
+              0
             ],
             [
               3,
+              75,
               0,
-              0,
-              -5
+              0
             ],
             [
               4,

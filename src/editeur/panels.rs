@@ -112,6 +112,12 @@ pub enum Act {
     /// Coupe : axe (aucune = `None`), déplacer.
     Cut(Option<usize>),
     CutMove(i32),
+    /// Poussée simulée dans l'aperçu (pas de 10 %).
+    Thrust(i32),
+    /// Hangars : prolonger le chemin (clics), le raccourcir, retirer le hangar.
+    PathEdit(usize),
+    PathShorten(usize),
+    RemoveHangar(usize),
 }
 
 /// Ce qu'on fait de la sélection.
@@ -419,6 +425,17 @@ pub fn rebuild(mut commands: Commands, mut editor: ResMut<Editor>, old: Query<En
                         button(w, "Etiquettes", Act::Tags, false);
                     });
                 }
+                if let Some(d) = ed.doc().filter(|d| !d.model.hangars.is_empty()) {
+                    label(p, &format!("HANGARS ({})", d.model.hangars.len()), 15.0, ACCENT);
+                    for (i, h) in d.model.hangars.iter().enumerate().take(24) {
+                        label(p, &format!("{} ({} points)", h.name, h.path.len()), 13.0, if h.cargo { ON } else { TEXT });
+                        wrap(p, |w| {
+                            button(w, "Prolonger le chemin", Act::PathEdit(i), ed.path_edit == Some(i));
+                            button(w, "Raccourcir", Act::PathShorten(i), false);
+                            button(w, "Retirer", Act::RemoveHangar(i), false);
+                        });
+                    }
+                }
                 if let Some(d) = ed.doc() {
                     let zones = &d.model.zones;
                     label(p, &format!("ZONES DE MOUVEMENT ({})", zones.len()), 15.0, ACCENT);
@@ -429,9 +446,16 @@ pub fn rebuild(mut commands: Commands, mut editor: ResMut<Editor>, old: Query<En
                         if let Some(pv) = &ed.preview {
                             wrap(p, |w| {
                                 for (k, a) in super::motion::model_anims(&d.model, &ed.lib).iter().enumerate() {
-                                    button(w, a, Act::Anim(k), *a == pv.anim);
+                                    button(w, &super::motion::anim_label(&ed.lib, a), Act::Anim(k), *a == pv.anim);
                                 }
                             });
+                            if d.model.kind == ModelKind::Vaisseau {
+                                wrap(p, |w| {
+                                    label(w, &format!("Poussee {:.0} %", ed.thrust * 100.0), 13.0, DIM);
+                                    button(w, "-", Act::Thrust(-1), false);
+                                    button(w, "+", Act::Thrust(1), false);
+                                });
+                            }
                         }
                         for (i, z) in zones.iter().enumerate().take(64) {
                             let depth = std::iter::successors(z.parent, |k| zones.get(*k as usize).and_then(|x| x.parent)).take(8).count();
@@ -522,8 +546,7 @@ fn overlay(root: &mut ChildBuilder, ed: &Editor, o: &Overlay) {
                             label(p, "Apercu", 13.0, DIM);
                             wrap(p, |w| {
                                 for (k, a) in super::motion::model_anims(&d.model, &ed.lib).iter().enumerate() {
-                                    let name = ed.lib.anim(a).map_or(a.as_str(), |x| x.name.as_str());
-                                    button(w, name, Act::Anim(k), *a == pv.anim);
+                                    button(w, &super::motion::anim_label(&ed.lib, a), Act::Anim(k), *a == pv.anim);
                                 }
                             });
                         }
@@ -714,7 +737,7 @@ pub fn escape(keys: Res<ButtonInput<KeyCode>>, mut editor: ResMut<Editor>, mut n
         editor.say("Pose annulee.".into());
         return;
     }
-    if editor.drag.take().is_some() || std::mem::take(&mut editor.pasting) {
+    if editor.drag.take().is_some() || std::mem::take(&mut editor.pasting) || editor.path_edit.take().is_some() {
         editor.say("Annule.".into());
         return;
     }
@@ -782,6 +805,26 @@ pub fn actions(interactions: Query<(&Interaction, &Act), Changed<Interaction>>, 
                 }
             }
             Act::CutMove(by) => ed.move_cut(by),
+            Act::Thrust(d) => ed.thrust = (ed.thrust + d as f32 * 0.1).clamp(0.0, 1.0),
+            Act::PathEdit(i) => {
+                ed.path_edit = if ed.path_edit == Some(i) { None } else { Some(i) };
+                if ed.path_edit.is_some() {
+                    ed.stop_preview();
+                    ed.say("Clique dans la vue : chaque clic ajoute un point au bout exterieur du chemin. Echap : fini.".into());
+                }
+            }
+            Act::PathShorten(i) => {
+                if let Some(d) = ed.doc_mut() {
+                    d.shorten_path(i);
+                }
+            }
+            Act::RemoveHangar(i) => {
+                if let Some(d) = ed.doc_mut() {
+                    d.remove_hangar(i);
+                }
+                ed.path_edit = None;
+                ed.say("Hangar retire (sa porte reste une zone ; Ctrl+Z pour annuler).".into());
+            }
             Act::Mirror => ed.mirror = !ed.mirror,
             Act::Grid => ed.grid = !ed.grid,
             Act::Undo => ed.undo(),

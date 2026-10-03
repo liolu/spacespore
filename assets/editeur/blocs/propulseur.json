@@ -1,0 +1,109 @@
+{
+  "id": "propulseur",
+  "name": "Propulseur principal (flamme)",
+  "kinds": [
+    "vaisseau"
+  ],
+  "scalable": true,
+  "parts": [
+    {
+      "name": "tuyere",
+      "pivot": [
+        0.5,
+        0.5,
+        0.5
+      ],
+      "boxes": [
+        [
+          -2,
+          -2,
+          0,
+          2,
+          2,
+          2
+        ]
+      ],
+      "color": [
+        90,
+        95,
+        105
+      ],
+      "material": "Metal"
+    },
+    {
+      "name": "flamme",
+      "pivot": [
+        0.5,
+        0.5,
+        0
+      ],
+      "boxes": [
+        [
+          -1,
+          -1,
+          -6,
+          1,
+          1,
+          -1
+        ]
+      ],
+      "parent": "tuyere",
+      "color": [
+        255,
+        140,
+        40
+      ],
+      "material": "Lumineuse"
+    }
+  ],
+  "anims": {
+    "repos": {
+      "duration": 1.0,
+      "tracks": {
+        "flamme": {
+          "type": "entree",
+          "input": "poussee",
+          "scale": [
+            [
+              0.4,
+              0.4,
+              0.05
+            ],
+            [
+              1,
+              1,
+              1
+            ]
+          ],
+          "flicker": 0.15
+        }
+      }
+    },
+    "eteint": {
+      "duration": 1.0,
+      "tracks": {
+        "flamme": {
+          "type": "cles",
+          "scale": [
+            [
+              0.0,
+              0.001,
+              0.001,
+              0.001
+            ],
+            [
+              1.0,
+              0.001,
+              0.001,
+              0.001
+            ]
+          ]
+        }
+      }
+    }
+  },
+  "states": {
+    "pose": "eteint",
+    "detruit": "eteint"
+  }
+}
