@@ -247,6 +247,7 @@ fn update_scanner(
     target: Res<CameraTarget>,
     weather: Res<crate::world_clock::LocalWeather>,
     cave: Res<crate::surface::NearestCave>,
+    phases: Res<crate::sky::MoonPhases>,
     field: Res<crate::asteroids::AsteroidField>,
     star_q: Query<&StarId, With<StarRoot>>,
     mut scanner: ResMut<Scanner>,
@@ -295,6 +296,10 @@ fn update_scanner(
     let mut live = if weather.body.is_some() && weather.body == Some(target.0) { weather.scanner_line() } else { String::new() };
     if !live.is_empty() && !cave.text.is_empty() {
         live = format!("{live}\n{}", cave.text);
+    }
+    // Phases des lunes (C4)
+    if phases.target == Some(target.0) && !phases.text.is_empty() {
+        live = if live.is_empty() { phases.text.clone() } else { format!("{live}\n{}", phases.text) };
     }
     let full = match scanner.text.rsplit_once('\n') {
         Some((head, tail)) if !live.is_empty() => format!("{head}\n{live}\n{tail}"),

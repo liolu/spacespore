@@ -1386,6 +1386,9 @@ fn annulus_mesh(inner: f32, outer: f32, segments: usize) -> Mesh {
 pub struct AuroraGlow {
     pub base: LinearRgba,
     pub phase: f32,
+    /// Planète : les orages de son étoile l'avivent, et elle s'efface quand on est au sol (les
+    /// rideaux de `sky.rs` prennent le relais).
+    pub planet: usize,
 }
 
 /// Anneaux et aurores d'une planète (phase 9), inclinés comme son axe.
@@ -1428,7 +1431,7 @@ fn spawn_ring_and_aurora(
                     MeshMaterial3d(material),
                     Transform::from_translation(offset).with_rotation(tilt),
                     NotShadowCaster,
-                    AuroraGlow { base, phase: k as f32 * 1.7 + (pcfg.seed % 100) as f32 * 0.1 },
+                    AuroraGlow { base, phase: k as f32 * 1.7 + (pcfg.seed % 100) as f32 * 0.1, planet: planet_id },
                 ))
                 .id();
             commands.entity(root).add_child(child);
@@ -1437,12 +1440,23 @@ fn spawn_ring_and_aurora(
 }
 
 /// Les aurores ondulent.
-fn shimmer_auroras(time: Res<Time>, glows: Query<(&AuroraGlow, &MeshMaterial3d<StandardMaterial>)>, mut materials: ResMut<Assets<StandardMaterial>>) {
+fn shimmer_auroras(
+    time: Res<Time>,
+    storms: Res<crate::sky::Storms>,
+    surface: Res<crate::surface::Surface>,
+    glows: Query<(&AuroraGlow, &MeshMaterial3d<StandardMaterial>)>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
     let t = time.elapsed_secs();
     for (glow, mat) in &glows {
+        // Orages de l'étoile (C4) ; au sol, les rideaux vus d'en bas les remplacent
+        let landed = surface.body() == Some(crate::ui::TargetKind::Planet(glow.planet));
+        let storm = if landed { 0.0 } else { storms.aurora(glow.planet) };
         if let Some(m) = materials.get_mut(&mat.0) {
-            let k = 0.55 + 0.45 * (t * 0.8 + glow.phase).sin() * (t * 0.31 + glow.phase * 2.0).cos();
+            let k = (0.55 + 0.45 * (t * 0.8 + glow.phase).sin() * (t * 0.31 + glow.phase * 2.0).cos()) * storm;
             m.emissive = LinearRgba::new(glow.base.red * k, glow.base.green * k, glow.base.blue * k, 1.0);
+            let a = (glow.base.green.max(glow.base.red).max(glow.base.blue) / 3.0).min(1.0) * 0.35 * storm.min(1.5);
+            m.base_color.set_alpha(a);
         }
     }
 }
@@ -1842,6 +1856,7 @@ fn update_flare_voxels(
     settings: Res<GameSettings>,
     star_q: Query<(&GlobalTransform, &StarId), With<StarRoot>>,
     cam_q: Query<&GlobalTransform, With<Camera3d>>,
+    storms: Res<crate::sky::Storms>,
     mut flare_q: Query<(&FlareVoxel, &Mesh3d, &mut Transform, &mut Visibility)>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
@@ -1938,7 +1953,8 @@ fn update_flare_voxels(
                 dir.cross(Vec3::Y).normalize()
             };
 
-            let height = scfg.flare_height * k * life;
+            // Orage magnétique (C4) : éruptions bien plus hautes
+            let height = scfg.flare_height * k * life * (1.0 + 2.0 * storms.flare(fv.star_idx));
             let half_spread = scfg.flare_distance.max(5.0) * k * 0.5;
 
             // Positions relatives à l'étoile (le maillage suit l'étoile)

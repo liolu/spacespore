@@ -724,6 +724,7 @@ impl Asteroid {
             relief: Default::default(),
             biomes: Default::default(),
             asteroid: Some(self.shape),
+            tide: Default::default(),
         }
     }
 
