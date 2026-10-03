@@ -53,6 +53,7 @@ impl Plugin for AsteroidsPlugin {
             .init_resource::<CometFx>()
             .add_event::<CometCommand>()
             .add_systems(Update, (go_belt, go_comet, stream_asteroids, update_bands, update_comet_tails).chain().before(crate::surface::SurfaceControl))
+            .add_systems(Update, draw_trails.after(crate::surface::SurfaceControl))
             .add_systems(PostUpdate, ship_collisions.before(bevy::transform::TransformSystem::TransformPropagate));
     }
 }
@@ -1479,11 +1480,11 @@ fn stream_asteroids(
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Grains de la bande d'une ceinture.
-const BAND_GRAINS: usize = 2_600;
+const BAND_GRAINS: usize = 4_500;
 /// La bande s'efface en approchant de la ceinture (les vrais astéroïdes prennent le relais).
 const BAND_FADE_NEAR: f32 = 500_000.0;
 const BAND_FADE_FAR: f32 = 2_500_000.0;
-const BAND_BRIGHTNESS: f32 = 0.55;
+const BAND_BRIGHTNESS: f32 = 0.9;
 
 #[derive(Component)]
 struct BeltBand;
@@ -1502,13 +1503,33 @@ fn belt_tint(belt: &Belt) -> [f32; 3] {
     c.map(|x| (x * 1.4).min(1.0))
 }
 
-/// Maillage de la bande : des grains (octaèdres) placés selon la densité de la ceinture.
+/// Icosaèdre unité (sommets, faces) : la base des cailloux de la bande.
+fn icosahedron() -> ([Vec3; 12], [[usize; 3]; 20]) {
+    let t = (1.0 + 5f32.sqrt()) / 2.0;
+    let v = [
+        Vec3::new(-1.0, t, 0.0), Vec3::new(1.0, t, 0.0), Vec3::new(-1.0, -t, 0.0), Vec3::new(1.0, -t, 0.0),
+        Vec3::new(0.0, -1.0, t), Vec3::new(0.0, 1.0, t), Vec3::new(0.0, -1.0, -t), Vec3::new(0.0, 1.0, -t),
+        Vec3::new(t, 0.0, -1.0), Vec3::new(t, 0.0, 1.0), Vec3::new(-t, 0.0, -1.0), Vec3::new(-t, 0.0, 1.0),
+    ]
+    .map(|p| p.normalize());
+    let f = [
+        [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
+        [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1],
+    ];
+    (v, f)
+}
+
+/// Maillage de la bande : des cailloux de formes variées (icosaèdres bosselés, allongés, tournés),
+/// de tailles en loi de puissance, placés selon la densité de la ceinture ; chaque face est ombrée
+/// d'après l'étoile (au centre du maillage) : un côté jour, un côté nuit, pas de points lumineux.
 fn band_mesh(belt: &Belt) -> Mesh {
     let mut rng = Rng(mix(belt.seed as u64, 0xBA4D));
     let (mut pos, mut nor, mut col, mut idx) = (Vec::new(), Vec::new(), Vec::new(), Vec::<u32>::new());
-    let size = belt.mid() * 0.0035;
+    let size = belt.width() * 0.0045;
+    let (ico, faces) = icosahedron();
+    let mut grains = 0;
     let mut tries = 0;
-    while pos.len() < BAND_GRAINS * 6 && tries < BAND_GRAINS * 30 {
+    while grains < BAND_GRAINS && tries < BAND_GRAINS * 30 {
         tries += 1;
         let rho = belt.inner as f64 + rng.f64() * belt.width() as f64;
         let theta = rng.f64() * TAU;
@@ -1519,17 +1540,27 @@ fn band_mesh(belt: &Belt) -> Mesh {
             continue;
         }
         let c = Vec3::new((rho * theta.cos()) as f32, y as f32, (rho * theta.sin()) as f32);
-        let s = size * rng.range(0.5, 1.5);
-        let v = rng.range(0.6, 1.0);
-        let base = pos.len() as u32;
-        for o in [Vec3::X, Vec3::NEG_X, Vec3::Y, Vec3::NEG_Y, Vec3::Z, Vec3::NEG_Z] {
-            pos.push((c + o * s).to_array());
-            nor.push(o.to_array());
-            col.push([v, v, v, 1.0]);
-        }
-        // 8 faces : (±X, ±Y, ±Z)
-        for (a, b, cc) in [(0, 2, 4), (2, 1, 4), (1, 3, 4), (3, 0, 4), (2, 0, 5), (1, 2, 5), (3, 1, 5), (0, 3, 5)] {
-            idx.extend_from_slice(&[base + a, base + b, base + cc]);
+        grains += 1;
+        // Taille : beaucoup de petits, quelques gros
+        let s = size * power_radius(0.35, 3.0, rng.f64() as f32);
+        // Forme : allongée, aplatie, bosselée, tournée au hasard
+        let stretch = Vec3::new(rng.range(0.55, 1.5) as f32, rng.range(0.45, 1.0) as f32, rng.range(0.6, 1.3) as f32);
+        let rot = Quat::from_euler(EulerRot::XYZ, rng.range(0.0, std::f32::consts::TAU), rng.range(0.0, std::f32::consts::TAU), rng.range(0.0, std::f32::consts::TAU));
+        let bumps: Vec<f32> = (0..12).map(|_| rng.range(0.72, 1.15) as f32).collect();
+        let verts: Vec<Vec3> = ico.iter().zip(&bumps).map(|(v, b)| c + rot * (*v * stretch * *b) * s).collect();
+        let albedo = rng.range(0.55, 1.0) as f32;
+        let sun = -c.normalize_or(Vec3::X);
+        for f in faces {
+            let (a, b, d) = (verts[f[0]], verts[f[1]], verts[f[2]]);
+            let n = (b - a).cross(d - a).normalize_or(Vec3::Y);
+            let light = albedo * (0.12 + 0.88 * n.dot(sun).max(0.0));
+            let base = pos.len() as u32;
+            for p in [a, b, d] {
+                pos.push(p.to_array());
+                nor.push(n.to_array());
+                col.push([light, light, light, 1.0]);
+            }
+            idx.extend_from_slice(&[base, base + 1, base + 2]);
         }
     }
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
@@ -1582,7 +1613,7 @@ fn update_bands(
             let fade = ((distance_to_belt(belt, rel) as f32 - BAND_FADE_NEAR) / (BAND_FADE_FAR - BAND_FADE_NEAR)).clamp(0.0, 1.0);
             let fade = fade * fade * (3.0 - 2.0 * fade);
             let tint = belt_tint(belt);
-            let color = Color::srgb(tint[0] * fade * BAND_BRIGHTNESS, tint[1] * fade * BAND_BRIGHTNESS, tint[2] * fade * BAND_BRIGHTNESS);
+            let color = Color::srgba(tint[0] * BAND_BRIGHTNESS, tint[1] * BAND_BRIGHTNESS, tint[2] * BAND_BRIGHTNESS, fade);
             // Toute la bande tourne à la vitesse du milieu de la ceinture
             let n = (mu() / (belt.mid() as f64).powi(3)).sqrt();
             let pose = Transform {
@@ -1596,14 +1627,14 @@ fn update_bands(
                         *tf = pose;
                     }
                     let (old, new) = (materials.get(mat).map(|m| m.base_color.to_srgba()), color.to_srgba());
-                    if old.is_some_and(|o| (o.red - new.red).abs() + (o.green - new.green).abs() + (o.blue - new.blue).abs() > 0.004) {
+                    if old.is_some_and(|o| (o.alpha - new.alpha).abs() > 0.004) {
                         if let Some(m) = materials.get_mut(mat) {
                             m.base_color = color;
                         }
                     }
                 }
                 None => {
-                    let mat = materials.add(StandardMaterial { base_color: color, unlit: true, alpha_mode: AlphaMode::Add, ..default() });
+                    let mat = materials.add(StandardMaterial { base_color: color, unlit: true, alpha_mode: AlphaMode::Blend, ..default() });
                     let e = commands
                         .spawn((Mesh3d(meshes.add(band_mesh(belt))), MeshMaterial3d(mat.clone()), pose, Visibility::default(), NotShadowCaster, BeltBand))
                         .id();
@@ -1626,6 +1657,8 @@ struct Tails {
     parts: [Entity; 3],
     materials: [Handle<StandardMaterial>; 3],
     activity: f32,
+    /// Atténuation quand la caméra est dans la chevelure (0,1 à 1).
+    near: f32,
 }
 
 #[derive(Resource, Default)]
@@ -1686,8 +1719,10 @@ fn update_comet_tails(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut parts: Query<(&mut Transform, &mut Visibility), (With<CometPart>, Without<AsteroidBody>)>,
+    cam_q: Query<&Transform, (With<Camera3d>, Without<CometPart>, Without<AsteroidBody>)>,
 ) {
     let fx = &mut *fx;
+    let cam = cam_q.get_single().map(|t| t.translation).unwrap_or(Vec3::splat(f32::MAX));
     let mesh = fx
         .meshes
         .get_or_insert_with(|| [meshes.add(Sphere::new(1.0).mesh().ico(3).unwrap_or_else(|_| Mesh::from(Sphere::new(1.0)))), meshes.add(tail_mesh(0.0)), meshes.add(tail_mesh(0.35))])
@@ -1712,14 +1747,19 @@ fn update_comet_tails(
         let tails = fx.tails.entry(live.ast.key).or_insert_with(|| {
             let materials: [Handle<StandardMaterial>; 3] = [0, 1, 2].map(|_| materials.add(StandardMaterial { base_color: Color::BLACK, unlit: true, alpha_mode: AlphaMode::Add, cull_mode: None, double_sided: true, ..default() }));
             let parts = [0, 1, 2].map(|i| commands.spawn((Mesh3d(mesh[i].clone()), MeshMaterial3d(materials[i].clone()), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, CometPart)).id());
-            Tails { parts, materials, activity: -1.0 }
+            Tails { parts, materials, activity: -1.0, near: 1.0 }
         });
-        // Couleurs : seulement quand l'activité change vraiment
-        if (tails.activity - act).abs() > 0.01 {
+        // De près (dans la chevelure ou la queue), la lueur s'efface : on voit le noyau
+        let (coma, _) = tail_size(comet, act);
+        let d = cam.distance(pos);
+        let near = 0.1 + 0.9 * ((d - coma * 1.5) / (coma * 10.0)).clamp(0.0, 1.0);
+        // Couleurs : seulement quand l'activité ou la distance changent vraiment
+        if (tails.activity - act).abs() > 0.01 || (tails.near - near).abs() > 0.03 {
             tails.activity = act;
+            tails.near = near;
             for (i, m) in tails.materials.iter().enumerate() {
                 if let Some(m) = materials.get_mut(m) {
-                    let k = if i == 0 { 0.35 + 0.9 * act } else { 1.2 * act };
+                    let k = if i == 0 { 0.35 + 0.9 * act } else { 1.2 * act } * near;
                     let c = COMET_COLORS[i];
                     m.base_color = Color::linear_rgb(c[0] * k, c[1] * k, c[2] * k);
                 }
@@ -1744,6 +1784,59 @@ fn update_comet_tails(
                     *v = wanted;
                 }
             }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Traînées : où vont les comètes, les planètes et les gros astéroïdes
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Points d'une traînée : le chemin parcouru pendant les `span` dernières secondes, du présent au
+/// passé, de plus en plus transparent.
+fn trail(n: usize, span: f64, rgb: [f32; 3], alpha: f32, at: impl Fn(f64) -> Vec3) -> Vec<(Vec3, Color)> {
+    (0..=n)
+        .map(|k| {
+            let f = k as f64 / n as f64;
+            let a = alpha * (1.0 - f as f32).powf(1.5);
+            (at(span * f), Color::srgba(rgb[0], rgb[1], rgb[2], a))
+        })
+        .collect()
+}
+
+/// Derrière chaque comète (5 % de son orbite), planète (4 % de la sienne) et gros astéroïde proche
+/// (30 fois sa taille), le chemin qu'il vient de suivre s'efface : on voit où il est et où il va,
+/// même quand le mouvement est trop lent pour être vu.
+fn draw_trails(clock: Res<WorldClock>, settings: Res<GameSettings>, field: Res<AsteroidField>, surface: Res<Surface>, cam_q: Query<&Transform, With<Camera3d>>, mut g: Gizmos) {
+    // À pied ou en vol bas, les traînées du ciel gêneraient
+    if surface.active() {
+        return;
+    }
+    let t = clock.secs;
+    let cam = cam_q.get_single().map(|c| c.translation).unwrap_or_default();
+    for live in field.live.values() {
+        let Some(center) = sys_center(&settings, live.ast.key.sys as usize) else { continue };
+        if let Some(c) = live.ast.comet() {
+            let span = Elements::of_comet(c).period() * 0.05;
+            g.linestrip_gradient(trail(48, span, [0.55, 0.78, 1.0], 0.6, |dt| world_of(center, live.ast.rel_position(t - dt))));
+            continue;
+        }
+        if live.ast.key.level != LANDABLE_LEVEL {
+            continue;
+        }
+        let r = live.ast.shape.max_radius();
+        let speed = live.vel.length();
+        if speed < 1e-3 || live.pose.translation.distance(cam) > r * 300.0 {
+            continue;
+        }
+        let span = (r * 30.0 / speed) as f64;
+        g.linestrip_gradient(trail(16, span, [0.8, 0.78, 0.72], 0.35, |dt| world_of(center, live.ast.rel_position(t - dt))));
+    }
+    for &si in field.sources.keys() {
+        let (Some(sys), Some(center)) = (settings.systems.get(si), sys_center(&settings, si)) else { continue };
+        for p in sys.planets().iter().filter(|p| !p.rogue) {
+            let el = Elements::of_planet(p);
+            g.linestrip_gradient(trail(40, el.period() * 0.04, [0.85, 0.9, 1.0], 0.3, |dt| world_of(center, el.position(t - dt, 0.0))));
         }
     }
 }

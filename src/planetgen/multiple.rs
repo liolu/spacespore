@@ -49,6 +49,10 @@ pub struct StarOrbit {
     pub peri: f32,
     pub m0: f32,
     pub factor: f32,
+    /// Période réelle (secondes de jeu : 1 jour de la planète = 24 min) ; 0 = Kepler avec les
+    /// distances affichées (rapprochées par l'échelle log, elles donneraient une fausse période).
+    #[serde(default)]
+    pub period: f32,
 }
 
 impl StarOrbit {
@@ -66,6 +70,10 @@ impl StarOrbit {
 
     /// Position depuis le centre du système à l'instant `t`.
     pub fn position(&self, t: f64) -> bevy::math::DVec3 {
+        if self.period > 0.0 {
+            let lead = (std::f64::consts::TAU * t / self.period as f64).rem_euclid(std::f64::consts::TAU);
+            return self.elements().position(0.0, lead) * self.factor as f64;
+        }
         self.elements().position(t, 0.0) * self.factor as f64
     }
 
@@ -108,6 +116,9 @@ impl Stellar {
 }
 
 /// Étoile de la séquence principale (ou naine brune) de masse `m` (M☉).
+/// Un jour de la planète en secondes de jeu (1 h = 1 min, A1).
+const DAY_SECS: f64 = 24.0 * 60.0;
+
 pub fn star_of_mass(seed: u64, m: f64) -> StarPhysics {
     if m < 0.075 {
         return StarPhysics::generate(seed, ((m - 0.013) / 0.062).clamp(0.0, 1.0), Some(StarClass::BrownDwarf));
@@ -175,7 +186,11 @@ pub fn generate(seed: u64, primary: &StarPhysics, g_radius: f64, primary_radius:
         out.luminosity += b.luminosity_sun;
         out.mass += b.mass_sun;
         let hz = out.luminosity.max(1e-7).sqrt();
-        let sep = (display_distance(close_au, hz) * g_radius * stretch).max((primary_radius + r2) * 1.6);
+        // Une paire serrée est serrée : un quart de la première orbite permise aux planètes
+        // (3 fois l'écart réel), sans que les deux étoiles se touchent. (L'échelle log des planètes
+        // l'aurait mise aussi loin qu'une planète intérieure.)
+        let first_orbit = display_distance(3.0 * close_au * (1.0 + close_e), hz) * g_radius * stretch;
+        let sep = (first_orbit * 0.25).max((primary_radius + r2) * 1.6);
         let m2 = b.mass_sun;
         let (f1, f2) = (m2 / (m1 + m2), m1 / (m1 + m2));
         let orbit = |factor: f64| StarOrbit {
@@ -186,6 +201,8 @@ pub fn generate(seed: u64, primary: &StarPhysics, g_radius: f64, primary_radius:
             peri: angles[2] as f32,
             m0: angles[3] as f32,
             factor: factor as f32,
+            // Sa vraie période : on la voit tourner (1 à 200 jours = 24 min à 80 h de jeu)
+            period: (close_days * DAY_SECS) as f32,
         };
         out.primary = Some(orbit(-f1));
         out.companions.push(Companion { physics: b, orbit: orbit(f2) });
@@ -204,7 +221,10 @@ pub fn generate(seed: u64, primary: &StarPhysics, g_radius: f64, primary_radius:
         out.max_au = 0.25 * wide_au * (1.0 - wide_e);
         let limit_d = display_distance(out.max_au, hz) * g_radius * stretch;
         // Au plus près, bien au-delà de tout ce qui tourne autour du centre
+        // Sa distance (même échelle que les planètes), assez loin pour ne pas troubler leurs orbites
+        // (les orbites affichées, excentricité et lunes comprises, vont jusqu'à deux fois la limite)
         let a = (display_distance(wide_au, hz) * g_radius * stretch).max(limit_d * 4.0 / (1.0 - wide_e));
+        let years = (wide_au.powi(3) / (out.mass + c.mass_sun)).sqrt();
         out.outer_limit = a * (1.0 - wide_e) * 0.5;
         out.companions.push(Companion {
             physics: c,
@@ -216,6 +236,7 @@ pub fn generate(seed: u64, primary: &StarPhysics, g_radius: f64, primary_radius:
                 peri: wide_angles[2] as f32,
                 m0: wide_angles[3] as f32,
                 factor: 1.0,
+                period: (years * 365.25 * DAY_SECS) as f32,
             },
         });
     }
@@ -255,6 +276,16 @@ mod tests {
                 assert!(peri > extent.max(belts) * 1.5, "{} : compagnon a {peri}, planetes jusqu'a {extent}, ceintures {belts}", sys.name);
             }
             // Zone habitable recalculée : luminosité des étoiles du centre additionnées
+            // Paire serrée : elle tourne vraiment (24 min à 80 h par tour) et reste bien plus près que
+            // les planètes
+            if let Some(o) = st.primary {
+                assert!(o.period > 0.0 && o.period <= 200.0 * 1440.0 * 1.01, "{} : periode {}", sys.name, o.period);
+                let quarter = o.position(0.0).distance(o.position(o.period as f64 / 4.0));
+                assert!(quarter > 0.3 * (o.a * o.factor.abs()) as f64, "{} : immobile", sys.name);
+                if let Some(first) = planets.iter().filter(|p| !p.rogue).map(|p| p.orbit_distance * (1.0 - p.eccentricity)).reduce(f32::min) {
+                    assert!(o.a * 2.0 < first, "{} : paire a {}, premiere planete a {first}", sys.name, o.a);
+                }
+            }
             let l = sys.lighting().unwrap().luminosity_sun;
             assert!(l >= sys.star_physics().unwrap().luminosity_sun);
         }

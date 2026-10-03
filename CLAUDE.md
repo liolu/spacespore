@@ -303,6 +303,13 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   modele : `cockpit`) s'ouvre (etat « pose »), le personnage saute dedans puis le vaisseau decolle ; a
   l'atterrissage il en descend. Les vaisseaux par defaut ont une verriere. `SPACESPORE_TEST_LAND=<s>,<s>` (V a
   plusieurs instants). L'editeur rend la souris (`Surface::release_cursor`).
+  Cometes, ceintures, etoiles multiples : la lueur d'une comete s'efface quand la camera est dans sa chevelure
+  (`Tails::near`) ; `asteroids::draw_trails` = trainees (gizmos) derriere cometes (5 % de la periode), gros
+  asteroides proches et planetes des systemes charges (4 %). Bande des ceintures = cailloux icosaedres bosseles
+  ombres par l'etoile (`band_mesh`, opaques) ; epaisseur des ceintures d'apres la largeur affichee (principale
+  0,12 a 0,24 de la largeur, Kuiper plate). `StarOrbit::period` = vraie periode (paire serree 1 a 200 j =
+  24 min a 80 h de jeu, compagnon lointain en siecles) ; paire serree a un quart de la premiere orbite permise.
+  PROTOCOL 30.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 
