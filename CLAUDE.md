@@ -180,7 +180,7 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   `belts.rs`, `comets.rs`. Surface : `sun_list` / `combined_sky` (ciel et jour de tous les soleils, double coucher),
   `SurfaceSun` = une lumiere directionnelle par soleil avec ombres (cascades ~200 voxels) qui remplace la lumiere
   ponctuelle des etoiles sur un astre solide (`dim_star_light`), le decor projette des ombres. `/aller etoile
-  double|triple`. Saison moyenne ~1,4 h depuis (planetes des paires serrees plus loin), echelle inchangee. PROTOCOL 27.
+  double|triple`. Saisons recalees (`SEASON_REF_DAYS` 115 -> 300 : moyenne 1 h, Q2). PROTOCOL 27.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 
