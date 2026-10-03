@@ -275,6 +275,8 @@ enum Msg {
     ModelWant { fp: u64, parts: Vec<u32> },
     /// Un morceau d'un fichier de modèle (hexadécimal).
     ModelPart { fp: u64, index: u32, total: u32, data: String },
+    /// Un joueur partage un modèle (E8) : chacun le reçoit par son empreinte, dans sa bibliothèque.
+    Share { fp: u64, name: String, from: String },
     Bye,
 }
 
@@ -984,6 +986,12 @@ pub struct Net {
     transfers: crate::net_models::Transfers,
     /// Mon amarrage dans le hangar d'un autre joueur (E7).
     pub dock: Option<crate::net_models::DockState>,
+    /// Modèles que je partage (empreinte, nom), à envoyer (E8).
+    pub share_out: Vec<(u64, String)>,
+    /// Modèles partagés par les autres, en route : (empreinte, nom, auteur, depuis).
+    shares_in: Vec<(u64, String, String, f64)>,
+    /// Hôte : qui a partagé quel fichier (pour le lui demander).
+    share_owner: HashMap<u64, u32>,
     /// Fiches de guilde qui me manquent (une version plus récente est annoncée).
     pub guild_want: Vec<u64>,
     /// Fiches de guilde qu'un autre joueur me demande.
@@ -1029,6 +1037,9 @@ impl Default for Net {
             voxel_relay: Vec::new(),
             transfers: Default::default(),
             dock: None,
+            share_out: Vec::new(),
+            shares_in: Vec::new(),
+            share_owner: HashMap::new(),
             guild_want: Vec::new(),
             guild_asked: Vec::new(),
             profiles: ProfileCache::default(),
@@ -1434,6 +1445,29 @@ pub(crate) fn net_update(
     for fp in models.missing_prints() {
         net.transfers.want(fp, now);
     }
+    // Modèles partagés (E8) : arrivés, ils vont dans la bibliothèque (`saves/modeles/partages/`)
+    let mut arrived = Vec::new();
+    net.shares_in.retain(|(fp, name, from, since)| {
+        if let Some(bytes) = models.file(*fp) {
+            arrived.push((bytes, name.clone(), from.clone()));
+            return false;
+        }
+        now - since < 300.0
+    });
+    for (fp, ..) in net.shares_in.clone() {
+        net.transfers.want(fp, now);
+    }
+    for (bytes, name, from) in arrived {
+        let dir = crate::editeur::library_dir().join("partages");
+        let r = crate::editeur::format::Model::from_bytes(&bytes).and_then(|mut m| {
+            m.name = format!("{name} (de {from})");
+            crate::editeur::save_model(&dir, &m)
+        });
+        match r {
+            Ok(_) => net.notify(&format!("{from} a partage \"{name}\" : il est dans votre bibliotheque (editeur)."), now),
+            Err(e) => net.notify(&format!("Modele partage illisible : {e}"), now),
+        }
+    }
     if !net.upnp_started {
         net.upnp_started = true;
         start_upnp(net.upnp.clone());
@@ -1584,6 +1618,20 @@ pub(crate) fn net_update(
                             }
                         }
                     }
+                    // Un client partage un modèle : je le note, le prends aussi, et préviens les autres
+                    Msg::Share { fp, name, from } => {
+                        if let Some(slot) = clients.get(&addr) {
+                            let (name, from) = (sanitize_chat(&name).unwrap_or_default(), sanitize_name(&from));
+                            net.share_owner.insert(fp, slot.id);
+                            if net.shares_in.len() < 16 {
+                                net.shares_in.push((fp, name.clone(), from.clone(), now));
+                            }
+                            let msg = Msg::Share { fp, name, from };
+                            for (a, _) in clients.iter().filter(|(a, _)| **a != addr) {
+                                send(socket, *a, &msg);
+                            }
+                        }
+                    }
                     // Un client a modifié des voxels : on les applique et on les relaie à tous
                     Msg::Voxels { edits } => {
                         if clients.contains_key(&addr) {
@@ -1615,7 +1663,8 @@ pub(crate) fn net_update(
             // Modèles : je demande ceux qui me manquent à leur joueur, j'envoie ceux demandés
             for (fp, parts) in net.transfers.asks(now) {
                 let key = crate::models::ModelKey::Print(fp);
-                let owner = clients.iter().find(|(_, s)| net.peers.get(&s.id).is_some_and(|p| p.look.ship.as_ref() == Some(&key) || p.look.chr.as_ref() == Some(&key)));
+                let shared = net.share_owner.get(&fp).copied();
+                let owner = clients.iter().find(|(_, s)| Some(s.id) == shared || net.peers.get(&s.id).is_some_and(|p| p.look.ship.as_ref() == Some(&key) || p.look.chr.as_ref() == Some(&key)));
                 if let Some((addr, _)) = owner {
                     send(socket, *addr, &Msg::ModelWant { fp, parts });
                 }
@@ -1623,6 +1672,13 @@ pub(crate) fn net_update(
             for (to, fp, index) in net.transfers.next_parts(crate::net_models::PARTS_PER_FRAME) {
                 if let Some((total, data)) = models.file(fp).and_then(|b| crate::net_models::part_of(&b, index)) {
                     send(socket, to, &Msg::ModelPart { fp, index, total, data });
+                }
+            }
+            // Mes partages : à tous les clients
+            for (fp, name) in std::mem::take(&mut net.share_out) {
+                let msg = Msg::Share { fp, name, from: my_name.clone() };
+                for addr in clients.keys() {
+                    send(socket, *addr, &msg);
                 }
             }
             // Voxels modifiés par moi ou par un client : à tous les clients
@@ -1834,6 +1890,11 @@ pub(crate) fn net_update(
                             models.add_file(bytes);
                         }
                     }
+                    Msg::Share { fp, name, from } => {
+                        if net.shares_in.len() < 16 && !net.shares_in.iter().any(|s| s.0 == fp) {
+                            net.shares_in.push((fp, sanitize_chat(&name).unwrap_or_default(), sanitize_name(&from), now));
+                        }
+                    }
                     Msg::Bye => {
                         next = Some((Session::Offline, "L'hote a quitte la partie.".into(), false, None));
                         break;
@@ -1846,6 +1907,9 @@ pub(crate) fn net_update(
                 }
             }
             if next.is_none() {
+                for (fp, name) in std::mem::take(&mut net.share_out) {
+                    send(socket, *host, &Msg::Share { fp, name, from: my_name.clone() });
+                }
                 for (fp, parts) in net.transfers.asks(now) {
                     send(socket, *host, &Msg::ModelWant { fp, parts });
                 }
@@ -2403,11 +2467,26 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
 
+        // Partage (E8) : le client partage un modèle, il arrive dans la bibliothèque de l'hôte
+        let mut shared = crate::editeur::defaults::build("perso:lamia", &lib).unwrap();
+        shared.name = format!("Naga {}", fp % 100_000);
+        let sfp = client.world_mut().resource_mut::<crate::models::GameModels>().add_file(shared.to_bytes().unwrap()).unwrap();
+        client.world_mut().resource_mut::<Net>().share_out.push((sfp, shared.name.clone()));
+        let want = format!("{} (de Client)", shared.name);
+        let dir = crate::editeur::library_dir().join("partages");
+        let start = std::time::Instant::now();
+        while !crate::editeur::list_models(&dir).iter().any(|e| e.name == want) {
+            host.update();
+            client.update();
+            assert!(start.elapsed().as_secs() < 15, "partage timeout");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
         // Chat : chacun écrit, les deux voient les deux messages une seule fois
         host.world_mut().send_event(NetCommand::Chat("salut".into()));
         client.world_mut().send_event(NetCommand::Chat("  coucou  ".into()));
         let texts = |app: &App| -> Vec<String> {
-            app.world().resource::<Net>().chat.lines.iter().map(|l| format!("{}: {}", l.name, l.text)).collect()
+            app.world().resource::<Net>().chat.lines.iter().filter(|l| !l.system).map(|l| format!("{}: {}", l.name, l.text)).collect()
         };
         let start = std::time::Instant::now();
         while texts(&host).len() < 2 || texts(&client).len() < 2 {

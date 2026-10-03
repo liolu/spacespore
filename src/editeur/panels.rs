@@ -116,6 +116,26 @@ pub enum Act {
     Thrust(i32),
     /// Ce modèle devient le vaisseau ou le personnage du joueur (E7).
     UseInGame,
+    /// Export MagicaVoxel (E8).
+    ExportVox,
+    /// Partager le modèle avec les joueurs de la partie (E8).
+    Share,
+    /// Mode avancé (E8) : interrupteur, zone choisie, pivot, animations du modèle, frise.
+    Advanced,
+    SelectZone(usize),
+    PivotMove(usize, i32),
+    PivotPick,
+    NewAnim,
+    EditAnim(usize),
+    RenameAnim,
+    DeleteAnim,
+    AnimDuration(i32),
+    Scrub(usize),
+    PlayPause,
+    Key,
+    DelKey,
+    Angle(usize, i32),
+    SaveBlock,
     /// Hangars : prolonger le chemin (clics), le raccourcir, retirer le hangar.
     PathEdit(usize),
     PathShorten(usize),
@@ -183,6 +203,69 @@ fn swatch_button(w: &mut ChildBuilder, e: &PaletteEntry, act: Act, on: bool, wid
     ));
     if mark && !letter.is_empty() {
         b.with_child((Text::new(letter), TextFont { font_size: 11.0, ..default() }, TextColor(Color::srgba(0.0, 0.0, 0.0, 0.8))));
+    }
+}
+
+/// Mode avancé (E8) : pivot de la zone choisie, animations du modèle et leur frise d'images clés.
+fn advanced_panel(p: &mut ChildBuilder, ed: &Editor, d: &edit::Doc) {
+    let zone = ed.sel_zone.and_then(|z| d.model.zones.get(z));
+    match zone {
+        Some(z) => {
+            label(p, &format!("Zone : {}   pivot {:.1} {:.1} {:.1}", z.name, z.pivot[0], z.pivot[1], z.pivot[2]), 13.0, ON);
+            wrap(p, |w| {
+                for (a, n) in ["x", "y", "z"].iter().enumerate() {
+                    button(w, &format!("{n}-"), Act::PivotMove(a, -1), false);
+                    button(w, &format!("{n}+"), Act::PivotMove(a, 1), false);
+                }
+                button(w, "Pivot au clic", Act::PivotPick, ed.pivot_pick);
+                button(w, "Enregistrer en bloc", Act::SaveBlock, false);
+            });
+        }
+        None => label(p, "Clique le nom d'une zone pour la choisir.", 13.0, DIM),
+    }
+    label(p, "Animations du modele", 13.0, DIM);
+    wrap(p, |w| {
+        for (k, n) in d.model.anims.keys().enumerate() {
+            button(w, n, Act::EditAnim(k), ed.edit_anim.as_deref() == Some(n.as_str()));
+        }
+        button(w, "+ Animation", Act::NewAnim, false);
+    });
+    let Some(a) = ed.edit_anim.as_ref().and_then(|n| d.model.anims.get(n)) else { return };
+    let bone = ed.sel_bone();
+    let paused = ed.preview.as_ref().is_none_or(|p| p.paused);
+    wrap(p, |w| {
+        button(w, "Renommer", Act::RenameAnim, false);
+        button(w, "Supprimer", Act::DeleteAnim, false);
+        label(w, &format!("Duree {:.1} s", a.duration), 13.0, TEXT);
+        button(w, "-", Act::AnimDuration(-1), false);
+        button(w, "+", Act::AnimDuration(1), false);
+        button(w, if paused { "> Lire" } else { "|| Pause" }, Act::PlayPause, !paused);
+    });
+    // La frise : 21 cases de 0 à la durée ; les images clés de la zone choisie en jaune
+    let times = bone.as_ref().map_or(Vec::new(), |b| super::custom::key_times(a, b));
+    label(p, &format!("Frise : t = {:.2} s", ed.cursor), 13.0, DIM);
+    p.spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(1.0), ..default() }).with_children(|r| {
+        for i in 0..=20 {
+            let t = a.duration * i as f32 / 20.0;
+            let keyed = times.iter().any(|k| (k - t).abs() < a.duration / 40.0);
+            let here = (ed.cursor - t).abs() < a.duration / 40.0;
+            let color = if here { ACCENT } else if keyed { ON } else { BUTTON };
+            r.spawn((Button, Node { width: Val::Px(10.0), height: Val::Px(20.0), ..default() }, BackgroundColor(color), Act::Scrub(i)));
+        }
+    });
+    if let Some(b) = &bone {
+        let ang = super::custom::angles_at(a, b, ed.cursor);
+        label(p, &format!("Angles a t : x {:.0}  y {:.0}  z {:.0}", ang[0], ang[1], ang[2]), 13.0, TEXT);
+        wrap(p, |w| {
+            for (k, n) in ["x", "y", "z"].iter().enumerate() {
+                button(w, &format!("{n} -15"), Act::Angle(k, -15), false);
+                button(w, &format!("{n} +15"), Act::Angle(k, 15), false);
+            }
+        });
+        wrap(p, |w| {
+            button(w, "Cle ici", Act::Key, false);
+            button(w, "Retirer la cle", Act::DelKey, false);
+        });
     }
 }
 
@@ -425,6 +508,8 @@ pub fn rebuild(mut commands: Commands, mut editor: ResMut<Editor>, old: Query<En
                     wrap(p, |w| {
                         button(w, "Renommer", Act::Rename, false);
                         button(w, "Etiquettes", Act::Tags, false);
+                        button(w, "Exporter .vox", Act::ExportVox, false);
+                        button(w, "Partager", Act::Share, false);
                     });
                     if let Some(d) = ed.doc().filter(|d| d.model.kind != ModelKind::Autre) {
                         let what = if d.model.kind == ModelKind::Vaisseau { "Utiliser comme mon vaisseau" } else { "Utiliser comme mon personnage" };
@@ -445,6 +530,12 @@ pub fn rebuild(mut commands: Commands, mut editor: ResMut<Editor>, old: Query<En
                 if let Some(d) = ed.doc() {
                     let zones = &d.model.zones;
                     label(p, &format!("ZONES DE MOUVEMENT ({})", zones.len()), 15.0, ACCENT);
+                    if !zones.is_empty() {
+                        wrap(p, |w| button(w, if ed.advanced { "Mode avance : oui" } else { "Mode avance" }, Act::Advanced, ed.advanced));
+                    }
+                    if ed.advanced && !zones.is_empty() {
+                        advanced_panel(p, ed, d);
+                    }
                     if zones.is_empty() {
                         label(p, "Choisis un bloc de mouvement a gauche et pose-le.", 13.0, DIM);
                     } else {
@@ -467,7 +558,11 @@ pub fn rebuild(mut commands: Commands, mut editor: ResMut<Editor>, old: Query<En
                             let depth = std::iter::successors(z.parent, |k| zones.get(*k as usize).and_then(|x| x.parent)).take(8).count();
                             p.spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(6.0), align_items: AlignItems::Center, ..default() }).with_children(|r| {
                                 let color = if ed.colliding.contains(&i) { Color::srgb(1.0, 0.35, 0.3) } else { TEXT };
-                                label(r, &format!("{}{}", "  ".repeat(depth), z.name), 13.0, color);
+                                if ed.advanced {
+                                    button(r, &format!("{}{}", "  ".repeat(depth), z.name), Act::SelectZone(i), ed.sel_zone == Some(i));
+                                } else {
+                                    label(r, &format!("{}{}", "  ".repeat(depth), z.name), 13.0, color);
+                                }
                                 button(r, "Retirer", Act::RemoveZone(i), false);
                             });
                         }
@@ -600,7 +695,7 @@ fn overlay(root: &mut ChildBuilder, ed: &Editor, o: &Overlay) {
                 label(p, &format!("... et {} autres", ed.library.len() - 18), 13.0, DIM);
             }
             wrap(p, |w| {
-                button(w, "Importer Pixel World (saves/import/)", Act::Import, false);
+                button(w, "Importer .vox / Pixel World (saves/import/)", Act::Import, false);
                 button(w, "Fermer", Act::CloseOverlay, false);
             });
         }
@@ -723,6 +818,7 @@ pub fn typing(mut events: EventReader<KeyboardInput>, mut editor: ResMut<Editor>
         Some(true) => editor.rename(name),
         Some(false) => {
             editor.overlay = None;
+            editor.rename_anim = None;
             editor.ui_dirty = true;
             editor.escape_used = true;
         }
@@ -743,7 +839,7 @@ pub fn escape(keys: Res<ButtonInput<KeyCode>>, mut editor: ResMut<Editor>, mut n
         editor.say("Pose annulee.".into());
         return;
     }
-    if editor.drag.take().is_some() || std::mem::take(&mut editor.pasting) || editor.path_edit.take().is_some() {
+    if editor.drag.take().is_some() || std::mem::take(&mut editor.pasting) || editor.path_edit.take().is_some() || std::mem::take(&mut editor.pivot_pick) {
         editor.say("Annule.".into());
         return;
     }
@@ -771,6 +867,7 @@ pub fn actions(
     mut next: ResMut<NextState<AppState>>,
     mut settings: ResMut<crate::settings::GameSettings>,
     mut models: ResMut<crate::models::GameModels>,
+    mut net: ResMut<crate::net::Net>,
 ) {
     for (i, act) in &interactions {
         if *i != Interaction::Pressed {
@@ -817,6 +914,124 @@ pub fn actions(
                 }
             }
             Act::CutMove(by) => ed.move_cut(by),
+            Act::ExportVox => ed.export_vox(),
+            Act::Share => {
+                if net.player_count() < 2 {
+                    ed.say("Personne d'autre dans la partie pour l'instant (Multijoueur).".into());
+                } else {
+                    if ed.doc().is_some_and(|d| d.dirty || d.path.is_none()) {
+                        ed.save();
+                    }
+                    let file = ed.doc().filter(|d| !d.dirty).and_then(|d| Some((d.model.name.clone(), std::fs::read(d.path.as_ref()?).ok()?)));
+                    match file.and_then(|(name, bytes)| Some((name, models.add_file(bytes)?))) {
+                        Some((name, fp)) => {
+                            net.share_out.push((fp, name.clone()));
+                            ed.say(format!("\"{name}\" partage : les autres joueurs le recoivent dans leur bibliotheque."));
+                        }
+                        None => ed.say("Partage impossible (modele non enregistre ou trop lourd).".into()),
+                    }
+                }
+            }
+            Act::Advanced => {
+                ed.advanced = !ed.advanced;
+                if !ed.advanced {
+                    ed.pivot_pick = false;
+                    ed.edit_anim(None);
+                } else {
+                    ed.say("Mode avance : choisis une zone, deplace son pivot, cree des animations image par image.".into());
+                }
+            }
+            Act::SelectZone(z) => ed.sel_zone = Some(z),
+            Act::PivotMove(axis, s) => {
+                if let Some(z) = ed.sel_zone {
+                    if let Some(d) = ed.doc_mut() {
+                        if let Some(zone) = d.model.zones.get(z) {
+                            let mut p = Vec3::from_array(zone.pivot);
+                            p[axis] += 0.5 * s as f32;
+                            d.set_pivot(z, p);
+                        }
+                    }
+                }
+            }
+            Act::PivotPick => {
+                ed.pivot_pick = !ed.pivot_pick && ed.sel_zone.is_some();
+                if ed.pivot_pick {
+                    ed.stop_preview();
+                    ed.say("Clique une case : le pivot va en son centre.".into());
+                }
+            }
+            Act::NewAnim => {
+                if let Some(d) = ed.doc_mut() {
+                    let name = super::custom::fresh_anim_name(&d.model);
+                    d.edit_anims(|anims| {
+                        anims.insert(name.clone(), super::format::ModelAnim { duration: 2.0, keys: Default::default() });
+                    });
+                    ed.cursor = 0.0;
+                    ed.edit_anim(Some(name));
+                    ed.say("Nouvelle animation : choisis une zone, un instant sur la frise, puis tourne-la (x / y / z).".into());
+                }
+            }
+            Act::EditAnim(k) => {
+                let name = ed.doc().and_then(|d| d.model.anims.keys().nth(k).cloned());
+                ed.cursor = 0.0;
+                ed.edit_anim(name);
+            }
+            Act::RenameAnim => {
+                if let Some(n) = ed.edit_anim.clone() {
+                    ed.rename_anim = Some(n.clone());
+                    ed.overlay = Some(Overlay::Rename(n));
+                }
+            }
+            Act::DeleteAnim => {
+                if let Some(n) = ed.edit_anim.clone() {
+                    if let Some(d) = ed.doc_mut() {
+                        d.edit_anims(|anims| {
+                            anims.remove(&n);
+                        });
+                    }
+                    ed.edit_anim(None);
+                }
+            }
+            Act::AnimDuration(s) => {
+                if let Some(n) = ed.edit_anim.clone() {
+                    if let Some(d) = ed.doc_mut() {
+                        d.edit_anims(|anims| {
+                            if let Some(a) = anims.get_mut(&n) {
+                                a.duration = (a.duration + 0.5 * s as f32).clamp(0.5, 30.0);
+                            }
+                        });
+                    }
+                    let c = ed.cursor;
+                    ed.seek(c);
+                }
+            }
+            Act::Scrub(i) => {
+                let dur = ed.edit_anim.as_ref().and_then(|n| ed.doc().and_then(|d| d.model.anims.get(n))).map_or(1.0, |a| a.duration);
+                ed.seek(dur * i as f32 / 20.0);
+            }
+            Act::PlayPause => {
+                if let Some(p) = ed.preview.as_mut() {
+                    p.paused = !p.paused;
+                } else if let Some(n) = ed.edit_anim.clone() {
+                    ed.start_preview(&n);
+                }
+            }
+            Act::Key => ed.key_angles(|_| {}),
+            Act::DelKey => {
+                if let (Some(n), Some(b)) = (ed.edit_anim.clone(), ed.sel_bone()) {
+                    let t = ed.cursor;
+                    if let Some(d) = ed.doc_mut() {
+                        d.edit_anims(|anims| {
+                            if let Some(a) = anims.get_mut(&n) {
+                                super::custom::remove_key(a, &b, t);
+                            }
+                        });
+                    }
+                    ed.seek(t);
+                }
+            }
+            Act::Angle(k, delta) => ed.key_angles(|a| a[k] += delta as f32),
+            Act::SaveBlock => ed.save_block(),
             Act::UseInGame => {
                 // Enregistré d'abord (le jeu lit le fichier), puis choisi
                 if ed.doc().is_some_and(|d| d.dirty || d.path.is_none()) {
@@ -891,7 +1106,10 @@ pub fn actions(
                 ed.overlay = Some(Overlay::Rename(name));
             }
             Act::Tags => ed.overlay = Some(Overlay::Tags),
-            Act::CloseOverlay => ed.overlay = None,
+            Act::CloseOverlay => {
+                ed.overlay = None;
+                ed.rename_anim = None;
+            }
             Act::NewKind(k) => ed.new_kind = k,
             Act::NewRace(r) => ed.choose_race(r, None),
             Act::RaceOption(k) => {
@@ -1098,7 +1316,25 @@ impl Editor {
         self.overlay = None;
         self.ui_dirty = true;
         self.escape_used = true;
+        let anim = self.rename_anim.take();
         if name.is_empty() {
+            return;
+        }
+        // Une animation du modèle (mode avancé, E8)
+        if let Some(old) = anim {
+            if old != name {
+                if let Some(d) = self.doc_mut() {
+                    let new = name.clone();
+                    d.edit_anims(|anims| {
+                        if !anims.contains_key(&new) {
+                            if let Some(a) = anims.remove(&old) {
+                                anims.insert(new, a);
+                            }
+                        }
+                    });
+                }
+                self.edit_anim(Some(name));
+            }
             return;
         }
         if let Some(d) = self.doc_mut() {

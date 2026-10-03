@@ -392,6 +392,19 @@ pub fn tools_input(
         }
         return;
     }
+    // Mode avancé : le pivot de la zone choisie au centre de la case cliquée
+    if editor.pivot_pick {
+        if buttons.just_pressed(MouseButton::Left) {
+            if let (Some(z), Some(c)) = (editor.sel_zone, hit.or(place)) {
+                if let Some(d) = editor.doc_mut() {
+                    d.set_pivot(z, c.as_vec3() + Vec3::splat(0.5));
+                }
+                editor.pivot_pick = false;
+                editor.say("Pivot pose (Ctrl+Z pour annuler).".into());
+            }
+        }
+        return;
+    }
     // Chemin d'un hangar : clic = un point de plus au bout extérieur
     if let Some(i) = editor.path_edit {
         if buttons.just_pressed(MouseButton::Left) {
@@ -649,7 +662,9 @@ pub fn update_mesh(
 pub fn animate(time: Res<Time>, mut editor: ResMut<Editor>, mut q: Query<(&RigPart, &mut Transform)>) {
     let dt = time.delta_secs();
     if let Some(p) = editor.preview.as_mut() {
-        p.t += dt;
+        if !p.paused {
+            p.t += dt;
+        }
         p.blend = (p.blend + dt / p.blend_secs.max(0.05)).min(1.0);
     }
     let pose = match editor.shown() {
@@ -816,6 +831,21 @@ pub fn draw(editor: Res<Editor>, root: Query<&Transform, With<EditorRoot>>, mut 
         let m = editor.pose.get(i + 1).copied().unwrap_or(Mat4::IDENTITY);
         let local = Mat4::from_scale_rotation_translation(*hi - *lo + Vec3::splat(0.06), Quat::IDENTITY, (*lo + *hi) * 0.5);
         g.cuboid(Transform::from_matrix(Mat4::from_translation(o) * m * local), zone_color(i, editor.colliding.contains(&i)));
+    }
+    // Mode avancé : la zone choisie et son pivot (axes x rouge, y vert, z bleu)
+    if let Some(z) = editor.sel_zone.filter(|_| editor.advanced) {
+        if let (Some(zone), Some((lo, hi))) = (doc.model.zones.get(z), editor.zone_boxes.get(z)) {
+            let m = editor.pose.get(z + 1).copied().unwrap_or(Mat4::IDENTITY);
+            let pivot = o + m.transform_point3(Vec3::from_array(zone.pivot));
+            g.sphere(Isometry3d::from_translation(pivot), 0.35, Color::srgb(1.0, 1.0, 0.2));
+            for (axis, col) in [(Vec3::X, Color::srgb(1.0, 0.2, 0.2)), (Vec3::Y, Color::srgb(0.2, 1.0, 0.2)), (Vec3::Z, Color::srgb(0.3, 0.5, 1.0))] {
+                g.line(pivot, pivot + m.transform_vector3(axis) * 3.0, col);
+            }
+            if lo.x <= hi.x {
+                let local = Mat4::from_scale_rotation_translation(*hi - *lo + Vec3::splat(0.3), Quat::IDENTITY, (*lo + *hi) * 0.5);
+                g.cuboid(Transform::from_matrix(Mat4::from_translation(o) * m * local), Color::srgb(1.0, 1.0, 0.2));
+            }
+        }
     }
     // Hangars : chemin d'entrée (du dehors à la place), place, et le vaisseau qui entre ou sort
     let hangar_seq = editor.preview.as_ref().filter(|p| p.anim == motion::HANGAR_IN || p.anim == motion::HANGAR_OUT).map(|p| (p.anim == motion::HANGAR_IN, p.t));

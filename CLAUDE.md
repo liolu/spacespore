@@ -287,6 +287,14 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   Amarrage (`dock.rs`, touche H, dans l'espace) : hangar libre a notre taille d'un autre joueur, entree / amarre /
   sortie, portes animees chez tous (`carrier_sequence`). Tests : `SPACESPORE_TEST_LAND=<s>` (V), 
   `SPACESPORE_TEST_PEER=marcheur|croiseur|capital` (faux joueur), `SPACESPORE_TEST_DOCK=<s>`.
+  E8 = mode avance : `vox.rs` (MagicaVoxel 150 : SIZE/XYZI, RGBA, MATL verre/metal/lumineux, graphe nTRN/nGRP/nSHP,
+  morceaux de 256³, z du .vox = y ici ; import depuis `saves/import/`, export `saves/export/`). Animations du
+  modele `format::ModelAnim` (`Model::anims`, cles de rotation par os, dans meta.json, prioritaires dans
+  `zone_locals`), `Doc::set_pivot` / `edit_anims` (annulables), `custom.rs` (cles : `angles_at`, `set_key`,
+  `remove_key` ; `block_json` = zone + filles -> bloc de mouvement dans `saves/editeur/blocs/`). Panneau « Mode
+  avance » (zone choisie, pivot +- 0,5 ou au clic, animations, frise de 21 cases, angles +-15, cle, duree,
+  lecture / pause : `Preview::paused`). Partage (`Msg::Share`, `Net::share_out`) : le modele arrive chez les
+  autres par empreinte, dans `saves/modeles/partages/`. Capture : `SPACESPORE_EDITOR_DEMO=avance`.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

@@ -15,6 +15,7 @@
 //! - E5 : races (`races.rs`, 23 familles) et bibliothèque d'animations (`motion::Library`) ; au
 //!   choix de la race, son rig s'anime à côté de la fenêtre « Nouveau modèle ».
 
+pub mod custom;
 pub mod defaults;
 pub mod edit;
 pub mod format;
@@ -25,6 +26,7 @@ pub mod palette;
 pub mod races;
 pub mod panels;
 pub mod view;
+pub mod vox;
 
 use bevy::prelude::*;
 use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task};
@@ -115,6 +117,8 @@ pub struct Preview {
     pub on_race: bool,
     /// Durée du passage depuis la pose d'avant (s) : plus longue entre deux états du vaisseau.
     pub blend_secs: f32,
+    /// Arrêtée sur un instant (édition des images clés, E8).
+    pub paused: bool,
 }
 
 /// Un outil de volume tiré à la souris : départ, arrivée, normale de la face de départ,
@@ -216,6 +220,14 @@ pub struct Editor {
     /// Poussée simulée dans l'aperçu (0 à 1) ; hangar dont on prolonge le chemin.
     pub thrust: f32,
     pub path_edit: Option<usize>,
+    /// Mode avancé (E8) : zone choisie, animation du modèle éditée et instant de la frise, pivot
+    /// à poser d'un clic, animation à renommer.
+    pub advanced: bool,
+    pub sel_zone: Option<usize>,
+    pub edit_anim: Option<String>,
+    pub cursor: f32,
+    pub pivot_pick: bool,
+    pub rename_anim: Option<String>,
     /// Échap déjà utilisé cette image (fermer la saisie du nom).
     pub escape_used: bool,
     /// Blocs de mouvement, animations, races (ceux du jeu, puis ceux de `saves/editeur/`).
@@ -276,6 +288,12 @@ impl Default for Editor {
             pasting: false,
             thrust: 0.6,
             path_edit: None,
+            advanced: false,
+            sel_zone: None,
+            edit_anim: None,
+            cursor: 0.0,
+            pivot_pick: false,
+            rename_anim: None,
             escape_used: false,
             lib: motion::Library::default(),
             race_view: None,
@@ -370,7 +388,7 @@ impl Editor {
         let names: Vec<String> = colliding.iter().filter_map(|z| d.model.zones.get(*z).map(|z| z.name.clone())).collect();
         self.colliding = colliding;
         let blend_secs = if anim.starts_with(motion::STATE_PREFIX) { 1.5 } else { 0.35 };
-        self.preview = Some(Preview { anim: anim.to_string(), t: 0.0, blend: if from.is_empty() { 1.0 } else { 0.0 }, from, on_race, blend_secs });
+        self.preview = Some(Preview { anim: anim.to_string(), t: 0.0, blend: if from.is_empty() { 1.0 } else { 0.0 }, from, on_race, blend_secs, paused: false });
         if on_race {
             self.ui_dirty = true;
             return;
@@ -678,11 +696,105 @@ impl Editor {
         self.say(format!("Coupe en {} = {}.", ["x", "y", "z"][c.axis], cut.pos));
     }
 
+    /// Édite l'animation `name` du modèle : l'aperçu s'arrête sur l'instant de la frise.
+    pub fn edit_anim(&mut self, name: Option<String>) {
+        self.edit_anim = name.clone();
+        match name {
+            Some(n) => {
+                self.start_preview(&n);
+                let t = self.cursor;
+                if let Some(p) = self.preview.as_mut() {
+                    p.paused = true;
+                    p.t = t;
+                }
+            }
+            None => self.stop_preview(),
+        }
+        self.ui_dirty = true;
+    }
+
+    /// Place l'aperçu (arrêté) sur l'instant de la frise.
+    pub fn seek(&mut self, t: f32) {
+        self.cursor = t.max(0.0);
+        let anim = self.edit_anim.clone();
+        match (&mut self.preview, anim) {
+            (Some(p), Some(a)) if p.anim == a => {
+                p.t = self.cursor;
+                p.paused = true;
+                p.blend = 1.0;
+            }
+            (_, Some(a)) => self.edit_anim(Some(a)),
+            _ => {}
+        }
+        self.ui_dirty = true;
+    }
+
+    /// L'os de la zone choisie (images clés).
+    pub fn sel_bone(&self) -> Option<String> {
+        let z = self.sel_zone?;
+        self.doc()?.model.zones.get(z).map(motion::bone)
+    }
+
+    /// Change les angles de la zone choisie à l'instant de la frise (crée l'image clé).
+    pub fn key_angles(&mut self, f: impl FnOnce(&mut [f32; 3])) {
+        let (Some(anim), Some(bone)) = (self.edit_anim.clone(), self.sel_bone()) else {
+            self.say("Choisis une zone (liste a droite) et une animation du modele.".into());
+            return;
+        };
+        let t = self.cursor;
+        if let Some(d) = self.doc_mut() {
+            d.edit_anims(|anims| {
+                if let Some(a) = anims.get_mut(&anim) {
+                    let mut angles = custom::angles_at(a, &bone, t);
+                    f(&mut angles);
+                    custom::set_key(a, &bone, t, angles);
+                }
+            });
+        }
+        self.seek(t);
+    }
+
+    /// Enregistre la zone choisie (et ses filles) en bloc de mouvement personnel.
+    pub fn save_block(&mut self) {
+        let (Some(z), Some(d)) = (self.sel_zone, self.doc()) else {
+            self.say("Choisis d'abord une zone (liste a droite).".into());
+            return;
+        };
+        let Some(zone) = d.model.zones.get(z) else { return };
+        let name = format!("{} ({})", zone.name, d.model.name);
+        let id = format!("perso_{}", file_stem(&name));
+        let json = custom::block_json(&d.model, z, &id, &name);
+        let dir = editor_dir().join("blocs");
+        let path = dir.join(format!("{id}.json"));
+        let r = std::fs::create_dir_all(&dir).map_err(|e| e.to_string()).and_then(|_| serde_json::to_string_pretty(&json).map_err(|e| e.to_string())).and_then(|t| std::fs::write(&path, t).map_err(|e| e.to_string()));
+        match r {
+            Ok(()) => {
+                let (lib, _) = motion::Library::load(Some(&editor_dir()));
+                self.lib = lib;
+                self.say(format!("Bloc \"{name}\" enregistre ({}) : il est dans la liste des blocs de mouvement.", path.display()));
+            }
+            Err(e) => self.say(format!("Bloc non enregistre : {e}")),
+        }
+    }
+
+    /// Exporte l'onglet en MagicaVoxel (`saves/export/<nom>.vox`).
+    pub fn export_vox(&mut self) {
+        let Some(d) = self.doc() else { return };
+        let dir = export_dir();
+        let path = dir.join(format!("{}.vox", file_stem(&d.model.name)));
+        let bytes = vox::export(&d.model);
+        let msg = match std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&path, bytes)) {
+            Ok(()) => format!("Exporte pour MagicaVoxel : {}", path.display()),
+            Err(e) => format!("Export impossible : {e}"),
+        };
+        self.say(msg);
+    }
+
     /// Importe les JSON de Pixel World de `saves/import/`.
     pub fn import(&mut self) {
         let from = import_dir();
         let msg = match import_folder(&from, &library_dir()) {
-            Ok(r) if r.models == 0 => format!("Aucun JSON de Pixel World dans {} : copiez-y vos modeles (.json).", from.display()),
+            Ok(r) if r.models == 0 => format!("Aucun modele dans {} : copiez-y des .vox (MagicaVoxel) ou des .json (Pixel World).", from.display()),
             Ok(r) => format!("{} modele(s) importe(s), {} voxels ({} blocs inconnus, {} hors de la grille).", r.models, r.voxels, r.unknown, r.outside),
             Err(e) => {
                 let _ = std::fs::create_dir_all(&from);
@@ -706,6 +818,11 @@ pub fn library_dir() -> PathBuf {
 /// élément, même format que `assets/editeur/`).
 pub fn editor_dir() -> PathBuf {
     crate::settings::data_dir().join("editeur")
+}
+
+/// Modèles exportés (MagicaVoxel `.vox`, E8).
+pub fn export_dir() -> PathBuf {
+    crate::settings::data_dir().join("export")
 }
 
 pub fn import_dir() -> PathBuf {
@@ -758,7 +875,20 @@ pub fn import_folder(from: &Path, to: &Path) -> Result<import::ImportReport, Str
     let rd = std::fs::read_dir(from).map_err(|_| format!("dossier {} introuvable", from.display()))?;
     let mut total = import::ImportReport::default();
     let mut errors = Vec::new();
-    for path in rd.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "json")) {
+    let files: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
+    // MagicaVoxel (E8)
+    for path in files.iter().filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("vox"))) {
+        let name = path.file_stem().map_or("Modele".into(), |s| s.to_string_lossy().to_string());
+        match std::fs::read(path).map_err(|e| e.to_string()).and_then(|b| vox::import(&b, &name)) {
+            Ok(m) => {
+                save_model(to, &m)?;
+                total.models += 1;
+                total.voxels += m.voxels.count();
+            }
+            Err(e) => errors.push(format!("{} : {e}", path.display())),
+        }
+    }
+    for path in files.into_iter().filter(|p| p.extension().is_some_and(|x| x == "json")) {
         let text = match std::fs::read_to_string(&path) {
             Ok(t) => t,
             Err(e) => {
@@ -919,7 +1049,7 @@ fn test_capture(
         put(4, 10, 17, 7, 10, 17, PaletteEntry { rgb: [255, 60, 200], material: format::Material::Lumineuse });
         // Blocs de mouvement (E4) : `SPACESPORE_EDITOR_DEMO=blocs` pose des bras, une tête et une
         // queue, lance l'aperçu « marche » et montre le gabarit d'une aile
-        let blocks_demo = std::env::var("SPACESPORE_EDITOR_DEMO").is_ok_and(|v| v == "blocs");
+        let blocks_demo = std::env::var("SPACESPORE_EDITOR_DEMO").is_ok_and(|v| v == "blocs" || v == "avance");
         if blocks_demo {
             let (lib, _) = motion::Library::load(None);
             let get = |id: &str| lib.block(id).unwrap().clone();
@@ -932,7 +1062,23 @@ fn test_capture(
         editor.overlay = None;
         let i = editor.docs.len() - 1;
         editor.select(i);
-        if blocks_demo {
+        if std::env::var("SPACESPORE_EDITOR_DEMO").is_ok_and(|v| v == "avance") {
+            // `avance` : mode avancé, une animation du modèle en cours d'édition (E8)
+            editor.lib = motion::Library::load(None).0;
+            editor.advanced = true;
+            editor.sel_zone = Some(0);
+            if let Some(d) = editor.doc_mut() {
+                d.edit_anims(|anims| {
+                    let mut a = format::ModelAnim { duration: 2.0, keys: Default::default() };
+                    custom::set_key(&mut a, "bras_g", 0.0, [0.0; 3]);
+                    custom::set_key(&mut a, "bras_g", 1.0, [0.0, 0.0, -120.0]);
+                    custom::set_key(&mut a, "bras_g", 2.0, [0.0; 3]);
+                    anims.insert("lever le bras".into(), a);
+                });
+            }
+            editor.cursor = 1.0;
+            editor.edit_anim(Some("lever le bras".into()));
+        } else if blocks_demo {
             editor.start_preview("marcher");
         }
         // `SPACESPORE_EDITOR_DEMO=gabarit` : le gabarit d'une aile (tournée, reflétée) près du corps
