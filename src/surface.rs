@@ -515,6 +515,14 @@ impl Surface {
         self.frame.filter(|_| self.active()).map(|f| f.center)
     }
 
+    /// En vol bas : le vent déplace le vaisseau de `local` (repère fixe de l'astre, C5).
+    pub fn drift(&mut self, local: Vec3) {
+        if self.phase == Phase::Flying {
+            let r = self.fpos.length();
+            self.fpos = (self.fpos + local).normalize_or(Vec3::Y) * r;
+        }
+    }
+
     /// Marée actuelle du terrain (C4).
     pub fn tide(&self) -> Option<crate::terrain::Tide> {
         self.terrain().map(|t| t.params.tide)
@@ -791,6 +799,8 @@ struct Ctx<'w, 's> {
     windows: Query<'w, 's, &'static mut Window, With<PrimaryWindow>>,
     asteroids: Res<'w, crate::asteroids::AsteroidField>,
     dim: Res<'w, crate::sky::SunDim>,
+    weather: Res<'w, crate::weather::WeatherNow>,
+    clock: Res<'w, crate::world_clock::WorldClock>,
 }
 
 impl Ctx<'_, '_> {
@@ -1204,6 +1214,13 @@ fn surface_control(
         let space = SPACE_SKY.to_srgba();
         let space = [space.red, space.green, space.blue];
         let (c, day, height) = combined_sky(&params, &suns, up, air, space);
+        // Météo (C5) : ciel gris sous les nuages, brun dans la poussière, blanc dans l'éclair
+        let w = &ctx.weather.sample;
+        let grey = (c[0] + c[1] + c[2]) / 3.0 * 0.85;
+        let mut c = c.map(|x| x + (grey - x) * (0.7 * w.cloud + 0.3 * w.fog).min(0.85));
+        c = [0, 1, 2].map(|i| c[i] + ([0.55, 0.4, 0.25][i] * day - c[i]) * 0.8 * w.dust);
+        let flash = ctx.weather.flash_at(ctx.clock.secs) * 0.6;
+        let c = c.map(|x| (x + flash).min(1.0));
         // Sous terre : noir (on ne voit plus le ciel)
         let dark = 1.0 - surface.underground;
         clear.0 = Color::srgb(c[0] * dark, c[1] * dark, c[2] * dark);
@@ -1430,6 +1447,7 @@ fn surface_light(
     stars: Query<(&Transform, &StarId), With<StarRoot>>,
     asteroids: Res<crate::asteroids::AsteroidField>,
     dim: Res<crate::sky::SunDim>,
+    (weather, clock): (Res<crate::weather::WeatherNow>, Res<crate::world_clock::WorldClock>),
     cam_q: Query<&Transform, (With<Camera3d>, Without<PlanetRoot>, Without<MoonRoot>, Without<StarRoot>)>,
     mut was_active: Local<bool>,
 ) {
@@ -1490,7 +1508,9 @@ fn surface_light(
     let moon = moonlight(cam.translation, up, star, &bodies) * (1.0 - day);
     // Une atmosphère épaisse diffuse plus de lumière ; la teinte est celle du ciel
     let sky_light = (AMBIENT_DAY - night) * day * params.pressure.clamp(0.05, 4.0).powf(0.25);
-    ambient.brightness = (night + sky_light + MOONLIGHT_MAX * moon) * (1.0 - 0.95 * surface.underground());
+    // Éclair (C5) : un flash bref
+    let flash = weather.flash_at(clock.secs) * 4_000.0;
+    ambient.brightness = (night + sky_light + MOONLIGHT_MAX * moon + flash) * (1.0 - 0.95 * surface.underground());
     ambient.color = if day > 0.05 {
         let s = params.sky;
         Color::srgb(0.4 + 0.3 * s[0], 0.4 + 0.3 * s[1], 0.4 + 0.3 * s[2])

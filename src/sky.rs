@@ -212,6 +212,7 @@ fn update_eclipses(
     planets: Query<(Entity, &Transform, &PlanetId), (With<PlanetRoot>, Without<MoonRoot>)>,
     moons: Query<(Entity, &Transform, &MoonId), With<MoonRoot>>,
     cam_q: Query<&Transform, With<Camera3d>>,
+    weather: Res<crate::weather::WeatherNow>,
     mut dim: ResMut<SunDim>,
 ) {
     dim.0.clear();
@@ -220,7 +221,8 @@ fn update_eclipses(
     let disks = bodies(&settings, &planets, &moons);
     for (t, id) in &stars {
         let Some(cfg) = settings.systems.get(id.0 / 1000).and_then(|s| s.stars.get(id.0 % 1000)) else { continue };
-        let keep = sunlight_at(cam.translation, t.translation, cfg.radius, &disks, surface.body());
+        // Éclipse, puis nuages et poussière (C5)
+        let keep = sunlight_at(cam.translation, t.translation, cfg.radius, &disks, surface.body()) * weather.light();
         if keep < 0.999 {
             dim.0.insert(id.0, keep);
         }

@@ -190,6 +190,14 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   et greve dans `base_column`, recalculee par `update_tides` quand le niveau change d'un voxel sous le joueur
   (tuiles reconstruites comme pour les saisons). Phases des lunes (`MoonPhases`, scanner). Aurores du sol :
   rideaux (`curtain_mesh`) la nuit, enfants de la planete ; les anneaux d'aurore vus de l'espace s'effacent.
+  C5 = meteo (`weather.rs`), f(graine, horloge, lieu) : `WeatherParams::of` (air de la phase 3), vents zonaux
+  (`zonal`), nuages advectes et qui se forment / se defont (`cloud_field`, deux champs fondus), `sample` : pluie,
+  neige, grele, pluies exotiques (methane, acide, neige carbonique, verre, fer), orages + `lightning`, poussiere,
+  brouillard du matin. Couche de nuages en cubes reconstruite en arriere-plan (`rebuild_clouds`, 2 s pour l'astre
+  ou l'on est, 30 s sinon ; `rotate_clouds` ne fait plus deriver la couche). `WeatherNow` (lieu du joueur) :
+  lumiere des soleils voilee (`SunDim`), ciel gris / brun, flash des eclairs, brouillard (`gas.rs`), particules
+  autour de la camera (`particle_positions`), vent qui pousse le vaisseau en vol bas (`Surface::drift`), scanner.
+  Banc : `cargo test --release bench_cloud_layer -- --ignored --nocapture`.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

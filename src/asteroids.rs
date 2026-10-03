@@ -106,7 +106,7 @@ fn lattice(x: i32, y: i32, z: i32, seed: u32) -> f32 {
 }
 
 /// Bruit de valeur lissé dans [0, 1].
-fn vnoise(p: Vec3, seed: u32) -> f32 {
+pub(crate) fn vnoise(p: Vec3, seed: u32) -> f32 {
     let f = p.floor();
     let (x, y, z) = (f.x as i32, f.y as i32, f.z as i32);
     let t = p - f;
@@ -122,7 +122,7 @@ fn vnoise(p: Vec3, seed: u32) -> f32 {
 }
 
 /// Bruit fractal dans [0, 1].
-fn fbm(p: Vec3, seed: u32, octaves: u32) -> f32 {
+pub(crate) fn fbm(p: Vec3, seed: u32, octaves: u32) -> f32 {
     let (mut sum, mut amp, mut norm, mut q) = (0.0, 1.0, 0.0, p);
     for o in 0..octaves {
         sum += vnoise(q, seed.wrapping_add(o * 101)) * amp;
