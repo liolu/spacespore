@@ -317,6 +317,12 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   touche L = lumiere du jeu) ; bibliotheque : « Modeles fournis » (`defaults::all_ids`, copie a enregistrer) ;
   `OrbitCam::focus` cadre le contenu (`Sparse::chunk_bounds`) ou toute la grille. Captures :
   `SPACESPORE_EDITOR_DEMO=vide:<categorie>` / `fourni:<k>` (+ `SPACESPORE_TEST_CMD=/editeur`).
+  C2 animations : `RaceDef::anims` (variante par famille, groupe `motion::VARIANTS` jamais propose seul,
+  `motion::anim_for`) et `RaceDef::alias` (os vise -> os de la race, `race_pose`) ; onde avec `base` (Euler :
+  aile depliee, cape toujours derriere le dos). Cephalopode : saluer / dormir (pose au sol) / nager (tete devant) ;
+  dragon et harpie : voler / planer propres ; mecha : `voler_reacteur`. Vol : battement autour de l'axe avant du
+  monde vu du tronc penche (`flap_axis` du script). Cape : 4 segments jusqu'aux mollets, fente pour la queue et
+  les jambes. Flotter : la tete oscille. Test `every_family_animation_moves_something`.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

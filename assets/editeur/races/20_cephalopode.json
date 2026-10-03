@@ -370,5 +370,10 @@
     }
    ]
   }
- ]
+ ],
+ "anims": {
+  "saluer": "saluer_tentacule",
+  "dormir": "dormir_cephalopode",
+  "nager": "nager_cephalopode"
+ }
 }
