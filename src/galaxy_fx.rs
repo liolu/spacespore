@@ -45,8 +45,9 @@ impl Plugin for GalaxyFxPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(ShowLinks(true))
             .init_resource::<NpcTerritories>()
+            .init_resource::<CloudsShown>()
             .add_systems(Startup, (spawn_clouds, build_npc_territories))
-            .add_systems(Update, (toggle_links, draw_links, update_clouds));
+            .add_systems(Update, (toggle_links, draw_links, stream_clouds, update_clouds, extend_npcs));
     }
 }
 
@@ -148,13 +149,19 @@ impl NpcFaction {
 /// Territoires des factions PNJ : les mêmes pour tous les joueurs (graine du monde).
 #[derive(Resource, Default)]
 pub struct NpcTerritories {
-    pub factions: Vec<NpcFaction>,
+    /// Factions par numéro : 0, 1, 2… dans notre galaxie et les extérieures (comme avant), puis
+    /// `FAR_FACTION_BASE + galaxie × 64 + rang` dans une galaxie lointaine (le même numéro quel que
+    /// soit l'ordre des visites : l'économie s'en sert comme clé).
+    pub factions: std::collections::BTreeMap<usize, NpcFaction>,
     owner: HashMap<usize, usize>,
 }
 
+/// Numéros des factions des galaxies lointaines (voir `NpcTerritories::factions`).
+pub const FAR_FACTION_BASE: usize = 1_000_000;
+
 impl NpcTerritories {
     pub fn faction_of(&self, sys: usize) -> Option<&NpcFaction> {
-        self.owner.get(&sys).map(|&i| &self.factions[i])
+        self.owner.get(&sys).and_then(|i| self.factions.get(i))
     }
 
     pub fn faction_index_of(&self, sys: usize) -> Option<usize> {
@@ -165,7 +172,7 @@ impl NpcTerritories {
     /// Renvoie `false` si l'étoile n'appartient à aucune faction.
     pub fn remove_star(&mut self, sys: usize, settings: &GameSettings) -> bool {
         let Some(idx) = self.owner.remove(&sys) else { return false };
-        let faction = &mut self.factions[idx];
+        let Some(faction) = self.factions.get_mut(&idx) else { return false };
         faction.stars.retain(|&s| s != sys);
         faction.recompute(settings);
         true
@@ -208,78 +215,111 @@ fn near_stars(settings: &GameSettings, spatial: &SystemSpatialIndex, sys: usize)
         .collect()
 }
 
-/// Tous les territoires PNJ, déterministes d'après la graine du monde.
+/// Territoires PNJ de notre galaxie et des extérieures, déterministes d'après la graine du monde
+/// (les galaxies lointaines ont les leurs quand elles sont générées : `extend_npcs`).
 pub fn generate_npcs(settings: &GameSettings, spatial: &SystemSpatialIndex) -> NpcTerritories {
-    let seed = (settings.world_seed as u32) ^ ((settings.world_seed >> 32) as u32) ^ 0x4E_50_43;
     let mut out = NpcTerritories::default();
     let mut counter = 0u32;
-    for (gid, gal) in settings.galaxies.iter().enumerate() {
-        let candidates: Vec<usize> = settings
-            .systems
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| s.galaxy_id as usize == gid && s.center().distance(gal.center()) >= CORE_EXCLUSION)
-            .map(|(i, _)| i)
-            .collect();
-        if candidates.is_empty() {
-            continue;
-        }
-        let wanted = if gid == 0 { NPC_MAIN } else { 1 + (gal.radius / (1_300_000.0 * crate::settings::GALAXY_SCALE)) as usize };
-        let mut made = 0;
-        for attempt in 0..(wanted * 12) as u32 {
-            if made >= wanted {
-                break;
-            }
-            let start = candidates[mix(seed, gid as u32, attempt) as usize % candidates.len()];
-            if out.owner.contains_key(&start) {
-                continue;
-            }
-            let target = NPC_MIN_STARS + mix(seed ^ 0x51, gid as u32, attempt) as usize % (NPC_MAX_STARS - NPC_MIN_STARS + 1);
-            // Le territoire grandit d'étoile voisine en étoile voisine, en restant compact
-            let origin = settings.systems[start].center();
-            let mut members = vec![start];
-            while members.len() < target {
-                let next = members
-                    .iter()
-                    .flat_map(|&m| near_stars(settings, spatial, m))
-                    .filter(|s| !members.contains(s) && !out.owner.contains_key(s))
-                    .filter(|&s| settings.systems[s].center().distance(gal.center()) >= CORE_EXCLUSION)
-                    .min_by(|&x, &y| {
-                        let dx = settings.systems[x].center().distance(origin);
-                        let dy = settings.systems[y].center().distance(origin);
-                        dx.total_cmp(&dy)
-                    });
-                match next {
-                    Some(s) => members.push(s),
-                    None => break,
-                }
-            }
-            // Trop petit (coincé contre d'autres territoires) : on essaie ailleurs
-            if members.len() < NPC_MIN_STARS / 2 {
-                continue;
-            }
-            let idx = out.factions.len();
-            let hue = ((counter as f32 * 0.618_034) % 1.0) * 360.0;
-            for &m in &members {
-                out.owner.insert(m, idx);
-            }
-            let mut faction = NpcFaction {
-                name: faction_name(mix(seed, counter, 99)),
-                color: Color::hsl(hue, 0.85, 0.58),
-                galaxy: gid as u32,
-                stars: members,
-                links: Vec::new(),
-                outline: Vec::new(),
-                center: Vec3::ZERO,
-                extent: 0.0,
-            };
-            faction.recompute(settings);
-            out.factions.push(faction);
-            counter += 1;
-            made += 1;
-        }
+    let dense = (crate::settings::NUM_DISTANT_GALAXIES + 1).min(settings.galaxies.len());
+    for gid in 0..dense {
+        let (base, first) = (out.factions.len(), counter);
+        let made = galaxy_factions(settings, spatial, &mut out, gid as u32, &|k| (base + k, first + k as u32));
+        counter += made as u32;
     }
     out
+}
+
+/// Factions d'une galaxie (ses systèmes doivent exister et être dans `spatial`) ; `id_of(k)` :
+/// (numéro, tirage du nom et de la couleur) de la k-ième. Renvoie le nombre de factions créées.
+fn galaxy_factions(settings: &GameSettings, spatial: &SystemSpatialIndex, out: &mut NpcTerritories, gid: u32, id_of: &dyn Fn(usize) -> (usize, u32)) -> usize {
+    let seed = (settings.world_seed as u32) ^ ((settings.world_seed >> 32) as u32) ^ 0x4E_50_43;
+    let Some(gal) = settings.galaxies.get(gid as usize) else { return 0 };
+    let candidates: Vec<usize> = settings
+        .systems
+        .in_galaxy(gid)
+        .into_iter()
+        .filter(|(_, s)| s.center().distance(gal.center()) >= CORE_EXCLUSION)
+        .map(|(i, _)| i)
+        .collect();
+    if candidates.is_empty() {
+        return 0;
+    }
+    let wanted = if gid == 0 { NPC_MAIN } else { 1 + (gal.radius / (1_300_000.0 * crate::settings::GALAXY_SCALE)) as usize };
+    let mut made = 0;
+    for attempt in 0..(wanted * 12) as u32 {
+        if made >= wanted {
+            break;
+        }
+        let start = candidates[mix(seed, gid, attempt) as usize % candidates.len()];
+        if out.owner.contains_key(&start) {
+            continue;
+        }
+        let target = NPC_MIN_STARS + mix(seed ^ 0x51, gid, attempt) as usize % (NPC_MAX_STARS - NPC_MIN_STARS + 1);
+        // Le territoire grandit d'étoile voisine en étoile voisine, en restant compact
+        let origin = settings.systems[start].center();
+        let mut members = vec![start];
+        while members.len() < target {
+            let next = members
+                .iter()
+                .flat_map(|&m| near_stars(settings, spatial, m))
+                .filter(|s| !members.contains(s) && !out.owner.contains_key(s))
+                .filter(|&s| settings.systems[s].center().distance(gal.center()) >= CORE_EXCLUSION)
+                .min_by(|&x, &y| {
+                    let dx = settings.systems[x].center().distance(origin);
+                    let dy = settings.systems[y].center().distance(origin);
+                    dx.total_cmp(&dy)
+                });
+            match next {
+                Some(s) => members.push(s),
+                None => break,
+            }
+        }
+        // Trop petit (coincé contre d'autres territoires) : on essaie ailleurs
+        if members.len() < NPC_MIN_STARS / 2 {
+            continue;
+        }
+        let (idx, counter) = id_of(made);
+        let hue = ((counter as f32 * 0.618_034) % 1.0) * 360.0;
+        for &m in &members {
+            out.owner.insert(m, idx);
+        }
+        let mut faction = NpcFaction {
+            name: faction_name(mix(seed, counter, 99)),
+            color: Color::hsl(hue, 0.85, 0.58),
+            galaxy: gid,
+            stars: members,
+            links: Vec::new(),
+            outline: Vec::new(),
+            center: Vec3::ZERO,
+            extent: 0.0,
+        };
+        faction.recompute(settings);
+        out.factions.insert(idx, faction);
+        made += 1;
+    }
+    made
+}
+
+/// Une galaxie lointaine vient d'être générée : ses factions, aux numéros fixes.
+fn extend_npcs(
+    mut events: EventReader<crate::planet::FarGalaxyLoaded>,
+    settings: Res<GameSettings>,
+    spatial: Option<Res<SystemSpatialIndex>>,
+    eco: Res<crate::economy::Economy>,
+    mut npcs: ResMut<NpcTerritories>,
+) {
+    let Some(spatial) = spatial else { return };
+    for &crate::planet::FarGalaxyLoaded(gid) in events.read() {
+        let base = FAR_FACTION_BASE + gid as usize * 64;
+        if npcs.factions.range(base..base + 64).next().is_some() {
+            continue;
+        }
+        galaxy_factions(&settings, &spatial, &mut npcs, gid, &|k| (base + k, (base + k) as u32));
+        let sold: Vec<usize> = eco.sold_stars.iter().copied().filter(|&s| settings.systems.peek(s).is_some_and(|x| x.galaxy_id == gid)).collect();
+        for sys in sold {
+            npcs.remove_star(sys, &settings);
+        }
+    }
 }
 
 fn build_npc_territories(settings: Res<GameSettings>, eco: Res<crate::economy::Economy>, mut npcs: ResMut<NpcTerritories>) {
@@ -310,7 +350,7 @@ fn draw_links(
     let window = (ctrl.distance * 1.5).clamp(60_000.0, 6_000_000.0);
 
     // Factions PNJ : seulement celles qui sont près de la caméra (il y en a des milliers dans l'univers)
-    for faction in &npcs.factions {
+    for faction in npcs.factions.values() {
         if cam_pos.distance(to_local(faction.center)) > window + faction.extent {
             continue;
         }
@@ -353,7 +393,15 @@ const CLOUD_FADE_END: f32 = 120_000_000.0 * crate::settings::GALAXY_SCALE;
 #[derive(Resource)]
 struct CloudMaterials {
     steps: Vec<Vec<Handle<StandardMaterial>>>,
+    mesh: Handle<Mesh>,
 }
+
+/// Galaxies dont les nuages sont créés (seulement près de la caméra : ils s'effacent au-delà).
+#[derive(Resource, Default)]
+struct CloudsShown(std::collections::HashSet<u32>);
+
+/// Distance (caméra → galaxie) sous laquelle ses nuages existent.
+const CLOUD_REACH: f32 = CLOUD_FADE_END * 1.1;
 
 #[derive(Component)]
 struct GalaxyCloud {
@@ -419,6 +467,7 @@ fn spawn_clouds(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    mut shown: ResMut<CloudsShown>,
 ) {
     let texture = images.add(Image::new(
         Extent3d { width: CLOUD_TEXTURE, height: CLOUD_TEXTURE, depth_or_array_layers: 1 },
@@ -443,49 +492,99 @@ fn spawn_clouds(
         }
         steps.push(per_step);
     }
-    let mesh = meshes.add(Rectangle::new(2.0, 2.0));
-    let start_material = steps[0][CLOUD_STEPS - 1].clone();
-    commands.insert_resource(CloudMaterials { steps });
-
-    let tau = std::f32::consts::TAU;
+    let mats = CloudMaterials { steps, mesh: meshes.add(Rectangle::new(2.0, 2.0)) };
+    // Nuages des galaxies proches du départ ; les autres viennent à l'approche (`stream_clouds`)
+    let start = settings.systems.first().map_or(Vec3::ZERO, |s| s.center());
     for (gid, gal) in settings.galaxies.iter().enumerate() {
-        let seed = 900_000 + gid as u32 * 1_000;
-        let rnd = |k: u32| pseudo_rand(seed.wrapping_mul(31).wrapping_add(k));
-        let shape = gal.shape();
-        // Une galaxie extérieure a une couleur dominante et une secondaire
-        let main_color = (rnd(900) * CLOUD_COLORS as f32) as usize % CLOUD_COLORS;
-        let second_color = (main_color + 1 + (rnd(901) * (CLOUD_COLORS - 1) as f32) as usize) % CLOUD_COLORS;
-        for i in 0..cloud_count(gid, gal.radius) as u32 {
-            // Sur la structure de la galaxie (bras, anneaux, filaments…), avec un peu de dispersion
-            let mut srng = Rng::new(seed.wrapping_add(i * 7919));
-            let jitter = Vec3::new(rnd(i * 11 + 3) - 0.5, (rnd(i * 11 + 5) - 0.5) * 0.3, rnd(i * 11 + 4) - 0.5)
-                * gal.radius * 0.05;
-            let local = shape.sample_structure(&mut srng, 0.12) + jitter;
-            let world = gal.center() + gal.tilt * local;
-            // Pas de nuage collé au trou noir central
-            if local.length() < CORE_EXCLUSION * 3.0 {
-                continue;
-            }
-            commands.spawn((
-                Mesh3d(mesh.clone()),
-                MeshMaterial3d(start_material.clone()),
-                Transform::from_translation(world).with_scale(Vec3::ZERO),
-                Visibility::Hidden,
-                NotShadowCaster,
-                GalaxyCloud {
-                    galaxy_id: gid as u32,
-                    size: gal.radius * (0.04 + 0.07 * rnd(i * 11 + 6)),
-                    color: if gid == 0 {
-                        (rnd(i * 11 + 7) * CLOUD_COLORS as f32) as usize % CLOUD_COLORS
-                    } else if rnd(i * 11 + 7) < 0.65 {
-                        main_color
-                    } else {
-                        second_color
-                    },
-                    stretch: 1.0 + rnd(i * 11 + 8) * 0.9,
-                    roll: rnd(i * 11 + 9) * tau,
+        if start.distance(gal.center()) < CLOUD_REACH {
+            spawn_galaxy_clouds(&mut commands, &mats, gid, gal);
+            shown.0.insert(gid as u32);
+        }
+    }
+    commands.insert_resource(mats);
+}
+
+/// Les nuages d'une galaxie.
+fn spawn_galaxy_clouds(commands: &mut Commands, mats: &CloudMaterials, gid: usize, gal: &crate::settings::GalaxyConfig) {
+    let tau = std::f32::consts::TAU;
+    let start_material = mats.steps[0][CLOUD_STEPS - 1].clone();
+    let seed = 900_000 + gid as u32 * 1_000;
+    let rnd = |k: u32| pseudo_rand(seed.wrapping_mul(31).wrapping_add(k));
+    let shape = gal.shape();
+    // Une galaxie extérieure a une couleur dominante et une secondaire
+    let main_color = (rnd(900) * CLOUD_COLORS as f32) as usize % CLOUD_COLORS;
+    let second_color = (main_color + 1 + (rnd(901) * (CLOUD_COLORS - 1) as f32) as usize) % CLOUD_COLORS;
+    for i in 0..cloud_count(gid, gal.radius) as u32 {
+        // Sur la structure de la galaxie (bras, anneaux, filaments…), avec un peu de dispersion
+        let mut srng = Rng::new(seed.wrapping_add(i * 7919));
+        let jitter = Vec3::new(rnd(i * 11 + 3) - 0.5, (rnd(i * 11 + 5) - 0.5) * 0.3, rnd(i * 11 + 4) - 0.5) * gal.radius * 0.05;
+        let local = shape.sample_structure(&mut srng, 0.12) + jitter;
+        let world = gal.center() + gal.tilt * local;
+        // Pas de nuage collé au trou noir central
+        if local.length() < CORE_EXCLUSION * 3.0 {
+            continue;
+        }
+        commands.spawn((
+            Mesh3d(mats.mesh.clone()),
+            MeshMaterial3d(start_material.clone()),
+            Transform::from_translation(world).with_scale(Vec3::ZERO),
+            Visibility::Hidden,
+            NotShadowCaster,
+            GalaxyCloud {
+                galaxy_id: gid as u32,
+                size: gal.radius * (0.04 + 0.07 * rnd(i * 11 + 6)),
+                color: if gid == 0 {
+                    (rnd(i * 11 + 7) * CLOUD_COLORS as f32) as usize % CLOUD_COLORS
+                } else if rnd(i * 11 + 7) < 0.65 {
+                    main_color
+                } else {
+                    second_color
                 },
-            ));
+                stretch: 1.0 + rnd(i * 11 + 8) * 0.9,
+                roll: rnd(i * 11 + 9) * tau,
+            },
+        ));
+    }
+}
+
+/// Les nuages d'une galaxie n'existent que quand la caméra en est assez près pour les voir.
+fn stream_clouds(
+    mut commands: Commands,
+    time: Res<Time>,
+    settings: Res<GameSettings>,
+    mats: Option<Res<CloudMaterials>>,
+    cam_q: Query<&GlobalTransform, With<Camera3d>>,
+    mut shown: ResMut<CloudsShown>,
+    clouds: Query<(Entity, &GalaxyCloud)>,
+    mut last: Local<f64>,
+) {
+    let Some(mats) = mats else { return };
+    let now = time.elapsed_secs_f64();
+    if now - *last < 0.5 {
+        return;
+    }
+    *last = now;
+    let Ok(cam) = cam_q.get_single() else { return };
+    let cam_pos = cam.translation();
+    let mut created = 0;
+    let mut gone: Vec<u32> = Vec::new();
+    for (gid, gal) in settings.galaxies.iter().enumerate() {
+        let d = cam_pos.distance(gal.center());
+        let has = shown.0.contains(&(gid as u32));
+        if !has && d < CLOUD_REACH && created < 4 {
+            spawn_galaxy_clouds(&mut commands, &mats, gid, gal);
+            shown.0.insert(gid as u32);
+            created += 1;
+        } else if has && d > CLOUD_REACH * 1.3 {
+            shown.0.remove(&(gid as u32));
+            gone.push(gid as u32);
+        }
+    }
+    if !gone.is_empty() {
+        for (e, c) in &clouds {
+            if gone.contains(&c.galaxy_id) {
+                commands.entity(e).try_despawn();
+            }
         }
     }
 }
@@ -588,14 +687,14 @@ mod tests {
         // Toujours les mêmes, pour tous les joueurs
         let again = generate_npcs(&settings, &spatial);
         assert_eq!(npcs.factions.len(), again.factions.len());
-        assert!(npcs.factions.iter().zip(&again.factions).all(|(a, b)| a.name == b.name && a.stars == b.stars));
+        assert!(npcs.factions.values().zip(again.factions.values()).all(|(a, b)| a.name == b.name && a.stars == b.stars));
         // Des factions dans la galaxie principale, et dans les autres aussi
-        let main = npcs.factions.iter().filter(|f| f.galaxy == 0).count();
+        let main = npcs.factions.values().filter(|f| f.galaxy == 0).count();
         assert!((NPC_MAIN / 2..=NPC_MAIN).contains(&main), "{main}");
-        assert!(npcs.factions.iter().any(|f| f.galaxy > 0));
+        assert!(npcs.factions.values().any(|f| f.galaxy > 0));
 
         let mut seen = HashSet::new();
-        for f in &npcs.factions {
+        for f in npcs.factions.values() {
             assert!(f.stars.len() >= NPC_MIN_STARS / 2 && f.stars.len() <= NPC_MAX_STARS);
             for &s in &f.stars {
                 // Une étoile n'appartient qu'à une faction, dans sa galaxie
@@ -622,7 +721,7 @@ mod tests {
             assert!(!f.links.is_empty());
         }
         // Les couleurs de deux factions voisines dans la liste diffèrent
-        assert!(npcs.factions.windows(2).all(|w| w[0].color != w[1].color));
+        assert!(npcs.factions.values().collect::<Vec<_>>().windows(2).all(|w| w[0].color != w[1].color));
     }
 
     #[test]
@@ -687,8 +786,10 @@ mod tests {
     #[test]
     fn galaxy_clouds_stay_few() {
         let settings = GameSettings::default();
-        let total: usize = settings.galaxies.iter().enumerate().map(|(gid, g)| cloud_count(gid, g.radius)).sum();
-        assert!(total < 6_000, "{total} nuages");
+        // Seules les galaxies proches de la caméra ont leurs nuages (créés à l'approche)
+        let start = settings.systems[0].center();
+        let total: usize = settings.galaxies.iter().enumerate().filter(|(_, g)| start.distance(g.center()) < CLOUD_REACH).map(|(gid, g)| cloud_count(gid, g.radius)).sum();
+        assert!(total < 6_000, "{total} nuages au depart");
         for (gid, g) in settings.galaxies.iter().enumerate().skip(1) {
             assert!((20..=200).contains(&cloud_count(gid, g.radius)), "galaxie {gid} : {}", cloud_count(gid, g.radius));
         }

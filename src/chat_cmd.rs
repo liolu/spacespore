@@ -113,7 +113,8 @@ pub const COMMAND_HELP: [(&str, &str, &str); 12] = [
 
 /// Ce que l'on peut taper après une commande, selon la position de l'argument.
 fn arguments(command: &str, previous: &[&str], galaxy_kinds: &[String], galaxies: usize) -> Vec<String> {
-    let numbers = || (0..galaxies).map(|n| n.to_string());
+    // (10 000 galaxies : seulement les 100 premières numéros proposés)
+    let numbers = || (0..galaxies.min(100)).map(|n| n.to_string());
     match (command, previous.len()) {
         ("/aller" | "/go", 0) => ["etoile", "planete", "lune", "suivant"].map(String::from).to_vec(),
         ("/aller" | "/go", 1) => {
@@ -458,7 +459,8 @@ mod tests {
         let settings = GameSettings::default();
         assert_eq!(find_galaxy("0", &settings, 5), Ok(0));
         assert_eq!(find_galaxy("maison", &settings, 5), Ok(0));
-        assert!(find_galaxy("9999", &settings, 0).is_err());
+        assert_eq!(find_galaxy("9999", &settings, 0), Ok(9999));
+        assert!(find_galaxy("10000", &settings, 0).is_err());
         assert!(find_galaxy("zzz", &settings, 0).is_err());
         let id = find_galaxy("spirale barree", &settings, 0).unwrap();
         assert_eq!(settings.galaxies[id].kind, GalaxyKind::Barred);

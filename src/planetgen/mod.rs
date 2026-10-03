@@ -119,11 +119,11 @@ mod tests {
         let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
         let a = default_systems(&galaxies, DEFAULT_WORLD_SEED);
         let b = default_systems(&galaxies, DEFAULT_WORLD_SEED);
-        assert_eq!(world_digest(&a, usize::MAX), world_digest(&b, usize::MAX));
+        assert_eq!(world_digest(a.dense(), usize::MAX), world_digest(b.dense(), usize::MAX));
         let c = default_systems(&default_galaxies(7), 7);
-        assert_ne!(world_digest(&a, 3000), world_digest(&c, 3000));
+        assert_ne!(world_digest(a.dense(), 3000), world_digest(c.dense(), 3000));
         // Le parcours n'a rien gardé en mémoire
-        assert!(a.iter().all(|s| !s.planets_cached()));
+        assert!(a.dense().iter().all(|s| !s.planets_cached()));
     }
 
     /// Ressources (phase 8) : tous les astres en ont, l'or est courant, les minerais fictifs rares.
@@ -133,7 +133,7 @@ mod tests {
         let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
         let systems = default_systems(&galaxies, DEFAULT_WORLD_SEED);
         let (mut bodies, mut rocky, mut gold, mut he3, mut fictional) = (0, 0, 0, 0, 0);
-        for sys in systems.iter().take(1500) {
+        for sys in systems.dense().iter().take(1500) {
             for p in sys.planets_uncached().iter() {
                 for r in std::iter::once(&p.resources).chain(p.moons.iter().map(|m| &m.resources)) {
                     bodies += 1;
@@ -161,7 +161,7 @@ mod tests {
         let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
         let systems = default_systems(&galaxies, DEFAULT_WORLD_SEED);
         let mut count = std::collections::HashMap::new();
-        for sys in &systems {
+        for sys in systems.dense() {
             let star = &sys.stars[0];
             *count.entry(star.class).or_insert(0usize) += 1;
             assert!(star.radius > 0.0 && star.radius <= 6_500_000.0, "{}", star.radius);
@@ -170,7 +170,7 @@ mod tests {
             assert_eq!(physics.class, star.class);
             assert!((physics.temperature_k as f32 - star.temperature_k).abs() < 1.0);
         }
-        let share = |c: StarClass| *count.get(&c).unwrap_or(&0) as f64 / systems.len() as f64;
+        let share = |c: StarClass| *count.get(&c).unwrap_or(&0) as f64 / systems.dense().len() as f64;
         assert!(share(StarClass::M) > 0.6 && share(StarClass::G) > 0.05 && share(StarClass::G) < 0.1);
         assert!(share(StarClass::RedGiant) > 0.003 && share(StarClass::WhiteDwarf) > 0.03);
         println!("types : {count:?}");
@@ -180,7 +180,7 @@ mod tests {
     fn cached_planets_match_and_can_be_forgotten() {
         let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
         let mut systems = default_systems(&galaxies, DEFAULT_WORLD_SEED);
-        for sys in systems.iter_mut().step_by(997) {
+        for sys in systems.dense_mut().iter_mut().step_by(997) {
             let fresh = sys.planets_uncached().into_owned();
             assert!(!sys.planets_cached());
             let cached = sys.planets();
@@ -207,15 +207,18 @@ mod tests {
         assert!(!sys.planets_cached(), "planetes explicites : pas un cache");
     }
 
-    /// Mémoire de la liste des systèmes : 68,9 Mo avant la phase 0 (planètes stockées).
+    /// Mémoire de la liste des systèmes : 68,9 Mo avant la phase 0 (planètes stockées) pour
+    /// ~144 000 systèmes, soit ~480 octets chacun ; moins de la moitié par système depuis (il y a
+    /// davantage de galaxies depuis la 0.11).
     #[test]
     fn the_system_list_is_much_lighter() {
         use crate::planetgen::memory::retained_by;
         let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
         let (systems, bytes) = retained_by(|| default_systems(&galaxies, DEFAULT_WORLD_SEED));
-        let per_system = bytes as f64 / systems.len() as f64;
+        let per_system = bytes as f64 / systems.dense().len() as f64;
         println!("liste des systemes : {} octets ({per_system:.0} par systeme)", bytes);
-        assert!(bytes < 68_889_502 / 2, "{bytes} octets");
+        // (avec la table des 10 000 galaxies, quelques octets de plus par système du départ)
+        assert!(per_system < 260.0, "{per_system:.0} octets par systeme ({bytes} en tout)");
         // Un système chargé (planètes, lunes et toute leur chaîne) ne pèse que quelques Ko, et
         // seuls les systèmes proches du vaisseau sont en mémoire
         let (_, one) = retained_by(|| systems[10].planets().len());

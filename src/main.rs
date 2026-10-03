@@ -25,6 +25,7 @@ mod planetgen;
 mod rocks;
 mod scanner;
 mod settings;
+mod systems;
 mod ship;
 mod stats;
 mod suit;
@@ -389,7 +390,9 @@ fn setup_scene(
     commands.spawn((
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
-            far: 4_000_000_000.0 * settings::GALAXY_SCALE,
+            // Les galaxies lointaines vont jusqu'à ~2 G x GALAXY_SCALE du centre : de quoi les voir
+            // de l'autre bout de l'univers
+            far: 12_000_000_000.0 * settings::GALAXY_SCALE,
             ..default()
         }),
 
@@ -641,10 +644,13 @@ fn select_world_target(
     // ── DistantGalaxyCore : depuis la vue d'ensemble (saut entre galaxies),
     //    ou le trou noir de la galaxie où l'on se trouve ────
     let current_gal = current_galaxy(&target.0, &queries, &settings);
-    for (gt, dc) in &queries.dist_core_q {
-        if overview || dc.galaxy_id == current_gal {
-            let center = gt.translation();
-            consider(center, galaxy_tolerance(center, dc.galaxy_id as usize), TargetKind::DistantGalaxyCore(dc.galaxy_id));
+    // (toutes les galaxies, même celles qui ne sont qu'un point : leur trou noir n'existe qu'à
+    // l'approche)
+    for (gid, g) in settings.galaxies.iter().enumerate().skip(1) {
+        let gid = gid as u32;
+        if overview || gid == current_gal {
+            let center = g.center();
+            consider(center, galaxy_tolerance(center, gid as usize), TargetKind::DistantGalaxyCore(gid));
         }
     }
 
@@ -1471,11 +1477,13 @@ fn resolve_target(
                 .map(|gt| gt.translation())
                 .unwrap_or(Vec3::ZERO),
 
+        // (le trou noir d'une galaxie lointaine n'existe qu'à l'approche : sinon, son centre)
         TargetKind::DistantGalaxyCore(id) =>
             q.dist_core_q
                 .iter()
                 .find(|(_, dc)| dc.galaxy_id == id)
                 .map(|(gt, _)| gt.translation())
+                .or_else(|| settings.galaxies.get(id as usize).map(|g| g.center()))
                 .unwrap_or_default(),
     }
 }

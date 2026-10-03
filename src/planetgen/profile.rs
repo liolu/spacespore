@@ -745,7 +745,7 @@ mod tests {
     fn profiles_reflect_the_generated_bodies() {
         let settings = GameSettings::default();
         let deltas = WorldDeltas::new();
-        for (si, sys) in settings.systems.iter().enumerate().take(200) {
+        for (si, sys) in settings.systems.dense().iter().enumerate().take(200) {
             let star = StarProfile::build(si, 0, sys, &sys.stars[0]);
             // Physique réelle : de la naine blanche (0,01 R☉) à la géante (100 R☉)
             assert!((0.005..=101.0).contains(&star.radius_sun), "{}", star.radius_sun);

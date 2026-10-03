@@ -311,7 +311,7 @@ fn update_icons(
     // Capitales proches, les plus proches d'abord
     let mut near: Vec<(f32, usize)> = Vec::new();
     if *zoom != ZoomLevel::Planet && !dialog.open {
-        for (i, f) in npcs.factions.iter().enumerate() {
+        for (&i, f) in npcs.factions.iter() {
             let Some(sys) = f.stars.first().and_then(|&s| settings.systems.get(s)) else { continue };
             let d = cam_pos.distance(sys.center());
             if d <= window {
@@ -322,7 +322,7 @@ fn update_icons(
     }
     for (icon, mut node, mut vis, mut border) in &mut icons {
         let shown = near.get(icon.0).and_then(|&(_, fi)| {
-            let f = &npcs.factions[fi];
+            let f = npcs.factions.get(&fi)?;
             let sys = settings.systems.get(*f.stars.first()?)?;
             let screen = camera.world_to_viewport(cam_tf, sys.center()).ok()?;
             Some((screen, f.color))
@@ -349,7 +349,7 @@ fn update_prompt(
     let Ok((mut t, mut vis)) = prompt.get_single_mut() else { return };
     match targeted_faction(&target, &star_q, &npcs).filter(|_| !dialog.open) {
         Some(fi) => {
-            **t = format!("[E] Parler au PNJ - {}", npcs.factions[fi].name);
+            **t = format!("[E] Parler au PNJ - {}", npcs.factions.get(&fi).map_or("?", |f| f.name.as_str()));
             *vis = Visibility::Visible;
         }
         None => *vis = Visibility::Hidden,
@@ -488,7 +488,7 @@ fn buy_star(dialog: &mut NpcDialog, eco: &mut Economy, npcs: &mut NpcTerritories
     };
     let Some(info) = settings.systems.get(sys) else { return ("Etoile inconnue.".into(), false) };
     let (name, planets) = (info.name.clone(), info.planets().len());
-    if npcs.factions[fi].stars.len() <= economy::MIN_FACTION_STARS {
+    if npcs.factions.get(&fi).is_none_or(|f| f.stars.len() <= economy::MIN_FACTION_STARS) {
         return ("\"Je ne vendrai pas une etoile de plus : c'est tout ce qui nous reste.\"".into(), false);
     }
     if settings.claims.len() >= crate::net::MAX_CLAIMS {
@@ -536,7 +536,7 @@ fn rebuild_dialog(
     }
     let Ok(body) = body_q.get_single() else { return };
     commands.entity(body).despawn_descendants();
-    let Some(faction) = npcs.factions.get(dialog.faction).filter(|_| dialog.open) else { return };
+    let Some(faction) = npcs.factions.get(&dialog.faction).filter(|_| dialog.open) else { return };
     let fi = dialog.faction;
     let tier = eco.tier(fi);
     let qty = QTYS[dialog.qty];

@@ -618,6 +618,11 @@ pub const GALAXY_RADIUS: f32 = 9_000_000.0 * GALAXY_SCALE;
 /// et des centaines de milliers d'entités à afficher). 20 galaxies : une de chaque type (voir
 /// `GalaxyKind`), soit ~160 000 systèmes.
 pub const NUM_DISTANT_GALAXIES: usize = 20;
+/// Galaxies lointaines (ids après les extérieures) : de 1,3 à 10 fois la distance de la plus
+/// lointaine des galaxies extérieures, 10 000 galaxies en tout. De vraies galaxies (systèmes,
+/// trous noirs, trous de ver, factions), générées quand on s'en approche ou qu'on y accède
+/// (`systems::Systems`) ; de très loin, de simples points comme des étoiles.
+pub const NUM_OUTER_GALAXIES: usize = 10_000 - 1 - NUM_DISTANT_GALAXIES;
 
 /// Nombre d'étoiles d'une galaxie, le même intervalle pour toutes : (étoiles de bras, dispersées).
 pub fn star_budget(seed: u32) -> (usize, usize) {
@@ -667,7 +672,7 @@ pub fn default_galaxies(world_seed: u64) -> Vec<GalaxyConfig> {
         let x = (world_seed as u32) ^ ((world_seed >> 32) as u32);
         (pseudo_rand(x ^ 0x6A09_E667) * 65_535.0) as u32 * 2 + (x & 1)
     };
-    let mut galaxies = Vec::with_capacity(NUM_DISTANT_GALAXIES + 1);
+    let mut galaxies = Vec::with_capacity(NUM_DISTANT_GALAXIES + NUM_OUTER_GALAXIES + 1);
     galaxies.push(GalaxyConfig {
         abs_center: Vec3::ZERO,
         tilt: Quat::IDENTITY,
@@ -738,135 +743,245 @@ pub fn default_galaxies(world_seed: u64) -> Vec<GalaxyConfig> {
             scatter_stars: star_budget(gs).1,
         });
     }
+
+    // Galaxies lointaines : au-delà des extérieures, jusqu'à 10 fois la plus lointaine. Une
+    // grille de cellules (~0,7 fois la plus lointaine) couvre la coquille ; chaque galaxie est à un
+    // point tiré dans sa cellule, loin de ses bords : elles ne se touchent jamais, et le placement
+    // se fait en un seul passage (rien de quadratique). Ajoutées après les autres : les galaxies
+    // et les systèmes déjà connus ne changent pas.
+    let farthest = galaxies.iter().map(|g| g.abs_center.length()).fold(0.0f32, f32::max);
+    let (inner, outer) = (farthest * 1.3, farthest * 10.0);
+    let cell = farthest * 0.7;
+    let n_cells = (outer / cell).ceil() as i32;
+    let near_dense = |c: Vec3| galaxies.iter().any(|g| c.distance(g.abs_center) < SPACING * (g.radius + 1.2e10) + cell * 0.2);
+    let mut spots: Vec<(u32, Vec3)> = Vec::new();
+    for x in -n_cells..n_cells {
+        for y in -n_cells..n_cells {
+            for z in -n_cells..n_cells {
+                let k = (((x + 512) as u32) << 20) ^ (((y + 512) as u32) << 10) ^ ((z + 512) as u32);
+                let jitter = |a: u32| 0.2 + 0.6 * pseudo_rand(k.wrapping_mul(2_654_435_761).wrapping_add(a) ^ world_hash);
+                let c = Vec3::new(
+                    (x as f32 + jitter(1)) * cell,
+                    (y as f32 + jitter(2)) * cell,
+                    (z as f32 + jitter(3)) * cell,
+                );
+                let d = c.length();
+                if d < inner || d > outer || near_dense(c) {
+                    continue;
+                }
+                spots.push((k, c));
+            }
+        }
+    }
+    // Les cellules retenues : tirées au sort (toujours les mêmes pour la même graine), puis
+    // rangées de la plus proche à la plus lointaine (les numéros croissent vers l'extérieur)
+    spots.sort_by_key(|(k, _)| (pseudo_rand(k ^ world_hash ^ 0x0BAD_5EED) * 4_000_000_000.0) as u64);
+    spots.truncate(NUM_OUTER_GALAXIES);
+    spots.sort_by(|a, b| a.1.length().total_cmp(&b.1.length()));
+    for (gi, (_, center)) in spots.into_iter().enumerate() {
+        let gs = gi as u32 + 700_000 + world_hash % 90_000;
+        let rk = |k: u32| pseudo_rand(gs * 13 + k);
+        let radius = (1_300_000.0 + (rk(7) * 0.6 + rk(27) * 0.4).powf(1.3) * 6_000_000.0) * GALAXY_SCALE;
+        galaxies.push(GalaxyConfig {
+            abs_center: center,
+            tilt: Quat::from_euler(EulerRot::XYZ, (rk(13) - 0.5) * 1.5, rk(15) * tau, (rk(17) - 0.5) * 1.0),
+            radius,
+            num_arms: 2 + (rk(9) * 5.0) as usize,
+            twist: 1.5 + rk(11) * 7.5,
+            kind: crate::galaxy_shape::GalaxyKind::for_index(NUM_DISTANT_GALAXIES + gi, world_hash),
+            core_radius: (10_000.0 + rk(23) * 20_000.0) * GALAXY_SIZE_SCALE,
+            seed: gs * 1000,
+            arm_stars: star_budget(gs).0,
+            scatter_stars: star_budget(gs).1,
+        });
+    }
     galaxies
 }
 
-pub(crate) fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> Vec<StarSystemConfig> {
-    const NUM_ARMS: usize = 5;
-    // Galaxie principale : 5 000 à 10 000 étoiles d'après la graine du monde
-    let (arm_stars, scatter_stars) = star_budget(((world_seed as u32) ^ ((world_seed >> 32) as u32)).wrapping_mul(0x9E37_79B1) ^ 0x4D41_494E);
-    const ARM_TWIST: f32 = 5.0;
-    let tau = std::f32::consts::TAU;
-    let gr = GALAXY_RADIUS;
+/// Systèmes de l'univers : notre galaxie et les extérieures tout de suite, les lointaines à la
+/// demande (`systems::Systems`).
+pub(crate) fn default_systems(galaxies: &[GalaxyConfig], world_seed: u64) -> crate::systems::Systems {
+    crate::systems::Systems::new(galaxies, world_seed, 1 + NUM_DISTANT_GALAXIES)
+}
 
-    let prefixes = ["HD", "GJ", "HR", "TYC", "HIP", "NGC", "IC", "SAO"];
-    let star_names = [
-        "Sol", "Vega", "Altair", "Sirius", "Kepler",
-        "Proxima", "Rigel", "Deneb", "Polaris", "Antares",
-        "Aldebaran", "Betelgeuse", "Capella", "Fomalhaut", "Arcturus",
-        "Spica", "Regulus", "Achernar", "Canopus", "Procyon",
-        "Mira", "Castor", "Pollux", "Bellatrix", "Shaula",
-        "Toliman", "Hadar", "Mimosa", "Gacrux", "Acrux",
-        "Wezen", "Sargas", "Kaus", "Avior", "Menkalinan",
-        "Atria", "Alhena", "Mirfak", "Saiph", "Alnitak",
-        "Alnilam", "Mintaka", "Rasalhague", "Schedar", "Alphard",
-    ];
-    let gen_name = |idx: usize| -> String {
-        if idx < star_names.len() {
-            star_names[idx].to_string()
-        } else {
-            let pi = idx % prefixes.len();
-            format!("{}-{}", prefixes[pi], idx * 7 + 1031)
-        }
-    };
+const SYSTEM_PREFIXES: [&str; 8] = ["HD", "GJ", "HR", "TYC", "HIP", "NGC", "IC", "SAO"];
+const STAR_NAMES: [&str; 45] = [
+    "Sol", "Vega", "Altair", "Sirius", "Kepler",
+    "Proxima", "Rigel", "Deneb", "Polaris", "Antares",
+    "Aldebaran", "Betelgeuse", "Capella", "Fomalhaut", "Arcturus",
+    "Spica", "Regulus", "Achernar", "Canopus", "Procyon",
+    "Mira", "Castor", "Pollux", "Bellatrix", "Shaula",
+    "Toliman", "Hadar", "Mimosa", "Gacrux", "Acrux",
+    "Wezen", "Sargas", "Kaus", "Avior", "Menkalinan",
+    "Atria", "Alhena", "Mirfak", "Saiph", "Alnitak",
+    "Alnilam", "Mintaka", "Rasalhague", "Schedar", "Alphard",
+];
+
+/// Fabrique les systèmes d'une galaxie d'après la graine du monde (au départ ou à la demande).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SystemMaker {
+    world_seed: u64,
+}
+
+impl SystemMaker {
+    pub fn new(world_seed: u64) -> Self {
+        Self { world_seed }
+    }
 
     // Tout ce qui vit dans un système (étoile, planètes, lunes) dépend de la graine du monde
     // (les positions suivent la forme des galaxies). Rien d'autre que + - * / ici : le résultat
     // doit être identique sur toutes les machines (empreinte du monde en multijoueur).
-    let sd = ((world_seed as u32) ^ ((world_seed >> 32) as u32)).wrapping_mul(0x9E37_79B1);
-    let mixed = |x: u32| x.wrapping_add(sd);
+    fn mixed(&self, x: u32) -> u32 {
+        let sd = ((self.world_seed as u32) ^ ((self.world_seed >> 32) as u32)).wrapping_mul(0x9E37_79B1);
+        x.wrapping_add(sd)
+    }
 
     // Échelle G du système : 600 000 à 1 500 000, au moins 100 fois ses planètes (4 200 à 14 000).
-    // L'étoile elle-même a un type tiré au sort (naine rouge, G, géante… voir `planetgen::star`) :
-    // une G garde ce rayon, les autres ont les proportions réelles. Son rang dans son type (masse)
-    // reprend le même tirage.
-    // Aucun type imposé : le système de départ est tiré comme les autres
-    let make_star = |seed: u32| -> StarConfig {
-        let seed = mixed(seed);
+    // L'étoile a un type tiré au sort (voir `planetgen::star`) : une G garde ce rayon, les autres
+    // ont les proportions réelles. Aucun type imposé : le système de départ est tiré comme les autres.
+    fn make_star(&self, seed: u32) -> StarConfig {
+        let seed = self.mixed(seed);
         let r_f = pseudo_rand(seed.wrapping_mul(5).wrapping_add(31));
         let g_radius = 600_000.0 + r_f * 900_000.0;
         StarConfig::from_physics(&StarPhysics::generate(seed as u64, r_f as f64, None), g_radius)
-    };
-
-    // Planètes et lunes : seulement leur génome, elles sont recalculées à la demande
-    // (`planetgen::genome`). `sb` : base des graines de planètes (doit rester loin de u32::MAX).
-    let genome = |seed: u32, sb: u32| SystemGenome { seed: mixed(seed), planet_base: mixed(sb) };
-
-    let distant_count: usize = galaxies.iter().skip(1).map(|g| g.arm_stars + g.scatter_stars).sum();
-    let mut systems = Vec::with_capacity(arm_stars + scatter_stars + distant_count);
-
-    // ── Bras spiraux ──────────────────────────────────────────────────
-    for i in 0..arm_stars {
-        let s = i as u32 + 100;
-        let arm = i % NUM_ARMS;
-        let arm_base = arm as f32 * tau / NUM_ARMS as f32;
-
-        let t = pseudo_rand(s * 7 + 3);
-        let r = t * t * gr;
-        // Pas d'étoile dans le trou noir central ni son disque
-        if r < CORE_EXCLUSION { continue; }
-
-        let spiral = arm_base + (r / gr) * ARM_TWIST;
-        let width = 0.9 * (1.0 - r / gr * 0.5);
-        let scatter = (pseudo_rand(s * 7 + 5) - 0.5) * width;
-        let theta = spiral + scatter;
-
-        let x = r * theta.cos();
-        let z = r * theta.sin();
-        let thickness = 60000.0 * GALAXY_SCALE * (1.0 - r / gr * 0.7);
-        let y = (pseudo_rand(s * 7 + 7) - 0.5) * thickness;
-
-        systems.push(StarSystemConfig::generated(gen_name(i), [x, y, z], 0, make_star(s), genome(s, (s + 1) * 100)));
     }
 
-    // ── Étoiles dispersées entre les bras ─────────────────────────────
-    for i in 0..scatter_stars {
-        let s = (arm_stars + i) as u32 + 100;
-        let t = pseudo_rand(s * 7 + 3);
-        let r = t * t * gr * 0.85;
-        if r < CORE_EXCLUSION { continue; }
-        let theta = pseudo_rand(s * 7 + 5) * tau;
-        let x = r * theta.cos();
-        let z = r * theta.sin();
-        let y = (pseudo_rand(s * 7 + 7) - 0.5) * 3000.0 * GALAXY_SCALE;
-
-        systems.push(StarSystemConfig::generated(
-            gen_name(arm_stars + i), [x, y, z], 0, make_star(s), genome(s, (s + 1) * 100),
-        ));
+    // Planètes et lunes : seulement leur génome, recalculées à la demande (`planetgen::genome`).
+    // `sb` : base des graines de planètes (doit rester loin de u32::MAX).
+    fn genome(&self, seed: u32, sb: u32) -> SystemGenome {
+        SystemGenome { seed: self.mixed(seed), planet_base: self.mixed(sb) }
     }
 
-    // ── Galaxies extérieures : mêmes systèmes (étoile + planètes) ─────
-    for (gid, gal) in galaxies.iter().enumerate().skip(1) {
+    /// Notre galaxie (en tête de `galaxies`) et les galaxies extérieures, comme avant la 0.11 :
+    /// numéros contigus. Renvoie aussi la plage de numéros de chaque galaxie.
+    pub fn dense(&self, galaxies: &[GalaxyConfig]) -> (Vec<StarSystemConfig>, Vec<std::ops::Range<usize>>) {
+        const NUM_ARMS: usize = 5;
+        const ARM_TWIST: f32 = 5.0;
+        let world_seed = self.world_seed;
+        // Galaxie principale : 5 000 à 10 000 étoiles d'après la graine du monde
+        let (arm_stars, scatter_stars) = star_budget(((world_seed as u32) ^ ((world_seed >> 32) as u32)).wrapping_mul(0x9E37_79B1) ^ 0x4D41_494E);
+        let tau = std::f32::consts::TAU;
+        let gr = GALAXY_RADIUS;
+        let gen_name = |idx: usize| -> String {
+            if idx < STAR_NAMES.len() {
+                STAR_NAMES[idx].to_string()
+            } else {
+                let pi = idx % SYSTEM_PREFIXES.len();
+                format!("{}-{}", SYSTEM_PREFIXES[pi], idx * 7 + 1031)
+            }
+        };
+        let distant_count: usize = galaxies.iter().skip(1).map(|g| g.arm_stars + g.scatter_stars).sum();
+        let mut systems = Vec::with_capacity(arm_stars + scatter_stars + distant_count);
+        let mut ranges = Vec::with_capacity(galaxies.len());
+        if galaxies.is_empty() {
+            return (systems, ranges);
+        }
+
+        // ── Bras spiraux ──────────────────────────────────────────────────
+        for i in 0..arm_stars {
+            let s = i as u32 + 100;
+            let arm = i % NUM_ARMS;
+            let arm_base = arm as f32 * tau / NUM_ARMS as f32;
+
+            let t = pseudo_rand(s * 7 + 3);
+            let r = t * t * gr;
+            // Pas d'étoile dans le trou noir central ni son disque
+            if r < CORE_EXCLUSION { continue; }
+
+            let spiral = arm_base + (r / gr) * ARM_TWIST;
+            let width = 0.9 * (1.0 - r / gr * 0.5);
+            let scatter = (pseudo_rand(s * 7 + 5) - 0.5) * width;
+            let theta = spiral + scatter;
+
+            let x = r * theta.cos();
+            let z = r * theta.sin();
+            let thickness = 60000.0 * GALAXY_SCALE * (1.0 - r / gr * 0.7);
+            let y = (pseudo_rand(s * 7 + 7) - 0.5) * thickness;
+
+            systems.push(StarSystemConfig::generated(gen_name(i), [x, y, z], 0, self.make_star(s), self.genome(s, (s + 1) * 100)));
+        }
+
+        // ── Étoiles dispersées entre les bras ─────────────────────────────
+        for i in 0..scatter_stars {
+            let s = (arm_stars + i) as u32 + 100;
+            let t = pseudo_rand(s * 7 + 3);
+            let r = t * t * gr * 0.85;
+            if r < CORE_EXCLUSION { continue; }
+            let theta = pseudo_rand(s * 7 + 5) * tau;
+            let x = r * theta.cos();
+            let z = r * theta.sin();
+            let y = (pseudo_rand(s * 7 + 7) - 0.5) * 3000.0 * GALAXY_SCALE;
+
+            systems.push(StarSystemConfig::generated(
+                gen_name(arm_stars + i), [x, y, z], 0, self.make_star(s), self.genome(s, (s + 1) * 100),
+            ));
+        }
+        ranges.push(0..systems.len());
+
+        // ── Galaxies extérieures : mêmes systèmes (étoile + planètes) ─────
+        for (gid, gal) in galaxies.iter().enumerate().skip(1) {
+            let start = systems.len();
+            let shape = gal.shape();
+            let total = gal.arm_stars + gal.scatter_stars;
+            let on_structure = (total as f32 * shape.structure_share) as usize;
+            let mut local_idx = 0usize;
+            for i in 0..total {
+                let s = i as u32 + gal.seed;
+                let mut rng = crate::galaxy_shape::Rng::new(s);
+                let local = if i < on_structure {
+                    shape.sample_structure(&mut rng, 0.0)
+                } else {
+                    shape.sample_background(&mut rng)
+                };
+                // Pas de système dans le trou noir central
+                if local.length() < CORE_EXCLUSION { continue; }
+                let world = gal.abs_center + gal.tilt * local;
+
+                let global_idx = systems.len() as u32;
+                let pi = local_idx % SYSTEM_PREFIXES.len();
+                systems.push(StarSystemConfig::generated(
+                    format!("G{}-{}-{}", gid, SYSTEM_PREFIXES[pi], local_idx * 7 + 1031),
+                    [world.x, world.y, world.z],
+                    gid as u32,
+                    self.make_star(s),
+                    self.genome(s, (global_idx + 1) * 100),
+                ));
+                local_idx += 1;
+            }
+            ranges.push(start..systems.len());
+        }
+        (systems, ranges)
+    }
+
+    /// Systèmes d'une galaxie lointaine, générée à la demande : le système `i` de son budget
+    /// d'étoiles porte le numéro `base + i` (vide s'il tombe dans le trou noir central).
+    pub fn lazy(&self, gid: u32, gal: &GalaxyConfig, base: usize) -> Vec<Option<StarSystemConfig>> {
         let shape = gal.shape();
         let total = gal.arm_stars + gal.scatter_stars;
         let on_structure = (total as f32 * shape.structure_share) as usize;
-        let mut local_idx = 0usize;
-        for i in 0..total {
-            let s = i as u32 + gal.seed;
-            let mut rng = crate::galaxy_shape::Rng::new(s);
-            let local = if i < on_structure {
-                shape.sample_structure(&mut rng, 0.0)
-            } else {
-                shape.sample_background(&mut rng)
-            };
-            // Pas de système dans le trou noir central
-            if local.length() < CORE_EXCLUSION { continue; }
-            let world = gal.abs_center + gal.tilt * local;
-
-            let global_idx = systems.len() as u32;
-            let pi = local_idx % prefixes.len();
-            systems.push(StarSystemConfig::generated(
-                format!("G{}-{}-{}", gid, prefixes[pi], local_idx * 7 + 1031),
-                [world.x, world.y, world.z],
-                gid as u32,
-                make_star(s),
-                genome(s, (global_idx + 1) * 100),
-            ));
-            local_idx += 1;
-        }
+        (0..total)
+            .map(|i| {
+                let s = i as u32 + gal.seed;
+                let mut rng = crate::galaxy_shape::Rng::new(s);
+                let local = if i < on_structure { shape.sample_structure(&mut rng, 0.0) } else { shape.sample_background(&mut rng) };
+                if local.length() < CORE_EXCLUSION {
+                    return None;
+                }
+                let world = gal.abs_center + gal.tilt * local;
+                // Base des graines de planètes : tirée du numéro (loin de u32::MAX)
+                let idx = (base + i) as u64;
+                let sb = ((idx.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 33) % 4_000_000_000) as u32 + 100;
+                let pi = i % SYSTEM_PREFIXES.len();
+                Some(StarSystemConfig::generated(
+                    format!("G{}-{}-{}", gid, SYSTEM_PREFIXES[pi], i * 7 + 1031),
+                    [world.x, world.y, world.z],
+                    gid,
+                    self.make_star(s),
+                    self.genome(s, sb),
+                ))
+            })
+            .collect()
     }
-
-    systems
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -957,7 +1072,7 @@ pub struct GameSettings {
     #[serde(skip)]                            pub temp_identity: bool,
 
     // ── Systèmes stellaires (régénérés au lancement, jamais sauvegardés) ─
-    #[serde(skip)] pub systems: Vec<StarSystemConfig>,
+    #[serde(skip)] pub systems: crate::systems::Systems,
     /// Galaxies (index 0 = principale), régénérées au lancement.
     #[serde(skip)] pub galaxies: Vec<GalaxyConfig>,
 
@@ -1230,6 +1345,8 @@ use std::collections::HashMap;
 #[derive(Resource, Default)]
 pub struct SystemSpatialIndex {
     cells: HashMap<(i32, i32), Vec<usize>>,
+    /// Galaxies lointaines ajoutées (générées après le départ).
+    far: std::collections::HashSet<u32>,
 }
 
 impl SystemSpatialIndex {
@@ -1244,10 +1361,25 @@ impl SystemSpatialIndex {
     /// (relatives à l'origine flottante) et les convertissent.
     pub fn build(settings: &GameSettings) -> Self {
         let mut cells: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
-        for (si, sys) in settings.systems.iter().enumerate() {
+        for (si, sys) in settings.systems.iter() {
             cells.entry(Self::cell_of(sys.abs_center().as_dvec3())).or_default().push(si);
         }
-        Self { cells }
+        Self { cells, far: std::collections::HashSet::new() }
+    }
+
+    /// Ajoute les systèmes d'une galaxie lointaine qui vient d'être générée.
+    pub fn add_galaxy(&mut self, gid: u32, systems: &[(usize, &StarSystemConfig)]) {
+        if !self.far.insert(gid) {
+            return;
+        }
+        for &(si, sys) in systems {
+            self.cells.entry(Self::cell_of(sys.abs_center().as_dvec3())).or_default().push(si);
+        }
+    }
+
+    /// Galaxies lointaines déjà dans l'index.
+    pub fn has_galaxy(&self, gid: u32) -> bool {
+        self.far.contains(&gid)
     }
 
     /// Système le plus proche de `pos`, en explorant la grille par anneaux croissants.
@@ -1296,6 +1428,51 @@ impl SystemSpatialIndex {
 mod tests {
     use super::*;
 
+    /// 10 000 galaxies : les lointaines après les autres (rien de déjà connu ne change), de 1,3 à
+    /// 10 fois la plus lointaine des extérieures, jamais en contact ; leurs systèmes ont des
+    /// numéros fixes et ne sont générés qu'à la demande.
+    #[test]
+    fn ten_thousand_galaxies_generated_on_demand() {
+        let t = std::time::Instant::now();
+        let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
+        assert_eq!(galaxies.len(), 10_000);
+        let farthest = galaxies[..=NUM_DISTANT_GALAXIES].iter().map(|g| g.abs_center.length()).fold(0.0f32, f32::max);
+        for g in &galaxies[NUM_DISTANT_GALAXIES + 1..] {
+            let d = g.abs_center.length();
+            assert!(d >= farthest * 1.29 && d <= farthest * 10.01, "{d} pour {farthest}");
+        }
+        // Jamais en contact (grille : on vérifie chaque galaxie contre ses voisines proches)
+        let mut sorted: Vec<&GalaxyConfig> = galaxies.iter().collect();
+        sorted.sort_by(|a, b| a.abs_center.x.total_cmp(&b.abs_center.x));
+        for (i, a) in sorted.iter().enumerate() {
+            for b in sorted[i + 1..].iter().take_while(|b| b.abs_center.x - a.abs_center.x < 3.0e10) {
+                assert!(a.abs_center.distance(b.abs_center) > a.radius + b.radius, "galaxies qui se touchent");
+            }
+        }
+        // Mêmes galaxies pour la même graine
+        let again = default_galaxies(DEFAULT_WORLD_SEED);
+        assert!(galaxies.iter().zip(&again).all(|(a, b)| a.abs_center == b.abs_center));
+        // Les systèmes : notre galaxie et les extérieures tout de suite, les autres à la demande
+        let systems = default_systems(&galaxies, DEFAULT_WORLD_SEED);
+        assert!(t.elapsed().as_secs_f32() < 5.0, "{:?}", t.elapsed());
+        assert!(systems.len() > 50_000_000, "{}", systems.len());
+        assert_eq!(systems.loaded_far_galaxies().len(), 0);
+        let far = 5_000u32;
+        let range = systems.galaxy_range(far);
+        assert!(range.start > systems.dense().len() && range.len() > 4_000);
+        // Un accès génère la galaxie ; ses numéros ne dépendent pas de l'ordre des visites
+        let some = (range.start..range.end).find_map(|i| systems.get(i).map(|s| (i, s.name.clone()))).unwrap();
+        assert!(systems.is_loaded(far));
+        assert_eq!(systems.loaded_far_galaxies(), vec![far]);
+        let other = default_systems(&galaxies, DEFAULT_WORLD_SEED);
+        other.load(9_000);
+        assert_eq!(other.get(some.0).map(|s| s.name.clone()), Some(some.1));
+        assert!(other.get(some.0).is_some_and(|s| s.galaxy_id == far));
+        // Le parcours ne donne que les systèmes générés, avec leur numéro
+        assert!(systems.iter().all(|(i, s)| systems.peek(i).is_some_and(|p| p.name == s.name)));
+        assert!(systems.iter().count() < systems.dense().len() + 12_000);
+    }
+
     #[test]
     fn galaxies_do_not_touch_each_other() {
         let g = default_galaxies(DEFAULT_WORLD_SEED);
@@ -1317,7 +1494,7 @@ mod tests {
         let systems = default_systems(&galaxies, DEFAULT_WORLD_SEED);
         let (mut hot, mut temperate, mut cold) = (0, 0, 0);
         let mut kinds = std::collections::HashMap::new();
-        for sys in systems.iter().take(3000) {
+        for sys in systems.dense().iter().take(3000) {
             let star = &sys.stars[0];
             // Échelle G du système (rayon d'une G) : la taille réelle de l'étoile dépend de son type
             let scale = star.scale();
@@ -1377,7 +1554,7 @@ mod tests {
         let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
         let a = default_systems(&galaxies, 42);
         let b = default_systems(&galaxies, 43);
-        let different = a.iter().zip(&b).take(300).filter(|(x, y)| {
+        let different = a.dense().iter().zip(b.dense()).take(300).filter(|(x, y)| {
             x.stars[0].radius.to_bits() != y.stars[0].radius.to_bits()
                 || x.planets().len() != y.planets().len()
                 || x.planets()[0].radius.to_bits() != y.planets()[0].radius.to_bits()
@@ -1420,7 +1597,7 @@ mod tests {
         let a = default_systems(&galaxies, DEFAULT_WORLD_SEED);
         let b = default_systems(&galaxies, DEFAULT_WORLD_SEED);
         assert_eq!(a.len(), b.len());
-        for (x, y) in a.iter().zip(&b).take(500) {
+        for (x, y) in a.dense().iter().zip(b.dense()).take(500) {
             assert_eq!(x.planets().len(), y.planets().len());
             for (p, q) in x.planets().iter().zip(y.planets()) {
                 assert_eq!(p.radius.to_bits(), q.radius.to_bits());
@@ -1430,4 +1607,5 @@ mod tests {
         }
     }
 }
+
 

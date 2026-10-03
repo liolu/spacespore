@@ -279,7 +279,12 @@ fn run_stats_commands(
             net.notify("/stats : galaxie actuelle ; /stats <n> : galaxie n ; /stats tout : tout l'univers. F3 : masquer.", now);
             continue;
         };
-        let systems: Vec<StarSystemConfig> = settings.systems.iter().filter(|s| filter.map_or(true, |g| s.galaxy_id == g)).cloned().collect();
+        // Une galaxie : tous ses systèmes (générés si besoin) ; tout l'univers : les systèmes déjà
+        // générés (notre galaxie, les extérieures et les lointaines visitées)
+        let systems: Vec<StarSystemConfig> = match filter {
+            Some(g) => settings.systems.in_galaxy(g).into_iter().map(|(_, s)| s.clone()).collect(),
+            None => settings.systems.iter().map(|(_, s)| s.clone()).collect(),
+        };
         net.notify(&format!("Statistiques de {title} : {} systemes, calcul en cours...", systems.len()), now);
         let t = title.clone();
         let task = AsyncComputeTaskPool::get().spawn(async move { report(&t, &systems) });
@@ -336,7 +341,7 @@ mod tests {
     #[test]
     fn galaxy_report_counts_everything() {
         let settings = GameSettings::default();
-        let systems: Vec<StarSystemConfig> = settings.systems.iter().filter(|s| s.galaxy_id == 0).cloned().collect();
+        let systems: Vec<StarSystemConfig> = settings.systems.dense().iter().filter(|s| s.galaxy_id == 0).cloned().collect();
         let start = std::time::Instant::now();
         let text = report("galaxie 0", &systems);
         let secs = start.elapsed().as_secs_f64();

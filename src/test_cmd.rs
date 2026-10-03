@@ -206,7 +206,8 @@ fn match_in(sys: &StarSystemConfig, si: usize, family: Family, kind: &str) -> Re
 /// Cherche le premier astre du type après le système `after` (en faisant le tour).
 /// `Err` : type inconnu ; `Ok(None)` : rien dans les `limit` systèmes examinés.
 pub fn find(settings: &GameSettings, family: Family, kind: &str, after: usize, limit: usize) -> Result<Option<BodyId>, ()> {
-    let n = settings.systems.len();
+    // Dans notre galaxie et les extérieures (les lointaines ne sont générées qu'à l'approche)
+    let n = settings.systems.dense().len();
     if n == 0 {
         return Ok(None);
     }
@@ -340,7 +341,7 @@ fn run_go_commands(
             net.notify(&format!("Type inconnu \"{kind}\". Types de {} : {types}.", describe(family)), now);
             continue;
         }
-        let n = settings.systems.len();
+        let n = settings.systems.dense().len();
         if n == 0 {
             continue;
         }
@@ -382,7 +383,7 @@ fn finish_search(
     match result {
         Ok(Some(id)) => start_travel(id, family, &kind, &settings, &mut state, &mut target, &mut net, &mut ship_q, now),
         Ok(None) => {
-            state.last = Some((family, kind.clone(), (after + SEARCH_LIMIT) % settings.systems.len().max(1)));
+            state.last = Some((family, kind.clone(), (after + SEARCH_LIMIT) % settings.systems.dense().len().max(1)));
             net.notify(&format!("Aucune {} \"{kind}\" dans les {SEARCH_LIMIT} systemes suivants. /aller suivant pour continuer.", describe(family)), now);
         }
         Err(()) => net.notify(&format!("Type inconnu \"{kind}\"."), now),

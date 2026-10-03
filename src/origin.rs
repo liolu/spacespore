@@ -11,7 +11,7 @@
 
 use bevy::prelude::*;
 
-use crate::planet::{DistantGalaxyCore, FarStar, GalacticCore};
+use crate::planet::{DistantGalaxyCore, FarStar, GalacticCore, GalaxyPoint};
 use crate::settings::{origin, set_origin, GameSettings};
 use crate::ship::Ship;
 use crate::surface::Surface;
@@ -40,7 +40,7 @@ fn rebase_origin(
     settings: Res<GameSettings>,
     mut surface: ResMut<Surface>,
     mut roots: Query<
-        (&mut Transform, &mut GlobalTransform, Option<&FarStar>, Option<&GalacticCore>, Option<&DistantGalaxyCore>, Has<Ship>),
+        (&mut Transform, &mut GlobalTransform, Option<&FarStar>, Option<&GalacticCore>, Option<&DistantGalaxyCore>, Has<Ship>, Option<&GalaxyPoint>),
         (Without<Parent>, Without<Node>, Without<Camera2d>),
     >,
     mut cam_q: Query<&mut CameraController>,
@@ -57,7 +57,7 @@ fn rebase_origin(
     set_origin(origin() + delta.as_dvec3());
     epoch.0 = epoch.0.wrapping_add(1);
 
-    for (mut tf, mut gt, far_star, core, distant_core, _) in &mut roots {
+    for (mut tf, mut gt, far_star, core, distant_core, _, point) in &mut roots {
         // Les positions qui viennent des réglages sont recalculées exactement (pas de dérive)
         let exact = if let Some(fs) = far_star {
             settings.systems.get(fs.sys_idx).map(|s| s.center())
@@ -65,6 +65,8 @@ fn rebase_origin(
             settings.galaxies.first().map(|g| g.center())
         } else if let Some(dc) = distant_core {
             settings.galaxies.get(dc.galaxy_id as usize).map(|g| g.center())
+        } else if let Some(p) = point {
+            settings.galaxies.get(p.galaxy_id as usize).map(|g| g.center())
         } else {
             None
         };
