@@ -407,7 +407,9 @@ fn cloud_count(galaxy_id: usize, radius: f32) -> usize {
     if galaxy_id == 0 {
         CLOUDS_MAIN
     } else {
-        (20.0 + radius / 100_000.0) as usize
+        // Indépendant de l'échelle des distances : avant, ce décompte grossissait avec elle (des
+        // dizaines de milliers de nuages par galaxie, recalculés à chaque mouvement de caméra)
+        (20.0 + radius / (50_000.0 * crate::settings::GALAXY_SCALE)) as usize
     }
 }
 
@@ -681,4 +683,14 @@ mod tests {
         assert!(cloud_fade(400_000.0, size, (CLOUD_FADE_START + CLOUD_FADE_END) / 2.0) < 1.0);
     }
 
+    /// Les nuages restent peu nombreux, quelle que soit l'échelle des distances (performances).
+    #[test]
+    fn galaxy_clouds_stay_few() {
+        let settings = GameSettings::default();
+        let total: usize = settings.galaxies.iter().enumerate().map(|(gid, g)| cloud_count(gid, g.radius)).sum();
+        assert!(total < 6_000, "{total} nuages");
+        for (gid, g) in settings.galaxies.iter().enumerate().skip(1) {
+            assert!((20..=200).contains(&cloud_count(gid, g.radius)), "galaxie {gid} : {}", cloud_count(gid, g.radius));
+        }
+    }
 }
