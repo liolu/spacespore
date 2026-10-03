@@ -341,6 +341,10 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   lointaines, trous de ver, galaxies...), utilisee par `select_world_target` et `draw_body_markers` (un cercle
   par astre cliquable, fondu 0,2 s, couleur par type `marker_color`, cible en jaune, 60 etoiles lointaines au
   plus, rien autour d'un astre deja grand a l'ecran ; groupe de gizmos par defaut, pas `IndicatorGizmos`).
+  C7 chargement : `planet::system_to_load` = le systeme de la cible (`target_system`, trou de ver compris), charge
+  tout de suite ou que soit le vaisseau, message « Systeme X charge » ; sans systeme (trou noir, galaxie) on garde
+  celui ou l'on est tant qu'on y est. Plus de chargement au plus proche ni de recherche large. Le verrou du zoom 1
+  (pas d'autre systeme) est dans `clickables` (plus de `lock_system_at_planet_zoom`, qui annulait `/aller`).
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

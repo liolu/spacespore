@@ -303,7 +303,6 @@ fn main() {
                 setup_fps_display,
             ),
         )
-        .add_systems(PostUpdate, lock_system_at_planet_zoom)
 
         // ── Update ──────────────────────────────────────────────────────
         .add_systems(
@@ -540,8 +539,8 @@ fn screen_radius(camera: &Camera, camera_transform: &GlobalTransform, viewport: 
 }
 
 /// Tous les astres cliquables maintenant (C6) : une seule règle pour le clic et pour les cercles.
-/// Même zoom permis (`can_navigate_to`), mêmes distances de clic ; rien pendant un séjour sur un
-/// astre ou un voyage en trou de ver (le clic y est ignoré, l'appelant le vérifie).
+/// Même zoom permis (`can_navigate_to`), mêmes distances de clic, pas d'autre système au zoom 1 ;
+/// rien pendant un séjour sur un astre ou un voyage en trou de ver (l'appelant le vérifie).
 #[allow(clippy::too_many_arguments)]
 fn clickables(
     camera: &Camera,
@@ -552,11 +551,27 @@ fn clickables(
     settings: &GameSettings,
     zoom: &ZoomLevel,
     current_gal: u32,
+    current_sys: Option<usize>,
 ) -> Vec<Clickable> {
     let mut out = Vec::new();
+    // Au zoom 1 (< 10 000), on ne sort pas du système chargé en cliquant
+    let loaded_star = |id: usize| queries.star_q.iter().any(|(_, s)| s.0 == id);
+    let leaves = |kind: &TargetKind| -> bool {
+        let Some(cur) = current_sys.filter(|_| *zoom == ZoomLevel::Planet) else { return false };
+        let sys = match *kind {
+            TargetKind::Planet(id) => id / 1000,
+            TargetKind::Moon(p, _) => p / 1000,
+            TargetKind::Asteroid(k) => k.sys as usize,
+            TargetKind::Star(id) => star_parts(id, loaded_star(id)).0,
+            TargetKind::WormholeMouth(si) => si,
+            TargetKind::GalacticCore | TargetKind::DistantGalaxyCore(_) => return true,
+            _ => return false,
+        };
+        sys != cur
+    };
     let mut add = |position: Vec3, tolerance: f32, size: f32, kind: TargetKind| {
         // Un objet que ce zoom ne permet pas de cibler ne doit pas voler le clic à une galaxie
-        if !zoom.can_navigate_to(&kind) {
+        if !zoom.can_navigate_to(&kind) || leaves(&kind) {
             return;
         }
         // Derrière la caméra : pas de clic
@@ -707,6 +722,7 @@ fn select_world_target(
     time: Res<Time>,
     mut net: ResMut<Net>,
     travel: Res<wormhole::WormholeTravel>,
+    spawned: Res<planet::SpawnedSystems>,
 ) {
     if !buttons.just_pressed(MouseButton::Left) {
         return;
@@ -732,7 +748,7 @@ fn select_world_target(
     let current_gal = current_galaxy(&target.0, &queries, &settings);
     // La règle « cliquable » est la même que celle des cercles (`clickables`)
     let mut best: Option<(f32, TargetKind)> = None;
-    for c in clickables(camera, camera_transform, &viewport, ctrl_dist, &queries, &settings, &zoom, current_gal) {
+    for c in clickables(camera, camera_transform, &viewport, ctrl_dist, &queries, &settings, &zoom, current_gal, spawned.0.iter().next().copied()) {
         let d = c.screen.distance(viewport.to_window(cursor));
         if d <= c.tolerance && best.map_or(true, |(b, _)| d < b) {
             best = Some((d, c.kind));
@@ -814,33 +830,6 @@ pub(crate) fn target_system(
     }
 }
 
-/// Au zoom 1 (< 10 000), on ne peut pas sortir du système courant :
-/// toute nouvelle cible appartenant à un autre système est annulée.
-fn lock_system_at_planet_zoom(
-    mut target: ResMut<CameraTarget>,
-    zoom: Res<ZoomLevel>,
-    spawned: Res<planet::SpawnedSystems>,
-    star_q: Query<&StarId, With<StarRoot>>,
-    mut previous: Local<Option<TargetKind>>,
-) {
-    if target.is_changed() && *zoom == ZoomLevel::Planet {
-        if let Some(&current_sys) = spawned.0.iter().next() {
-            let leaves_system = match target_system(&target.0, &star_q) {
-                Some(Some(si)) => si != current_sys,
-                Some(None) => true,
-                None => false,
-            };
-            if leaves_system {
-                if let Some(prev) = *previous {
-                    target.0 = prev;
-                }
-                return;
-            }
-        }
-    }
-    *previous = Some(target.0);
-}
-
 /// `P` : passe à la planète suivante du système chargé (à ces échelles, les planètes sont des
 /// points minuscules : impossible de les viser à la souris depuis l'étoile).
 fn select_next_planet(
@@ -881,6 +870,7 @@ fn draw_body_markers(
     viewport: Res<graphics::ViewportScale>,
     queries: TargetQueries,
     travel: Res<wormhole::WormholeTravel>,
+    spawned: Res<planet::SpawnedSystems>,
     mut fades: Local<Vec<(TargetKind, f32, Vec3, f32)>>,
     mut gizmos: Gizmos,
 ) {
@@ -890,7 +880,7 @@ fn draw_body_markers(
         Vec::new()
     } else {
         let current_gal = current_galaxy(&target.0, &queries, &settings);
-        let mut list = clickables(camera, cam_gt, &viewport, ctrl.distance, &queries, &settings, &zoom, current_gal);
+        let mut list = clickables(camera, cam_gt, &viewport, ctrl.distance, &queries, &settings, &zoom, current_gal, spawned.0.iter().next().copied());
         // Les étoiles lointaines sont des centaines : les plus proches du centre de l'écran
         let center = viewport.to_window(camera.logical_viewport_size().unwrap_or(Vec2::splat(800.0)) * 0.5);
         list.sort_by(|a, b| a.screen.distance(center).total_cmp(&b.screen.distance(center)));

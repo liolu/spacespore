@@ -9,7 +9,7 @@ use crate::kepler::{OrbitalElements, DEFAULT_MU};
 use crate::lod::{compute_lod_level, LodChunk, LodLevel};
 use crate::mesher::{build_celestial_chunk_mesh, build_chunk_mesh, build_gas_giant_mesh, GasLook};
 use crate::galaxy_shape::{CapMode, Shape};
-use crate::settings::{GalaxyConfig, GameSettings, PlanetConfig, SystemSpatialIndex, CORE_EXCLUSION, GALAXY_SCALE, SYSTEM_CELL_SIZE, STREAM_RADIUS};
+use crate::settings::{GalaxyConfig, GameSettings, PlanetConfig, SystemSpatialIndex, CORE_EXCLUSION, GALAXY_SCALE};
 use crate::surface::{FarMesh, Surface};
 use bevy::render::view::NoFrustumCulling;
 use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, ComputeTaskPool, Task};
@@ -2549,16 +2549,28 @@ fn system_reach(sys: &crate::settings::StarSystemConfig) -> f32 {
     planets.chain(stars).fold(10_000.0_f32, f32::max) * 1.2 + 10_000.0
 }
 
+/// Système à charger (C7) : celui de la cible (étoile, planète, lune, astéroïde, trou de ver,
+/// cliqués ou donnés par `/aller`, une arrivée...) ; sans système (trou noir, galaxie), celui où
+/// l'on est tant que le vaisseau reste dans sa zone. Plus de chargement « au plus proche » : le
+/// système cliqué se charge tout de suite, où que soit le vaisseau, et le reste.
+pub(crate) fn system_to_load(target_sys: Option<Option<usize>>, current: Option<usize>, inside_current: bool, exists: impl Fn(usize) -> bool) -> Option<usize> {
+    match target_sys {
+        Some(Some(si)) if exists(si) => Some(si),
+        _ => current.filter(|_| inside_current),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn stream_system_bodies(
     mut commands: Commands,
     settings: Res<GameSettings>,
-    spatial: Res<SystemSpatialIndex>,
+    (target, star_ids, time): (Res<crate::CameraTarget>, Query<&StarId, With<StarRoot>>, Res<Time>),
     camera_q: Query<&GlobalTransform, With<Camera3d>>,
     ship_q: Query<&GlobalTransform, With<Ship>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut spawned: ResMut<SpawnedSystems>,
-    mut wide: Local<(u32, Option<usize>)>,
+    mut net: ResMut<crate::net::Net>,
     star_q: Query<(Entity, &SystemIdx), With<StarRoot>>,
     planet_q: Query<(Entity, &SystemIdx), With<PlanetRoot>>,
     moon_q: Query<(Entity, &SystemIdx), With<MoonRoot>>,
@@ -2567,48 +2579,13 @@ pub(crate) fn stream_system_bodies(
 ) {
     let cam_pos = camera_q.single().translation();
     let ship_pos = ship_q.single().translation();
-    let stream_dist = STREAM_RADIUS * SYSTEM_CELL_SIZE;
-    let radius_sq = stream_dist * stream_dist;
-
-    let nearby = spatial.systems_in_radius(ship_pos, stream_dist);
-    let mut closest: Option<(usize, f32)> = None;
-    for si in &nearby {
-        if let Some(sys) = settings.systems.get(*si) {
-            let d = ship_pos.distance_squared(sys.center());
-            if d < radius_sq {
-                if closest.is_none() || d < closest.unwrap().1 {
-                    closest = Some((*si, d));
-                }
-            }
-        }
-    }
-
-    // Le système chargé reste chargé tant que le vaisseau est dans sa zone : ses orbites sont
-    // larges, un système voisin peut avoir un centre plus proche sans que l'on ait quitté le nôtre.
-    let staying = spawned
-        .0
-        .iter()
-        .next()
-        .copied()
-        .filter(|&si| settings.systems.get(si).is_some_and(|sys| ship_pos.distance(sys.center()) < system_reach(sys)));
-    let mut want = staying.or(closest.map(|(si, _)| si));
-    // Zone d'un grand système loin de son centre (arrivée par un trou de ver) : recherche large,
-    // peu fréquente, dont le résultat est gardé tant que le vaisseau est dans la zone.
-    if want.is_none() {
-        wide.0 += 1;
-        if wide.0 % 20 == 1 {
-            wide.1 = spatial
-                .systems_in_radius(ship_pos, MAX_SYSTEM_REACH)
-                .into_iter()
-                .filter_map(|si| settings.systems.get(si).map(|sys| (si, ship_pos.distance(sys.center()), system_reach(sys))))
-                .filter(|(_, d, reach)| d < reach)
-                .min_by(|a, b| a.1.total_cmp(&b.1))
-                .map(|(si, _, _)| si);
-        }
-        want = wide
-            .1
-            .filter(|&si| settings.systems.get(si).is_some_and(|sys| ship_pos.distance(sys.center()) < system_reach(sys)));
-    }
+    let current = spawned.0.iter().next().copied();
+    let inside = current.and_then(|si| settings.systems.get(si)).is_some_and(|sys| ship_pos.distance(sys.center()) < system_reach(sys));
+    let target_sys = match target.0 {
+        crate::TargetKind::WormholeMouth(si) => Some(Some(si)),
+        k => crate::target_system(&k, &star_ids),
+    };
+    let want = system_to_load(target_sys, current, inside, |si| settings.systems.get(si).is_some());
 
     let mut to_despawn: Vec<usize> = Vec::new();
     for &si in spawned.0.iter() {
@@ -2657,8 +2634,33 @@ pub(crate) fn stream_system_bodies(
                     &mut meshes, &mut materials, cam_pos, center,
                 );
                 spawned.0.insert(si);
+                net.notify(&format!("Systeme {} charge.", sys.name), time.elapsed_secs_f64());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod system_loading_tests {
+    use super::system_to_load;
+
+    /// C7 : le système chargé est celui de la cible ; 50 allers-retours entre deux systèmes
+    /// voisins chargent chaque fois le bon, même quand le vaisseau est encore dans l'autre.
+    #[test]
+    fn the_clicked_system_loads_every_time() {
+        let exists = |si: usize| si < 10;
+        let mut loaded = Some(3);
+        for k in 0..100 {
+            let target = if k % 2 == 0 { 4 } else { 3 };
+            // Le vaisseau n'a pas encore quitté le système chargé : il doit quand même changer
+            loaded = system_to_load(Some(Some(target)), loaded, true, exists);
+            assert_eq!(loaded, Some(target));
+        }
+        // Trou noir (hors système) : on garde le système tant qu'on y est, puis plus rien
+        assert_eq!(system_to_load(Some(None), Some(4), true, exists), Some(4));
+        assert_eq!(system_to_load(Some(None), Some(4), false, exists), None);
+        // Un système inconnu ne se charge pas
+        assert_eq!(system_to_load(Some(Some(99)), Some(4), true, exists), Some(4));
     }
 }
 
