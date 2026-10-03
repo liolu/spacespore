@@ -80,6 +80,32 @@ pub struct BodyParams {
     pub biomes: BiomeParams,
     /// Astéroïde (C1) : sa forme remplace le relief (même fonction que son maillage lointain).
     pub asteroid: Option<crate::asteroids::AsteroidShape>,
+    /// Marées (C4) : le niveau de la mer monte et descend (mis à jour pendant un séjour).
+    pub tide: Tide,
+}
+
+/// Marées (C4) : un renflement de la mer vers chaque astre qui la tire (et à l'opposé), en
+/// unités, dans le repère fixe de l'astre. Figées au moment de leur calcul : `surface.rs` les
+/// recalcule quand le niveau change d'un voxel sous le joueur.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Tide {
+    pub dirs: [Vec3; 4],
+    pub amps: [f32; 4],
+}
+
+impl Tide {
+    /// Hauteur de la mer (unités) dans la direction `dir` : haute vers l'astre et à l'opposé, basse
+    /// à 90° (marée d'équilibre, polynôme de Legendre P2).
+    pub fn at(&self, dir: Vec3) -> f32 {
+        self.dirs.iter().zip(self.amps).map(|(d, a)| {
+            let c = dir.dot(*d);
+            a * (1.5 * c * c - 0.5)
+        }).sum()
+    }
+
+    pub fn is_calm(&self) -> bool {
+        self.amps.iter().all(|a| *a == 0.0)
+    }
 }
 
 /// Ciel d'une planète faite à la main (sans atmosphère calculée) : celui de la Terre.
@@ -112,6 +138,7 @@ impl BodyParams {
             relief: p.geology.relief,
             biomes: p.biomes,
             asteroid: None,
+            tide: Default::default(),
         }
     }
 
@@ -141,6 +168,7 @@ impl BodyParams {
             relief: m.relief.unwrap_or_else(|| moon_relief(m.seed)),
             biomes: BiomeParams::default(),
             asteroid: None,
+            tide: Default::default(),
         }
     }
 
@@ -486,8 +514,10 @@ impl Terrain {
         }
         let (h, hv, relief) = self.raw_height_full(dir);
         let rel = ((h - p.radius) / quantum).round();
+        // Marée (C4) : la mer monte ou descend de quelques voxels près du joueur
+        let tide_q = if p.tide.is_calm() { 0.0 } else { (p.tide.at(dir) / quantum).round() };
         // Sous le niveau de la mer : eau, banquise, ou bassin à sec (trop chaud, ou sans air)
-        let sea = if rel < 0.0 { sea_material(&p.climate, &p.hydro, p.airless, dir.y) } else { None };
+        let sea = if rel < tide_q { sea_material(&p.climate, &p.hydro, p.airless, dir.y) } else { None };
         let water = sea.is_some();
 
         let var = self.color.get([dir.x as f64 * 12.0, dir.y as f64 * 12.0, dir.z as f64 * 12.0]) as f32 * 0.10;
@@ -503,10 +533,14 @@ impl Terrain {
                 (base[2] * (1.0 - depth * 0.2) + var * 0.4 + jitter).clamp(0.03, 1.0),
                 1.0,
             ];
-            (p.radius, kind, color)
+            (p.radius + tide_q * quantum, kind, color)
         } else {
             // Hauteur réelle (collines comprises) : une colline au bord de l'eau n'est pas une plage
             let mut kind = self.surface_type((h - p.radius) / p.terrain_height.max(1.0), dir);
+            // Marée basse : le fond découvert est une grève de sable
+            if rel < 0.0 && sea_material(&p.climate, &p.hydro, p.airless, dir.y).is_some() {
+                kind = VoxelType::Sand;
+            }
             // Coulées de lave figées (basalte), éboulis au pied des pentes et des falaises (sauf
             // sous la neige éternelle des sommets)
             // Fond de cratère rempli : glace sur un monde froid et humide, lave figée ailleurs
@@ -1282,6 +1316,7 @@ mod tests {
             relief: Relief::default(),
             biomes: BiomeParams::default(),
             asteroid: None,
+            tide: Default::default(),
         }
     }
 
@@ -1686,6 +1721,7 @@ mod sea_level_tests {
             relief: Relief::default(),
             biomes: BiomeParams::default(),
             asteroid: None,
+            tide: Default::default(),
         }
     }
 }

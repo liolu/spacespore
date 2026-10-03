@@ -515,6 +515,28 @@ impl Surface {
         self.frame.filter(|_| self.active()).map(|f| f.center)
     }
 
+    /// Marée actuelle du terrain (C4).
+    pub fn tide(&self) -> Option<crate::terrain::Tide> {
+        self.terrain().map(|t| t.params.tide)
+    }
+
+    /// Nouvelle marée : le sol (collisions) tout de suite, les tuiles une à une.
+    pub fn set_tide(&mut self, tide: crate::terrain::Tide) {
+        if let Some(t) = self.terrain.as_mut() {
+            t.params.tide = tide;
+        }
+    }
+
+    /// Hauteur (sinus) du plus haut soleil au-dessus de l'horizon local.
+    pub fn sun_height(&self) -> f32 {
+        self.sun_height
+    }
+
+    /// Le vaisseau stationnera au-dessus de `dir` (repère fixe de l'astre `kind`).
+    pub fn set_hover(&mut self, kind: TargetKind, dir: Vec3) {
+        self.hover = Some((kind, dir.normalize_or(Vec3::Y)));
+    }
+
     /// Navigation à basse altitude autour de l'astre.
     pub fn flying(&self) -> bool {
         self.phase == Phase::Flying
@@ -768,6 +790,7 @@ struct Ctx<'w, 's> {
     stars: Query<'w, 's, (&'static Transform, &'static StarId), (With<StarRoot>, Without<Ship>, Without<Camera3d>)>,
     windows: Query<'w, 's, &'static mut Window, With<PrimaryWindow>>,
     asteroids: Res<'w, crate::asteroids::AsteroidField>,
+    dim: Res<'w, crate::sky::SunDim>,
 }
 
 impl Ctx<'_, '_> {
@@ -1176,7 +1199,7 @@ fn surface_control(
         let altitude = cam_local.length() - params.radius;
         // Tous les soleils (étoiles doubles, C3) : chacun teinte le ciel selon sa hauteur et son
         // éclat ; deux couchers de soleil se suivent
-        let suns = sun_list(&ctx.settings, ctx.stars.iter().map(|(t, id)| (t.translation, id.0)), center);
+        let suns = sun_list(&ctx.settings, ctx.stars.iter().map(|(t, id)| (t.translation, id.0)), center, &ctx.dim);
         let air = (1.0 - altitude / atmosphere_depth(&params)).clamp(0.0, 1.0);
         let space = SPACE_SKY.to_srgba();
         let space = [space.red, space.green, space.blue];
@@ -1211,12 +1234,13 @@ pub fn star_lux(cfg: &crate::settings::StarConfig, d: f32) -> f32 {
 
 /// Soleils vus depuis `center` : (direction vers l'étoile, éclat relatif au plus brillant, lux),
 /// du plus brillant au plus faible.
-pub fn sun_list(settings: &GameSettings, stars: impl Iterator<Item = (Vec3, usize)>, center: Vec3) -> Vec<(Vec3, f32, f32)> {
+pub fn sun_list(settings: &GameSettings, stars: impl Iterator<Item = (Vec3, usize)>, center: Vec3, dim: &crate::sky::SunDim) -> Vec<(Vec3, f32, f32)> {
     let mut out: Vec<(Vec3, f32, f32)> = stars
         .filter_map(|(pos, id)| {
             let cfg = settings.systems.get(id / 1000)?.stars.get(id % 1000)?;
             let d = pos - center;
-            Some((d.normalize_or(Vec3::Y), 0.0, star_lux(cfg, d.length())))
+            // Éclipse (C4) : une lune devant le soleil
+            Some((d.normalize_or(Vec3::Y), 0.0, star_lux(cfg, d.length()) * dim.factor(id)))
         })
         .collect();
     out.sort_by(|a, b| b.2.total_cmp(&a.2));
@@ -1262,11 +1286,12 @@ fn update_suns(
     surface: Res<Surface>,
     settings: Res<GameSettings>,
     stars: Query<(&Transform, &StarId), (With<StarRoot>, Without<SurfaceSun>)>,
+    dim: Res<crate::sky::SunDim>,
     mut suns: Query<(Entity, &SurfaceSun, &mut DirectionalLight, &mut Transform)>,
     mut cascades: Local<f32>,
 ) {
     let list = match (surface.suns_on(), surface.center()) {
-        (true, Some(center)) => sun_list(&settings, stars.iter().map(|(t, id)| (t.translation, id.0)), center),
+        (true, Some(center)) => sun_list(&settings, stars.iter().map(|(t, id)| (t.translation, id.0)), center, &dim),
         _ => Vec::new(),
     };
     // Ombres jusqu'à ~200 voxels autour de la caméra (le marcheur, le vaisseau posé, le décor)
@@ -1404,6 +1429,7 @@ fn surface_light(
     moons: Query<(&Transform, &MoonId), With<MoonRoot>>,
     stars: Query<(&Transform, &StarId), With<StarRoot>>,
     asteroids: Res<crate::asteroids::AsteroidField>,
+    dim: Res<crate::sky::SunDim>,
     cam_q: Query<&Transform, (With<Camera3d>, Without<PlanetRoot>, Without<MoonRoot>, Without<StarRoot>)>,
     mut was_active: Local<bool>,
 ) {
@@ -1427,7 +1453,7 @@ fn surface_light(
         _ => None,
     };
     let Some(center) = center else { return };
-    let suns = sun_list(&settings, stars.iter().map(|(t, id)| (t.translation, id.0)), center);
+    let suns = sun_list(&settings, stars.iter().map(|(t, id)| (t.translation, id.0)), center, &dim);
     // Le plus brillant des soleils (clair de lune : la lumière vient surtout de lui)
     let Some(&(to_star, _, _)) = suns.first() else { return };
     let cam_local = cam.translation - center;
@@ -1829,6 +1855,8 @@ struct TileStore {
     /// Climat des tuiles : quand la saison (ou l'heure, pour le givre) change, on les reconstruit
     /// une à une, en gardant les anciennes affichées en attendant.
     climate: Option<crate::planetgen::climate::Climate>,
+    /// Marée avec laquelle les tuiles sont construites (C4).
+    tide: Option<crate::terrain::Tide>,
     generation: u32,
     /// Cellules modifiées de l'astre (minage, 0.14).
     voxels: Option<std::sync::Arc<crate::voxel::BodyVoxels>>,
@@ -1890,6 +1918,7 @@ fn update_tiles(
         store.far_hidden = false;
         store.body = wanted;
         store.climate = None;
+        store.tide = None;
         store.voxels = wanted.and_then(|k| crate::voxel::body_voxels(&settings, &k));
     }
     let Some(kind) = store.body else { return };
@@ -1898,16 +1927,17 @@ fn update_tiles(
     let params = terrain.params;
     let layout = terrain.layout;
     let now = time.elapsed_secs_f64();
-    if store.climate != Some(params.climate) {
+    if store.climate != Some(params.climate) || store.tide != Some(params.tide) {
         // Pas de nouvelle saison tant que la précédente n'est pas finie (temps très accéléré)
         let rebuilding = store.built.values().any(|e| e.generation != store.generation);
         if store.climate.is_none() || !rebuilding {
             store.climate = Some(params.climate);
+            store.tide = Some(params.tide);
             store.generation = store.generation.wrapping_add(1);
         }
     }
     let generation = store.generation;
-    let params = BodyParams { climate: store.climate.unwrap_or(params.climate), ..params };
+    let params = BodyParams { climate: store.climate.unwrap_or(params.climate), tide: store.tide.unwrap_or(params.tide), ..params };
     let voxels = store.voxels.clone();
     // Les grottes de l'astre (et leur cache) sont partagées par toutes les tuiles
     let caves = terrain.caves.clone();
@@ -2210,6 +2240,7 @@ mod tests {
             relief: crate::planetgen::geology::Relief::default(),
             biomes: crate::planetgen::biome::BiomeParams::default(),
             asteroid: None,
+            tide: Default::default(),
         })
     }
 

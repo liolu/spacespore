@@ -181,6 +181,15 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   `SurfaceSun` = une lumiere directionnelle par soleil avec ombres (cascades ~200 voxels) qui remplace la lumiere
   ponctuelle des etoiles sur un astre solide (`dim_star_light`), le decor projette des ombres. `/aller etoile
   double|triple`. Saisons recalees (`SEASON_REF_DAYS` 115 -> 300 : moyenne 1 h, Q2). PROTOCOL 27.
+  C4 = phenomenes du ciel (`sky.rs`) : orages magnetiques `storm(seed, activite, t)` par tranches de 15 min
+  (`Storms` : eruptions plus hautes dans `update_flare_voxels`, aurores avivees 2 min plus tard) ; eclipses :
+  `occultation` des disques, `SunDim` (lumiere de chaque soleil a la camera, passee a `sun_list`), taches d'ombre
+  des lunes sur leur planete (`shadow_spot`), voile sombre et rouge des lunes dans l'ombre de leur planete ;
+  `/eclipse [lune]` (`next_eclipse`, memes orbites que `planet.rs`, l'hote avance l'horloge). Marees :
+  `terrain::Tide` (renflement P2 vers chaque astre, 0 a 3 voxels, `tide_voxels` / `solar_tide_voxels`), mer
+  et greve dans `base_column`, recalculee par `update_tides` quand le niveau change d'un voxel sous le joueur
+  (tuiles reconstruites comme pour les saisons). Phases des lunes (`MoonPhases`, scanner). Aurores du sol :
+  rideaux (`curtain_mesh`) la nuit, enfants de la planete ; les anneaux d'aurore vus de l'espace s'effacent.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

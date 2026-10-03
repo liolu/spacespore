@@ -28,6 +28,7 @@ mod settings;
 mod systems;
 mod asteroids;
 mod rings;
+mod sky;
 mod ship;
 mod stats;
 mod suit;
@@ -271,6 +272,7 @@ fn main() {
         .add_plugins(suit::SuitPlugin)
         .add_plugins(asteroids::AsteroidsPlugin)
         .add_plugins(rings::RingsPlugin)
+        .add_plugins(sky::SkyPlugin)
 
         // ── UI ──────────────────────────────────────────────────────────
         .add_plugins(UiPlugin)
