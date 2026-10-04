@@ -320,7 +320,7 @@ fn cave_decor(terrain: &Terrain, key: TileKey) -> Vec<DecorInstance> {
     let _ = n;
     let (x0, y0) = (key.x as i64 * TILE_CELLS as i64, key.y as i64 * TILE_CELLS as i64);
     let dirs = [key.center_dir()];
-    for region in caves.for_tile(&dirs, &|d| terrain.surface_r(d)) {
+    for region in caves.for_tile(&dirs, &|d| terrain.surface_r(d), &terrain.cave_windows()) {
         let Some((rc, rr)) = region.room else { continue };
         let (face, i, j) = terrain.cell_of(rc.normalize());
         if face != key.face || !(x0..x0 + TILE_CELLS as i64).contains(&i) || !(y0..y0 + TILE_CELLS as i64).contains(&j) {
@@ -522,7 +522,7 @@ mod bench {
             let t = Terrain::new(*p);
             let dir = Vec3::new(0.2, 0.3, 0.9).normalize();
             let mut keys = Vec::new();
-            select_tiles(t.layout, p.radius, dir * (t.ground(dir).top + 20.0), &mut keys);
+            select_tiles(t.layout, t.ground(dir).top, dir * (t.ground(dir).top + 20.0), &mut keys);
             for key in &keys {
                 let a = std::time::Instant::now();
                 std::hint::black_box(build_tile_mesh_with(&t, *key));

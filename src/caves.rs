@@ -432,12 +432,16 @@ impl Caves {
 
     /// Régions qui peuvent toucher une tuile : celles autour de points pris dans la tuile, de la
     /// surface jusqu'à la profondeur maximale.
-    pub fn for_tile(&self, dirs: &[Vec3], surface: &dyn Fn(Vec3) -> f32) -> Vec<Arc<Region>> {
+    /// `windows` = tranches de profondeur sous la surface (unités) à prendre ; les grottes plus
+    /// profondes existent (collisions) mais ne sont maillées que quand on y descend (0.13 E2).
+    pub fn for_tile(&self, dirs: &[Vec3], surface: &dyn Fn(Vec3) -> f32, windows: &[(f32, f32)]) -> Vec<Arc<Region>> {
         let mut keys = std::collections::HashSet::new();
         for &d in dirs {
             let top = surface(d);
-            let mut r = top + self.size;
-            while r > top - MAX_DEPTH - self.size {
+            for &(from, to) in windows {
+            let to = to.min(MAX_DEPTH);
+            let mut r = top - from.max(0.0) + self.size;
+            while r > top - to - self.size {
                 let k = self.key_of(d * r);
                 for dz in -1..=1 {
                     for dy in -1..=1 {
@@ -447,6 +451,7 @@ impl Caves {
                     }
                 }
                 r -= self.size * 0.5;
+            }
             }
         }
         keys.into_iter().filter_map(|k| self.region(k, surface)).collect()
