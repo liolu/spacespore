@@ -405,6 +405,15 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   seulement, neige jusqu'a ~60 deg, mousse au pied des parois de 3 voxels sur les mondes humides) ; parois sous la
   couche du dessus = strates (`strata_color`, bandes de 2 a 4 couches, ocre avec air). `mesher.rs` applique
   `ground_tint` avec sa pente (regle 16). Test `ground_colors_follow_slope_and_scale`. PROTOCOL inchange.
+- 0.13 T4 = detail jusqu'a l'horizon : `GameSettings::terrain_detail` (0 Bas .. 3 Ultra par defaut, menu Options
+  « Detail du sol », `graphics::TERRAIN_DETAIL` = facteur de decoupe 1,8 / 2,4 / 3,2 / 4,5 et niveaux de tuiles
+  avec decor 1 / 2 / 2 / 3, `Terrain::with_decor_levels`) ; `select_tiles_with(split, relief)` ne decoupe pas une
+  tuile cachee par l'horizon (`Terrain::relief_span`). Fondu : une tuile remplacee reste affichee
+  `TILE_FADE_SECS` (0,35 s) avec un materiau transparent qui s'efface (`TileStore::fading`). Maillages des
+  tuiles `RenderAssetUsages::RENDER_WORLD` (memoire en vol bas Ultra 3,2 Go -> 0,84 Go). Option « Ombres du
+  relief » (`relief_shadows`, defaut non : ~40 % d'images/s) : tuiles ombrantes + 4e cascade jusqu'a 4 000
+  voxels. Mesures : `SPACESPORE_PERF` avec `terrain_detail` / `relief_shadows` dans settings.json. Test
+  `detail_reaches_the_horizon_but_not_beyond`.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 
