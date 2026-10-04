@@ -37,7 +37,7 @@ impl Plugin for ChatCmdPlugin {
 #[derive(Event)]
 pub struct ChatCommand(pub String);
 
-const COMMANDS: [&str; 22] = ["/impact", "/ceinture", "/comete", "/eclipse", "/editeur", "/grotte", "/surplomb", "/tp", "/galaxie", "/profil", "/profile", "/graine", "/seed", "/aller", "/go", "/stats", "/aide", "/help", "/heure", "/time", "/temps", "/speed"];
+const COMMANDS: [&str; 23] = ["/echelle", "/impact", "/ceinture", "/comete", "/eclipse", "/editeur", "/grotte", "/surplomb", "/tp", "/galaxie", "/profil", "/profile", "/graine", "/seed", "/aller", "/go", "/stats", "/aide", "/help", "/heure", "/time", "/temps", "/speed"];
 
 /// La ligne est une commande du jeu (et non un message à envoyer).
 pub fn is_local(line: &str) -> bool {
@@ -96,13 +96,14 @@ fn find_galaxy(arg: &str, settings: &GameSettings, current: usize) -> Result<usi
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Commandes : (nom, arguments, description). Ordre d'affichage des propositions.
-pub const COMMAND_HELP: [(&str, &str, &str); 16] = [
+pub const COMMAND_HELP: [(&str, &str, &str); 17] = [
     ("/aide", "[commande]", "la liste des commandes, ou l'aide d'une commande"),
     ("/aller", "etoile|planete|lune <type> | suivant", "tests : aller a un type d'etoile, de planete ou de lune"),
     ("/stats", "[n | tout]", "statistiques de tous les astres d'une galaxie (F3 : masquer)"),
     ("/heure", "", "heure locale, hauteur du soleil et saison de l'astre ou l'on est (ou cible)"),
     ("/temps", "<facteur>", "tests : accelerer le temps (1 = normal, 60 = une heure de la planete par seconde)"),
     ("/surplomb", "", "tests : aller a l'arche de test en voxels 3D de l'astre (pose ou en vol bas)"),
+    ("/echelle", "<k : 1, 8, 16, 32, 64>", "tests (0.13 E1) : voxels k fois plus petits au prochain atterrissage"),
     ("/grotte", "", "aller a l'entree de grotte la plus proche (pose ou en vol bas)"),
     ("/ceinture", "", "aller au champ dense d'une ceinture d'asteroides du systeme charge"),
     ("/comete", "", "aller a la comete la plus active du systeme charge"),
@@ -322,6 +323,16 @@ fn run_chat_commands(
                 stats.send(crate::stats::StatsCommand(arg.to_string()));
             }
             // Horloge du monde (`world_clock.rs`)
+            // Étude d'échelle (0.13 E1) : voxel k fois plus petit, au prochain atterrissage
+            "/echelle" => {
+                match arg.trim().parse::<u32>() {
+                    Ok(k) if (1..=64).contains(&k) => {
+                        crate::terrain::set_voxel_scale(k);
+                        net.notify(&format!("Echelle x{k} : voxels {k} fois plus petits au prochain atterrissage (non sauvegarde)."), now);
+                    }
+                    _ => net.notify(&format!("/echelle <k> de 1 a 64 (actuelle : x{}).", crate::terrain::voxel_scale()), now),
+                }
+            }
             "/heure" | "/time" => {
                 clock.send(crate::world_clock::ClockCommand::Hour);
             }

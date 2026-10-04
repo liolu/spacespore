@@ -357,6 +357,26 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   (`galaxy_jump_range`, sphere dessinee face a la camera en vue d'ensemble par `draw_travel_range`). Toutes les
   etoiles visibles a portee ont leur cercle (pas les cachees par l'eclaircissement) ; cercles de taille fixe dans
   l'espace (celui d'un trou noir galactique = son disque), 6 px pour un point.
+- 0.13 (`ROADMAP-0.13.md`) : E1 = etude d'echelle (`RAPPORT-echelle-E1.md`) : `terrain::set_voxel_scale(k)` /
+  `layout_scaled`, `/echelle k`, `SPACESPORE_SCALE=k` ; banc `cargo test --release bench_scale -- --ignored
+  --nocapture --test-threads=1` ; mesures en jeu `SPACESPORE_PERF=<fichier>` (+ `_FROM` / `_TO` en s :
+  images/s medianes, 1 % bas, > 33 ms), `SPACESPORE_TEST_WALK=1` (marche tout droit). Choix : k = 16.
+  E2 = passage a l'echelle : `terrain::GROUND_SCALE = 16` (le voxel 16 fois plus petit, rayons en unites
+  inchanges ; `/echelle k` reste pour les tests). `select_tiles(layout, ground_r, cam)` mesure au sol (sinon pas
+  de tuiles fines sur un plateau). `Terrain::layer` tolere 0,01 voxel (precision f32). Grottes : toujours 2 000
+  unites de profondeur (Q2) mais maillees seulement jusqu'a `NEAR_CAVE_VOXELS` (300) sous la surface + une tranche
+  de +-`CAVE_WINDOW_VOXELS` autour du joueur sous terre (`Terrain::cave_window`, `caves::for_tile(windows)`,
+  tuiles reconstruites quand la tranche change). Vol bas en voxels (`HOVER_VOXELS` 22, vitesse 1,5 x altitude
+  entre 40 et 4 000 voxels/s, Maj x4), camera a quelques longueurs du vaisseau. Vol suborbital : `J` (`Hop`,
+  point vise au centre de l'ecran, > 5 000 voxels, 6 a 25 s). Brume en voxels (`Surface::ground_scale`), plan
+  proche 0,1 voxel au sol (`near_plane`), phares en voxels. Marcheur : sort de la roche (coins du cube, limite
+  de colonnes) en fin de pas. Saves : `world.json` garde `ground_scale`, cellules d'une autre echelle oubliees.
+  PROTOCOL 31.
+  E3 = streaming : `update_tiles` pose les tuiles terminees dans un budget de `TILE_BUDGET_MS` (3 ms) par image,
+  les grosses d'abord ; `max_tile_tasks` = 2 par coeur ; priorite devant la camera. Pas de cache disque : relire
+  une tuile (3,0 ms, 375 Ko) coute plus que la generer (1,7 ms) (`bench_tile_cache`). Mesures : `TileStats`
+  (tuiles a leur finesse, dans `SPACESPORE_PERF`), `SPACESPORE_TEST_FLY=1|climb` (vol bas plein gaz, en montant),
+  `Surface::test_zoom_in` (comme un coup de molette).
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

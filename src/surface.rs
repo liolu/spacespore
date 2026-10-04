@@ -51,8 +51,14 @@ const NIGHT_GALAXY: f32 = 0.75;
 /// Lampe du marcheur et phares du vaisseau (allumés quand il fait sombre).
 pub const LAMP_KEY: KeyCode = KeyCode::KeyN;
 
-/// Nombre maximum de tuiles construites en même temps en arrière-plan.
-const MAX_TILE_TASKS: usize = 10;
+/// Tuiles en construction en même temps (hors du fil principal) : deux par cœur (0.13 E3).
+fn max_tile_tasks() -> usize {
+    std::thread::available_parallelism().map_or(8, |n| n.get()).clamp(4, 32) * 2
+}
+
+/// Temps (ms) accordé par image à la pose des tuiles terminées (envoi des maillages, décor) : au
+/// delà, la suite attend l'image suivante (pas de pic à l'atterrissage, 0.13 E3).
+const TILE_BUDGET_MS: f64 = 3.0;
 /// Au-delà, les tuiles inutilisées depuis longtemps sont supprimées.
 const MAX_TILES: usize = 520;
 const TILE_KEEP_SECS: f64 = 8.0;
@@ -123,6 +129,8 @@ impl Plugin for SurfacePlugin {
             .add_systems(Update, go_overhang.before(SurfaceControl))
             .add_systems(Update, update_galaxy_dim)
             .add_systems(Update, remember_walker_cam)
+            .add_systems(Update, near_plane)
+            .init_resource::<TileStats>()
             .add_systems(
                 Update,
                 (surface_control.in_set(SurfaceControl).run_if(crate::editeur::in_game), update_underground, dim_star_light, update_suns, surface_light, update_lamps, update_season, refresh_voxels, update_tiles, update_hud)
@@ -391,6 +399,28 @@ impl Walker {
             }
         }
         self.pos = up * r;
+        // Corps dans la roche (coin du cube où trois grilles de colonnes se rencontrent, relief qui
+        // vient de changer, ou pile sur la limite de deux colonnes, que l'arrondi de la direction
+        // fait basculer) : on remonte jusqu'à 16 voxels, sur le premier sol qui laisse la place du
+        // corps ; vérifié avec la direction telle qu'elle sera relue (position normalisée)
+        for _ in 0..2 {
+            let up = self.up();
+            let r = self.pos.length();
+            if t.floor(up, r + 2.0 * v).top <= r + 0.05 * v && t.ceiling(up, r) >= r + BODY_VOXELS * v - 0.05 * v {
+                break;
+            }
+            for n in 1..=16 {
+                let top = t.floor(up, r + n as f32 * v).top;
+                if top > r + 0.05 * v && t.ceiling(up, top) >= top + BODY_VOXELS * v - 0.05 * v && t.floor(up, top + 2.0 * v).top <= top + 0.05 * v {
+                    self.pos = up * top;
+                    self.vr = 0.0;
+                    self.on_ground = true;
+                    break;
+                }
+            }
+        }
+        let up = self.up();
+        let r = self.pos.length();
         self.heading = tangent(self.heading, up);
 
         let eye_target = r + v * EYE_VOXELS;
@@ -448,6 +478,43 @@ const BOARD_WAIT: f32 = 0.5;
 const UNBOARD_WAIT: f32 = 1.0;
 const BOARD_SECS: f32 = 1.6;
 
+/// Vol bas (0.13, règle 14, en voxels) : hauteur d'arrivée au-dessus du relief, vitesse selon
+/// l'altitude (voxels/s, x4 avec Maj), vitesse de montée.
+const HOVER_VOXELS: f32 = 22.0;
+const FLY_MIN_VOXELS: f32 = 40.0;
+const FLY_MAX_VOXELS: f32 = 4_000.0;
+const CLIMB_MIN_VOXELS: f32 = 20.0;
+const CLIMB_MAX_VOXELS: f32 = 3_000.0;
+
+/// Vol suborbital (Q3) : touche, distance minimale (voxels).
+pub const HOP_KEY: KeyCode = KeyCode::KeyJ;
+const HOP_MIN_VOXELS: f32 = 5_000.0;
+
+/// Un saut suborbital : d'une direction à l'autre de l'astre par une courbe haute (repère fixe de
+/// l'astre).
+#[derive(Clone, Copy, Debug)]
+struct Hop {
+    from: Vec3,
+    to: Vec3,
+    r0: f32,
+    r1: f32,
+    peak: f32,
+    t: f32,
+    dur: f32,
+}
+
+impl Hop {
+    /// Position (repère de l'astre) et direction du mouvement à l'avancement `u` (0..1).
+    fn at(&self, u: f32) -> (Vec3, Vec3) {
+        let e = smoothstep(u);
+        let rot = Quat::from_rotation_arc(self.from, self.to);
+        let dir = (Quat::IDENTITY.slerp(rot, e) * self.from).normalize();
+        let r = self.r0 + (self.r1 - self.r0) * e + self.peak * (std::f32::consts::PI * u).sin();
+        let ahead = (Quat::IDENTITY.slerp(rot, (e + 0.01).min(1.0)) * self.from).normalize();
+        (dir * r, tangent(ahead - dir, dir))
+    }
+}
+
 /// En zoomant sous cette distance du vaisseau, on passe en navigation autour de l'astre ;
 /// en dézoomant au-delà, on revient à la vue orbitale.
 pub const FLIGHT_ZOOM: f32 = 1_000.0;
@@ -496,6 +563,8 @@ pub struct Surface {
     fpitch: f32,
     /// Le vaisseau descend à l'altitude de croisière en entrant en navigation.
     fdescend: bool,
+    /// Vol suborbital en cours (0.13 E2, Q3).
+    hop: Option<Hop>,
     /// Instant jusqu'auquel un zoom avant récent compte comme « je veux approcher ».
     zoom_in_until: f64,
     /// Jour du ciel à la caméra (0 : nuit ou pas d'air, 1 : plein jour), et hauteur de l'étoile
@@ -559,6 +628,7 @@ impl Default for Surface {
             fyaw: 0.0,
             fpitch: 0.35,
             fdescend: false,
+            hop: None,
             zoom_in_until: 0.0,
             daylight: 1.0,
             sun_height: 1.0,
@@ -663,6 +733,12 @@ impl Surface {
 
     /// Distance de caméra sous laquelle on passe en vol bas (au moins `FLIGHT_ZOOM`, trois longueurs
     /// du vaisseau).
+    /// Tests (0.13 E3) : comme un coup de molette vers l'astre (passage en vol bas si on est assez
+    /// près).
+    pub fn test_zoom_in(&mut self, now: f64) {
+        self.zoom_in_until = now + 0.7;
+    }
+
     pub fn flight_zoom(&self) -> f32 {
         FLIGHT_ZOOM.max(self.ship_dims.max_length() * 3.0)
     }
@@ -742,6 +818,14 @@ impl Surface {
 
     /// Altitude relative du sol (0 = niveau de la mer, 1 = sommets) sous le marcheur ou le
     /// vaisseau en vol bas : les sommets sont plus froids.
+    /// Taille d'un voxel au sol et hauteur (unités) du joueur ou du vaisseau au-dessus du relief :
+    /// la brume de l'horizon se règle en voxels (0.13, règle 14).
+    pub fn ground_scale(&self) -> Option<(f32, f32)> {
+        let t = self.terrain.as_ref()?;
+        let p = self.local_point()?;
+        Some((t.voxel(), (p.length() - t.ground(p.normalize_or(Vec3::Y)).top).max(0.0)))
+    }
+
     pub fn ground_altitude(&self) -> Option<f32> {
         let t = self.terrain.as_ref()?;
         let p = &t.params;
@@ -1122,7 +1206,11 @@ fn surface_control(
                     surface.heading = tangent(frame.vector(*ship_tf.forward()), up);
                     surface.fspeed = 0.0;
                     surface.fvert = 0.0;
-                    surface.fdist = ctrl.distance.clamp(60.0, fz * 0.95);
+                    // Caméra derrière le vaisseau à sa vraie taille (quelques longueurs) : il est
+                    // petit à l'échelle 0.13 ; la molette recule jusqu'à la vue orbitale
+                    let voxel = surface.terrain.as_ref().map_or(1.0, |t| t.voxel());
+                    let ship_len = surface.ship_dims.real_scale(voxel) * surface.ship_dims.icon_len;
+                    surface.fdist = (ship_len * 4.0).min(ctrl.distance).clamp(ship_len * 1.2, fz * 0.95);
                     surface.fyaw = 0.0;
                     surface.fpitch = 0.35;
                     // Une géante n'a pas de sol : on ne plonge pas d'office vers son cœur
@@ -1262,6 +1350,11 @@ fn surface_control(
                 input.strafe = axis(&[KeyCode::KeyD, KeyCode::ArrowRight], &[KeyCode::KeyA, KeyCode::ArrowLeft]);
                 input.sprint = k.pressed(KeyCode::ShiftLeft) || k.pressed(KeyCode::ShiftRight);
                 input.jump = k.pressed(KeyCode::Space);
+                // Mesures (0.13) : `SPACESPORE_TEST_WALK` = marche tout droit (parcours fixe)
+                if std::env::var("SPACESPORE_TEST_WALK").is_ok() {
+                    input.forward = 1.0;
+                    input.jump = true;
+                }
                 let sens = ctx.settings.mouse_sensitivity * 0.003;
                 input.look = look_delta.clamp_length_max(300.0) * sens;
             }
@@ -1393,26 +1486,61 @@ fn surface_control(
                 turn = axis(&[KeyCode::KeyA, KeyCode::ArrowLeft], &[KeyCode::KeyD, KeyCode::ArrowRight]);
                 vertical = axis(&[KeyCode::Space], &[KeyCode::ControlLeft]);
                 boost = k.pressed(KeyCode::ShiftLeft);
+                // Mesures (0.13 E3) : `SPACESPORE_TEST_FLY` = plein gaz tout droit avec Maj
+                if let Ok(mode) = std::env::var("SPACESPORE_TEST_FLY") {
+                    forward = 1.0;
+                    boost = true;
+                    // `climb` : en montant (de plus en plus vite, tuiles toujours plus loin)
+                    if mode == "climb" {
+                        vertical = 1.0;
+                    }
+                }
                 if ctx.buttons.pressed(MouseButton::Right) {
                     let sens = ctx.settings.mouse_sensitivity * 0.01;
                     surface.fyaw -= look_delta.x * sens;
                     surface.fpitch = (surface.fpitch + look_delta.y * sens).clamp(-0.2, 1.4);
                 }
                 if wheel != 0.0 {
-                    surface.fdist = (surface.fdist * (-wheel * 0.12).exp()).max(20.0);
+                    let ship_len = surface.ship_dims.real_scale(terrain.voxel()) * surface.ship_dims.icon_len;
+                    surface.fdist = (surface.fdist * (-wheel * 0.12).exp()).max(ship_len * 1.2);
                 }
                 if vertical != 0.0 {
                     surface.fdescend = false;
+                }
+                // Vol suborbital : vers le point visé au centre de l'écran, s'il est loin
+                if k.just_pressed(HOP_KEY) && surface.hop.is_none() && !terrain.params.gaseous && params.asteroid.is_none() {
+                    let v = terrain.voxel();
+                    let aim = *cam_local_tf.forward();
+                    match ray_sphere(cam_local_tf.translation, aim, terrain.params.radius) {
+                        None => net.notify("Saut suborbital : visez un point de la planete (centre de l'ecran).", now),
+                        Some(d) => {
+                            let to = (cam_local_tf.translation + aim * d).normalize();
+                            let arc = up.angle_between(to) * terrain.params.radius;
+                            if arc < HOP_MIN_VOXELS * v {
+                                net.notify(&format!("Saut suborbital : le point vise est a {:.0} voxels, il en faut {HOP_MIN_VOXELS:.0}. Montez pour voir plus loin, ou volez-y.", arc / v), now);
+                            } else {
+                                let r1 = terrain.ground(to).top + HOVER_VOXELS * v;
+                                let dur = (6.0 + arc / (3_000.0 * v)).clamp(6.0, 25.0);
+                                surface.hop = Some(Hop { from: up, to, r0: r, r1, peak: (arc * 0.3).max(300.0 * v), t: 0.0, dur });
+                                surface.fdescend = false;
+                                net.notify(&format!("Saut suborbital : {:.0} voxels, {:.0} s.", arc / v, dur), now);
+                            }
+                        }
+                    }
                 }
             }
 
             // Cap, vitesse et altitude
             heading = (Quat::from_axis_angle(up, turn * 1.3 * dt) * heading).normalize();
-            let top_speed = (terrain.params.radius * 0.15).clamp(120.0, 4000.0) * if boost { 4.0 } else { 1.0 };
+            // Vitesses en voxels (règle 14) : plus vite en altitude (rase-mottes lent, haute
+            // altitude rapide : la planète est 16 fois plus grande en voxels), Maj x4
+            let v = terrain.voxel();
+            let alt = ((r - terrain.floor(up, r).top) / v).max(0.0);
+            let top_speed = (alt * 1.5).clamp(FLY_MIN_VOXELS, FLY_MAX_VOXELS) * v * if boost { 4.0 } else { 1.0 };
             surface.fspeed += (forward * top_speed - surface.fspeed) * (1.0 - (-2.0 * dt).exp());
             // Dans une géante (des dizaines de milliers d'unités d'atmosphère), on monte et
             // descend plus vite
-            let climb = if terrain.params.gaseous { 400.0 * (terrain.params.radius / 8000.0).max(1.0) } else { 400.0 };
+            let climb = if terrain.params.gaseous { 400.0 * (terrain.params.radius / 8000.0).max(1.0) } else { alt.clamp(CLIMB_MIN_VOXELS, CLIMB_MAX_VOXELS) * v };
             surface.fvert += (vertical * climb - surface.fvert) * (1.0 - (-4.0 * dt).exp());
             let next = (surface.fpos + heading * surface.fspeed * dt).normalize();
             // Voxels 3D : le sol sous le vaisseau (on peut passer sous une arche) et le plafond
@@ -1423,21 +1551,31 @@ fn surface_control(
                 Some(s) => s.max_radius() * 3.0 + 1500.0,
                 None => hover_radius(&params),
             };
-            // Entrée en navigation : on descend d'abord à 150 au-dessus du relief
+            // Entrée en navigation : on descend d'abord à `HOVER_VOXELS` au-dessus du relief
             let mut r = r + surface.fvert * dt;
             if surface.fdescend {
-                let above = r - ground - 150.0;
-                if above > 1.0 {
-                    r -= ((above * 2.0).clamp(30.0, 2000.0) * dt).min(above);
+                let above = r - ground - HOVER_VOXELS * v;
+                if above > 0.1 * v {
+                    r -= ((above * 2.0).clamp(4.0 * v, 2000.0) * dt).min(above);
                 } else {
                     surface.fdescend = false;
                 }
             }
             let real = surface.ship_dims.real_scale(terrain.voxel());
-            let clearance = (surface.ship_dims.half_h * real + 5.0).max(25.0);
-            let r = r.clamp(ground + clearance, ceiling.max(ground + 100.0)).min((roof - clearance).max(ground + clearance));
+            let clearance = (surface.ship_dims.half_h * real + 0.7 * v).max(3.5 * v);
+            let r = r.clamp(ground + clearance, ceiling.max(ground + 15.0 * v)).min((roof - clearance).max(ground + clearance));
             surface.fpos = next * r;
             surface.heading = tangent(heading, next);
+            if let Some(mut hop) = surface.hop {
+                hop.t += dt;
+                let u = (hop.t / hop.dur).clamp(0.0, 1.0);
+                let (pos, dir) = hop.at(u);
+                surface.fpos = pos;
+                surface.heading = dir;
+                surface.fspeed = 0.0;
+                surface.fvert = 0.0;
+                surface.hop = (u < 1.0).then_some(hop);
+            }
 
             // Vol bas : la vraie taille du vaisseau, la caméra assez loin pour le voir en entier
             let scale = real;
@@ -1459,13 +1597,16 @@ fn surface_control(
             let thrust = (surface.fspeed / top_speed.max(1.0)).clamp(-1.0, 1.0) * if boost { 1.0 } else { 0.6 };
             surface.pilot = Vec3::new(0.0, vertical * 0.6, -thrust).clamp_length_max(1.0);
             surface.pilot_turn = turn;
+            if surface.hop.is_some() {
+                surface.pilot = Vec3::NEG_Z;
+            }
             ship_local = Transform { translation: ship_pos, rotation: ship_rot, scale: Vec3::splat(scale) };
 
             // Caméra derrière le vaisseau, orientable à la souris, jamais sous le relief
             let back = Quat::from_axis_angle(next, surface.fyaw) * -surface.heading;
             let offset = (back * surface.fpitch.cos() + next * surface.fpitch.sin()) * surface.fdist;
             let mut cam_local = surface.fpos + offset;
-            let floor = terrain.floor(cam_local.normalize(), cam_local.length()).top + 10.0;
+            let floor = terrain.floor(cam_local.normalize(), cam_local.length()).top + 1.5 * terrain.voxel();
             if cam_local.length() < floor {
                 cam_local = cam_local.normalize() * floor;
             }
@@ -1854,6 +1995,19 @@ fn spawn_lamps(mut commands: Commands) {
     }
 }
 
+/// Plan proche de la caméra (0.13 E2) : 0,1 voxel au sol (le marcheur fait 2 voxels), 0,1 unité
+/// ailleurs. La projection de Bevy est en profondeur inversée : rien à perdre au loin.
+fn near_plane(surface: Res<Surface>, mut cams: Query<&mut Projection, With<Camera3d>>) {
+    let near = surface.terrain.as_ref().filter(|_| surface.active()).map_or(0.1, |t| 0.1 * t.voxel());
+    for mut p in &mut cams {
+        if let Projection::Perspective(pp) = &mut *p {
+            if (pp.near - near).abs() > 1e-4 {
+                pp.near = near;
+            }
+        }
+    }
+}
+
 /// La distance de la caméra à pied (molette) est reprise au lancement et enregistrée (C4).
 fn remember_walker_cam(mut surface: ResMut<Surface>, mut settings: ResMut<GameSettings>, mut started: Local<bool>, mut since: Local<f32>, time: Res<Time>) {
     if !*started {
@@ -1910,7 +2064,7 @@ fn update_lamps(
             let scale = ship.scale.x;
             let up = *ship.up();
             let dir = (*ship.forward() * 0.9 - up * 0.42).normalize();
-            (scale * 25.0 + 60.0, Transform::from_translation(ship.translation + *ship.forward() * scale * 1.2).looking_to(dir, up))
+            (scale * 25.0 + 9.0 * voxel, Transform::from_translation(ship.translation + *ship.forward() * scale * 1.2).looking_to(dir, up))
         } else {
             // La lampe est tenue dans la main droite : elle éclaire là où l'on regarde (de face :
             // là où regarde le personnage)
@@ -2191,6 +2345,13 @@ fn update_season(
 //  Tuiles de terrain
 // ─────────────────────────────────────────────────────────────────────────
 
+/// Tuiles voulues autour de la caméra et celles déjà prêtes à leur finesse (mesures, 0.13 E3).
+#[derive(Resource, Default)]
+pub struct TileStats {
+    pub leaves: usize,
+    pub ready: usize,
+}
+
 struct TileEntry {
     entity: Entity,
     last_needed: f64,
@@ -2213,6 +2374,8 @@ struct TileStore {
     generation: u32,
     /// Cellules modifiées de l'astre (minage, 0.14).
     voxels: Option<std::sync::Arc<crate::voxel::BodyVoxels>>,
+    /// Tranche de grottes maillée autour du joueur sous terre (0.13 E2).
+    cave_window: Option<(f32, f32)>,
 }
 
 fn set_far_visibility(
@@ -2252,6 +2415,7 @@ fn update_tiles(
     children: Query<&Children>,
     far: Query<(), With<FarMesh>>,
     mut vis: Query<&mut Visibility>,
+    mut stats: ResMut<TileStats>,
 ) {
     // Pas de tuiles dans une géante gazeuse : sa sphère reste affichée
     let wanted = if surface.active() && !surface.gaseous() { surface.body } else { None };
@@ -2289,6 +2453,21 @@ fn update_tiles(
             store.generation = store.generation.wrapping_add(1);
         }
     }
+    // Sous terre, plus bas que les grottes toujours maillées : une tranche autour de la caméra (par
+    // pas d'une demi-tranche, pour ne pas tout reconstruire à chaque pas)
+    let cam_local0 = root_tf.rotation.inverse() * (cam.translation - root_tf.translation);
+    let v = layout.voxel;
+    let depth = terrain.surface_r(cam_local0.normalize_or(Vec3::Y)) - cam_local0.length();
+    let window = (depth > (crate::terrain::NEAR_CAVE_VOXELS - crate::terrain::CAVE_WINDOW_VOXELS) * v).then(|| {
+        let step = crate::terrain::CAVE_WINDOW_VOXELS * 0.5 * v;
+        let mid = (depth / step).round() * step;
+        (mid - crate::terrain::CAVE_WINDOW_VOXELS * v, mid + crate::terrain::CAVE_WINDOW_VOXELS * v)
+    });
+    if window != store.cave_window {
+        store.cave_window = window;
+        store.generation = store.generation.wrapping_add(1);
+    }
+    let cave_window = store.cave_window;
     let generation = store.generation;
     let params = BodyParams { climate: store.climate.unwrap_or(params.climate), tide: store.tide.unwrap_or(params.tide), ..params };
     let voxels = store.voxels.clone();
@@ -2312,7 +2491,8 @@ fn update_tiles(
     // Caméra dans le repère fixe de l'astre : les tuiles tournent avec lui.
     let cam_local = root_tf.rotation.inverse() * (cam.translation - root_tf.translation);
     let mut leaves = Vec::new();
-    select_tiles(layout, params.radius, cam_local, &mut leaves);
+    let ground_r = terrain.ground(cam_local.normalize_or(Vec3::Y)).top;
+    select_tiles(layout, ground_r, cam_local, &mut leaves);
     let mut needed: HashSet<TileKey> = HashSet::with_capacity(leaves.len() * 2);
     for &leaf in &leaves {
         let mut k = Some(leaf);
@@ -2328,15 +2508,20 @@ fn update_tiles(
     if store.built.is_empty() && store.tasks.is_empty() {
         for face in 0..6 {
             let key = TileKey::root(face);
-            let first = Terrain::new(params).with_voxels(voxels.clone()).with_caves(caves.clone()).with_rocks(rocks.clone());
+            let first = Terrain::new(params).with_voxels(voxels.clone()).with_caves(caves.clone()).with_rocks(rocks.clone()).with_cave_window(cave_window);
             let entity = spawn_tile(&mut commands, &mut meshes, &material, root, build_tile_mesh_with(&first, key));
             store.built.insert(key, TileEntry { entity, last_needed: now, generation });
         }
     }
 
-    // Récupère les tuiles terminées
-    let finished: Vec<TileKey> = store.tasks.keys().copied().collect();
+    // Récupère les tuiles terminées, dans le budget de l'image (les plus grosses d'abord : jamais de trou)
+    let started = std::time::Instant::now();
+    let mut finished: Vec<TileKey> = store.tasks.keys().copied().collect();
+    finished.sort_by_key(|k| k.depth);
     for key in finished {
+        if started.elapsed().as_secs_f64() * 1000.0 > TILE_BUDGET_MS {
+            break;
+        }
         let Some((task, built_gen)) = store.tasks.get_mut(&key) else { continue };
         let built_gen = *built_gen;
         if let Some((mesh, objects)) = block_on(future::poll_once(task)) {
@@ -2355,17 +2540,23 @@ fn update_tiles(
         }
     }
 
-    // Lance les constructions manquantes : d'abord les grosses tuiles, puis les plus proches
-    // (les tuiles d'une ancienne saison passent après les manquantes)
+    // Lance les constructions manquantes : d'abord les grosses tuiles, puis les plus proches et celles
+    // devant la caméra (au centre de l'écran) ; les tuiles d'une ancienne saison passent après les
+    // manquantes
+    let cam_fwd = root_tf.rotation.inverse() * *cam.forward();
     let mut missing: Vec<(bool, u8, f32, TileKey)> = needed
         .iter()
         .filter(|k| !store.tasks.contains_key(k) && store.built.get(k).is_none_or(|e| e.generation != generation))
-        .map(|k| (store.built.contains_key(k), k.depth, (cam_local - k.center_dir() * params.radius).length_squared(), *k))
+        .map(|k| {
+            let to = k.center_dir() * params.radius - cam_local;
+            let ahead = to.normalize_or(Vec3::Y).dot(cam_fwd);
+            (store.built.contains_key(k), k.depth, to.length_squared() * (1.6 - 0.6 * ahead), *k)
+        })
         .collect();
     missing.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.total_cmp(&b.2)));
     let pool = AsyncComputeTaskPool::get();
     for (_, _, _, key) in missing {
-        if store.tasks.len() >= MAX_TILE_TASKS {
+        if store.tasks.len() >= max_tile_tasks() {
             break;
         }
         let p = params;
@@ -2376,7 +2567,7 @@ fn update_tiles(
             key,
             (
                 pool.spawn(async move {
-                    let terrain = Terrain::new(p).with_voxels(vx).with_caves(cv).with_rocks(rk);
+                    let terrain = Terrain::new(p).with_voxels(vx).with_caves(cv).with_rocks(rk).with_cave_window(cave_window);
                     (build_tile_mesh_with(&terrain, key), tile_decor(&terrain, key))
                 }),
                 generation,
@@ -2384,6 +2575,8 @@ fn update_tiles(
         );
     }
 
+    stats.leaves = leaves.len();
+    stats.ready = leaves.iter().filter(|k| store.built.contains_key(k)).count();
     // Tuiles à afficher : la feuille si elle est prête, sinon son plus proche ancêtre prêt
     let mut shown: HashSet<TileKey> = HashSet::new();
     for &leaf in &leaves {
@@ -2528,7 +2721,7 @@ fn update_hud(
         },
         Phase::Flying if surface.gaseous() => "ZQSD/WASD : voler   A/D : tourner   Maj : accelerer   Espace/Ctrl : monter/descendre\nClic droit : orbiter   Molette : zoom (>1000 : orbite)   Pas de sol : la pression abime la coque".to_string(),
         Phase::Flying => format!(
-            "ZQSD/WASD : voler   A/D : tourner   Maj : accelerer   Espace/Ctrl : monter/descendre\nClic droit : orbiter   Molette : zoom (>1000 : orbite)   V : atterrir   N : phares\n{}   {}",
+            "ZQSD/WASD : voler   A/D : tourner   Maj : accelerer   Espace/Ctrl : monter/descendre\nClic droit : orbiter   Molette : zoom (>1000 : orbite)   V : atterrir   N : phares   J : saut suborbital (point vise, > 5 000 voxels)\n{}   {}",
             weather.short(),
             surface.wind_text
         ),
@@ -2570,6 +2763,27 @@ fn update_hud(
 
 #[cfg(test)]
 mod tests {
+    /// E2 (Q3) : le saut suborbital part du vaisseau, monte haut au milieu et arrive au-dessus du
+    /// point visé ; il avance toujours vers la cible.
+    #[test]
+    fn the_suborbital_hop_arcs_to_its_target() {
+        let from = Vec3::Y;
+        let to = Vec3::new(1.0, 1.0, 0.0).normalize();
+        let hop = super::Hop { from, to, r0: 9_000.0, r1: 9_010.0, peak: 500.0, t: 0.0, dur: 10.0 };
+        let (p0, _) = hop.at(0.0);
+        let (pm, dm) = hop.at(0.5);
+        let (p1, _) = hop.at(1.0);
+        assert!(p0.distance(from * 9_000.0) < 1e-2 && p1.distance(to * 9_010.0) < 1e-2, "{p0} {p1}");
+        assert!(pm.length() > 9_400.0, "sommet {}", pm.length());
+        assert!(dm.dot(to - from) > 0.0);
+        let mut last = 0.0;
+        for i in 0..=20 {
+            let a = hop.at(i as f32 / 20.0).0.normalize().angle_between(from);
+            assert!(a + 1e-4 >= last, "recule a {i}");
+            last = a;
+        }
+    }
+
     /// C3 : en croisière, le nez du vaisseau (-Z, avant du modèle) regarde la destination ; près du
     /// point de stationnement, le dessous est parallèle à la surface.
     #[test]
@@ -2899,7 +3113,8 @@ mod tests {
         for params in bodies {
             let t = Terrain::new(params);
             let l = t.layout;
-            assert!(l.voxel > 3.0 && l.voxel <= 11.0, "voxel {} pour un rayon de {}", l.voxel, params.radius);
+            let max = crate::terrain::MAX_VOXEL / crate::terrain::GROUND_SCALE as f32;
+            assert!(l.voxel > max * 0.25 && l.voxel <= max, "voxel {} pour un rayon de {}", l.voxel, params.radius);
             for dir in spots {
                 let dir = dir.normalize();
                 // Le sol existe, est fini et reste près de la surface
@@ -2926,7 +3141,7 @@ mod tests {
                 // Le quadtree reste borné et ses tuiles sont valides
                 let cam = dir * (g.top + t.voxel() * 2.0);
                 let mut tiles = Vec::new();
-                select_tiles(l, params.radius, cam, &mut tiles);
+                select_tiles(l, t.ground(cam.normalize()).top, cam, &mut tiles);
                 assert!(tiles.len() < 700, "{} tuiles pour un rayon de {}", tiles.len(), params.radius);
                 let key = *tiles.iter().max_by_key(|k| k.depth).unwrap();
                 let mesh = build_tile_mesh(&params, key);
