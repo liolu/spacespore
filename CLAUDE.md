@@ -399,6 +399,12 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   cheminees de fee. `kind_in` evalue les pieces creusees des rocks meme sans grottes ; `has_3d` vrai avec
   rocks (collisions). Chat : `/relief [forme]` (`go_relief`), `SPACESPORE_TEST_CMD_SECS`. Tests
   `cliff_forms_are_real_voxels`, `relief_marks_point_at_real_forms`. PROTOCOL 33.
+- 0.13 T3 = couleurs du sol (`terrain.rs`) : taches de 200 / 30 / 5 voxels (`value_noise`, seulement celles plus
+  grandes que 3 fois le quantum de la tuile), `Column::raw` (hauteur avant arrondi) -> `tint_columns` (pente
+  d'apres les 4 voisines, `ground_tint` : roche nue `rock_of` au-dela de 45 deg, sable des plages en pente douce
+  seulement, neige jusqu'a ~60 deg, mousse au pied des parois de 3 voxels sur les mondes humides) ; parois sous la
+  couche du dessus = strates (`strata_color`, bandes de 2 a 4 couches, ocre avec air). `mesher.rs` applique
+  `ground_tint` avec sa pente (regle 16). Test `ground_colors_follow_slope_and_scale`. PROTOCOL inchange.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

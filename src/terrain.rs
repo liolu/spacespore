@@ -344,6 +344,95 @@ pub struct Column {
     pub top: f32,
     pub kind: VoxelType,
     pub color: [f32; 4],
+    /// Rayon du sol avant l'arrondi aux couches (pente du sol : couleurs, 0.13 T3).
+    pub raw: f32,
+}
+
+/// Teinte de la roche nue d'un sol de couleur `color` : la pierre, un peu de la couleur du lieu.
+pub fn rock_of(color: [f32; 4]) -> [f32; 4] {
+    let s = VoxelType::Stone.color();
+    [s[0] * 0.7 + color[0] * 0.3, s[1] * 0.7 + color[1] * 0.3, s[2] * 0.7 + color[2] * 0.3, 1.0]
+}
+
+fn mix(a: [f32; 4], b: [f32; 4], f: f32) -> [f32; 4] {
+    [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f, 1.0]
+}
+
+/// Bruit de valeurs (-1 à 1) lissé, bien moins cher que Perlin : taches de couleur du sol (T3).
+fn value_noise(p: [f64; 3], seed: u32) -> f32 {
+    let (fx, fy, fz) = (p[0].floor(), p[1].floor(), p[2].floor());
+    let (x, y, z) = (fx as i64, fy as i64, fz as i64);
+    let s = |t: f64| -> f32 {
+        let t = t as f32;
+        t * t * (3.0 - 2.0 * t)
+    };
+    let (u, v, w) = (s(p[0] - fx), s(p[1] - fy), s(p[2] - fz));
+    let h = |i: i64, j: i64, k: i64| -> f32 {
+        let mut z = (seed as u64) ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (j as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F) ^ (k as u64).wrapping_mul(0x1656_67B1_9E37_79F9);
+        z = (z ^ (z >> 31)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        ((z ^ (z >> 29)) >> 40) as f32 / (1u64 << 23) as f32 - 1.0
+    };
+    let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
+    let plane = |k: i64| lerp(lerp(h(x, y, k), h(x + 1, y, k), u), lerp(h(x, y + 1, k), h(x + 1, y + 1, k), u), v);
+    lerp(plane(z), plane(z + 1), w)
+}
+
+/// Couleur de la mousse au pied des parois humides.
+const MOSS: [f32; 4] = [0.16, 0.34, 0.12, 1.0];
+
+/// Couleur du dessus d'une colonne selon la pente du sol (`slope` = dénivelé / distance) et la
+/// paroi qui la domine (`wall`, voxels) (0.13 T3) : roche nue sur les pentes fortes (la neige
+/// tient plus longtemps, le sable des plages seulement en pente douce), mousse au pied des parois
+/// sur un monde humide. Mêmes règles pour les tuiles et le maillage vu de l'espace (règle 16).
+pub fn ground_tint(kind: VoxelType, color: [f32; 4], slope: f32, wall: f32, wet: bool) -> [f32; 4] {
+    if kind.is_liquid() {
+        return color;
+    }
+    let (a, b) = match kind {
+        VoxelType::Snow | VoxelType::Ice => (1.4, 1.8),
+        VoxelType::Sand => (0.35, 0.6),
+        _ => (0.7, 1.0),
+    };
+    let f = ((slope - a) / (b - a)).clamp(0.0, 1.0);
+    let f = f * f * (3.0 - 2.0 * f);
+    let c = mix(color, rock_of(color), f);
+    let green = matches!(kind, VoxelType::Grass | VoxelType::Forest | VoxelType::Jungle | VoxelType::Taiga | VoxelType::Swamp | VoxelType::Tundra);
+    if wet && green && wall >= 3.0 && f < 0.5 {
+        return mix(c, MOSS, 0.55);
+    }
+    c
+}
+
+/// Couleur d'une paroi à la couche `k` : strates de 2 à 4 voxels, plus ou moins claires, ocre
+/// sur les mondes qui ont de l'air (0.13 T3).
+pub fn strata_color(color: [f32; 4], k: i32, seed: u32, warm: bool) -> [f32; 4] {
+    let h = |x: i64| -> f32 {
+        let mut z = (x as u64 ^ ((seed as u64) << 32)).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        z = (z ^ (z >> 29)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        ((z ^ (z >> 32)) >> 40) as f32 / (1u64 << 24) as f32
+    };
+    // Bandes d'épaisseur variable : la limite suivante tombe 2 à 4 couches plus haut
+    let band = (k as i64).div_euclid(3);
+    let cut = band * 3 + (h(band * 7 + 1) * 3.0) as i64;
+    let band = if (k as i64) < cut { band * 2 } else { band * 2 + 1 };
+    let rock = rock_of(color);
+    let lum = 0.8 + 0.32 * h(band);
+    let c = [rock[0] * lum, rock[1] * lum, rock[2] * lum, 1.0];
+    if warm {
+        mix(c, [0.70 * lum, 0.50 * lum, 0.36 * lum, 1.0], 0.3 * h(band + 99))
+    } else {
+        c
+    }
+}
+
+/// Pente du sol et hauteur de la paroi voisine (voxels) de la colonne `c`, d'après ses quatre
+/// voisines (est, ouest, nord, sud).
+fn slope_of(c: &Column, e: &Column, w: &Column, n: &Column, s: &Column, voxel: f32) -> (f32, f32) {
+    let dx = ((e.dir - w.dir).length() * c.raw).max(1e-3);
+    let dy = ((n.dir - s.dir).length() * c.raw).max(1e-3);
+    let slope = ((e.raw - w.raw) / dx).hypot((n.raw - s.raw) / dy);
+    let wall = (e.top.max(w.top).max(n.top).max(s.top) - c.top) / voxel;
+    (slope, wall)
 }
 
 pub struct Terrain {
@@ -544,7 +633,7 @@ impl Terrain {
         let p = &self.params;
         // Géante gazeuse : pas de relief, seulement le cœur où le vol s'arrête
         if p.gaseous {
-            return Column { dir, top: p.radius * GAS_CORE, kind: VoxelType::Stone, color: [0.3, 0.25, 0.2, 1.0] };
+            return Column { dir, top: p.radius * GAS_CORE, kind: VoxelType::Stone, color: [0.3, 0.25, 0.2, 1.0], raw: p.radius * GAS_CORE };
         }
         // Astéroïde : roche de son type, couleurs de son maillage
         if let Some(shape) = &p.asteroid {
@@ -557,7 +646,7 @@ impl Terrain {
                 AsteroidClass::M => VoxelType::Ore,
                 AsteroidClass::Ice => VoxelType::Ice,
             };
-            return Column { dir, top, kind, color: shape.color_at(dir) };
+            return Column { dir, top, kind, color: shape.color_at(dir), raw: h };
         }
         let (h, hv, relief) = self.raw_height_full(dir);
         let rel = ((h - p.radius) / quantum).round();
@@ -567,7 +656,18 @@ impl Terrain {
         let sea = if rel < tide_q { sea_material(&p.climate, &p.hydro, p.airless, dir.y) } else { None };
         let water = sea.is_some();
 
-        let var = self.color.get([dir.x as f64 * 12.0, dir.y as f64 * 12.0, dir.z as f64 * 12.0]) as f32 * 0.10;
+        // Taches de couleur sur plusieurs échelles (0.13 T3) : 200, 30 et 5 voxels, seulement
+        // celles que la tuile peut montrer (pas de moiré sur les tuiles lointaines)
+        let mut var = self.color.get([dir.x as f64 * 12.0, dir.y as f64 * 12.0, dir.z as f64 * 12.0]) as f32 * 0.10;
+        for (k, (wave, amp)) in [(200.0, 0.06), (30.0, 0.045), (5.0, 0.03)].into_iter().enumerate() {
+            let wave = wave * self.layout.voxel;
+            if wave < 3.0 * quantum {
+                break;
+            }
+            let f = (p.radius / wave) as f64;
+            let o = 37.1 * (k + 1) as f64;
+            var += value_noise([dir.x as f64 * f + o, dir.y as f64 * f - o, dir.z as f64 * f + 0.5 * o], p.seed.wrapping_add(k as u32)) * amp;
+        }
         let jitter = ((dir.x * 127.1 + dir.y * 311.7 + dir.z * 74.7).sin() * 43758.547).fract().abs() * 0.05 - 0.025;
 
         let (top, kind, color) = if water {
@@ -631,7 +731,7 @@ impl Terrain {
             }
             (p.radius + rel * quantum, kind, color)
         };
-        Column { dir, top, kind, color }
+        Column { dir, top, kind, color, raw: h }
     }
 
     /// Surface la plus haute de la colonne du niveau le plus fin qui contient `dir` (dessus d'un
@@ -772,7 +872,7 @@ impl Terrain {
     pub fn floor(&self, dir: Vec3, r: f32) -> Column {
         let p = &self.params;
         if p.gaseous {
-            return Column { dir, top: p.radius * GAS_CORE, kind: VoxelType::Stone, color: [0.3, 0.25, 0.2, 1.0] };
+            return Column { dir, top: p.radius * GAS_CORE, kind: VoxelType::Stone, color: [0.3, 0.25, 0.2, 1.0], raw: p.radius * GAS_CORE };
         }
         let (face, i, j) = self.cell_of(dir);
         let center = self.cell_dir(face, i, j);
@@ -788,7 +888,7 @@ impl Terrain {
             let kind = self.kind_at(face, i, j, k, center, &base, top_k);
             if kind != VoxelType::Air {
                 let color = if k < top_k { base.color } else { OVERHANG_COLOR };
-                return Column { dir: center, top: self.layer_radius(k + 1), kind, color };
+                return Column { dir: center, top: self.layer_radius(k + 1), kind, color, raw: base.raw };
             }
         }
         base
@@ -1038,6 +1138,7 @@ fn build_height_tile_inner(terrain: &Terrain, key: TileKey) -> Mesh {
             cols.push(terrain.column(face_dir(key.face, mid(i0 + ci), mid(j0 + cj)), quantum));
         }
     }
+    tint_columns(terrain, &mut cols, nc, |c| c, |c| c);
     let col = |ci: i32, cj: i32| &cols[(cj + 1) as usize * nc + (ci + 1) as usize];
 
     let mut buf = MeshBuf::default();
@@ -1084,12 +1185,33 @@ fn build_height_tile_inner(terrain: &Terrain, key: TileKey) -> Mesh {
                 if n.dot(nb.dir - c.dir) < 0.0 {
                     n = -n;
                 }
-                let shade = [c.color[0] * 0.82, c.color[1] * 0.82, c.color[2] * 0.82, 1.0];
+                // Parois : la roche nue (le sol seulement au bord des marches)
+                let wall = if c.top - lo > 1.5 * quantum && !c.kind.is_liquid() { rock_of(c.color) } else { c.color };
+                let shade = [wall[0] * 0.82, wall[1] * 0.82, wall[2] * 0.82, 1.0];
                 buf.quad([a * lo, b * lo, b * hi, a * hi], n, shade);
             }
         }
     }
     buf.into_mesh()
+}
+
+/// Couleurs des dessus d'une tuile d'après la pente et les parois (`ground_tint`) ; `cols` a une
+/// rangée de voisines tout autour (`nc` par côté).
+fn tint_columns<T>(t: &Terrain, cols: &mut [T], nc: usize, get: impl Fn(&T) -> &Column, get_mut: impl Fn(&mut T) -> &mut Column) {
+    let p = &t.params;
+    let wet = p.atmosphere && !p.airless && p.hydro.liquid == crate::planetgen::hydrology::Liquid::Water;
+    let at = |ci: usize, cj: usize| cj * nc + ci;
+    let tinted: Vec<(usize, [f32; 4])> = (1..nc - 1)
+        .flat_map(|cj| (1..nc - 1).map(move |ci| (ci, cj)))
+        .map(|(ci, cj)| {
+            let c = get(&cols[at(ci, cj)]);
+            let (slope, wall) = slope_of(c, get(&cols[at(ci + 1, cj)]), get(&cols[at(ci - 1, cj)]), get(&cols[at(ci, cj + 1)]), get(&cols[at(ci, cj - 1)]), t.layout.voxel);
+            (at(ci, cj), ground_tint(c.kind, c.color, slope, wall, wet))
+        })
+        .collect();
+    for (k, color) in tinted {
+        get_mut(&mut cols[k]).color = color;
+    }
 }
 
 /// Colonne d'une tuile 3D (avec une rangée de voisines tout autour).
@@ -1148,6 +1270,7 @@ pub fn build_voxel_tile_mesh(t: &Terrain, key: TileKey) -> Mesh {
             cols.push(Col3 { base, top_k, face, i, j });
         }
     }
+    tint_columns(t, &mut cols, nc, |c| &c.base, |c| &mut c.base);
     let col = |ci: i32, cj: i32| &cols[(cj + 1) as usize * nc + (ci + 1) as usize];
 
     // Couches à examiner : autour du sol, plus les formes 3D et les cellules modifiées
@@ -1308,7 +1431,13 @@ pub fn build_voxel_tile_mesh(t: &Terrain, key: TileKey) -> Mesh {
                     if nrm.dot(nb.base.dir - up) < 0.0 {
                         nrm = -nrm;
                     }
-                    buf.quad([a * r0, b * r0, b * r1, a * r1], nrm, shade(color, 0.82));
+                    // Paroi sous la couche du dessus : strates de la roche (0.13 T3)
+                    let side = if k < c.top_k - 1 && matches!(here, VoxelType::Stone | VoxelType::Basalt) || (k < c.top_k - 1 && here == c.base.kind) {
+                        strata_color(c.base.color, k, t.params.seed, !t.params.airless && t.params.atmosphere)
+                    } else {
+                        color
+                    };
+                    buf.quad([a * r0, b * r0, b * r1, a * r1], nrm, shade(side, 0.82));
                 }
             }
             // Jupes au bord de la tuile (raccord avec une voisine plus grossière)
@@ -1787,6 +1916,40 @@ mod tests {
             assert!(found.contains(&"piton") && found.contains(&"blocs") && found.contains(&"corniche"));
             assert_eq!(found.contains(&"gorge"), !airless);
         }
+    }
+
+    /// T3 : roche nue sur les pentes fortes (plus tôt pour le sable, plus tard pour la neige),
+    /// mousse au pied des parois humides, strates par couche, taches de quelques voxels au sol.
+    #[test]
+    fn ground_colors_follow_slope_and_scale() {
+        let dist = |a: [f32; 4], b: [f32; 4]| (0..3).map(|i| (a[i] - b[i]).abs()).sum::<f32>();
+        let g = VoxelType::Grass.color();
+        assert_eq!(ground_tint(VoxelType::Grass, g, 0.3, 0.0, true), g);
+        assert!(dist(ground_tint(VoxelType::Grass, g, 1.2, 0.0, true), rock_of(g)) < 1e-4);
+        let sand = VoxelType::Sand.color();
+        assert!(dist(ground_tint(VoxelType::Sand, sand, 0.7, 0.0, true), rock_of(sand)) < 1e-4, "plage en pente = roche");
+        let snow = VoxelType::Snow.color();
+        assert_eq!(ground_tint(VoxelType::Snow, snow, 1.2, 0.0, true), snow, "neige sur les pentes moyennes");
+        assert!(dist(ground_tint(VoxelType::Grass, g, 0.2, 5.0, true), g) > 0.05, "mousse");
+        assert_eq!(ground_tint(VoxelType::Grass, g, 0.2, 5.0, false), g);
+        let w = VoxelType::Water.color();
+        assert_eq!(ground_tint(VoxelType::Water, w, 3.0, 9.0, true), w);
+        // Strates : des bandes différentes d'une couche à l'autre
+        let bands: std::collections::HashSet<_> = (0..30).map(|k| strata_color(g, k, 7, true).map(f32::to_bits)).collect();
+        assert!(bands.len() > 4, "{}", bands.len());
+        // Taches de 5 voxels : deux colonnes à 3 voxels l'une de l'autre n'ont pas la même couleur
+        let t = Terrain::new(earth_like());
+        let v = t.voxel();
+        let mut differ = 0;
+        for k in 0..40 {
+            let d = Vec3::new(0.3 + k as f32 * 0.01, 0.8, 0.2).normalize();
+            let e = (d + Vec3::Y.cross(d).normalize() * 3.0 * v / t.params.radius).normalize();
+            let (a, b) = (t.base_column(d, v), t.base_column(e, v));
+            if a.kind == b.kind && dist(a.color, b.color) > 0.01 {
+                differ += 1;
+            }
+        }
+        assert!(differ > 20, "{differ}");
     }
 
     /// Un delta (minage, 0.14) creuse bien une cellule : le sol descend d'un voxel.
