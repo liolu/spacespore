@@ -186,10 +186,14 @@ pub struct Layout {
     pub voxel: f32,
 }
 
-/// Étude d'échelle (0.13 E1) : le voxel est `k` fois plus petit (la planète `k` fois plus grande en
-/// voxels, ses rayons en unités inchangés). Prototype : `/echelle k` ou `SPACESPORE_SCALE`, jamais
-/// sauvegardé ; pris en compte au prochain atterrissage.
-static VOXEL_SCALE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+/// Échelle du sol (0.13, règle 14) : le voxel est `GROUND_SCALE` fois plus petit qu'en 0.12 (la
+/// planète 16 fois plus grande en voxels, ses rayons en unités inchangés : règle 15). Changer
+/// l'échelle = changer ce nombre (décision Q1 après l'étude E1, `RAPPORT-echelle-E1.md`).
+pub const GROUND_SCALE: u32 = 16;
+
+/// Échelle en cours : `GROUND_SCALE`, ou un autre `k` pour les tests (`/echelle k`,
+/// `SPACESPORE_SCALE`, jamais sauvegardé, au prochain atterrissage).
+static VOXEL_SCALE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(GROUND_SCALE);
 
 pub fn voxel_scale() -> u32 {
     VOXEL_SCALE.load(std::sync::atomic::Ordering::Relaxed)
@@ -305,8 +309,10 @@ impl TileKey {
     }
 }
 
-/// Tuiles (feuilles du quadtree) à afficher pour une caméra à `cam_local` (repère du corps).
-pub fn select_tiles(layout: Layout, radius: f32, cam_local: Vec3, out: &mut Vec<TileKey>) {
+/// Tuiles (feuilles du quadtree) à afficher pour une caméra à `cam_local` (repère du corps) ;
+/// `ground_r` = rayon du sol sous la caméra : les distances se mesurent au sol, pas à la sphère de
+/// base (à la nouvelle échelle, un plateau à 60 voxels au-dessus n'aurait jamais de tuiles fines).
+pub fn select_tiles(layout: Layout, ground_r: f32, cam_local: Vec3, out: &mut Vec<TileKey>) {
     fn visit(key: TileKey, layout: Layout, radius: f32, cam: Vec3, out: &mut Vec<TileKey>) {
         if (key.depth as u32) < layout.max_depth {
             let dist = (cam - key.center_dir() * radius).length();
@@ -320,7 +326,7 @@ pub fn select_tiles(layout: Layout, radius: f32, cam_local: Vec3, out: &mut Vec<
         out.push(key);
     }
     for face in 0..6 {
-        visit(TileKey::root(face), layout, radius, cam_local, out);
+        visit(TileKey::root(face), layout, ground_r, cam_local, out);
     }
 }
 
@@ -640,8 +646,11 @@ impl Terrain {
     }
 
     /// Couche radiale qui contient le rayon `r` (0 = juste au-dessus du niveau de la mer).
+    /// (un centième de voxel de tolérance : à 16 000 unités du centre, l'écart entre deux `f32`
+    /// voisins fait ~0,004 voxel à l'échelle 0.13, et un rayon pile sur une limite de couche,
+    /// calculé par `layer_radius`, tomberait dans la couche du dessous ; règle 19)
     pub fn layer(&self, r: f32) -> i32 {
-        ((r - self.params.radius) / self.layout.voxel).floor() as i32
+        ((r - self.params.radius) / self.layout.voxel + 0.01).floor() as i32
     }
 
     /// Rayon du bas de la couche `k`.
@@ -1356,9 +1365,10 @@ mod tests {
 
     #[test]
     fn voxel_size_stays_in_range() {
+        let max = MAX_VOXEL / GROUND_SCALE as f32;
         for r in [120.0, 300.0, 500.0, 1_000.0, 1_500.0, 3_000.0, 6_000.0, 13_000.0] {
-            let l = layout_for(r);
-            assert!(l.voxel > MAX_VOXEL * 0.4 && l.voxel <= MAX_VOXEL, "rayon {r} : voxel {}", l.voxel);
+            let l = layout_scaled(r, GROUND_SCALE);
+            assert!(l.voxel > max * 0.4 && l.voxel <= max, "rayon {r} : voxel {}", l.voxel);
         }
     }
 
@@ -1369,7 +1379,7 @@ mod tests {
         let dir = Vec3::new(0.3, 0.8, 0.5).normalize();
         let cam = dir * (t.ground(dir).top + 15.0);
         let mut tiles = Vec::new();
-        select_tiles(t.layout, p.radius, cam, &mut tiles);
+        select_tiles(t.layout, t.ground(dir).top, cam, &mut tiles);
         assert!(tiles.len() < 600, "{} tuiles", tiles.len());
         // Le niveau le plus fin existe sous la caméra...
         let (face, s, tt) = dir_to_face(dir);
@@ -1535,7 +1545,8 @@ mod tests {
                 assert_ne!(f2, face, "face {face} ({gi}, {gj})");
                 // La colonne voisine canonique est bien à un voxel du bord
                 let back = t.cell_dir(f2, i2, j2);
-                assert!(back.angle_between(dir) * t.params.radius < t.voxel() * 0.75, "face {face} ({gi}, {gj})");
+                // (distance des points : `angle_between` passe par acos, imprécis pour les petits angles)
+                assert!((back - dir).length() * t.params.radius < t.voxel() * 0.75, "face {face} ({gi}, {gj})");
             }
         }
     }
@@ -1771,7 +1782,7 @@ mod bench {
             let t = Terrain::new(*p);
             let dir = Vec3::new(0.3, 0.7, -0.4).normalize();
             let mut keys = Vec::new();
-            select_tiles(t.layout, p.radius, dir * (t.ground(dir).top + 20.0), &mut keys);
+            select_tiles(t.layout, t.ground(dir).top, dir * (t.ground(dir).top + 20.0), &mut keys);
             for key in keys.iter().take(40) {
                 std::hint::black_box(build_tile_mesh(p, *key));
                 tiles += 1;
@@ -1792,7 +1803,7 @@ mod bench {
             let t = Terrain::new(*p);
             let dir = t.overhang.map_or(Vec3::Y, |o| o.dir);
             let mut sel = Vec::new();
-            select_tiles(t.layout, p.radius, dir * (t.ground(dir).top + 20.0), &mut sel);
+            select_tiles(t.layout, t.ground(dir).top, dir * (t.ground(dir).top + 20.0), &mut sel);
             keys.extend(sel.into_iter().filter(|k| k.depth as u32 == t.layout.max_depth).take(20).map(|k| (t.params, k)));
         }
         // Un terrain par astre, comme dans le jeu (les tuiles partagent le cache des grottes)
@@ -1873,7 +1884,7 @@ mod scale_study {
                 let dir = Vec3::new(0.3, 0.7, -0.4).normalize();
                 let eye = dir * (t.ground(dir).top + 1.8 * v);
                 let mut keys = Vec::new();
-                select_tiles(t.layout, p.radius, eye, &mut keys);
+                select_tiles(t.layout, t.ground(dir).top, eye, &mut keys);
                 let start = std::time::Instant::now();
                 for key in &keys {
                     let mesh = build_tile_mesh_with(&t, *key);

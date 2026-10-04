@@ -522,7 +522,7 @@ mod bench {
             let t = Terrain::new(*p);
             let dir = Vec3::new(0.2, 0.3, 0.9).normalize();
             let mut keys = Vec::new();
-            select_tiles(t.layout, p.radius, dir * (t.ground(dir).top + 20.0), &mut keys);
+            select_tiles(t.layout, t.ground(dir).top, dir * (t.ground(dir).top + 20.0), &mut keys);
             for key in &keys {
                 let a = std::time::Instant::now();
                 std::hint::black_box(build_tile_mesh_with(&t, *key));

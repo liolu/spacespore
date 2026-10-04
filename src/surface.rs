@@ -391,6 +391,28 @@ impl Walker {
             }
         }
         self.pos = up * r;
+        // Corps dans la roche (coin du cube où trois grilles de colonnes se rencontrent, relief qui
+        // vient de changer, ou pile sur la limite de deux colonnes, que l'arrondi de la direction
+        // fait basculer) : on remonte jusqu'à 16 voxels, sur le premier sol qui laisse la place du
+        // corps ; vérifié avec la direction telle qu'elle sera relue (position normalisée)
+        for _ in 0..2 {
+            let up = self.up();
+            let r = self.pos.length();
+            if t.floor(up, r + 2.0 * v).top <= r + 0.05 * v && t.ceiling(up, r) >= r + BODY_VOXELS * v - 0.05 * v {
+                break;
+            }
+            for n in 1..=16 {
+                let top = t.floor(up, r + n as f32 * v).top;
+                if top > r + 0.05 * v && t.ceiling(up, top) >= top + BODY_VOXELS * v - 0.05 * v && t.floor(up, top + 2.0 * v).top <= top + 0.05 * v {
+                    self.pos = up * top;
+                    self.vr = 0.0;
+                    self.on_ground = true;
+                    break;
+                }
+            }
+        }
+        let up = self.up();
+        let r = self.pos.length();
         self.heading = tangent(self.heading, up);
 
         let eye_target = r + v * EYE_VOXELS;
@@ -2317,7 +2339,8 @@ fn update_tiles(
     // Caméra dans le repère fixe de l'astre : les tuiles tournent avec lui.
     let cam_local = root_tf.rotation.inverse() * (cam.translation - root_tf.translation);
     let mut leaves = Vec::new();
-    select_tiles(layout, params.radius, cam_local, &mut leaves);
+    let ground_r = terrain.ground(cam_local.normalize_or(Vec3::Y)).top;
+    select_tiles(layout, ground_r, cam_local, &mut leaves);
     let mut needed: HashSet<TileKey> = HashSet::with_capacity(leaves.len() * 2);
     for &leaf in &leaves {
         let mut k = Some(leaf);
@@ -2904,7 +2927,8 @@ mod tests {
         for params in bodies {
             let t = Terrain::new(params);
             let l = t.layout;
-            assert!(l.voxel > 3.0 && l.voxel <= 11.0, "voxel {} pour un rayon de {}", l.voxel, params.radius);
+            let max = crate::terrain::MAX_VOXEL / crate::terrain::GROUND_SCALE as f32;
+            assert!(l.voxel > max * 0.25 && l.voxel <= max, "voxel {} pour un rayon de {}", l.voxel, params.radius);
             for dir in spots {
                 let dir = dir.normalize();
                 // Le sol existe, est fini et reste près de la surface
@@ -2931,7 +2955,7 @@ mod tests {
                 // Le quadtree reste borné et ses tuiles sont valides
                 let cam = dir * (g.top + t.voxel() * 2.0);
                 let mut tiles = Vec::new();
-                select_tiles(l, params.radius, cam, &mut tiles);
+                select_tiles(l, t.ground(cam.normalize()).top, cam, &mut tiles);
                 assert!(tiles.len() < 700, "{} tuiles pour un rayon de {}", tiles.len(), params.radius);
                 let key = *tiles.iter().max_by_key(|k| k.depth).unwrap();
                 let mesh = build_tile_mesh(&params, key);
