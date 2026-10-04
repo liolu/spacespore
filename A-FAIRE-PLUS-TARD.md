@@ -1,6 +1,6 @@
 # À faire plus tard
 
-> **04/10/2026 : tout le bloc D est repris dans `ROADMAP-0.14.md`** (D1 à D6, mêmes noms). Ce fichier reste pour l'historique.
+> **04/10/2026 : tout le bloc D est repris dans `ROADMAP-0.13.md`** (D1 -> O3, D2 -> T5, D3 -> L2, D4 -> L1, D5 -> L3, D6 -> L4). Ce fichier reste pour l'historique.
 
 
 Ce qui reste du bloc D de la 0.11 (`ROADMAP-0.11.md`), mis de côté le 03/10/2026 après la release
@@ -47,5 +47,5 @@ ni les décisions sans me demander. »
 
 ## Après le bloc D
 
-La 0.15 (minage et destruction, avant prévue en 0.14) : creuser / poser des voxels avec les deltas de B1, ressources de la
+La 0.14 (minage et destruction) : creuser / poser des voxels avec les deltas de B1, ressources de la
 phase 8, astéroïdes minables (C1), destruction de planètes (débris → anneaux, C2).

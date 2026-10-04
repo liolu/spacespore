@@ -133,7 +133,7 @@ D2 → D3 → D4 → D5 → D6**, puis la 0.14 (minage et destruction).
 - C3 (étoiles multiples) après C1–C2 : les ceintures et comètes doivent déjà gérer un seul soleil.
 - La faune (D3) après la météo et le jour/nuit : son comportement en dépend.
 
-### 0.15 — Minage et destruction (rappel ; prévu en 0.14, décalé le 04/10/2026)
+### 0.14 — Minage et destruction (rappel)
 - Creuser / poser des voxels avec les deltas de B1, ressources de la phase 8, astéroïdes minables (C1).
 - Destruction de planètes : masse → gravité, atmosphère, orbite, marées recalculées ; débris → anneaux (C2).
 

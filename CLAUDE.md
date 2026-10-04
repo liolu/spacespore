@@ -72,7 +72,7 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   decompressee, silicates, glaces, gaz) et gisements de minerais reels et fictifs (Xenium, Aetherite, Chronite,
   `Realism::Fictional`) : abondance, profondeur, distribution, rarete, difficulte, quantite (t). Chaque minerai =
   un bien du rayon « Ressources » (`Ore::good`, biens ajoutes a la fin de `economy::GOODS`, une faction n'en vend
-  qu'une partie : `economy::sold_by`). Minage (0.15) : `BodyDelta::ores` = tonnes extraites. Scanner, profil, `/stats`.
+  qu'une partie : `economy::sold_by`). Minage (0.14) : `BodyDelta::ores` = tonnes extraites. Scanner, profil, `/stats`.
   Phase 7 : vie independante de l'habitabilite (`planetgen/life.rs`, sans plantes les biomes verts restent nus),
   decor voxel des tuiles proches (`decor.rs` : `tile_decor` calcule avec la tuile, enfants de la tuile, maillages
   et materiaux partages). Banc : `cargo test --release bench_decor -- --ignored --nocapture`. L'etoile a un type (`planetgen/star.rs`, O..M, naine blanche/brune, sous-geante, geante rouge) :
@@ -119,7 +119,7 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   3D (`build_voxel_tile_mesh`), les autres en champ de hauteur (`build_height_tile_mesh`) ; `column` = vue de dessus.
   Collisions 3D : `Terrain::floor(dir, r)` (sol sous un point) et `ceiling` (marcheur, vol bas, camera).
   Deltas : `voxel.rs` (`BlockKey` 32^3, `BodyVoxels`, `VoxelDeltas` dans `world.json`, message `VoxelEdit`, minage
-  0.15). Banc : `cargo test --release bench_voxel_tiles -- --ignored --nocapture`. PROTOCOL 18.
+  0.14). Banc : `cargo test --release bench_voxel_tiles -- --ignored --nocapture`. PROTOCOL 18.
   B2 = grottes (`caves.rs`) : regions cubiques de 40 voxels hachees (regle 12, cache partage `Arc<Caves>` entre
   les tuiles : `Terrain::with_caves`), salle + tunnels vers des portes partagees avec les voisines, puits d'entree
   pres de la surface ; sortes selon la geologie (`CaveStyle::of`) : tube de lave, karst (lacs, stalactites), glace,
@@ -391,6 +391,14 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   bosses (2 a 6 voxels, pas vues de l'espace), vallees d'erosion (mondes a air et eau) ; masque des terres
   `land_mask` (un cinquieme du relief sous la mer). Remplace les anciens bruits `mid` / `fine`. Pentes :
   `cargo test --release slope_distribution -- --nocapture`. PROTOCOL 32.
+- 0.13 T2 = formes 3D du relief (`rocks.rs`, cellules de 60 voxels hachees, `CellForms` : pieces + reperes
+  `Feature`) sur tout astre solide : falaises (pente > 45 deg mesuree sur 3 points de la cellule) = corniche
+  (`Piece::Add` dalle) avec la roche creusee dessous (surplomb), strates (rainures `Carve`), entree de grotte ;
+  pitons (montagnes), chaos de blocs (pied des pentes, mondes nus) ; avec air : gorges etroites (`Carve`,
+  noyees sous la mer si eau), ponts naturels (`Add` qui l'emporte sur `Carve`), arches (jusqu'a 40 voxels),
+  cheminees de fee. `kind_in` evalue les pieces creusees des rocks meme sans grottes ; `has_3d` vrai avec
+  rocks (collisions). Chat : `/relief [forme]` (`go_relief`), `SPACESPORE_TEST_CMD_SECS`. Tests
+  `cliff_forms_are_real_voxels`, `relief_marks_point_at_real_forms`. PROTOCOL 33.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

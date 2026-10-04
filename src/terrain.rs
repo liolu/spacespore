@@ -396,10 +396,14 @@ impl Terrain {
             overhang: None,
             voxels: None,
             caves: CaveStyle::of(&params).filter(|_| params.asteroid.is_none()).map(|s| Arc::new(Caves::new(s, params.seed, params.layout().voxel))),
-            // Seulement là où le vent et l'eau sculptent la roche
             min_crater: std::sync::atomic::AtomicU32::new((2.0 * params.layout().voxel / params.radius.max(1.0)).to_bits()),
-            rocks: (params.atmosphere && !params.airless && !params.gaseous && params.pressure >= 0.05)
-                .then(|| Arc::new(Rocks::new(params.seed, params.radius, params.layout().voxel))),
+            // Formes 3D (T2) sur tout astre solide ; arches et gorges seulement là où le vent et
+            // l'eau sculptent la roche
+            rocks: (!params.gaseous && params.asteroid.is_none()).then(|| {
+                let air = params.atmosphere && !params.airless && params.pressure >= 0.05;
+                let wet = air && params.hydro.liquid == crate::planetgen::hydrology::Liquid::Water;
+                Arc::new(Rocks::new(params.seed, params.radius, params.layout().voxel, air, wet))
+            }),
             cave_window: None,
         }
         .with_overhang()
@@ -683,6 +687,7 @@ impl Terrain {
     /// Formes 3D ou cellules modifiées près de cette colonne : sinon le champ de hauteur suffit.
     fn has_3d(&self, face: u8, i: i64, j: i64, dir: Vec3) -> bool {
         self.caves.is_some()
+            || self.rocks.is_some()
             || self.overhang.as_ref().is_some_and(|o| o.near(dir))
             || self.voxels.as_ref().is_some_and(|v| v.layers_in(face, i.div_euclid(BLOCK), j.div_euclid(BLOCK)).is_some())
     }
@@ -707,32 +712,30 @@ impl Terrain {
             let v = self.layout.voxel;
             let r = self.layer_radius(k) + v * 0.5;
             let depth = base.top - r;
-            // Sous la mer, pas de grotte (elle se remplirait) ; près de la surface, le sol
+            // Sous la mer, pas de grotte (elle se remplirait) ; près de la surface, le sol.
+            // Grottes, puis formes creusées du relief (gorges, corniches, strates : T2)
             if !base.kind.is_liquid() {
-                if let Some(caves) = &self.caves {
-                    if depth < crate::caves::MAX_DEPTH + caves.size {
-                        let p = dir * r;
-                        let cell = match pieces {
-                            Some(list) => eval_pieces(list.iter().filter(|(k0, k1, _)| (*k0..=*k1).contains(&k)).map(|(_, _, piece)| piece), p, v),
-                            None => {
-                                let near = caves.pieces_near(p, &|d| self.surface_r(d));
-                                eval_pieces(
-                                    near.iter().filter(|piece| {
-                                        let (c, r) = piece.bound();
-                                        c.distance_squared(p) <= r * r
-                                    }),
-                                    p,
-                                    v,
-                                )
-                            }
-                        };
-                        match cell {
-                            CaveCell::Air => return VoxelType::Air,
-                            CaveCell::Water => return VoxelType::Water,
-                            CaveCell::Crystal => return VoxelType::Crystal,
-                            CaveCell::Rock => {}
-                        }
+                let p = dir * r;
+                let cell = match pieces {
+                    Some(list) => eval_pieces(list.iter().filter(|(k0, k1, _)| (*k0..=*k1).contains(&k)).map(|(_, _, piece)| piece), p, v),
+                    None => {
+                        let caves = self.caves.as_ref().filter(|c| depth < crate::caves::MAX_DEPTH + c.size).map(|c| c.pieces_near(p, &|d| self.surface_r(d)));
+                        let rocks = self.rocks.as_ref().map(|r| r.pieces_near(dir, &|d| self.rock_ground(d)));
+                        eval_pieces(
+                            caves.iter().flat_map(|a| a.iter()).chain(rocks.iter().flat_map(|a| a.iter())).filter(|piece| {
+                                let (c, r) = piece.bound();
+                                c.distance_squared(p) <= r * r
+                            }),
+                            p,
+                            v,
+                        )
                     }
+                };
+                match cell {
+                    CaveCell::Air => return VoxelType::Air,
+                    CaveCell::Water => return VoxelType::Water,
+                    CaveCell::Crystal => return VoxelType::Crystal,
+                    CaveCell::Rock => {}
                 }
             }
             if depth < 2.5 * v || base.kind.is_liquid() {
@@ -821,7 +824,7 @@ impl Terrain {
         }
         if let Some(rocks) = &self.rocks {
             let dir = self.cell_dir(face, i, j);
-            for piece in rocks.pieces_near(dir, &|d| self.rock_ground(d)).iter() {
+            for piece in rocks.pieces_near(dir, &|d| self.rock_ground(d)).iter().filter(|p| matches!(p, Piece::Add(_))) {
                 let (c, r) = piece.bound();
                 k = k.max(self.layer(c.length() + r) + 1);
             }
@@ -1689,6 +1692,101 @@ mod tests {
             }
         }
         assert!(checked > 0, "aucune arche trouvee");
+    }
+
+    /// T2 : les formes du relief sont de vraies cellules 3D. Les pièces posées (corniches, pitons,
+    /// blocs, ponts) sont de la roche au-dessus du sol, les pièces creusées (gorges, grottes des
+    /// falaises, strates, dessous des corniches) de l'air ou de l'eau sous le sol ; et le sol pris
+    /// pour les collisions (`floor`) est le dessus de la roche posée.
+    #[test]
+    fn cliff_forms_are_real_voxels() {
+        let mut p = earth_like();
+        p.relief = Relief { seed: 5, plates: 8, mountains: 0.4, terraces: 0.6, canyons: 0.1, ..Default::default() };
+        let t = Terrain::new(p);
+        let rocks = t.rocks.clone().expect("formes du relief");
+        let v = t.voxel();
+        let (mut added, mut carved, mut floors) = (0, 0, 0);
+        let mut seen = std::collections::HashSet::new();
+        for n in 0..3000 {
+            let a = n as f32 * 0.37;
+            let dir = Vec3::new(a.cos() * 0.6, 0.5 + 0.4 * (a * 0.13).sin(), a.sin() * 0.6).normalize();
+            let pieces = rocks.pieces_near(dir, &|d| t.rock_ground(d));
+            for piece in pieces.iter() {
+                let (c, _) = piece.bound();
+                if !seen.insert(c.to_array().map(f32::to_bits)) {
+                    continue;
+                }
+                let d = c.normalize();
+                let (face, i, j) = t.cell_of(d);
+                let center = t.cell_dir(face, i, j);
+                let (base, top_k) = t.base_cell_column(center);
+                let p = center * c.length();
+                let k = t.layer(c.length());
+                let inside = |q: &Piece| match q {
+                    Piece::Add(s) | Piece::Carve(s, _) => s.contains(p),
+                    _ => false,
+                };
+                if !inside(piece) || base.kind.is_liquid() {
+                    continue;
+                }
+                let kind = t.kind_at(face, i, j, k, center, &base, top_k);
+                match piece {
+                    Piece::Add(_) if k >= top_k => {
+                        assert_eq!(kind, VoxelType::Stone, "roche posee absente");
+                        added += 1;
+                        // Juste au-dessus de la roche posée, le sol est au moins à sa hauteur
+                        if floors < 20 && t.kind_at(face, i, j, k + 1, center, &base, top_k) == VoxelType::Air {
+                            let f = t.floor(center, t.layer_radius(k + 1) + 0.5 * v);
+                            assert!(f.top >= t.layer_radius(k + 1) - 0.01 * v, "sol sous la roche posee {} < {}", f.top, t.layer_radius(k + 1));
+                            floors += 1;
+                        }
+                    }
+                    Piece::Carve(..) if k < top_k && !pieces.iter().any(|q| matches!(q, Piece::Add(s) if s.contains(p))) => {
+                        assert!(matches!(kind, VoxelType::Air | VoxelType::Water), "roche non creusee : {kind:?}");
+                        carved += 1;
+                    }
+                    _ => {}
+                }
+            }
+            if added > 30 && carved > 30 {
+                break;
+            }
+        }
+        eprintln!("pose {added}, creuse {carved}, sols {floors}");
+        assert!(added > 5 && carved > 5 && floors > 0, "pose {added}, creuse {carved}, sols {floors}");
+    }
+
+    /// `/relief` : chaque forme repérée existe là où on la montre (roche posée au point visé ou
+    /// air creusé), sur un monde avec air et sur un monde nu.
+    #[test]
+    fn relief_marks_point_at_real_forms() {
+        use crate::rocks::Feature;
+        for airless in [false, true] {
+            let mut p = earth_like();
+            p.airless = airless;
+            p.atmosphere = !airless;
+            p.relief = Relief { seed: 5, plates: 8, mountains: 0.4, terraces: 0.6, canyons: 0.1, ..Default::default() };
+            let t = Terrain::new(p);
+            let rocks = t.rocks.clone().expect("formes du relief");
+            let mut found = Vec::new();
+            for f in Feature::ALL {
+                let Some((_, _, look)) = rocks.nearest(Vec3::new(0.3, 0.8, 0.2).normalize(), Some(f), 20, &|d| t.rock_ground(d)) else { continue };
+                let d = look.normalize();
+                let (face, i, j) = t.cell_of(d);
+                let center = t.cell_dir(face, i, j);
+                let (base, top_k) = t.base_cell_column(center);
+                let k = t.layer(look.length());
+                let kind = t.kind_at(face, i, j, k, center, &base, top_k);
+                let solid = matches!(f, Feature::Pinnacle | Feature::Boulders | Feature::Bridge | Feature::Arch | Feature::Hoodoo);
+                if f != Feature::Ledge && f != Feature::Strata && f != Feature::Boulders {
+                    assert_eq!(kind != VoxelType::Air && kind != VoxelType::Water, solid, "{} ({airless}) : {kind:?}", f.name());
+                }
+                found.push(f.name());
+            }
+            eprintln!("air {}: {found:?}", !airless);
+            assert!(found.contains(&"piton") && found.contains(&"blocs") && found.contains(&"corniche"));
+            assert_eq!(found.contains(&"gorge"), !airless);
+        }
     }
 
     /// Un delta (minage, 0.14) creuse bien une cellule : le sol descend d'un voxel.

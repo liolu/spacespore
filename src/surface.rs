@@ -2275,13 +2275,59 @@ fn refresh_voxels(settings: Res<GameSettings>, mut changed: ResMut<VoxelsChanged
     }
 }
 
-/// `/surplomb` : aller à l'arche de test (voxels 3D) de l'astre où l'on se trouve.
+/// `/surplomb` (None) : aller à l'arche de test (voxels 3D) de l'astre où l'on se trouve ;
+/// `/relief [forme]` (Some) : à la forme du relief la plus proche (`rocks::Feature`, T2).
 #[derive(Event)]
-pub struct OverhangCommand;
+pub struct OverhangCommand(pub Option<String>);
+
+/// `/relief [forme]` : aller voir la forme du relief la plus proche (corniche, piton, gorge...).
+fn go_relief(t: &Terrain, surface: &mut Surface, arg: &str) -> Result<String, String> {
+    let rocks = t.rocks.clone().ok_or("Pas de formes du relief sur cet astre.")?;
+    let want = if arg.trim().is_empty() {
+        None
+    } else {
+        Some(crate::rocks::Feature::parse(arg).ok_or_else(|| {
+            format!("Formes : {}", crate::rocks::Feature::ALL.map(|f| f.name()).join(", "))
+        })?)
+    };
+    let here = surface.local_point().ok_or("Posez-vous ou volez bas d'abord.")?.normalize_or(Vec3::Y);
+    let (kind, at, look) = rocks.nearest(here, want, 40, &|d| t.rock_ground(d)).ok_or("Aucune forme de ce genre pres d'ici.")?;
+    let v = t.voxel();
+    let dir = at.normalize();
+    match surface.phase {
+        Phase::Walking => {
+            let floor = t.floor(dir, f32::INFINITY).top;
+            let heading = (look - at).normalize_or(Vec3::X);
+            let mut w = Walker::spawn(t, dir, heading);
+            w.pos = dir * floor;
+            w.eye_r = floor + v * EYE_VOXELS;
+            surface.walker = w;
+            Ok(format!("Devant : {}.", kind.name()))
+        }
+        Phase::Flying => {
+            surface.fpos = dir * (t.ground(dir).top + 40.0 * v);
+            surface.fdescend = false;
+            Ok(format!("{} sous le vaisseau (V pour se poser).", kind.name()))
+        }
+        _ => Err("Attendez la fin de l'atterrissage.".into()),
+    }
+}
 
 fn go_overhang(time: Res<Time>, mut events: EventReader<OverhangCommand>, mut surface: ResMut<Surface>, mut net: ResMut<Net>) {
     let now = time.elapsed_secs_f64();
-    for _ in events.read() {
+    for ev in events.read() {
+        if let Some(arg) = &ev.0 {
+            let Some(t) = surface.terrain.take() else {
+                net.notify("Posez-vous ou volez bas sur une planete ou une lune solide d'abord (zoom sous 1000).", now);
+                continue;
+            };
+            let msg = go_relief(&t, &mut surface, arg);
+            surface.terrain = Some(t);
+            match msg {
+                Ok(m) | Err(m) => net.notify(&m, now),
+            }
+            continue;
+        }
         let Some(o) = surface.terrain.as_ref().and_then(|t| t.overhang) else {
             net.notify("Posez-vous ou volez bas sur une planete ou une lune solide d'abord (zoom sous 1000).", now);
             continue;
