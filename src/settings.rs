@@ -675,7 +675,6 @@ pub const SPACE_STRETCH: f32 = 5.0;
 /// Échelle des tailles galactiques (trous noirs centraux) : celle d'avant l'étirement.
 pub const GALAXY_SIZE_SCALE: f32 = 300.0;
 pub const SYSTEM_CELL_SIZE: f32 = 100_000.0 * GALAXY_SCALE;
-pub const STREAM_RADIUS: f32 = 3.0;
 /// Graine du monde par défaut (partagée par tous les joueurs).
 pub const DEFAULT_WORLD_SEED: u64 = 42;
 pub const GALAXY_RADIUS: f32 = 9_000_000.0 * GALAXY_SCALE;

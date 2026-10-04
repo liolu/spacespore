@@ -57,8 +57,11 @@ fn dev_script(
     let t = time.elapsed_secs();
     if *step == 0 && t > 6.0 {
         *step = 1;
-        if let Ok(cmd) = std::env::var("SPACESPORE_TEST_CMD") {
-            chat.send(crate::chat_cmd::ChatCommand(cmd));
+        // Plusieurs commandes séparées par « ; » (dans l'ordre)
+        if let Ok(cmds) = std::env::var("SPACESPORE_TEST_CMD") {
+            for cmd in cmds.split(';').map(str::trim).filter(|c| !c.is_empty()) {
+                chat.send(crate::chat_cmd::ChatCommand(cmd.to_string()));
+            }
         }
     }
     let Ok(k) = std::env::var("SPACESPORE_TEST_STAR") else { return };

@@ -303,7 +303,6 @@ fn main() {
                 setup_fps_display,
             ),
         )
-        .add_systems(PostUpdate, lock_system_at_planet_zoom)
 
         // ── Update ──────────────────────────────────────────────────────
         .add_systems(
@@ -520,6 +519,195 @@ fn highlight_hovered_galaxy(
     }
 }
 
+/// Un astre qu'un clic peut choisir maintenant : où il est à l'écran (pixels de la fenêtre), la
+/// distance de clic autour de lui, sa taille à l'écran (rayon en pixels, 0 pour un point).
+pub struct Clickable {
+    pub kind: TargetKind,
+    pub pos: Vec3,
+    pub screen: Vec2,
+    pub tolerance: f32,
+    pub size: f32,
+}
+
+/// Rayon d'un astre à l'écran (pixels).
+fn screen_radius(camera: &Camera, camera_transform: &GlobalTransform, viewport: &graphics::ViewportScale, center: Vec3, radius: f32) -> f32 {
+    let edge = center + camera_transform.right() * radius;
+    match (camera.world_to_viewport(camera_transform, center), camera.world_to_viewport(camera_transform, edge)) {
+        (Ok(a), Ok(b)) => viewport.to_window(a).distance(viewport.to_window(b)),
+        _ => 0.0,
+    }
+}
+
+/// Tous les astres cliquables maintenant (C6) : une seule règle pour le clic et pour les cercles.
+/// Même zoom permis (`can_navigate_to`), mêmes distances de clic, pas d'autre système au zoom 1 ;
+/// rien pendant un séjour sur un astre ou un voyage en trou de ver (l'appelant le vérifie).
+#[allow(clippy::too_many_arguments)]
+fn clickables(
+    camera: &Camera,
+    camera_transform: &GlobalTransform,
+    viewport: &graphics::ViewportScale,
+    ctrl_dist: f32,
+    queries: &TargetQueries,
+    settings: &GameSettings,
+    zoom: &ZoomLevel,
+    current_gal: u32,
+    current_sys: Option<usize>,
+) -> Vec<Clickable> {
+    let mut out = Vec::new();
+    // Au zoom 1 (< 10 000), on ne sort pas du système chargé en cliquant
+    let loaded_star = |id: usize| queries.star_q.iter().any(|(_, s)| s.0 == id);
+    let leaves = |kind: &TargetKind| -> bool {
+        let Some(cur) = current_sys.filter(|_| *zoom == ZoomLevel::Planet) else { return false };
+        let sys = match *kind {
+            TargetKind::Planet(id) => id / 1000,
+            TargetKind::Moon(p, _) => p / 1000,
+            TargetKind::Asteroid(k) => k.sys as usize,
+            TargetKind::Star(id) => star_parts(id, loaded_star(id)).0,
+            TargetKind::WormholeMouth(si) => si,
+            TargetKind::GalacticCore | TargetKind::DistantGalaxyCore(_) => return true,
+            _ => return false,
+        };
+        sys != cur
+    };
+    let mut add = |position: Vec3, tolerance: f32, size: f32, kind: TargetKind| {
+        // Un objet que ce zoom ne permet pas de cibler ne doit pas voler le clic à une galaxie
+        if !zoom.can_navigate_to(&kind) || leaves(&kind) {
+            return;
+        }
+        // Derrière la caméra : pas de clic
+        if (position - camera_transform.translation()).dot(*camera_transform.forward()) <= 0.0 {
+            return;
+        }
+        let Ok(screen) = camera.world_to_viewport(camera_transform, position) else { return };
+        out.push(Clickable { kind, pos: position, screen: viewport.to_window(screen), tolerance, size });
+    };
+    let body = |center: Vec3, radius: f32| (body_click_tolerance(camera, camera_transform, viewport, center, radius), screen_radius(camera, camera_transform, viewport, center, radius));
+
+    for (transform, id) in &queries.moon_q {
+        let kind = TargetKind::Moon(id.planet_idx, id.moon_idx);
+        let radius = surface::body_params(settings, &kind).map_or(0.0, |p| p.radius);
+        let (tol, size) = body(transform.translation(), radius.max(300.0));
+        add(transform.translation(), tol, size, kind);
+    }
+    for (transform, id) in &queries.planet_q {
+        // Les planètes sont immenses : on les sélectionne en cliquant n'importe où sur leur disque
+        let radius = surface::body_params(settings, &TargetKind::Planet(id.0)).map_or(0.0, |p| p.radius);
+        let (tol, size) = body(transform.translation(), radius);
+        add(transform.translation(), tol, size, TargetKind::Planet(id.0));
+    }
+    for live in queries.asteroids.iter().filter(|l| l.ast.landable()) {
+        let center = live.pose.translation;
+        let (tol, size) = body(center, live.ast.shape.radius);
+        add(center, tol.min(200.0), size, TargetKind::Asteroid(live.ast.key));
+    }
+    for (transform, id) in &queries.star_q {
+        // Les étoiles sont immenses : on les sélectionne en cliquant n'importe où sur leur disque
+        let radius = settings.systems.get(id.0 / 1000).and_then(|s| s.stars.get(id.0 % 1000)).map_or(0.0, |s| s.radius);
+        let (tol, size) = body(transform.translation(), radius);
+        add(transform.translation(), tol, size, TargetKind::Star(id.0));
+    }
+    for (transform, root) in &queries.gas_q {
+        add(transform.translation(), 80.0, 0.0, TargetKind::GasPlanet(root.idx));
+    }
+    for (transform, root) in &queries.comet_q {
+        add(transform.translation(), 80.0, 0.0, TargetKind::Comet(root.idx));
+    }
+    for (transform, root) in &queries.meteoroid_q {
+        add(transform.translation(), 80.0, 0.0, TargetKind::Meteoroid(root.idx));
+    }
+    for (transform, root) in &queries.vstar_q {
+        add(transform.translation(), 80.0, 0.0, TargetKind::VoxelStar(root.idx));
+    }
+    for (transform, root) in &queries.proto_q {
+        add(transform.translation(), 80.0, 0.0, TargetKind::Protostar(root.idx));
+    }
+    for (transform, root) in &queries.dwarf_q {
+        add(transform.translation(), 80.0, 0.0, TargetKind::DwarfStar(root.idx));
+    }
+    for (transform, root) in &queries.ms_q {
+        add(transform.translation(), 80.0, 0.0, TargetKind::MainSequence(root.idx));
+    }
+    for (transform, root) in &queries.giant_q {
+        add(transform.translation(), 80.0, 0.0, TargetKind::GiantStar(root.idx));
+    }
+    for (transform, root) in &queries.sg_q {
+        add(transform.translation(), 80.0, 0.0, TargetKind::Supergiant(root.idx));
+    }
+    for (transform, root) in &queries.hg_q {
+        add(transform.translation(), 80.0, 0.0, TargetKind::Hypergiant(root.idx));
+    }
+    for (transform, _) in &queries.nebula_q {
+        add(transform.translation(), 80.0, 0.0, TargetKind::Nebula);
+    }
+    for (transform, root) in &queries.black_q {
+        add(transform.translation(), 80.0, 0.0, TargetKind::BlackHole(root.idx));
+    }
+    for (transform, root) in &queries.pulsar_q {
+        add(transform.translation(), 80.0, 0.0, TargetKind::Pulsar(root.idx));
+    }
+    for (transform, root) in &queries.magnetar_q {
+        add(transform.translation(), 80.0, 0.0, TargetKind::Magnetar(root.idx));
+    }
+    for (transform, root) in &queries.neutron_q {
+        add(transform.translation(), 80.0, 0.0, TargetKind::NeutronStar(root.idx));
+    }
+    for (transform, root) in &queries.supernova_q {
+        add(transform.translation(), 80.0, 0.0, TargetKind::Supernova(root.idx));
+    }
+
+    // Vue d'ensemble (zoom 5-6) : une galaxie se sélectionne en cliquant n'importe où
+    // sur son disque, pas seulement sur son trou noir (minuscule à cette distance)
+    let overview = matches!(*zoom, ZoomLevel::Cosmos | ZoomLevel::DeepSpace);
+    let galaxy = |center: Vec3, galaxy_id: usize| -> (f32, f32) {
+        let r = settings.galaxies.get(galaxy_id).map_or(0.0, |g| g.radius);
+        (galaxy_click_tolerance(camera, camera_transform, viewport, settings, overview, center, galaxy_id), screen_radius(camera, camera_transform, viewport, center, r))
+    };
+    for gt in &queries.core_q {
+        let center = gt.translation();
+        let (tol, size) = galaxy(center, 0);
+        add(center, tol, size, TargetKind::GalacticCore);
+    }
+    // DistantGalaxyCore : depuis la vue d'ensemble (saut entre galaxies), ou le trou noir de la
+    // galaxie où l'on se trouve (toutes les galaxies, même celles qui ne sont qu'un point)
+    for (gid, g) in settings.galaxies.iter().enumerate().skip(1) {
+        let gid = gid as u32;
+        if overview || gid == current_gal {
+            let center = g.center();
+            let (tol, size) = galaxy(center, gid as usize);
+            add(center, tol, size, TargetKind::DistantGalaxyCore(gid));
+        }
+    }
+
+    // Étoiles lointaines (spatial hash autour de la caméra)
+    let cam_pos = camera_transform.translation();
+    let cell = SYSTEM_CELL_SIZE;
+    let half = SYSTEM_GRID_SIZE as f32 * cell / 2.0;
+    let cam_col = ((cam_pos.x + half) / cell) as i32;
+    let cam_row = ((cam_pos.z + half) / cell) as i32;
+    let grid_radius = (ctrl_dist / cell).ceil() as i32 + 2;
+    for (gt, fs) in &queries.far_star_q {
+        let pos = gt.translation();
+        let col = ((pos.x + half) / cell) as i32;
+        let row = ((pos.z + half) / cell) as i32;
+        if (col - cam_col).abs() > grid_radius || (row - cam_row).abs() > grid_radius || fs.sys_idx >= settings.systems.len() {
+            continue;
+        }
+        add(pos, 60.0, 0.0, TargetKind::Star(fs.sys_idx));
+    }
+
+    // Ouvertures de trous de ver (visibles de près), même taille que leur dessin
+    for w in &queries.wormholes.list {
+        for (sys, mouth) in [(w.a, w.mouth_a()), (w.b, w.mouth_b())] {
+            let dist = cam_pos.distance(mouth);
+            if dist <= wormhole::DRAW_RANGE {
+                let r = (dist * 0.012).max(wormhole::MIN_DRAW_RADIUS);
+                add(mouth, r * 1.5, screen_radius(camera, camera_transform, viewport, mouth, r), TargetKind::WormholeMouth(sys));
+            }
+        }
+    }
+    out
+}
+
 fn select_world_target(
     buttons: Res<ButtonInput<MouseButton>>,
     primary_window: Query<&Window, With<PrimaryWindow>>,
@@ -534,6 +722,7 @@ fn select_world_target(
     time: Res<Time>,
     mut net: ResMut<Net>,
     travel: Res<wormhole::WormholeTravel>,
+    spawned: Res<planet::SpawnedSystems>,
 ) {
     if !buttons.just_pressed(MouseButton::Left) {
         return;
@@ -556,155 +745,13 @@ fn select_world_target(
     let cursor = viewport.to_viewport(cursor);
     let Ok((camera, camera_transform, ctrl)) = camera_q.get_single() else { return; };
     let ctrl_dist = ctrl.distance;
-    let Ok(ray) = camera.viewport_to_world(camera_transform, cursor) else { return; };
-    let mut best: Option<(f32, TargetKind)> = None;
-
-    for (transform, id) in &queries.moon_q {
-        let position = transform.translation();
-        let along = (position - ray.origin).dot(*ray.direction);
-        if along > 0.0 {
-            let closest = ray.origin + *ray.direction * along;
-            let ray_distance = closest.distance(position);
-            let moon_radius = surface::body_params(&settings, &TargetKind::Moon(id.planet_idx, id.moon_idx)).map_or(0.0, |p| p.radius);
-            if ray_distance <= moon_radius.max(300.0) && zoom.can_navigate_to(&TargetKind::Moon(id.planet_idx, id.moon_idx)) && best.map_or(true, |(distance, _)| along < distance) {
-                best = Some((along, TargetKind::Moon(id.planet_idx, id.moon_idx)));
-            }
-        }
-    }
-
-    let mut consider = |position: Vec3, tolerance: f32, candidate: TargetKind| {
-        // Un objet que ce zoom ne permet pas de cibler ne doit pas voler le clic à une galaxie
-        if !zoom.can_navigate_to(&candidate) {
-            return;
-        }
-        let Ok(screen_position) = camera.world_to_viewport(camera_transform, position) else {
-            return;
-        };
-        let screen_distance = viewport.to_window(screen_position).distance(viewport.to_window(cursor));
-        if screen_distance <= tolerance && best.map_or(true, |(distance, _)| screen_distance < distance) {
-            best = Some((screen_distance, candidate));
-        }
-    };
-
-    for (transform, id) in &queries.planet_q {
-        // Les planètes sont immenses : on les sélectionne en cliquant n'importe où sur leur disque
-        let radius = surface::body_params(&settings, &TargetKind::Planet(id.0)).map_or(0.0, |p| p.radius);
-        let tolerance = body_click_tolerance(camera, camera_transform, &viewport, transform.translation(), radius);
-        consider(transform.translation(), tolerance, TargetKind::Planet(id.0));
-    }
-    for live in queries.asteroids.iter().filter(|l| l.ast.landable()) {
-        let center = live.pose.translation;
-        let tolerance = body_click_tolerance(camera, camera_transform, &viewport, center, live.ast.shape.radius).min(200.0);
-        consider(center, tolerance, TargetKind::Asteroid(live.ast.key));
-    }
-    for (transform, id) in &queries.star_q {
-        // Les étoiles sont immenses : on les sélectionne en cliquant n'importe où sur leur disque
-        let radius = settings.systems.get(id.0 / 1000).and_then(|s| s.stars.get(id.0 % 1000)).map_or(0.0, |s| s.radius);
-        let tolerance = body_click_tolerance(camera, camera_transform, &viewport, transform.translation(), radius);
-        consider(transform.translation(), tolerance, TargetKind::Star(id.0));
-    }
-    for (transform, root) in &queries.gas_q {
-        consider(transform.translation(), 80.0, TargetKind::GasPlanet(root.idx));
-    }
-    for (transform, root) in &queries.comet_q {
-        consider(transform.translation(), 80.0, TargetKind::Comet(root.idx));
-    }
-    for (transform, root) in &queries.meteoroid_q {
-        consider(transform.translation(), 80.0, TargetKind::Meteoroid(root.idx));
-    }
-    for (transform, root) in &queries.vstar_q {
-        consider(transform.translation(), 80.0, TargetKind::VoxelStar(root.idx));
-    }
-    for (transform, root) in &queries.proto_q {
-        consider(transform.translation(), 80.0, TargetKind::Protostar(root.idx));
-    }
-    for (transform, root) in &queries.dwarf_q {
-        consider(transform.translation(), 80.0, TargetKind::DwarfStar(root.idx));
-    }
-    for (transform, root) in &queries.ms_q {
-        consider(transform.translation(), 80.0, TargetKind::MainSequence(root.idx));
-    }
-    for (transform, root) in &queries.giant_q {
-        consider(transform.translation(), 80.0, TargetKind::GiantStar(root.idx));
-    }
-    for (transform, root) in &queries.sg_q {
-        consider(transform.translation(), 80.0, TargetKind::Supergiant(root.idx));
-    }
-    for (transform, root) in &queries.hg_q {
-        consider(transform.translation(), 80.0, TargetKind::Hypergiant(root.idx));
-    }
-    for (transform, _) in &queries.nebula_q {
-        consider(transform.translation(), 80.0, TargetKind::Nebula);
-    }
-    for (transform, root) in &queries.black_q {
-        consider(transform.translation(), 80.0, TargetKind::BlackHole(root.idx));
-    }
-    for (transform, root) in &queries.pulsar_q {
-        consider(transform.translation(), 80.0, TargetKind::Pulsar(root.idx));
-    }
-    for (transform, root) in &queries.magnetar_q {
-        consider(transform.translation(), 80.0, TargetKind::Magnetar(root.idx));
-    }
-    for (transform, root) in &queries.neutron_q {
-        consider(transform.translation(), 80.0, TargetKind::NeutronStar(root.idx));
-    }
-    for (transform, root) in &queries.supernova_q {
-        consider(transform.translation(), 80.0, TargetKind::Supernova(root.idx));
-    }
-
-    // Vue d'ensemble (zoom 5-6) : une galaxie se sélectionne en cliquant n'importe où
-    // sur son disque, pas seulement sur son trou noir (minuscule à cette distance)
-    let overview = matches!(*zoom, ZoomLevel::Cosmos | ZoomLevel::DeepSpace);
-    let galaxy_tolerance = |center: Vec3, galaxy_id: usize| -> f32 {
-        galaxy_click_tolerance(camera, camera_transform, &viewport, &settings, overview, center, galaxy_id)
-    };
-
-    // ── GalacticCore : clic sur le trou noir central ──────────────
-    for gt in &queries.core_q {
-        let center = gt.translation();
-        consider(center, galaxy_tolerance(center, 0), TargetKind::GalacticCore);
-    }
-
-    // ── DistantGalaxyCore : depuis la vue d'ensemble (saut entre galaxies),
-    //    ou le trou noir de la galaxie où l'on se trouve ────
     let current_gal = current_galaxy(&target.0, &queries, &settings);
-    // (toutes les galaxies, même celles qui ne sont qu'un point : leur trou noir n'existe qu'à
-    // l'approche)
-    for (gid, g) in settings.galaxies.iter().enumerate().skip(1) {
-        let gid = gid as u32;
-        if overview || gid == current_gal {
-            let center = g.center();
-            consider(center, galaxy_tolerance(center, gid as usize), TargetKind::DistantGalaxyCore(gid));
-        }
-    }
-
-    // ── FarStar : clic sur étoiles lointaines (spatial hash) ──────
-    let cam_pos = camera_transform.translation();
-    let cell = SYSTEM_CELL_SIZE;
-    let half = SYSTEM_GRID_SIZE as f32 * cell / 2.0;
-    let cam_col = ((cam_pos.x + half) / cell) as i32;
-    let cam_row = ((cam_pos.z + half) / cell) as i32;
-    let grid_radius = (ctrl_dist / cell).ceil() as i32 + 2;
-
-    for (gt, fs) in &queries.far_star_q {
-        let pos = gt.translation();
-        let col = ((pos.x + half) / cell) as i32;
-        let row = ((pos.z + half) / cell) as i32;
-        if (col - cam_col).abs() > grid_radius || (row - cam_row).abs() > grid_radius {
-            continue;
-        }
-        if fs.sys_idx >= settings.systems.len() { continue; }
-        consider(pos, 60.0, TargetKind::Star(fs.sys_idx));
-    }
-
-    // ── Ouvertures de trous de ver (visibles de près) ──────────────
-    for w in &queries.wormholes.list {
-        for (sys, mouth) in [(w.a, w.mouth_a()), (w.b, w.mouth_b())] {
-            let dist = cam_pos.distance(mouth);
-            if dist <= wormhole::DRAW_RANGE {
-                // Même taille que le dessin de l'ouverture
-                consider(mouth, (dist * 0.012).max(wormhole::MIN_DRAW_RADIUS) * 1.5, TargetKind::WormholeMouth(sys));
-            }
+    // La règle « cliquable » est la même que celle des cercles (`clickables`)
+    let mut best: Option<(f32, TargetKind)> = None;
+    for c in clickables(camera, camera_transform, &viewport, ctrl_dist, &queries, &settings, &zoom, current_gal, spawned.0.iter().next().copied()) {
+        let d = c.screen.distance(viewport.to_window(cursor));
+        if d <= c.tolerance && best.map_or(true, |(b, _)| d < b) {
+            best = Some((d, c.kind));
         }
     }
 
@@ -783,33 +830,6 @@ pub(crate) fn target_system(
     }
 }
 
-/// Au zoom 1 (< 10 000), on ne peut pas sortir du système courant :
-/// toute nouvelle cible appartenant à un autre système est annulée.
-fn lock_system_at_planet_zoom(
-    mut target: ResMut<CameraTarget>,
-    zoom: Res<ZoomLevel>,
-    spawned: Res<planet::SpawnedSystems>,
-    star_q: Query<&StarId, With<StarRoot>>,
-    mut previous: Local<Option<TargetKind>>,
-) {
-    if target.is_changed() && *zoom == ZoomLevel::Planet {
-        if let Some(&current_sys) = spawned.0.iter().next() {
-            let leaves_system = match target_system(&target.0, &star_q) {
-                Some(Some(si)) => si != current_sys,
-                Some(None) => true,
-                None => false,
-            };
-            if leaves_system {
-                if let Some(prev) = *previous {
-                    target.0 = prev;
-                }
-                return;
-            }
-        }
-    }
-    *previous = Some(target.0);
-}
-
 /// `P` : passe à la planète suivante du système chargé (à ces échelles, les planètes sont des
 /// points minuscules : impossible de les viser à la souris depuis l'étoile).
 fn select_next_planet(
@@ -836,38 +856,93 @@ fn select_next_planet(
 
 /// Cercles autour des planètes et des lunes vues de loin : sans eux, à l'échelle d'un système
 /// (étoile de 100 000 de rayon), elles sont invisibles.
+/// Un cercle autour de chaque astre cliquable (C6), avec la même règle que le clic
+/// (`clickables`) : il apparaît dès que le clic est possible et s'efface dès qu'il ne l'est plus
+/// (fondu court). Couleur par type, la cible en jaune. Rien autour d'un astre déjà grand à l'écran.
+/// Groupe de gizmos par défaut : les indicateurs (orbites...) s'effacent près d'un astre, pas eux.
+#[allow(clippy::too_many_arguments)]
 fn draw_body_markers(
+    time: Res<Time>,
     zoom: Res<ZoomLevel>,
     settings: Res<GameSettings>,
     target: Res<CameraTarget>,
-    cam_q: Query<&GlobalTransform, With<Camera3d>>,
-    planets: Query<(&GlobalTransform, &PlanetId), With<PlanetRoot>>,
-    moons: Query<(&GlobalTransform, &MoonId), With<MoonRoot>>,
-    mut gizmos: Gizmos<surface::IndicatorGizmos>,
+    camera_q: Query<(&Camera, &GlobalTransform, &CameraController, &Projection)>,
+    viewport: Res<graphics::ViewportScale>,
+    queries: TargetQueries,
+    travel: Res<wormhole::WormholeTravel>,
+    spawned: Res<planet::SpawnedSystems>,
+    mut fades: Local<Vec<(TargetKind, f32, Vec3, f32)>>,
+    mut gizmos: Gizmos,
 ) {
-    if !matches!(*zoom, ZoomLevel::Planet | ZoomLevel::System) {
-        return;
-    }
-    let Ok(cam) = cam_q.get_single() else { return };
-    let (cam_pos, cam_rot) = (cam.translation(), cam.rotation());
-    let mut ring = |pos: Vec3, radius: f32, selected: bool, color: Color| {
-        let dist = cam_pos.distance(pos);
-        // Visible (≈ 1 % de l'écran) seulement quand l'astre lui-même est trop petit
-        if dist < radius * 10.0 {
-            return;
-        }
-        let r = (dist * 0.012).max(radius * 1.6) * if selected { 1.4 } else { 1.0 };
-        gizmos.circle(Isometry3d::new(pos, cam_rot), r, color);
+    let dt = time.delta_secs().min(0.1);
+    let Ok((camera, cam_gt, ctrl, projection)) = camera_q.get_single() else { return };
+    let now: Vec<Clickable> = if queries.surface.active() || travel.active() {
+        Vec::new()
+    } else {
+        let current_gal = current_galaxy(&target.0, &queries, &settings);
+        let mut list = clickables(camera, cam_gt, &viewport, ctrl.distance, &queries, &settings, &zoom, current_gal, spawned.0.iter().next().copied());
+        // Les étoiles lointaines sont des centaines : les plus proches du centre de l'écran
+        let center = viewport.to_window(camera.logical_viewport_size().unwrap_or(Vec2::splat(800.0)) * 0.5);
+        list.sort_by(|a, b| a.screen.distance(center).total_cmp(&b.screen.distance(center)));
+        let mut stars = 0;
+        list.retain(|c| {
+            let far = c.size == 0.0 && matches!(c.kind, TargetKind::Star(_));
+            stars += far as usize;
+            !far || stars <= 60
+        });
+        list
     };
-    for (gt, id) in &planets {
-        let radius = surface::body_params(&settings, &TargetKind::Planet(id.0)).map_or(0.0, |p| p.radius);
-        let selected = target.0 == TargetKind::Planet(id.0);
-        ring(gt.translation(), radius, selected, if selected { Color::srgb(1.0, 0.9, 0.3) } else { Color::srgba(0.4, 0.8, 1.0, 0.8) });
+    // Fondu : 0,2 s pour apparaître ou disparaître
+    let rate = dt / 0.2;
+    for f in fades.iter_mut() {
+        f.1 = (f.1 - rate).max(0.0);
     }
-    for (gt, id) in &moons {
-        let radius = surface::body_params(&settings, &TargetKind::Moon(id.planet_idx, id.moon_idx)).map_or(0.0, |p| p.radius);
-        let selected = target.0 == TargetKind::Moon(id.planet_idx, id.moon_idx);
-        ring(gt.translation(), radius, selected, if selected { Color::srgb(1.0, 0.9, 0.3) } else { Color::srgba(0.7, 0.7, 0.75, 0.6) });
+    for c in &now {
+        let r = (c.size * 1.25 + 6.0).clamp(10.0, c.tolerance.max(10.0));
+        match fades.iter_mut().find(|f| f.0 == c.kind) {
+            Some(f) => {
+                f.1 = (f.1 + rate * 2.0).min(1.0);
+                f.2 = c.pos;
+                f.3 = r;
+            }
+            None => fades.push((c.kind, rate, c.pos, r)),
+        }
+    }
+    fades.retain(|f| f.1 > 0.0);
+    let height = camera.logical_viewport_size().map_or(800.0, |s| viewport.to_window(s).y);
+    // Le cercle est posé à la profondeur de l'astre : taille d'un pixel à cette profondeur
+    let (eye, fwd) = (cam_gt.translation(), *cam_gt.forward());
+    let fov = match projection {
+        Projection::Perspective(p) => p.fov,
+        _ => std::f32::consts::FRAC_PI_4,
+    };
+    let px_at = |_pos: Vec3, depth: f32| -> f32 { 2.0 * depth * (fov * 0.5).tan() / height.max(1.0) };
+    for (kind, a, pos, r) in fades.iter() {
+        // Un astre déjà grand à l'écran se voit sans cercle
+        if *r > height * 0.25 {
+            continue;
+        }
+        let selected = *kind == target.0;
+        let color = if selected { Color::srgba(1.0, 0.9, 0.3, *a) } else { marker_color(kind).with_alpha(0.75 * a) };
+        let depth = (*pos - eye).dot(fwd);
+        if depth > 0.0 {
+            gizmos.circle(Isometry3d::new(*pos, cam_gt.rotation()), r * px_at(*pos, depth) * if selected { 1.3 } else { 1.0 }, color);
+        }
+    }
+}
+
+/// Couleur du cercle d'un astre cliquable, par type.
+fn marker_color(kind: &TargetKind) -> Color {
+    match kind {
+        TargetKind::Planet(_) => Color::srgb(0.4, 0.8, 1.0),
+        TargetKind::Moon(..) => Color::srgb(0.75, 0.75, 0.8),
+        TargetKind::Star(_) => Color::srgb(1.0, 0.75, 0.45),
+        TargetKind::Asteroid(_) => Color::srgb(0.75, 0.6, 0.45),
+        TargetKind::Comet(_) => Color::srgb(0.5, 0.9, 1.0),
+        TargetKind::WormholeMouth(_) => Color::srgb(0.75, 0.45, 1.0),
+        TargetKind::GalacticCore | TargetKind::DistantGalaxyCore(_) => Color::srgb(1.0, 0.95, 0.85),
+        TargetKind::BlackHole(_) | TargetKind::Pulsar(_) | TargetKind::Magnetar(_) | TargetKind::NeutronStar(_) => Color::srgb(0.9, 0.5, 1.0),
+        _ => Color::srgb(0.85, 0.85, 0.85),
     }
 }
 
