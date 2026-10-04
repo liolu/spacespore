@@ -298,8 +298,11 @@ pub fn build_chunk_mesh(
     let th = terrain_height;
     let sl = sea_level;
     let layers: usize = 12;
-    let r_min = radius - sl * th - 2.0;
-    let r_max = radius + (1.0 - sl) * th + 2.0;
+    // Relief en voxels (0.13 T1) : le même que le sol proche (règle 16), sans les bosses
+    let wet = atmosphere && hydro.liquid == crate::planetgen::hydrology::Liquid::Water;
+    let forms = crate::planetgen::landforms::Landforms::new(seed, radius, crate::terrain::layout_for(radius).voxel, &relief, !atmosphere, wet);
+    let r_min = radius - sl * th - 2.0 - forms.max_height();
+    let r_max = radius + (1.0 - sl) * th + 2.0 + forms.max_height();
 
     let mut fbm: Fbm<Perlin> = Fbm::new(seed);
     fbm.octaves = 6;
@@ -340,8 +343,10 @@ pub fn build_chunk_mesh(
                     * 0.15;
 
             let base = ((continent + det + 1.0) * 0.5).clamp(0.0, 1.0);
-            let height_val = (base + relief.offset(dir.normalize(), base)).clamp(0.0, 1.2);
-            terrain_heights[ix][iy] = radius + (height_val - sl) * th;
+            let sample = relief.sample(dir.normalize(), base);
+            let height_val = (base + sample.h).clamp(0.0, 1.2);
+            let land = crate::planetgen::landforms::land_mask(height_val, sl);
+            terrain_heights[ix][iy] = radius + (height_val - sl) * th + forms.offset(dir.normalize(), land, sample.mountain, false);
 
             // Même climat que le terrain voxel (`planetgen::climate`) : la vue de l'espace et le sol concordent
             let rh = height_val - sl;

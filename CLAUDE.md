@@ -385,6 +385,12 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   interieurs qui ne retrecissent pas), note editable (`Field::Dex` dans `net_ui` bloque les touches du jeu),
   Viser, Exporter (`export/dex-<joueur>-<date>.json`), Importer (`import/dex*.json`, meme graine du monde :
   `Dex::merge`). Test : `SPACESPORE_TEST_DEX=<s>` ouvre le dex.
+- 0.13 T1 = relief en voxels (`planetgen/landforms.rs`, `Landforms::offset`, un seul code pour `terrain.rs`
+  `raw_height_full` et `mesher.rs` `build_chunk_mesh`, regle 16) : deformation du domaine, collines (8 a 25 voxels,
+  ~110 de large), massifs en cretes (120 a 400 voxels avec plaques, `ReliefSample::mountain` + massifs regionaux),
+  bosses (2 a 6 voxels, pas vues de l'espace), vallees d'erosion (mondes a air et eau) ; masque des terres
+  `land_mask` (un cinquieme du relief sous la mer). Remplace les anciens bruits `mid` / `fine`. Pentes :
+  `cargo test --release slope_distribution -- --nocapture`. PROTOCOL 32.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 
