@@ -152,6 +152,8 @@ pub struct Sample {
     /// Vent (m/s) : vers l'est (+) / l'ouest (−) et vers le nord.
     pub east: f32,
     pub north: f32,
+    /// Rafale en cours (0 : vent établi, 1 : forte rafale).
+    pub gust: f32,
 }
 
 impl Sample {
@@ -204,20 +206,43 @@ pub fn cloud_field(w: &WeatherParams, dir: Vec3, t: f64) -> (f32, f32) {
     (cloud, thick)
 }
 
+/// Vent au point `dir` à l'instant `t` (m/s vers l'est, vers le nord, rafale 0..1) : le vent zonal
+/// du lieu, dont la direction tourne lentement (heures), qui forcit et faiblit (dizaines de minutes),
+/// avec des rafales de quelques secondes et de la turbulence dans les orages. f(graine, temps, lieu).
+pub fn wind(w: &WeatherParams, dir: Vec3, t: f64, storm: f32) -> (f32, f32, f32) {
+    let lat = dir.y.clamp(-1.0, 1.0).asin();
+    let at = |scale: f32, period: f64, salt: u32| vnoise(dir * scale + Vec3::new((t / period) as f32, 0.37, -(t / period) as f32 * 0.61), w.seed ^ salt);
+    // Vent établi : zonal, dont la direction tourne avec les dépressions qui passent
+    let base_e = zonal(lat) * w.wind;
+    let base_n = 0.25 * w.wind * (6.0 * lat).sin();
+    let turn = (at(3.0, 5_400.0, 0x61) - 0.5) * 2.4;
+    let (s, c) = turn.sin_cos();
+    let (e, n) = (base_e * c - base_n * s, base_e * s + base_n * c);
+    // Un fond qui tourne lui aussi : jamais toujours le même sens
+    let calm = 0.3 * w.wind;
+    let (e, n) = (e + calm * (turn * 1.7).cos(), n + calm * (turn * 1.7).sin());
+    // Force : forcit et faiblit lentement
+    let strength = 0.6 + 0.8 * at(6.0, 600.0, 0x60);
+    // Rafales : pics courts (quelques secondes), plus fréquents dans les orages
+    let g = at(40.0, 3.5, 0x62);
+    let gust = ((g - (0.62 - 0.2 * storm)) / 0.38).clamp(0.0, 1.0).powi(2);
+    // Turbulence des orages : la direction s'agite vite
+    let jitter = (at(50.0, 0.8, 0x63) - 0.5) * 1.6 * storm;
+    let (s, c) = jitter.sin_cos();
+    let k = strength * (1.0 + 0.9 * gust + 0.6 * storm);
+    ((e * c - n * s) * k, (e * s + n * c) * k, gust)
+}
+
 /// La météo complète au point `dir` (repère fixe de l'astre), à l'instant `t`, pour une
 /// température locale `temp_c` (°C) et une heure locale `hour`.
 pub fn sample(w: &WeatherParams, dir: Vec3, t: f64, temp_c: f32, hour: f32) -> Sample {
-    let lat = dir.y.clamp(-1.0, 1.0).asin();
     let (cloud, thick) = cloud_field(w, dir, t);
     let humid = if w.water { 0.5 + 0.5 * w.ocean } else { 0.35 };
     let precip = thick * humid;
-    // Rafales : le vent varie avec un bruit lent
-    let gust = 0.6 + 0.8 * vnoise(dir * 6.0 + Vec3::splat((t / 300.0) as f32), w.seed ^ 0x60);
-    let east = zonal(lat) * w.wind * gust;
-    let north = 0.25 * w.wind * (6.0 * lat).sin() * gust;
-    let speed = (east * east + north * north).sqrt();
     // Orages : précipitations fortes dans un air chaud et humide
     let storm = precip * smooth(8.0, 26.0, temp_c) * if w.water { 1.0 } else { 0.4 };
+    let (east, north, gust) = wind(w, dir, t, storm);
+    let speed = (east * east + north * north).sqrt();
     let kind = if precip < 0.02 {
         Precip::None
     } else if temp_c > 1600.0 {
@@ -249,7 +274,7 @@ pub fn sample(w: &WeatherParams, dir: Vec3, t: f64, temp_c: f32, hour: f32) -> S
     // Brouillard du matin : humide, calme, vers 7 h
     let morning = 1.0 - smooth(0.0, 3.0, (hour - 7.0).abs());
     let fog = morning * humid * w.ocean.max(0.2) * (1.0 - smooth(3.0, 12.0, speed)) * smooth(0.3, 0.6, vnoise(dir * 9.0, w.seed ^ 0xF0)) * if w.water { 1.0 } else { 0.0 };
-    Sample { cloud, precip, kind, storm, dust, fog, east, north }
+    Sample { cloud, precip, kind, storm, dust, fog, east, north, gust }
 }
 
 /// Éclair près du point `dir` dans la tranche d'une demi-seconde qui contient `t` : direction de
@@ -396,9 +421,11 @@ fn update_weather_now(
     now.text = describe(&now.sample);
 }
 
-/// En vol bas, le vent pousse le vaisseau (plus fort en rafale et dans les orages).
+/// En vol bas, le vent pousse le vaisseau (plus fort en altitude, en rafale et dans les orages) et
+/// le fait tanguer et rouler (`Surface::set_wind`).
 fn push_ship(time: Res<Time>, now: Res<WeatherNow>, mut surface: ResMut<Surface>) {
     if !surface.flying() || now.params.is_none() {
+        surface.set_wind(Vec3::ZERO, 0.0, String::new());
         return;
     }
     let Some(p) = surface.local_point() else { return };
@@ -406,9 +433,27 @@ fn push_ship(time: Res<Time>, now: Res<WeatherNow>, mut surface: ResMut<Surface>
     // Est et nord dans le repère fixe de l'astre (axe = y)
     let east = Vec3::Y.cross(up).normalize_or(Vec3::X);
     let north = up.cross(east);
-    let s = &now.sample;
-    let k = 1.5 * (1.0 + s.storm);
-    surface.drift((east * s.east + north * s.north) * k * time.delta_secs().min(0.1));
+    let s = now.sample;
+    // Plus fort en altitude (le sol freine le vent)
+    let radius = surface.params().map_or(p.length(), |b| b.radius);
+    let height = ((p.length() - radius) / (radius * 0.01).max(50.0)).clamp(0.0, 3.0);
+    let k = 1.5 * (1.0 + s.storm) * (0.6 + 0.4 * height);
+    let v = (east * s.east + north * s.north) * k;
+    surface.drift(v * time.delta_secs().min(0.1));
+    let speed = s.wind_speed() * (0.6 + 0.4 * height);
+    let text = if speed < 0.5 {
+        "Vent : calme".to_string()
+    } else {
+        format!("Vent : {:.0} m/s, du {}{}", speed, compass(-s.east, -s.north), if s.gust > 0.3 { ", rafale !" } else { "" })
+    };
+    surface.set_wind(v, s.gust, text);
+}
+
+/// Point cardinal d'une direction (vers l'est, vers le nord).
+fn compass(e: f32, n: f32) -> &'static str {
+    const NAMES: [&str; 8] = ["E", "NE", "N", "NO", "O", "SO", "S", "SE"];
+    let a = n.atan2(e).rem_euclid(std::f32::consts::TAU);
+    NAMES[((a / (std::f32::consts::TAU / 8.0)).round() as usize) % 8]
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -742,6 +787,32 @@ mod tests {
 
     fn earth_like() -> WeatherParams {
         WeatherParams { seed: 42, cover: 0.6, wind: 12.0, pressure: 1.0, clouds: CloudKind::Water, ocean: 0.7, water: true, radius_m: 6.371e6, mean_c: 15.0 }
+    }
+
+    /// C3 : le vent n'est pas toujours dans le même sens, il a des rafales de quelques secondes,
+    /// et c'est toujours le même pour la même graine, le même lieu, le même instant.
+    #[test]
+    fn wind_turns_and_gusts() {
+        let w = earth_like();
+        let dir = Vec3::new(0.3, 0.5, 0.8).normalize();
+        let mut angles = Vec::new();
+        let mut gusts = 0;
+        for i in 0..2_000 {
+            let t = i as f64 * 30.0;
+            let (e, n, g) = wind(&w, dir, t, 0.0);
+            assert!(e.is_finite() && n.is_finite() && (0.0..=1.0).contains(&g));
+            angles.push(n.atan2(e));
+            gusts += (g > 0.3) as usize;
+        }
+        let spread = angles.iter().map(|a| (a.cos(), a.sin())).fold((0.0f32, 0.0f32), |(x, y), (c, s)| (x + c, y + s));
+        let mean_len = (spread.0 * spread.0 + spread.1 * spread.1).sqrt() / angles.len() as f32;
+        assert!(mean_len < 0.9, "direction trop constante : {mean_len}");
+        assert!(gusts > 20 && gusts < 1_000, "rafales : {gusts}");
+        // Une rafale dure quelques secondes : pas de saut d'une image à l'autre
+        let a = wind(&w, dir, 1_000.0, 0.0);
+        let b = wind(&w, dir, 1_000.0 + 1.0 / 60.0, 0.0);
+        assert!((a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0, "{a:?} {b:?}");
+        assert_eq!(wind(&w, dir, 1234.5, 0.3), wind(&w, dir, 1234.5, 0.3));
     }
 
     #[test]

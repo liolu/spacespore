@@ -539,5 +539,9 @@
     "pied"
    ]
   }
- ]
+ ],
+ "anims": {
+  "voler": "voler_dragon",
+  "planer": "planer_dragon"
+ }
 }
