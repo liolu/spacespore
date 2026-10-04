@@ -377,6 +377,14 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   une tuile (3,0 ms, 375 Ko) coute plus que la generer (1,7 ms) (`bench_tile_cache`). Mesures : `TileStats`
   (tuiles a leur finesse, dans `SPACESPORE_PERF`), `SPACESPORE_TEST_FLY=1|climb` (vol bas plein gaz, en montant),
   `Surface::test_zoom_in` (comme un coup de molette).
+- 0.13.1 dex des decouvertes (`dex.rs`) : chaque astre lu par le scanner (`scanner::update_scanner` remplit
+  `dex::LastScan`) entre dans `Dex` (`dex.json` a cote de `world.json`) : sections du scanner, decouverte (date,
+  horloge, joueur), visites, atterrissages (`count_landings`), note. Scanner : section « HISTORIQUE »
+  (`Dex::history`, cache quand le dex est ouvert). Panneau : touche K ou bouton « Dex » (`DexUi`) : onglets
+  `CATEGORIES`, recherche sans accents dans tout (`Dex::filtered`), listes qui defilent (`DexScroll`, blocs
+  interieurs qui ne retrecissent pas), note editable (`Field::Dex` dans `net_ui` bloque les touches du jeu),
+  Viser, Exporter (`export/dex-<joueur>-<date>.json`), Importer (`import/dex*.json`, meme graine du monde :
+  `Dex::merge`). Test : `SPACESPORE_TEST_DEX=<s>` ouvre le dex.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 
