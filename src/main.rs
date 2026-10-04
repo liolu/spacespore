@@ -527,6 +527,25 @@ pub struct Clickable {
     pub screen: Vec2,
     pub tolerance: f32,
     pub size: f32,
+    /// Hors de portée (cercle blanc) : le clic donne un message, pas de cercle autour.
+    pub too_far: bool,
+}
+
+/// Galaxies où l'on peut sauter depuis la galaxie `gid` : les plus proches (environ 5).
+const GALAXY_JUMP_COUNT: usize = 5;
+
+/// Portée d'un saut entre galaxies depuis la galaxie `gid` : la distance (de centre à centre) de sa
+/// 5e voisine la plus proche, un peu élargie.
+pub(crate) fn galaxy_jump_range(settings: &GameSettings, gid: usize) -> f32 {
+    let Some(g) = settings.galaxies.get(gid) else { return 0.0 };
+    let c = g.center();
+    let mut d: Vec<f32> = settings.galaxies.iter().enumerate().filter(|(i, _)| *i != gid).map(|(_, o)| o.center().distance(c)).collect();
+    let k = GALAXY_JUMP_COUNT.min(d.len()).max(1) - 1;
+    if d.is_empty() {
+        return 0.0;
+    }
+    d.select_nth_unstable_by(k, |a, b| a.total_cmp(b));
+    d[k] * 1.02
 }
 
 /// Rayon d'un astre à l'écran (pixels).
@@ -552,8 +571,20 @@ fn clickables(
     zoom: &ZoomLevel,
     current_gal: u32,
     current_sys: Option<usize>,
+    ship: Option<Vec3>,
 ) -> Vec<Clickable> {
     let mut out = Vec::new();
+    // Portée : le vaisseau ne va pas plus loin que le cercle blanc d'un coup ; d'une galaxie, on ne
+    // saute que vers ses voisines les plus proches
+    let gal_center = settings.galaxies.get(current_gal as usize).map(|g| g.center());
+    let gal_range = galaxy_jump_range(settings, current_gal as usize);
+    let too_far = |kind: &TargetKind, position: Vec3| -> bool {
+        match *kind {
+            TargetKind::GalacticCore => current_gal != 0 && gal_center.is_some_and(|c| c.distance(position) > gal_range),
+            TargetKind::DistantGalaxyCore(g) => g != current_gal && gal_center.is_some_and(|c| c.distance(position) > gal_range),
+            _ => ship.is_some_and(|s| s.distance(position) > MAX_TRAVEL_RANGE),
+        }
+    };
     // Au zoom 1 (< 10 000), on ne sort pas du système chargé en cliquant
     let loaded_star = |id: usize| queries.star_q.iter().any(|(_, s)| s.0 == id);
     let leaves = |kind: &TargetKind| -> bool {
@@ -579,7 +610,8 @@ fn clickables(
             return;
         }
         let Ok(screen) = camera.world_to_viewport(camera_transform, position) else { return };
-        out.push(Clickable { kind, pos: position, screen: viewport.to_window(screen), tolerance, size });
+        let far = too_far(&kind, position);
+        out.push(Clickable { kind, pos: position, screen: viewport.to_window(screen), tolerance, size, too_far: far });
     };
     let body = |center: Vec3, radius: f32| (body_click_tolerance(camera, camera_transform, viewport, center, radius), screen_radius(camera, camera_transform, viewport, center, radius));
 
@@ -747,15 +779,16 @@ fn select_world_target(
     let ctrl_dist = ctrl.distance;
     let current_gal = current_galaxy(&target.0, &queries, &settings);
     // La règle « cliquable » est la même que celle des cercles (`clickables`)
-    let mut best: Option<(f32, TargetKind)> = None;
-    for c in clickables(camera, camera_transform, &viewport, ctrl_dist, &queries, &settings, &zoom, current_gal, spawned.0.iter().next().copied()) {
+    let mut best: Option<(f32, TargetKind, bool)> = None;
+    let ship_pos = ship_q.get_single().ok().map(|s| s.translation());
+    for c in clickables(camera, camera_transform, &viewport, ctrl_dist, &queries, &settings, &zoom, current_gal, spawned.0.iter().next().copied(), ship_pos) {
         let d = c.screen.distance(viewport.to_window(cursor));
-        if d <= c.tolerance && best.map_or(true, |(b, _)| d < b) {
-            best = Some((d, c.kind));
+        if d <= c.tolerance && best.map_or(true, |(b, _, _)| d < b) {
+            best = Some((d, c.kind, c.too_far));
         }
     }
 
-    if let Some((_, selected)) = best {
+    if let Some((_, selected, too_far)) = best {
         // Changer de galaxie (trou noir d'une autre galaxie, mais aussi n'importe laquelle de ses
         // étoiles) demande deux choses : être dézoomé à plus de 10 000 000, et que le vaisseau
         // soit sur le trou noir de la galaxie où l'on est
@@ -774,14 +807,10 @@ fn select_world_target(
             }
         }
         if zoom.can_navigate_to(&selected) {
-            // Portée de déplacement fixe : seuls les trous noirs de galaxie (sauts entre galaxies)
-            // et les cibles du système où l'on est peuvent être hors de portée
-            let too_far = !ZoomLevel::is_core(&selected)
-                && ship_q.get_single().is_ok_and(|ship| {
-                    let pos = resolve_target(&CameraTarget(selected), &queries, &settings);
-                    pos != Vec3::ZERO && pos.distance(ship.translation()) > MAX_TRAVEL_RANGE
-                });
-            if too_far {
+            // Portée (même règle que les cercles, `clickables`)
+            if too_far && ZoomLevel::is_core(&selected) {
+                net.notify(&format!("Trop loin : on ne saute que vers les {GALAXY_JUMP_COUNT} galaxies les plus proches de la sienne (cercle blanc). Sautez de galaxie en galaxie."), time.elapsed_secs_f64());
+            } else if too_far {
                 net.notify(&format!("Trop loin : votre vaisseau ne peut pas se deplacer a plus de {:.0} d'un coup (cercle blanc). Passez par un trou de ver ou avancez etape par etape.", MAX_TRAVEL_RANGE), time.elapsed_secs_f64());
             } else {
                 target.0 = selected;
@@ -871,6 +900,7 @@ fn draw_body_markers(
     queries: TargetQueries,
     travel: Res<wormhole::WormholeTravel>,
     spawned: Res<planet::SpawnedSystems>,
+    ship_q: Query<&GlobalTransform, With<Ship>>,
     mut fades: Local<Vec<(TargetKind, f32, Vec3, f32)>>,
     mut gizmos: Gizmos,
 ) {
@@ -880,7 +910,10 @@ fn draw_body_markers(
         Vec::new()
     } else {
         let current_gal = current_galaxy(&target.0, &queries, &settings);
-        let mut list = clickables(camera, cam_gt, &viewport, ctrl.distance, &queries, &settings, &zoom, current_gal, spawned.0.iter().next().copied());
+        let ship = ship_q.get_single().ok().map(|s| s.translation());
+        let mut list = clickables(camera, cam_gt, &viewport, ctrl.distance, &queries, &settings, &zoom, current_gal, spawned.0.iter().next().copied(), ship);
+        // Hors de portée : pas de cercle (le clic dit seulement « trop loin »)
+        list.retain(|c| !c.too_far);
         // Les étoiles lointaines sont des centaines : les plus proches du centre de l'écran
         let center = viewport.to_window(camera.logical_viewport_size().unwrap_or(Vec2::splat(800.0)) * 0.5);
         list.sort_by(|a, b| a.screen.distance(center).total_cmp(&b.screen.distance(center)));
@@ -2208,9 +2241,23 @@ fn update_system_hud(
 fn draw_travel_range(
     zoom: Res<ZoomLevel>,
     ship_q: Query<&GlobalTransform, With<Ship>>,
+    settings: Res<GameSettings>,
+    target: Res<CameraTarget>,
+    queries: TargetQueries,
+    cam_q: Query<&GlobalTransform, With<Camera3d>>,
     mut gizmos: Gizmos<surface::IndicatorGizmos>,
 ) {
-    if !matches!(*zoom, ZoomLevel::System | ZoomLevel::Sector | ZoomLevel::Galaxy | ZoomLevel::Cosmos) {
+    // Vue d'ensemble : la portée des sauts entre galaxies (une sphère, dessinée face à la caméra),
+    // autour de la galaxie où l'on est
+    if matches!(*zoom, ZoomLevel::Cosmos | ZoomLevel::DeepSpace) {
+        let gid = current_galaxy(&target.0, &queries, &settings) as usize;
+        if let Some(g) = settings.galaxies.get(gid) {
+            let rot = cam_q.get_single().map_or(Quat::IDENTITY, |c| c.rotation());
+            gizmos.circle(Isometry3d::new(g.center(), rot), galaxy_jump_range(&settings, gid), Color::srgba(1.0, 1.0, 1.0, 0.75)).resolution(128);
+        }
+        return;
+    }
+    if !matches!(*zoom, ZoomLevel::System | ZoomLevel::Sector | ZoomLevel::Galaxy) {
         return;
     }
     let Ok(ship) = ship_q.get_single() else { return };
@@ -2861,4 +2908,20 @@ fn draw_orbits(
         }
     }
 
+}
+#[cfg(test)]
+mod range_tests {
+    use super::*;
+
+    /// On saute vers environ 5 galaxies depuis chacune (les plus proches).
+    #[test]
+    fn about_five_galaxies_are_in_jump_range() {
+        let settings = GameSettings::default();
+        for gid in [0usize, 1, 5, 20] {
+            let r = galaxy_jump_range(&settings, gid);
+            let c = settings.galaxies[gid].center();
+            let n = settings.galaxies.iter().enumerate().filter(|(i, g)| *i != gid && g.center().distance(c) <= r).count();
+            assert!((5..=7).contains(&n), "galaxie {gid} : {n} a portee");
+        }
+    }
 }
