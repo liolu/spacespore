@@ -1,10 +1,10 @@
-# Feuille de route — Correctifs (0.11.4)
+# Feuille de route — Correctifs (publiés en v0.12.0)
 
 Objectif : corriger ce qui ne va pas après les tests de la v0.11.3 (éditeur, vaisseau, personnage,
-interface, chargement des systèmes, comètes). Publication : **v0.11.4**.
+interface, chargement des systèmes, comètes). Publiés avec l'éditeur en **v0.12.0** (04/10/2026).
 
 Les idées plus grosses (rendu au sol, ciel, trous noirs, voyage entre galaxies, aliens) sont dans
-`IDEES-prochaine-version.md`.
+`ROADMAP-0.13.md`.
 
 Chaque phase = une branche `claude/correctifs-<phase>`, une PR non fusionnée : tu testes, puis tu dis
 « push main ». Chaque phase a son **prompt prêt à coller** (section « Prompts »).
@@ -123,13 +123,13 @@ Message à l'écran pendant le chargement. Les étoiles des systèmes non charg�
 | # | Cause | Correction |
 |---|---|---|
 | 21 | 🔍 Pistes : la caméra se place **avant** la mise à jour de la comète (une image de retard, `asteroids.rs:55`), précision `f32` loin de l'origine (aphélie lointaine), queue recalculée à chaque image. Les captures ne montrent rien : il faut **mesurer**. | Journal des écarts image par image (comète, caméra, vaisseau) avec `/aller comete`. Ordre des systèmes : comète → vaisseau → caméra. Position calculée en `f64` relative à l'origine. Test : écart de position lissé sous 0,1 % de la taille à l'écran. |
-| 22 | 🔍 Les anneaux du trou noir (`astre/Remnant_stellaire/black_hole.rs`, 180 cubes de l'anneau photonique) sont dessinés sans tenir compte de la planète devant eux ni de l'atmosphère, et leur position ne suit pas l'origine flottante. | Au sol : cachés par la planète et par la brume de jour ; position recalculée depuis l'absolu (règle de l'origine flottante). Repris complètement par l'idée V2 (`IDEES-prochaine-version.md`). |
+| 22 | 🔍 Les anneaux du trou noir (`astre/Remnant_stellaire/black_hole.rs`, 180 cubes de l'anneau photonique) sont dessinés sans tenir compte de la planète devant eux ni de l'atmosphère, et leur position ne suit pas l'origine flottante. | Au sol : cachés par la planète et par la brume de jour ; position recalculée depuis l'absolu (règle de l'origine flottante). Repris complètement par la phase V1 de `ROADMAP-0.13.md`. |
 
 ---
 
 ## 3. Ordre conseillé
 
-**C1 → C2** (l'éditeur, que tu testes déjà) → **C3 → C4 → C5 → C6 → C7 → C8**, puis release **v0.11.4**.
+**C1 → C2** (l'éditeur, que tu testes déjà) → **C3 → C4 → C5 → C6 → C7 → C8**, puis release **v0.12.0**.
 
 ---
 
@@ -145,7 +145,7 @@ Message à l'écran pendant le chargement. Les étoiles des systèmes non charg�
 
 ## 5. Prompts (à coller dans une nouvelle session, un par phase)
 
-Contexte commun : « Lis `ROADMAP-0.11.4-correctifs.md` et `CLAUDE.md`. `git pull origin main` avant de
+Contexte commun : « Lis `ROADMAP-0.12-correctifs.md` et `CLAUDE.md`. `git pull origin main` avant de
 coder. Branche `claude/correctifs-<phase>`. Build release, tests. PR non fusionnée (je dirai « push
 main »). Ne change ni les tailles ni les décisions sans me demander. »
 
