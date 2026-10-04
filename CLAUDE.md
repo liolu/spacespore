@@ -345,6 +345,13 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   tout de suite ou que soit le vaisseau, message « Systeme X charge » ; sans systeme (trou noir, galaxie) on garde
   celui ou l'on est tant qu'on y est. Plus de chargement au plus proche ni de recherche large. Le verrou du zoom 1
   (pas d'autre systeme) est dans `clickables` (plus de `lock_system_at_planet_zoom`, qui annulait `/aller`).
+  C8 : comete qui tremble = `ship_collisions` (PostUpdate) repoussait le vaisseau stationne contre sa cible
+  APRES le placement de la camera ; dans l'espace, plus de choc avec l'asteroide / la comete cible, et la camera
+  suit toute poussee. Mesure : `SPACESPORE_COMET_LOG=1` (`asteroids::comet_log`, positions rendues par image) ;
+  `SPACESPORE_TEST_CMD` accepte plusieurs commandes separees par « ; ». Trou noir central (`spawn_galactic_core`)
+  cree au vrai centre de la galaxie, disque d'accretion = enfants du trou noir (avant : au point zero du monde =
+  la ou l'on etait au lancement, visible dans le ciel au sol et decale du trou noir apres un recentrage) ; son
+  eclat suit `GalaxyDim` (`dim_accretion_disk`).
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 
