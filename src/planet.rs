@@ -102,7 +102,7 @@ impl Plugin for PlanetPlugin {
             .add_systems(Startup, (build_spatial_index, generate_all).chain())
             .add_systems(
                 Update,
-                (orbit_planets, orbit_stars, orbit_moons.after(orbit_planets), update_flare_voxels, rotate_clouds.after(orbit_planets), shimmer_auroras, regenerate_all, update_lod, update_star_visibility, update_far_star_scale, update_arm_capsule_lod, stream_system_bodies, reload_stars, reload_planets, reload_moons, cleanup_hidden_toplevel, rotate_accretion_disk),
+                (orbit_planets, orbit_stars, orbit_moons.after(orbit_planets), update_flare_voxels, rotate_clouds.after(orbit_planets), shimmer_auroras, regenerate_all, update_lod, update_star_visibility, update_far_star_scale, update_arm_capsule_lod, stream_system_bodies, reload_stars, reload_planets, reload_moons, cleanup_hidden_toplevel, rotate_accretion_disk, dim_accretion_disk),
             )
             .add_event::<FarGalaxyLoaded>()
             .init_resource::<GalaxyVisuals>()
@@ -428,8 +428,12 @@ pub struct SystemIdx(pub usize);
 #[derive(Component)]
 pub struct GalacticCore;
 
+/// Un anneau du disque d'accrétion du trou noir central, enfant du trou noir (C8) ; son éclat de
+/// départ, atténué comme les bras de la galaxie près d'un astre et au sol de jour (`GalaxyDim`).
 #[derive(Component)]
-pub struct AccretionDisk;
+pub struct AccretionDisk {
+    pub glow: LinearRgba,
+}
 
 #[derive(Component)]
 pub struct DistantGalaxyCore {
@@ -718,7 +722,8 @@ fn generate_all(
         spawned.0.insert(0);
     }
 
-    spawn_galactic_core(&mut commands, &mut meshes, &mut materials);
+    let core_center = settings.galaxies.first().map_or(Vec3::ZERO, |g| g.center());
+    spawn_galactic_core(&mut commands, &mut meshes, &mut materials, core_center);
 
     // Capsule partagée + matériaux LOD (10 niveaux d'opacité)
     let capsule_mesh = meshes.add(Capsule3d::new(1.0, 1.0));
@@ -944,10 +949,14 @@ pub(crate) fn index_far_galaxies(
     }
 }
 
+/// Le trou noir central et son disque, au vrai centre de la galaxie (`center`, repère monde) : le
+/// disque est son enfant, il le suit quand l'origine flottante se recentre (avant, créés au point
+/// zéro du monde, c'est-à-dire là où l'on était au lancement, puis décalés l'un de l'autre).
 fn spawn_galactic_core(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
+    center: Vec3,
 ) {
     let core_radius = 30_000.0_f32 * crate::settings::GALAXY_SIZE_SCALE; // trou noir central : 10 fois plus grand
 
@@ -957,13 +966,15 @@ fn spawn_galactic_core(
         unlit: true,
         ..default()
     });
-    commands.spawn((
-        Mesh3d(meshes.add(Sphere::new(core_radius).mesh().ico(4).unwrap())),
-        MeshMaterial3d(core_mat),
-        Transform::from_translation(Vec3::ZERO),
-        NotShadowCaster,
-        GalacticCore,
-    ));
+    let core = commands
+        .spawn((
+            Mesh3d(meshes.add(Sphere::new(core_radius).mesh().ico(4).unwrap())),
+            MeshMaterial3d(core_mat),
+            Transform::from_translation(center),
+            NotShadowCaster,
+            GalacticCore,
+        ))
+        .id();
 
     let ring_segments = 128_u32;
     let ring_layers = 3_u32;
@@ -1018,9 +1029,10 @@ fn spawn_galactic_core(
         mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
         mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
 
+        let glow = LinearRgba::new(4.0 * (1.0 - t), 1.5 * (1.0 - t), 0.5, 1.0);
         let disk_mat = materials.add(StandardMaterial {
             base_color: Color::WHITE,
-            emissive: LinearRgba::new(4.0 * (1.0 - t), 1.5 * (1.0 - t), 0.5, 1.0),
+            emissive: glow,
             unlit: true,
             alpha_mode: AlphaMode::Add,
             double_sided: true,
@@ -1030,13 +1042,16 @@ fn spawn_galactic_core(
 
         let tilt = Quat::from_rotation_x(0.25) * Quat::from_rotation_z(0.1);
         let y_off = thickness * (layer as f32 - 1.0) * 0.3;
-        commands.spawn((
-            Mesh3d(meshes.add(mesh)),
-            MeshMaterial3d(disk_mat),
-            Transform::from_translation(Vec3::new(0.0, y_off, 0.0)).with_rotation(tilt),
-            NotShadowCaster,
-            AccretionDisk,
-        ));
+        let disk = commands
+            .spawn((
+                Mesh3d(meshes.add(mesh)),
+                MeshMaterial3d(disk_mat),
+                Transform::from_translation(Vec3::new(0.0, y_off, 0.0)).with_rotation(tilt),
+                NotShadowCaster,
+                AccretionDisk { glow },
+            ))
+            .id();
+        commands.entity(core).add_child(disk);
     }
 }
 
@@ -2522,6 +2537,19 @@ fn update_arm_capsule_lod(
             let ci = cap.color_idx.min(ARM_COLORS - 1);
             let target = &lod_mats.capsule_steps[ci][step];
             if mat.0 != *target { mat.0 = target.clone(); }
+        }
+    }
+}
+
+/// Le disque du trou noir s'atténue comme les bras de la galaxie : près d'un astre, et au sol de
+/// jour (la brume du ciel le cache) ; la nuit, il revient (C8).
+fn dim_accretion_disk(dim: Res<crate::surface::GalaxyDim>, disks: Query<(&AccretionDisk, &MeshMaterial3d<StandardMaterial>)>, mut materials: ResMut<Assets<StandardMaterial>>) {
+    if !dim.is_changed() {
+        return;
+    }
+    for (disk, mat) in &disks {
+        if let Some(m) = materials.get_mut(&mat.0) {
+            m.emissive = disk.glow * dim.0;
         }
     }
 }
