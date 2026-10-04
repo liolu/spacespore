@@ -40,10 +40,6 @@ pub const MAX_VOXEL: f32 = 11.0;
 /// Une tuile est subdivisée tant que la caméra est plus proche que ce multiple de sa taille.
 pub const SPLIT_FACTOR: f32 = 1.8;
 
-/// Longueurs d'onde maximales (unités) des collines moyennes et du relief fin ajoutés au relief du
-/// corps ; elles rétrécissent avec le rayon pour les petites lunes.
-const MID_WAVE: f32 = 1800.0;
-const FINE_WAVE: f32 = 200.0;
 
 // ─────────────────────────────────────────────────────────────────────────
 //  Paramètres d'un corps
@@ -206,6 +202,12 @@ pub fn set_voxel_scale(k: u32) {
 /// Profondeur maximale du quadtree (k = 64 sur la plus grande planète : 13).
 const MAX_TREE_DEPTH: u32 = 18;
 
+/// Relief en voxels d'un astre (partagé avec le maillage vu de l'espace).
+pub fn landforms_of(p: &BodyParams) -> crate::planetgen::landforms::Landforms {
+    let wet = p.atmosphere && !p.airless && p.hydro.liquid == crate::planetgen::hydrology::Liquid::Water;
+    crate::planetgen::landforms::Landforms::new(p.seed, p.radius, layout_for(p.radius).voxel, &p.relief, p.airless || !p.atmosphere, wet)
+}
+
 pub fn layout_for(radius: f32) -> Layout {
     layout_scaled(radius, voxel_scale())
 }
@@ -349,8 +351,8 @@ pub struct Terrain {
     pub layout: Layout,
     continent: Fbm<Perlin>,
     detail: Fbm<Perlin>,
-    mid: Fbm<Perlin>,
-    fine: Fbm<Perlin>,
+    /// Relief en voxels (0.13 T1) : collines, massifs, bosses, vallées (`planetgen::landforms`).
+    forms: crate::planetgen::landforms::Landforms,
     color: Perlin,
     relief: ReliefField,
     biomes: BiomeField,
@@ -382,17 +384,12 @@ impl Terrain {
         continent.octaves = 6;
         let mut detail: Fbm<Perlin> = Fbm::new(params.seed.wrapping_add(81));
         detail.octaves = 4;
-        let mut mid: Fbm<Perlin> = Fbm::new(params.seed.wrapping_add(131));
-        mid.octaves = 3;
-        let mut fine: Fbm<Perlin> = Fbm::new(params.seed.wrapping_add(171));
-        fine.octaves = 4;
         Self {
             params,
             layout: params.layout(),
             continent,
             detail,
-            mid,
-            fine,
+            forms: landforms_of(&params),
             color: Perlin::new(params.seed.wrapping_add(200)),
             relief: ReliefField::new(params.relief).with_sea(params.sea_level).with_min_crater(2.0 * params.layout().voxel / params.radius.max(1.0)),
             biomes: BiomeField::new(params.biomes),
@@ -496,16 +493,11 @@ impl Terrain {
         let sample = self.relief.sample_min(dir, base, min);
         let hv = (base + sample.h).clamp(0.0, 1.2);
 
-        // L'érosion adoucit aussi les collines et le relief fin
-        let rugged = (if p.airless { 1.5 } else { 1.0 }) * (1.0 - 0.5 * p.relief.erosion);
-        let mid_amp = (p.terrain_height * 0.5).clamp(self.layout.voxel * 3.0, self.layout.voxel * 36.0) * rugged;
-        let fine_amp = self.layout.voxel * 2.5 * rugged;
-        let mf = (p.radius / (p.radius * 0.3).clamp(250.0, MID_WAVE)) as f64;
-        let ff = (p.radius / (p.radius * 0.1).clamp(80.0, FINE_WAVE)) as f64;
-        let mid = self.mid.get([dir.x as f64 * mf, dir.y as f64 * mf, dir.z as f64 * mf]) as f32 * mid_amp;
-        let fine = self.fine.get([dir.x as f64 * ff, dir.y as f64 * ff, dir.z as f64 * ff]) as f32 * fine_amp;
-
-        let h = p.radius + (hv - p.sea_level) * p.terrain_height + mid + fine;
+        // Relief à l'échelle du marcheur (en voxels) : collines, massifs le long des plaques,
+        // bosses, vallées ; le même que vu de l'espace (règle 16)
+        let land = crate::planetgen::landforms::land_mask(hv, p.sea_level);
+        let forms = self.forms.offset(dir, land, sample.mountain, true);
+        let h = p.radius + (hv - p.sea_level) * p.terrain_height + forms;
         (h, hv, sample)
     }
 
@@ -1880,6 +1872,35 @@ mod geology_tests {
 #[cfg(test)]
 mod scale_study {
     use super::*;
+
+    /// T1 : pentes réelles du sol (terres de planètes rocheuses), en degrés : part au-dessus de 15,
+    /// 30, 45° (`cargo test --release slope_distribution -- --nocapture`).
+    #[test]
+    fn slope_distribution() {
+        let settings = crate::settings::GameSettings::default();
+        let bodies: Vec<BodyParams> = settings.systems.dense().iter().take(80).flat_map(|s| s.planets().iter().filter(|p| !p.gaseous()).map(BodyParams::planet).collect::<Vec<_>>()).take(12).collect();
+        let mut slopes = Vec::new();
+        for p in &bodies {
+            let t = Terrain::new(*p);
+            let v = t.voxel();
+            for i in 0..400 {
+                let a = i as f32 * 2.399;
+                let z = 1.0 - 2.0 * (i as f32 + 0.5) / 400.0;
+                let dir = Vec3::new(a.cos() * (1.0 - z * z).sqrt(), z, a.sin() * (1.0 - z * z).sqrt());
+                let g = t.ground(dir);
+                if g.kind.is_liquid() {
+                    continue;
+                }
+                let east = Vec3::Y.cross(dir).normalize_or(Vec3::X);
+                // Pente sur 4 voxels (les cubes font des marches d'un voxel)
+                let g2 = t.ground((dir * p.radius + east * 4.0 * v).normalize());
+                slopes.push(((g2.top - g.top) / (4.0 * v)).atan().to_degrees().abs());
+            }
+        }
+        let share = |d: f32| slopes.iter().filter(|s| **s > d).count() as f32 / slopes.len().max(1) as f32 * 100.0;
+        println!("PENTES {} points de terre : > 5 : {:.0} %, > 15 : {:.0} %, > 30 : {:.0} %, > 45 : {:.0} %, > 60 : {:.1} %", slopes.len(), share(5.0), share(15.0), share(30.0), share(45.0), share(60.0));
+        assert!(share(15.0) > 10.0 && share(60.0) < 15.0);
+    }
 
     /// Cache disque des tuiles (0.13 E3) : générer une tuile contre la relire d'un fichier
     /// (`cargo test --release bench_tile_cache -- --ignored --nocapture`).
