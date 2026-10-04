@@ -303,24 +303,6 @@ impl LocalWeather {
         format!("{}  {}  {:.0} C", hour_text(self.hour), self.season, self.temp)
     }
 
-    /// Ligne du scanner : températures du jour et de l'année à cette latitude.
-    pub fn scanner_line(&self) -> String {
-        if self.body.is_none() {
-            return String::new();
-        }
-        format!(
-            "Ici ({:.0} deg) : {}, {}, {:.0} C\nJour : {:.0} a {:.0} C   Annee : {:.0} a {:.0} C",
-            self.lat_deg,
-            hour_text(self.hour),
-            self.season,
-            self.temp,
-            self.day.0,
-            self.day.1,
-            self.year.0,
-            self.year.1
-        )
-    }
-
     /// Réponse de `/heure`.
     pub fn long(&self) -> String {
         let day = if self.locked { "rotation synchrone : jour ou nuit eternels".to_string() } else { format!("jour de {}", duration_text(self.day_s)) };
@@ -387,7 +369,6 @@ fn update_local_weather(
     settings: Res<GameSettings>,
     surface: Res<crate::surface::Surface>,
     target: Res<crate::CameraTarget>,
-    ship_q: Query<&Transform, With<crate::Ship>>,
     planets: Query<(&Transform, &crate::planet::PlanetId), With<crate::planet::PlanetRoot>>,
     moons: Query<(&Transform, &crate::planet::MoonId), With<crate::planet::MoonRoot>>,
     stars: Query<&Transform, With<crate::planet::StarRoot>>,
@@ -408,11 +389,9 @@ fn update_local_weather(
     };
     let Some(star) = stars.iter().map(|s| s.translation).min_by(|a, b| a.distance_squared(tf.translation).total_cmp(&b.distance_squared(tf.translation))) else { return };
     let to_star = (star - tf.translation).normalize_or(Vec3::X);
-    // Le point : là où l'on est posé ou survole, sinon sous le vaisseau
-    let p = surface.local_point().unwrap_or_else(|| {
-        let ship = ship_q.get_single().map_or(tf.translation + Vec3::Y, |s| s.translation);
-        tf.rotation.inverse() * (ship - tf.translation)
-    });
+    // Le point : là où l'on est posé ou survole, sinon le point de stationnement du vaisseau
+    // (fixe dans le repère de l'astre : il ne saute pas quand la caméra tourne ou zoome)
+    let p = surface.local_point().unwrap_or_else(|| surface.hover_dir(&kind).unwrap_or(Vec3::Y));
     let dir = p.normalize_or(Vec3::Y);
     let alt = surface.ground_altitude().unwrap_or(0.0);
     let hour = local_hour(tf.rotation, to_star, dir);
