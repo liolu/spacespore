@@ -152,7 +152,10 @@ fn gas_atmosphere(
                     sky.blue * 0.5 + haze[2] * l * 0.5,
                 );
                 // Météo (C5) : brouillard, pluie et poussière rapprochent l'horizon
-                let visibility = (40_000.0 / pressure.max(0.01).sqrt()).clamp(3_000.0, 120_000.0) * weather.visibility();
+                // En voxels (règle 14 : ~5 700 voxels pour 1 bar, 430 à 17 000), jamais plus près
+                // que quatre fois la hauteur du vaisseau (on voit toujours le sol sous soi)
+                let (voxel, height) = surface.ground_scale().unwrap_or((7.0, 0.0));
+                let visibility = ((5_700.0 / pressure.max(0.01).sqrt()).clamp(430.0, 17_000.0) * voxel).max(height * 4.0) * weather.visibility();
                 let dust = weather.sample.dust;
                 let c = Color::srgb(c.to_srgba().red + (0.55 - c.to_srgba().red) * dust * 0.7, c.to_srgba().green + (0.42 - c.to_srgba().green) * dust * 0.7, c.to_srgba().blue + (0.28 - c.to_srgba().blue) * dust * 0.7);
                 // La nuit, la brume ne cache plus les lunes, les planètes ni les étoiles

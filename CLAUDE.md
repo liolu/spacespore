@@ -361,6 +361,17 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   `layout_scaled`, `/echelle k`, `SPACESPORE_SCALE=k` ; banc `cargo test --release bench_scale -- --ignored
   --nocapture --test-threads=1` ; mesures en jeu `SPACESPORE_PERF=<fichier>` (+ `_FROM` / `_TO` en s :
   images/s medianes, 1 % bas, > 33 ms), `SPACESPORE_TEST_WALK=1` (marche tout droit). Choix : k = 16.
+  E2 = passage a l'echelle : `terrain::GROUND_SCALE = 16` (le voxel 16 fois plus petit, rayons en unites
+  inchanges ; `/echelle k` reste pour les tests). `select_tiles(layout, ground_r, cam)` mesure au sol (sinon pas
+  de tuiles fines sur un plateau). `Terrain::layer` tolere 0,01 voxel (precision f32). Grottes : toujours 2 000
+  unites de profondeur (Q2) mais maillees seulement jusqu'a `NEAR_CAVE_VOXELS` (300) sous la surface + une tranche
+  de +-`CAVE_WINDOW_VOXELS` autour du joueur sous terre (`Terrain::cave_window`, `caves::for_tile(windows)`,
+  tuiles reconstruites quand la tranche change). Vol bas en voxels (`HOVER_VOXELS` 22, vitesse 1,5 x altitude
+  entre 40 et 4 000 voxels/s, Maj x4), camera a quelques longueurs du vaisseau. Vol suborbital : `J` (`Hop`,
+  point vise au centre de l'ecran, > 5 000 voxels, 6 a 25 s). Brume en voxels (`Surface::ground_scale`), plan
+  proche 0,1 voxel au sol (`near_plane`), phares en voxels. Marcheur : sort de la roche (coins du cube, limite
+  de colonnes) en fin de pas. Saves : `world.json` garde `ground_scale`, cellules d'une autre echelle oubliees.
+  PROTOCOL 31.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 
