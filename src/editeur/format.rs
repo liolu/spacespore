@@ -310,6 +310,14 @@ impl Sparse {
         self.chunks.values().map(Chunk::count).sum()
     }
 
+    /// Boîte des chunks occupés (cases : début inclus, fin exclue), `None` si vide.
+    pub fn chunk_bounds(&self) -> Option<(IVec3, IVec3)> {
+        let mut it = self.chunks.keys();
+        let first = *it.next()?;
+        let (lo, hi) = it.fold((first, first), |(lo, hi), c| (lo.min(*c), hi.max(*c)));
+        Some((lo * CHUNK, (hi + IVec3::ONE) * CHUNK))
+    }
+
     pub fn chunk_count(&self) -> usize {
         self.chunks.len()
     }

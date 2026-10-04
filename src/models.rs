@@ -324,11 +324,14 @@ pub struct Rig {
     blend_secs: f32,
     last: Vec<Pose>,
     built: Option<ModelKey>,
+    /// Personnage : la main droite (pivot du poignet, sinon avant-bras, bras, tronc) dans le repère
+    /// du modèle, à la pose de l'image ; la lampe part de là (C4).
+    pub hand: Option<Vec3>,
 }
 
 impl Rig {
     pub fn new(key: ModelKey, fit: Fit, anim: &str) -> Self {
-        Self { key, fit, anim: anim.into(), t: 0.0, inputs: Inputs::default(), from: Vec::new(), blend: 1.0, blend_secs: 0.3, last: Vec::new(), built: None }
+        Self { key, fit, anim: anim.into(), t: 0.0, inputs: Inputs::default(), from: Vec::new(), blend: 1.0, blend_secs: 0.3, last: Vec::new(), built: None, hand: None }
     }
 
     /// Change d'animation (en douceur ; plus lentement entre deux états du vaisseau).
@@ -392,6 +395,13 @@ fn animate_rigs(time: Res<Time>, models: Res<GameModels>, mut rigs: Query<(&mut 
         };
         let mats = motion::compose(&l.model, &pose);
         rig.last = pose;
+        if l.model.kind == ModelKind::Personnage {
+            let names = ["main_d", "avant_bras_d", "bras_d", "tronc"];
+            rig.hand = names.iter().find_map(|n| {
+                let i = l.model.zones.iter().position(|z| motion::bone(z) == *n)?;
+                Some(mats.get(i + 1)?.transform_point3(Vec3::from_array(l.model.zones[i].pivot)))
+            });
+        }
         for c in children {
             if let Ok((part, mut tf)) = parts.get_mut(*c) {
                 let t = Transform::from_matrix(mats.get(part.0 as usize).copied().unwrap_or(Mat4::IDENTITY));
@@ -436,7 +446,8 @@ fn drive_local(
     mut ship_rig: Query<(&GlobalTransform, &mut Rig), (With<ShipRig>, Without<WalkerRig>)>,
     mut walker: Query<(&mut Transform, &mut Visibility), With<LocalWalker>>,
     mut walker_rig: Query<&mut Rig, (With<WalkerRig>, Without<ShipRig>)>,
-    mut last: Local<Option<(Vec3, f32)>>,
+    thrust_q: Query<&crate::ship::ShipThrust>,
+    mut last: Local<Option<(Quat, f32)>>,
 ) {
     let now = time.elapsed_secs_f64();
     let dt = time.delta_secs().max(1e-4);
@@ -464,16 +475,23 @@ fn drive_local(
             }
             None => rig.play(&format!("{}{state}", motion::STATE_PREFIX)),
         }
-        // Poussée : vitesse en longueurs de vaisseau par seconde, lissée
+        // Poussée : les commandes (vol bas, décollage, atterrissage) ou le pilote automatique
+        // (croisière), jamais le déplacement dans le monde (orbite de l'astre, origine flottante)
         let pos = ship.translation();
-        let scale = ship.compute_transform().scale.x.max(1e-3);
-        let (prev, thrust) = last.unwrap_or((pos, 0.0));
-        let speed = pos.distance(prev) / dt / (scale * surface.ship_dims.icon_len);
-        let thrust = thrust + ((speed / 2.0).clamp(0.0, 1.0) - thrust) * (1.0 - (-3.0 * dt).exp());
-        *last = Some((pos, thrust));
+        let (push, turn) = if surface.active() { (surface.pilot, surface.pilot_turn) } else { (thrust_q.get_single().map_or(Vec3::ZERO, |t| t.push), 0.0) };
+        let rot = ship.compute_transform().rotation;
+        let (prev, thrust) = last.unwrap_or((rot, 0.0));
+        let mag = push.length().min(1.0);
+        let thrust = thrust + (mag - thrust) * (1.0 - (-4.0 * dt).exp());
+        *last = Some((rot, thrust));
         rig.inputs.thrust = thrust;
         rig.inputs.speed = thrust;
-        rig.inputs.maneuver = (thrust * 0.5 + 0.5 * (now as f32 * 2.0).sin().abs()) * (thrust > 0.05) as u8 as f32;
+        // Manœuvre : virage demandé ou mesuré (le vaisseau tourne), poussée de côté ou verticale
+        let spin = (prev.angle_between(rot) / dt / 0.8).min(1.0);
+        let side = (push.x.abs() + push.y.abs()).min(1.0);
+        rig.inputs.maneuver = turn.abs().max(spin).max(side * 0.8).clamp(0.0, 1.0);
+        // Tuyères : la direction de poussée dans le repère du modèle (son avant +z = -Z du vaisseau)
+        rig.inputs.steer = if mag > 0.01 { Vec3::new(-push.x, push.y, -push.z) / push.length() } else { Vec3::Z };
         // Tourelles : le vaisseau le plus proche (dans le repère du modèle)
         let to_model = rig_gt.affine().inverse();
         let target = net.peers.values().filter(|p| p.status.hp > 0).map(|p| p.pos()).min_by(|a, b| a.distance(pos).total_cmp(&b.distance(pos)));

@@ -93,8 +93,17 @@ impl OrbitCam {
     /// Cadrer tout le modèle (touche F).
     pub fn focus(&mut self, m: &Model) {
         let s = m.size.as_vec3();
-        self.pivot = Vec3::new(s.x * 0.5, s.y * 0.35, s.z * 0.5);
-        self.distance = s.max_element() * 1.9 + 4.0;
+        if m.kind == super::format::ModelKind::Personnage {
+            self.pivot = Vec3::new(s.x * 0.5, s.y * 0.35, s.z * 0.5);
+            self.distance = s.max_element() * 1.9 + 4.0;
+            return;
+        }
+        // Le contenu (chunks occupés) s'il y en a, sinon toute la grille, entièrement dans l'écran
+        // (sphère englobante dans le champ de vision de 45°)
+        let (lo, hi) = m.voxels.chunk_bounds().map_or((Vec3::ZERO, s), |(lo, hi)| (lo.as_vec3().max(Vec3::ZERO), hi.as_vec3().min(s)));
+        let ext = hi - lo;
+        self.pivot = lo + ext * Vec3::new(0.5, 0.4, 0.5);
+        self.distance = ext.length() * 0.5 / (std::f32::consts::FRAC_PI_8).sin() * 1.05 + 4.0;
     }
 
     pub fn transform(&self, anchor: Vec3) -> Transform {
@@ -155,14 +164,52 @@ pub fn enter_scene(
         ghost_bad: materials.add(ghost(0.55, Color::srgb(1.0, 0.35, 0.3))),
     });
     let _ = &mut meshes;
+    // Lumière d'atelier : une lumière principale qui suit la caméra (un peu au-dessus et à gauche)
+    // et un contre-jour faible : toutes les faces se voient, sous tous les angles
     commands.spawn((
         DirectionalLight { illuminance: 9_000.0, shadows_enabled: false, ..default() },
-        Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, -0.6, -0.9, 0.0)),
+        Transform::from_rotation(GAME_SUN),
+        EditorLight(0),
         EditorScene,
-        layer,
+        layer.clone(),
     ));
+    commands.spawn((DirectionalLight { illuminance: 2_500.0, shadows_enabled: false, ..default() }, Transform::default(), EditorLight(1), EditorScene, layer));
     if let Some(d) = editor.doc_mut() {
         d.mesh_dirty = true;
+    }
+}
+
+/// Le soleil fixe de l'option « lumière du jeu ».
+const GAME_SUN: Quat = Quat::from_xyzw(-0.4155, -0.2661, -0.1285, 0.8602);
+
+/// Lumières de l'éditeur : 0 = principale, 1 = contre-jour.
+#[derive(Component)]
+pub struct EditorLight(u8);
+
+/// La lumière principale suit la caméra (lumière d'atelier), sauf avec « lumière du jeu ».
+pub fn follow_light(keys: Res<ButtonInput<KeyCode>>, mut editor: ResMut<Editor>, cam_q: Query<&Transform, With<Camera3d>>, mut lights: Query<(&EditorLight, &mut Transform, &mut DirectionalLight), Without<Camera3d>>) {
+    let typing = editor.overlay.is_some();
+    if keys.just_pressed(KeyCode::KeyL) && !typing {
+        editor.game_light = !editor.game_light;
+        editor.ui_dirty = true;
+    }
+    let Ok(cam) = cam_q.get_single() else { return };
+    for (l, mut tf, mut light) in &mut lights {
+        match (l.0, editor.game_light) {
+            (0, false) => {
+                tf.rotation = cam.rotation * Quat::from_euler(EulerRot::YXZ, 0.35, -0.4, 0.0);
+                light.illuminance = 9_000.0;
+            }
+            (0, true) => {
+                tf.rotation = GAME_SUN;
+                light.illuminance = 9_000.0;
+            }
+            (_, false) => {
+                tf.rotation = cam.rotation * Quat::from_euler(EulerRot::YXZ, std::f32::consts::PI - 0.5, 0.3, 0.0);
+                light.illuminance = 2_500.0;
+            }
+            (_, true) => light.illuminance = 0.0,
+        }
     }
 }
 
@@ -198,8 +245,12 @@ pub fn exit_scene(
     }
 }
 
+/// Les panneaux et tout ce qu'ils contiennent (un bouton arrête la recherche du survol : le
+/// panneau sous lui n'est alors pas « survolé »).
+pub type UiHover<'w, 's> = Query<'w, 's, &'static Interaction, Or<(With<super::panels::Blocks>, With<Button>, With<super::panels::ScrollThumb>)>>;
+
 /// Le curseur est-il sur un panneau de l'éditeur (pas dans la vue 3D) ?
-pub fn over_ui(ui: &Query<&Interaction, With<super::panels::Blocks>>) -> bool {
+pub fn over_ui(ui: &UiHover) -> bool {
     ui.iter().any(|i| *i != Interaction::None)
 }
 
@@ -209,7 +260,7 @@ pub fn camera_input(
     buttons: Res<ButtonInput<MouseButton>>,
     mut motion: EventReader<MouseMotion>,
     mut wheel: EventReader<MouseWheel>,
-    ui: Query<&Interaction, With<super::panels::Blocks>>,
+    ui: UiHover,
     mut editor: ResMut<Editor>,
     root: Query<&Transform, (With<EditorRoot>, Without<Camera3d>)>,
     mut cam_q: Query<&mut Transform, With<Camera3d>>,
@@ -268,7 +319,7 @@ pub fn tools_input(
     buttons: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     viewport: Res<crate::graphics::ViewportScale>,
-    ui: Query<&Interaction, With<super::panels::Blocks>>,
+    ui: UiHover,
     cam_q: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     root: Query<&Transform, With<EditorRoot>>,
     mut editor: ResMut<Editor>,
@@ -483,8 +534,23 @@ pub fn tools_input(
             d.begin();
         }
         editor.last_cell = None;
+        editor.add_plane = match (tool, hit, place) {
+            (Tool::Add, Some(h), Some(p)) if (p - h).abs().element_sum() == 1 => Some((p, p - h)),
+            (Tool::Add, _, Some(p)) => Some((p, IVec3::Y)),
+            _ => None,
+        };
     }
     if buttons.pressed(MouseButton::Left) && !shift && tool != Tool::Pick {
+        // Ajouter : un clic = un bloc ; en glissant, les cases du plan du premier bloc sous la
+        // souris (sinon le bloc posé devient la case visée et une colonne pousse vers la caméra)
+        let (target, hit, place) = match (tool, editor.add_plane, buttons.just_pressed(MouseButton::Left)) {
+            (Tool::Add, Some((start, n)), false) => {
+                let cell = plane_cell(origin, *ray.direction, start, n);
+                let ok = cell.filter(|c| editor.doc().is_some_and(|d| d.model.in_bounds(*c)));
+                (ok, ok.map(|c| c - n), ok)
+            }
+            _ => (target, hit, place),
+        };
         // Un trait : une seule action par case survolée
         if target.is_some() && target != editor.last_cell {
             editor.last_cell = target;
@@ -503,7 +569,25 @@ fn end_stroke(editor: &mut Editor, buttons: &ButtonInput<MouseButton>) {
             d.end();
         }
         editor.last_cell = None;
+        editor.add_plane = None;
     }
+}
+
+/// La case du plan (couche de `start` perpendiculaire à `n`) sous le rayon, s'il le coupe devant.
+fn plane_cell(origin: Vec3, dir: Vec3, start: IVec3, n: IVec3) -> Option<IVec3> {
+    let a = n.abs();
+    let axis = if a.x >= a.y && a.x >= a.z { 0 } else if a.y >= a.z { 1 } else { 2 };
+    let plane = start[axis] as f32 + 0.5;
+    if dir[axis].abs() < 1e-5 {
+        return None;
+    }
+    let t = (plane - origin[axis]) / dir[axis];
+    if t <= 0.0 {
+        return None;
+    }
+    let mut c = (origin + dir * t).floor().as_ivec3();
+    c[axis] = start[axis];
+    Some(c)
 }
 
 /// Maillages des chunks affichés (E3) : entités par chunk, niveau de détail, maillages en cours.
@@ -948,8 +1032,50 @@ pub fn draw(editor: Res<Editor>, root: Query<&Transform, With<EditorRoot>>, mut 
 
 /// Un nouveau document : cadré, miroir selon le type.
 pub fn open_doc(editor: &mut Editor, model: Model, path: Option<std::path::PathBuf>) {
+    // Le rig de la race (fenêtre « Nouveau ») n'est plus montré : la caméra cadre le nouveau modèle
+    editor.race_view = None;
+    editor.cam.shift = 0.0;
     editor.mirror = edit::mirror_default(model.kind);
     editor.docs.push(Doc::new(model, path));
     let i = editor.docs.len() - 1;
     editor.select(i);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// C1 : un trait de l'outil Ajouter reste sur le plan du premier bloc, même si le rayon passe
+    /// au-dessus d'un bloc qu'on vient de poser.
+    #[test]
+    fn add_stroke_stays_on_its_plane() {
+        // Premier bloc posé sur le sol (couche y = 0, face du dessus visée)
+        let (start, n) = (IVec3::new(5, 0, 5), IVec3::Y);
+        let eye = Vec3::new(5.5, 20.0, -10.0);
+        for x in 0..10 {
+            let target = Vec3::new(x as f32 + 0.5, 0.5, 8.5);
+            let c = plane_cell(eye, (target - eye).normalize(), start, n).unwrap();
+            assert_eq!(c, IVec3::new(x, 0, 8));
+        }
+        // Rayon parallèle au plan ou qui part à l'opposé : rien
+        assert!(plane_cell(eye, Vec3::X, start, n).is_none());
+        assert!(plane_cell(eye, Vec3::Y, start, n).is_none());
+        // Face de côté (normale -x) : on reste dans la couche x de départ
+        let c = plane_cell(Vec3::new(-20.0, 3.5, 3.5), Vec3::X, IVec3::new(2, 0, 0), IVec3::NEG_X).unwrap();
+        assert_eq!(c, IVec3::new(2, 3, 3));
+    }
+
+    /// C1 : « Cadrer » montre toute la grille d'un vaisseau vide, ou son contenu.
+    #[test]
+    fn focus_frames_grid_or_content() {
+        use super::super::format::{ModelKind, ShipCategory};
+        let mut m = Model::new("v", ModelKind::Vaisseau, Some(ShipCategory::Capital));
+        let mut cam = OrbitCam::default();
+        cam.focus(&m);
+        assert!(cam.distance > 1024.0 * 2.0, "grille entière : {}", cam.distance);
+        m.voxels.set(IVec3::new(500, 10, 500), 1);
+        cam.focus(&m);
+        assert!(cam.distance < 120.0, "un seul chunk : {}", cam.distance);
+        assert!(cam.pivot.distance(Vec3::new(496.0, 12.8, 496.0) + Vec3::new(0.0, 0.0, 0.0)) < 20.0);
+    }
 }

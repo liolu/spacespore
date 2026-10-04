@@ -43,6 +43,13 @@ pub struct RaceDef {
     pub parts: Vec<RacePart>,
     #[serde(default)]
     pub options: Vec<RaceOption>,
+    /// Variantes (C2) : animation de la bibliothèque -> celle que joue cette famille
+    /// (`"saluer": "saluer_tentacule"`).
+    #[serde(default)]
+    pub anims: std::collections::BTreeMap<String, String>,
+    /// Alias d'os (C2) : os visé par les animations -> os de cette famille (`"bras_d": "tav_1_d"`).
+    #[serde(default)]
+    pub alias: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -237,7 +244,7 @@ mod tests {
             }
         }
         assert!(l.anims.len() >= 40, "{}", l.anims.len());
-        let groups = ["Base", "Interaction", "Emotes", "Vol", "Locomotion", motion::PROCEDURAL];
+        let groups = ["Base", "Interaction", "Emotes", "Vol", "Locomotion", motion::PROCEDURAL, motion::VARIANTS];
         for a in &l.anims {
             assert!(groups.contains(&a.group.as_str()), "{} : groupe {}", a.id, a.group);
             for k in a.tracks.keys() {
@@ -276,6 +283,76 @@ mod tests {
         let q1 = motion::lib_pose(wag, "queue_1", 0.4).unwrap();
         let q3 = motion::lib_pose(wag, "queue_3", 0.4).unwrap();
         assert!(q1.rot.angle_between(q3.rot) > 1e-3);
+    }
+
+    /// C2 : pour chaque famille (toutes options cochées puis par défaut) et chaque animation
+    /// proposée, au moins un os bouge ; les variantes nommées par les races existent.
+    #[test]
+    fn every_family_animation_moves_something() {
+        let l = lib();
+        let mut collide = Vec::new();
+        for r in &l.races {
+            for (k, v) in &r.anims {
+                assert!(l.anim(v).is_some_and(|a| a.group == motion::VARIANTS), "{} : variante {k} -> {v} absente", r.id);
+            }
+            for opts in [r.default_options(), vec![true; r.options.len()]] {
+                let m = r.build("x", &opts);
+                let still = motion::compose(&m, &vec![motion::Pose::default(); m.zones.len()]);
+                for a in motion::model_anims(&m, &l).iter().filter(|a| *a != "repos") {
+                    let d = motion::anim_duration(&m, &l, a);
+                    let moving = (0..12).any(|i| {
+                        let mats = motion::compose(&m, &motion::zone_locals(&m, &l, a, d * i as f32 / 12.0, false));
+                        mats.iter().zip(&still).any(|(x, y)| !x.abs_diff_eq(*y, 1e-3))
+                    });
+                    assert!(moving, "{} : {a} ne bouge rien", r.id);
+                    let hit = motion::collisions(&m, &l, a);
+                    if !hit.is_empty() {
+                        collide.push(format!("{} {a} : {:?}", r.id, hit.iter().map(|z| m.zones[*z].name.clone()).collect::<Vec<_>>()));
+                    }
+                }
+            }
+        }
+        collide.dedup();
+        println!("{}", collide.join("
+"));
+        assert!(collide.iter().all(|c| !c.contains("cape")), "la cape traverse le corps :
+{}", collide.join("
+"));
+    }
+
+    /// C2 : le céphalopode salue d'un tentacule levé, nage tête devant, dort posé.
+    #[test]
+    fn the_cephalopod_waves_swims_and_sleeps_like_one() {
+        let l = lib();
+        let r = l.races.iter().find(|r| r.id == "cephalopode").unwrap();
+        let m = r.build("c", &r.default_options());
+        let anims = motion::model_anims(&m, &l);
+        for a in ["saluer", "nager", "dormir", "flotter"] {
+            assert!(anims.iter().any(|x| x == a), "{a} absent : {anims:?}");
+        }
+        let zone = |n: &str| m.zones.iter().position(|z| z.name.replace(' ', "_") == n).unwrap();
+        let tip = |anim: &str, t: f32, n: &str| {
+            let mats = motion::compose(&m, &motion::zone_locals(&m, &l, anim, t, false));
+            let z = zone(n);
+            let cells: Vec<Vec3> = m.zone_map.iter().filter(|(_, v)| *v as usize == z + 1).map(|(p, _)| p.as_vec3() + Vec3::splat(0.5)).collect();
+            let c = cells.iter().copied().sum::<Vec3>() / cells.len() as f32;
+            mats[z + 1].transform_point3(c)
+        };
+        // Saluer : le bout du tentacule avant droit monte au-dessus du bas de la tête
+        let rest = tip("repos", 0.0, "tav_4_d");
+        let up = tip("saluer", 0.9, "tav_4_d");
+        assert!(up.y > 14.0 && up.y > rest.y + 6.0, "{rest} -> {up}");
+        // Nager : le haut de la tête part vers l'avant (+z), les tentacules vers l'arrière
+        let back = tip("nager", 0.3, "tar_4_g");
+        let front = tip("nager", 0.3, "tav_4_g");
+        assert!(back.z < 12.0 && front.z < 16.0, "tentacules {back} {front}");
+        // Dormir : posé (la tête descend), pas couché sur le côté
+        let sleep = motion::zone_locals(&m, &l, "dormir", 1.0, false)[zone("tete")];
+        assert!(sleep.pos.y < -2.0 && sleep.rot.angle_between(Quat::IDENTITY) < 0.2, "{sleep:?}");
+        // ... et posé sur le sol (ni dedans ni au-dessus)
+        let mats = motion::compose(&m, &motion::zone_locals(&m, &l, "dormir", 1.0, false));
+        let low = m.zone_map.iter().map(|(p, z)| mats[z as usize].transform_point3(p.as_vec3() + Vec3::new(0.5, 0.0, 0.5)).y).fold(f32::MAX, f32::min);
+        assert!((-0.6..=0.6).contains(&low), "bas du cephalopode endormi : {low}");
     }
 
     #[test]

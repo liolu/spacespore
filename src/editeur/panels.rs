@@ -26,21 +26,91 @@ pub struct Blocks;
 #[derive(Component)]
 pub struct ScrollPanel(pub usize);
 
-/// La molette fait défiler le panneau sous la souris.
-pub fn scroll_panels(mut wheel: EventReader<bevy::input::mouse::MouseWheel>, mut editor: ResMut<Editor>, mut q: Query<(&Interaction, &mut ScrollPosition, &ScrollPanel)>) {
+/// Barre de défilement d'un panneau (à droite, déplaçable à la souris).
+#[derive(Component)]
+pub struct ScrollThumb(pub usize);
+
+/// Glissement d'une barre : panneau, souris et position au départ.
+#[derive(Default)]
+pub struct ThumbDrag(Option<(Entity, f32, f32)>);
+
+/// La molette fait défiler le panneau sous la souris (où qu'elle soit dans le panneau, même sur
+/// un bouton), jusqu'au bout du contenu ; la barre de défilement le montre et se tire.
+#[allow(clippy::too_many_arguments)]
+pub fn scroll_panels(
+    mut wheel: EventReader<bevy::input::mouse::MouseWheel>,
+    mut editor: ResMut<Editor>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    mut drag: Local<ThumbDrag>,
+    mut q: Query<(Entity, &ComputedNode, &GlobalTransform, &mut ScrollPosition, &ScrollPanel, &Children)>,
+    kids: Query<(&ComputedNode, &GlobalTransform, &Node), (Without<ScrollPanel>, Without<ScrollThumb>)>,
+    mut thumbs: Query<(&ScrollThumb, &Parent, &mut Node, &Interaction), Without<ScrollPanel>>,
+) {
     let lines: f32 = wheel.read().map(crate::ui::wheel_lines).sum();
-    for (i, mut s, panel) in &mut q {
+    let cursor = windows.get_single().ok().and_then(|w| w.cursor_position());
+    if !buttons.pressed(MouseButton::Left) {
+        drag.0 = None;
+    }
+    for (e, cn, gt, mut s, panel, children) in &mut q {
         let k = panel.0.min(2);
+        let inv = cn.inverse_scale_factor();
+        let size = cn.size() * inv;
+        let top_left = gt.translation().truncate() * inv - size * 0.5;
+        // Hauteur du contenu : le bas du dernier enfant dans le flux, plus la marge intérieure
+        let bottom = children
+            .iter()
+            .filter_map(|c| kids.get(*c).ok())
+            .filter(|(_, _, n)| n.position_type != PositionType::Absolute)
+            .map(|(c, g, _)| g.translation().y * inv + c.size().y * inv * 0.5)
+            .fold(top_left.y, f32::max);
+        let content = bottom - top_left.y + s.offset_y + 12.0;
+        let max = (content - size.y).max(0.0);
         // La mise en page ramène la position dans le contenu : on garde la vraie
         if (editor.scroll[k] - s.offset_y).abs() > 0.5 {
             editor.scroll[k] = s.offset_y;
         }
-        if *i == Interaction::None || lines == 0.0 {
-            continue;
+        let inside = cursor.is_some_and(|c| c.cmpge(top_left).all() && c.cmple(top_left + size).all());
+        if inside && lines != 0.0 {
+            s.offset_y = (s.offset_y - lines * 40.0).clamp(0.0, max);
+            editor.scroll[k] = s.offset_y;
         }
-        s.offset_y = (s.offset_y - lines * 40.0).clamp(0.0, 2_000.0);
-        editor.scroll[k] = s.offset_y;
+        // Barre : sa taille = la part visible, sa place = la position
+        let track = size.y - 8.0;
+        let h = if content > 0.0 { (track * size.y / content).clamp(24.0, track) } else { track };
+        for (t, parent, mut node, i) in &mut thumbs {
+            if parent.get() != e || t.0 != panel.0 {
+                continue;
+            }
+            if buttons.just_pressed(MouseButton::Left) && *i != Interaction::None {
+                if let Some(c) = cursor {
+                    drag.0 = Some((e, c.y, s.offset_y));
+                }
+            }
+            if let (Some((de, y0, o0)), Some(c)) = (drag.0, cursor) {
+                if de == e && track > h {
+                    s.offset_y = (o0 + (c.y - y0) * (content - size.y) / (track - h)).clamp(0.0, max);
+                    editor.scroll[k] = s.offset_y;
+                }
+            }
+            let pos = if max > 0.0 { (s.offset_y / max).clamp(0.0, 1.0) * (track - h) } else { 0.0 };
+            // Les enfants absolus défilent avec le contenu : on compense
+            node.top = Val::Px(s.offset_y + 4.0 + pos);
+            node.height = Val::Px(h);
+            node.display = if max > 0.0 { Display::Flex } else { Display::None };
+        }
     }
+}
+
+/// La barre de défilement du panneau `k` (premier enfant du panneau).
+fn thumb(p: &mut ChildBuilder, k: usize) {
+    p.spawn((
+        Node { position_type: PositionType::Absolute, right: Val::Px(2.0), top: Val::Px(4.0), width: Val::Px(6.0), height: Val::Px(0.0), display: Display::None, ..default() },
+        BackgroundColor(ACCENT.with_alpha(0.55)),
+        BorderRadius::all(Val::Px(3.0)),
+        Interaction::default(),
+        ScrollThumb(k),
+    ));
 }
 
 /// Racine de l'interface de l'éditeur.
@@ -60,6 +130,7 @@ pub enum Act {
     Tool(Tool),
     Mirror,
     Grid,
+    GameLight,
     Undo,
     Redo,
     Focus,
@@ -86,6 +157,8 @@ pub enum Act {
     NewSize(u32),
     Create,
     Open(usize),
+    /// Ouvrir une copie d'un modèle fourni (`defaults::all_ids`).
+    Provided(usize),
     Duplicate(usize),
     Delete(usize),
     Tag(&'static str),
@@ -302,6 +375,7 @@ pub fn rebuild(mut commands: Commands, mut editor: ResMut<Editor>, old: Query<En
             }))
             .insert((ScrollPosition { offset_x: 0.0, offset_y: ed.scroll[0] }, ScrollPanel(0)))
             .with_children(|p| {
+                thumb(p, 0);
                 label(p, "EDITEUR", 20.0, ACCENT);
                 wrap(p, |w| {
                     for t in Tool::ALL {
@@ -341,6 +415,7 @@ pub fn rebuild(mut commands: Commands, mut editor: ResMut<Editor>, old: Query<En
                 wrap(p, |w| {
                     button(w, "Miroir (X)", Act::Mirror, ed.mirror);
                     button(w, "Grille (G)", Act::Grid, ed.grid);
+                    button(w, "Lumiere du jeu (L)", Act::GameLight, ed.game_light);
                     button(w, "Cadrer (F)", Act::Focus, false);
                 });
                 wrap(p, |w| {
@@ -502,6 +577,7 @@ pub fn rebuild(mut commands: Commands, mut editor: ResMut<Editor>, old: Query<En
             }))
             .insert((ScrollPosition { offset_x: 0.0, offset_y: ed.scroll[1] }, ScrollPanel(1)))
             .with_children(|p| {
+                thumb(p, 1);
                 label(p, "MODELE", 18.0, ACCENT);
                 p.spawn((Text::new(""), TextFont { font_size: 14.0, ..default() }, TextColor(TEXT), Live::Info));
                 if !ed.docs.is_empty() {
@@ -615,6 +691,9 @@ fn overlay(root: &mut ChildBuilder, ed: &Editor, o: &Overlay) {
     .insert((BorderColor(ACCENT), ScrollPosition { offset_x: 0.0, offset_y: if side { ed.scroll[2] } else { 0.0 } }, ScrollPanel(2)))
     .with_children(|p| match o {
         Overlay::New => {
+            if side {
+                thumb(p, 2);
+            }
             label(p, "NOUVEAU MODELE", 20.0, ACCENT);
             if ed.welcome {
                 label(p, "Bienvenue ! Cree ton personnage : choisis ta race, puis construis-le bloc par bloc.", 15.0, ON);
@@ -694,6 +773,18 @@ fn overlay(root: &mut ChildBuilder, ed: &Editor, o: &Overlay) {
             if ed.library.len() > 18 {
                 label(p, &format!("... et {} autres", ed.library.len() - 18), 13.0, DIM);
             }
+            // Les modèles fournis (un vaisseau par catégorie, un personnage par famille) : une
+            // copie s'ouvre, à modifier puis enregistrer
+            label(p, "MODELES FOURNIS (s'ouvrent en copie a modifier)", 15.0, ACCENT);
+            wrap(p, |w| {
+                for (k, id) in super::defaults::all_ids(&ed.lib).iter().enumerate() {
+                    let name = match id.strip_prefix(super::defaults::SHIP_PREFIX) {
+                        Some(c) => format!("Vaisseau {c}"),
+                        None => ed.lib.races.iter().find(|r| Some(r.id.as_str()) == id.strip_prefix(super::defaults::CHARACTER_PREFIX)).map_or(id.clone(), |r| r.name.clone()),
+                    };
+                    button(w, &name, Act::Provided(k), false);
+                }
+            });
             wrap(p, |w| {
                 button(w, "Importer .vox / Pixel World (saves/import/)", Act::Import, false);
                 button(w, "Fermer", Act::CloseOverlay, false);
@@ -1074,6 +1165,7 @@ pub fn actions(
             }
             Act::Mirror => ed.mirror = !ed.mirror,
             Act::Grid => ed.grid = !ed.grid,
+            Act::GameLight => ed.game_light = !ed.game_light,
             Act::Undo => ed.undo(),
             Act::Redo => ed.redo(),
             Act::Focus => ed.focus(),
@@ -1125,6 +1217,7 @@ pub fn actions(
             Act::NewSize(s) => ed.new_size = s,
             Act::Create => ed.create(),
             Act::Open(k) => ed.open_library(k),
+            Act::Provided(k) => ed.open_provided(k),
             Act::Duplicate(k) => ed.duplicate(k),
             Act::Delete(k) => ed.delete(k),
             Act::Tag(t) => {
@@ -1242,6 +1335,19 @@ impl Editor {
         } else {
             "Nouveau modele : clic gauche pour poser des blocs. Ctrl+S pour enregistrer.".into()
         });
+    }
+
+    /// Ouvre une copie d'un modèle fourni (non enregistrée, sous un nom libre).
+    pub fn open_provided(&mut self, k: usize) {
+        let Some(id) = super::defaults::all_ids(&self.lib).get(k).cloned() else { return };
+        let Some(mut m) = super::defaults::build(&id, &self.lib) else { return };
+        let mut taken: Vec<String> = self.docs.iter().map(|d| d.model.name.clone()).collect();
+        taken.extend(list_models(&library_dir()).into_iter().map(|e| e.name));
+        m.name = fresh_name(&m.name, &taken);
+        let name = m.name.clone();
+        super::view::open_doc(self, m, None);
+        self.overlay = None;
+        self.say(format!("Copie ouverte : {name} (Ctrl+S pour l'enregistrer dans la bibliotheque)."));
     }
 
     fn open_library(&mut self, k: usize) {

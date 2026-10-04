@@ -54,7 +54,8 @@ impl Plugin for AsteroidsPlugin {
             .add_event::<CometCommand>()
             .add_systems(Update, (go_belt, go_comet, stream_asteroids, update_bands, update_comet_tails).chain().before(crate::surface::SurfaceControl))
             .add_systems(Update, draw_trails.after(crate::surface::SurfaceControl))
-            .add_systems(PostUpdate, ship_collisions.before(bevy::transform::TransformSystem::TransformPropagate));
+            .add_systems(PostUpdate, ship_collisions.before(bevy::transform::TransformSystem::TransformPropagate))
+            .add_systems(PostUpdate, comet_log.after(bevy::transform::TransformSystem::TransformPropagate));
     }
 }
 
@@ -1938,6 +1939,8 @@ fn ship_collisions(
     mut surface: ResMut<Surface>,
     mut field: ResMut<AsteroidField>,
     mut ship_q: Query<&mut Transform, With<Ship>>,
+    mut cam_q: Query<&mut Transform, (With<Camera3d>, Without<Ship>)>,
+    target: Res<CameraTarget>,
     mut hits: EventWriter<AsteroidHit>,
     mut prev: Local<Option<(Vec3, u32)>>,
     mut cooldown: Local<f64>,
@@ -1962,9 +1965,15 @@ fn ship_collisions(
         Some(TargetKind::Asteroid(k)) => Some(k),
         _ => None,
     };
+    // Dans l'espace, le vaisseau (à taille d'icône) stationne autour de sa cible : la toucher le
+    // ferait sauter à chaque image (comète qui « tremble », C8)
+    let parked = match (flying, target.0) {
+        (false, TargetKind::Asteroid(k)) => Some(k),
+        _ => None,
+    };
     let ship_r = SHIP_HALF * ship.scale.x;
     for live in field.live.values_mut() {
-        if Some(live.ast.key) == here {
+        if Some(live.ast.key) == here || Some(live.ast.key) == parked {
             continue;
         }
         let shape = &live.ast.shape;
@@ -1983,6 +1992,12 @@ fn ship_collisions(
             push += side * pen.max(ship_r);
         }
         ship.translation += push;
+        // Dans l'espace, la caméra suit le vaisseau (déjà placée pour cette image)
+        if !flying {
+            if let Ok(mut cam) = cam_q.get_single_mut() {
+                cam.translation += push;
+            }
+        }
         if flying {
             surface.bump(push, closing > 0.0);
             if closing > SAFE_SPEED && now > *cooldown {
@@ -2403,4 +2418,25 @@ mod tests {
         let m = build_mesh(&s, 40);
         println!("maillage d'un gros (40 par face) : {:.1} ms, {} sommets", t0.elapsed().as_secs_f64() * 1000.0, m.count_vertices());
     }
+}
+
+/// Mesure du tremblement (C8) : avec `SPACESPORE_COMET_LOG`, écrit à chaque image la position
+/// rendue de l'astéroïde ou de la comète ciblé, du vaisseau et de la caméra (après la propagation
+/// des transformations : ce que l'on voit).
+fn comet_log(
+    time: Res<Time>,
+    target: Res<CameraTarget>,
+    field: Res<AsteroidField>,
+    bodies: Query<&GlobalTransform, With<AsteroidBody>>,
+    ship_q: Query<&GlobalTransform, With<crate::Ship>>,
+    cam_q: Query<&GlobalTransform, With<Camera3d>>,
+) {
+    if std::env::var("SPACESPORE_COMET_LOG").is_err() {
+        return;
+    }
+    let TargetKind::Asteroid(k) = target.0 else { return };
+    let Some(live) = field.live.get(&k) else { return };
+    let (Ok(body), Ok(ship), Ok(cam)) = (bodies.get(live.entity), ship_q.get_single(), cam_q.get_single()) else { return };
+    let (b, s, c) = (body.translation(), ship.translation(), cam.translation());
+    eprintln!("COMET {:.4} {:.3} {:.3} {:.3} {:.3} {:.3} {:.3} {:.3} {:.3} {:.3}", time.delta_secs(), b.x - c.x, b.y - c.y, b.z - c.z, s.x - c.x, s.y - c.y, s.z - c.z, c.x, c.y, c.z);
 }

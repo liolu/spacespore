@@ -310,6 +310,48 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   0,12 a 0,24 de la largeur, Kuiper plate). `StarOrbit::period` = vraie periode (paire serree 1 a 200 j =
   24 min a 80 h de jeu, compagnon lointain en siecles) ; paire serree a un quart de la premiere orbite permise.
   PROTOCOL 30.
+- 0.11.4 correctifs (`ROADMAP-0.11.4-correctifs.md`, une PR par phase C1..C8). C1 editeur : outil Ajouter =
+  un clic un bloc, le trait reste sur le plan du premier bloc (`Editor::add_plane`, `view::plane_cell`) ;
+  panneaux qui defilent jusqu'au bout du contenu des que la souris est dedans, barre `ScrollThumb` tirable ;
+  `view::UiHover` (panneaux + boutons) ; lumiere d'atelier qui suit la camera + contre-jour (`follow_light`,
+  touche L = lumiere du jeu) ; bibliotheque : « Modeles fournis » (`defaults::all_ids`, copie a enregistrer) ;
+  `OrbitCam::focus` cadre le contenu (`Sparse::chunk_bounds`) ou toute la grille. Captures :
+  `SPACESPORE_EDITOR_DEMO=vide:<categorie>` / `fourni:<k>` (+ `SPACESPORE_TEST_CMD=/editeur`).
+  C2 animations : `RaceDef::anims` (variante par famille, groupe `motion::VARIANTS` jamais propose seul,
+  `motion::anim_for`) et `RaceDef::alias` (os vise -> os de la race, `race_pose`) ; onde avec `base` (Euler :
+  aile depliee, cape toujours derriere le dos). Cephalopode : saluer / dormir (pose au sol) / nager (tete devant) ;
+  dragon et harpie : voler / planer propres ; mecha : `voler_reacteur`. Vol : battement autour de l'axe avant du
+  monde vu du tronc penche (`flap_axis` du script). Cape : 4 segments jusqu'aux mollets, fente pour la queue et
+  les jambes. Flotter : la tete oscille. Test `every_family_animation_moves_something`.
+  C3 vaisseau : poussee = commandes (`Surface::pilot` / `pilot_turn` au sol et en vol bas, `ship::ShipThrust`
+  du pilote automatique en croisiere) dans `models::drive_local` (tuyeres `Inputs::steer`, manoeuvre = virage
+  demande ou mesure), jamais le deplacement monde. `main::fly_ship` + `surface::orient_ship` : nez vers la
+  destination sans roulis, passage doux a la pose de stationnement a l'approche. Vent `weather::wind` : direction
+  qui tourne (heures), force qui varie, rafales de quelques secondes (`Sample::gust`), turbulence d'orage ; plus
+  fort en altitude, roulis / tangage (`Surface::tilt`) que le pilote corrige, vent au HUD (`compass`).
+  C4 personnage : F5 = 1re personne -> de dos -> de face (`Surface::view`), molette = distance de la camera
+  (3 a 12 voxels, 6 par defaut, `GameSettings::walker_cam`, `remember_walker_cam`) ; lampe tenue dans la main
+  droite (`Rig::hand` = pivot de `main_d` a la pose de l'image), elle eclaire ou l'on regarde.
+  C5 scanner : panneau en sections (`scanner::Section` : titre + lignes libelle / valeur en colonnes), « Ici et
+  maintenant » en haut (`live_rows`, valeurs a largeur fixe, mises a jour a 1 Hz dans `LiveCell` sans
+  reconstruire tant que les libelles ne changent pas). « Rotation et orbite » : jour et annee reels et en temps
+  de jeu (`OrbitSection::day_game_s / year_game_s / orbit_game_s`, aussi dans `/profil`). Point de mesure de
+  `LocalWeather` dans l'espace = point de stationnement (`Surface::hover_dir`), plus sous le vaisseau.
+  C6 cercles : `main::clickables` = la seule regle « cliquable » (zoom permis, distances de clic, etoiles
+  lointaines, trous de ver, galaxies...), utilisee par `select_world_target` et `draw_body_markers` (un cercle
+  par astre cliquable, fondu 0,2 s, couleur par type `marker_color`, cible en jaune, 60 etoiles lointaines au
+  plus, rien autour d'un astre deja grand a l'ecran ; groupe de gizmos par defaut, pas `IndicatorGizmos`).
+  C7 chargement : `planet::system_to_load` = le systeme de la cible (`target_system`, trou de ver compris), charge
+  tout de suite ou que soit le vaisseau, message « Systeme X charge » ; sans systeme (trou noir, galaxie) on garde
+  celui ou l'on est tant qu'on y est. Plus de chargement au plus proche ni de recherche large. Le verrou du zoom 1
+  (pas d'autre systeme) est dans `clickables` (plus de `lock_system_at_planet_zoom`, qui annulait `/aller`).
+  C8 : comete qui tremble = `ship_collisions` (PostUpdate) repoussait le vaisseau stationne contre sa cible
+  APRES le placement de la camera ; dans l'espace, plus de choc avec l'asteroide / la comete cible, et la camera
+  suit toute poussee. Mesure : `SPACESPORE_COMET_LOG=1` (`asteroids::comet_log`, positions rendues par image) ;
+  `SPACESPORE_TEST_CMD` accepte plusieurs commandes separees par « ; ». Trou noir central (`spawn_galactic_core`)
+  cree au vrai centre de la galaxie, disque d'accretion = enfants du trou noir (avant : au point zero du monde =
+  la ou l'on etait au lancement, visible dans le ciel au sol et decale du trou noir apres un recentrage) ; son
+  eclat suit `GalaxyDim` (`dim_accretion_disk`).
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

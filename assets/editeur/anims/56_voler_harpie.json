@@ -1,0 +1,172 @@
+{
+ "id": "voler_harpie",
+ "name": "Voler (harpie)",
+ "group": "Variantes",
+ "duration": 0.8,
+ "mirror": 0.0,
+ "requires": [
+  "aile"
+ ],
+ "tracks": {
+  "aile_g": {
+   "type": "onde",
+   "axis": [
+    0.0,
+    0.866,
+    0.5
+   ],
+   "amplitude": 40,
+   "period": 0.8,
+   "phase": 0.0,
+   "step": 0.0,
+   "amp_step": 0.0,
+   "base": [
+    0,
+    0,
+    0
+   ]
+  },
+  "aile_milieu_g": {
+   "type": "onde",
+   "axis": [
+    0.0,
+    0.866,
+    0.5
+   ],
+   "amplitude": 18,
+   "period": 0.8,
+   "phase": 0.08,
+   "step": 0.0,
+   "amp_step": 0.0,
+   "base": [
+    0,
+    0,
+    0
+   ]
+  },
+  "pointe_g": {
+   "type": "onde",
+   "axis": [
+    0.0,
+    0.866,
+    0.5
+   ],
+   "amplitude": 14,
+   "period": 0.8,
+   "phase": 0.16,
+   "step": 0.0,
+   "amp_step": 0.0,
+   "base": [
+    0,
+    0,
+    0
+   ]
+  },
+  "bassin": {
+   "type": "cles",
+   "rot": [
+    [
+     0,
+     60,
+     0,
+     0
+    ],
+    [
+     0.8,
+     60,
+     0,
+     0
+    ]
+   ],
+   "pos": [
+    [
+     0,
+     0,
+     0,
+     0
+    ],
+    [
+     0.4,
+     0,
+     0.6,
+     0
+    ],
+    [
+     0.8,
+     0,
+     0,
+     0
+    ]
+   ]
+  },
+  "tete": {
+   "type": "cles",
+   "rot": [
+    [
+     0.0,
+     -45.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.8,
+     -45.0,
+     0.0,
+     0.0
+    ]
+   ]
+  },
+  "cuisse_g": {
+   "type": "cles",
+   "rot": [
+    [
+     0.0,
+     25.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.8,
+     25.0,
+     0.0,
+     0.0
+    ]
+   ]
+  },
+  "tibia_g": {
+   "type": "cles",
+   "rot": [
+    [
+     0.0,
+     40.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.8,
+     40.0,
+     0.0,
+     0.0
+    ]
+   ]
+  },
+  "queue_*": {
+   "type": "onde",
+   "axis": [
+    0,
+    1,
+    0
+   ],
+   "amplitude": 6,
+   "period": 0.8,
+   "phase": 0.0,
+   "step": 0.15,
+   "amp_step": 1.5,
+   "base": [
+    0,
+    0,
+    0
+   ]
+  }
+ }
+}

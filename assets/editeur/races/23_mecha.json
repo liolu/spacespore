@@ -369,5 +369,8 @@
     }
    ]
   }
- ]
+ ],
+ "anims": {
+  "voler": "voler_reacteur"
+ }
 }

@@ -152,6 +152,10 @@ pub enum Track {
         step: f32,
         #[serde(default)]
         amp_step: f32,
+        /// Position autour de laquelle on oscille (degrés, Euler XYZ) : aile dépliée, cape
+        /// toujours derrière le dos.
+        #[serde(default)]
+        base: [f32; 3],
     },
     /// Piloté par le jeu (E6) : `input` = « poussee », « vitesse » ou « manoeuvre » (0 à 1) fait
     /// passer de `rot[0]` à `rot[1]` (degrés) et de `scale[0]` à `scale[1]` ; `flicker` = flamme qui
@@ -377,11 +381,11 @@ pub fn sample_with(track: &Track, t: f32, duration: f32, index: u32, inputs: &In
             Pose { scale: if lit { Vec3::ONE } else { Vec3::splat(0.001) }, ..Pose::default() }
         }
         Track::Aim { .. } => Pose::default(),
-        Track::Wave { axis, amplitude, period, phase, step, amp_step } => {
+        Track::Wave { axis, amplitude, period, phase, step, amp_step, base } => {
             let k = index.max(1) as f32 - 1.0;
             let a = Vec3::from_array(*axis).normalize_or(Vec3::Y);
             let x = (t / period.max(0.05) - phase - step * k) * std::f32::consts::TAU;
-            Pose { rot: Quat::from_axis_angle(a, (amplitude + amp_step * k).to_radians() * x.sin()), ..Pose::default() }
+            Pose { rot: Quat::from_axis_angle(a, (amplitude + amp_step * k).to_radians() * x.sin()) * euler(*base), ..Pose::default() }
         }
         Track::Keys { rot, pos, scale } => {
             let d = duration.max(0.01);
@@ -488,6 +492,25 @@ pub struct LibAnim {
 
 /// Groupe des animations toujours actives (respiration, queues, oreilles...).
 pub const PROCEDURAL: &str = "Procedurales";
+
+/// Groupe des variantes d'une famille (C2) : jouées à la place d'une animation par les races qui
+/// les nomment (`RaceDef::anims`), jamais proposées seules.
+pub const VARIANTS: &str = "Variantes";
+
+/// L'animation `id` telle que la joue ce modèle : la variante de sa race s'il y en a une.
+pub fn anim_for<'a>(lib: &'a Library, m: &Model, id: &str) -> Option<&'a LibAnim> {
+    lib.race_of(m).and_then(|r| r.anims.get(id)).and_then(|v| lib.anim(v)).or_else(|| lib.anim(id))
+}
+
+/// Pose d'un os d'une race : par son nom, sinon par l'os qu'il remplace (`RaceDef::alias`).
+fn race_pose(anim: &LibAnim, race: Option<&super::races::RaceDef>, bone: &str, t: f32) -> Option<Pose> {
+    lib_pose(anim, bone, t).or_else(|| race?.alias.iter().find(|(_, v)| v.as_str() == bone).and_then(|(k, _)| lib_pose(anim, k, t)))
+}
+
+/// L'animation touche-t-elle cet os (directement ou par un alias) ?
+fn touches(anim: &LibAnim, race: Option<&super::races::RaceDef>, bone: &str) -> bool {
+    resolve(anim, bone).is_some() || race.is_some_and(|r| r.alias.iter().any(|(k, v)| v == bone && resolve(anim, k).is_some()))
+}
 
 /// Nom d'os d'une zone : son nom, espaces en « _ » (« avant bras g » -> `avant_bras_g`).
 pub fn bone(z: &Zone) -> String {
@@ -606,9 +629,13 @@ pub fn model_anims(m: &Model, lib: &Library) -> Vec<String> {
     // Les animations créées dans l'éditeur (E8)
     out.extend(m.anims.keys().filter(|k| k.as_str() != "repos").cloned());
     let bones: Vec<String> = m.zones.iter().map(bone).collect();
-    for a in &lib.anims {
-        let fits = a.requires.is_empty() || bones.iter().any(|b| a.requires.iter().any(|r| b.starts_with(r.as_str())));
-        if a.group != PROCEDURAL && fits && !out.contains(&a.id) && bones.iter().any(|b| resolve(a, b).is_some()) {
+    let race = lib.race_of(m);
+    for a in lib.anims.iter().filter(|a| a.group != PROCEDURAL && a.group != VARIANTS) {
+        // La variante de la famille, s'il y en a une ; une animation qui ne touche aucun os n'est
+        // pas proposée
+        let Some(eff) = anim_for(lib, m, &a.id) else { continue };
+        let fits = eff.requires.is_empty() || bones.iter().any(|b| eff.requires.iter().any(|r| b.starts_with(r.as_str())));
+        if fits && !out.contains(&a.id) && bones.iter().any(|b| touches(eff, race, b)) {
             out.push(a.id.clone());
         }
     }
@@ -717,7 +744,7 @@ pub fn anim_duration(m: &Model, lib: &Library, anim: &str) -> f32 {
     if let Some(a) = m.anims.get(anim) {
         return (a.duration / model_speed(m, lib)).max(0.1);
     }
-    let library = lib.anim(anim).map_or(0.0, |a| a.duration);
+    let library = anim_for(lib, m, anim).map_or(0.0, |a| a.duration);
     let states = m.zones.iter().filter_map(|z| lib.block(&z.block)).filter_map(|d| d.anims.get(block_anim(d, anim))).map(|a| a.duration).fold(0.0, f32::max);
     (blocks.max(library).max(states) / model_speed(m, lib)).max(0.5)
 }
@@ -735,8 +762,9 @@ pub fn zone_locals_with(m: &Model, lib: &Library, anim: &str, t: f32, procedural
     let doors: Vec<usize> = if anim == HANGAR_IN || anim == HANGAR_OUT { m.hangars.iter().filter_map(|h| h.door.map(|d| d as usize)).collect() } else { Vec::new() };
     let t = t * model_speed(m, lib);
     let own = m.anims.get(anim);
-    let wanted = lib.anim(anim);
-    let rest = lib.anim("repos");
+    let race = lib.race_of(m);
+    let wanted = anim_for(lib, m, anim);
+    let rest = anim_for(lib, m, "repos");
     let layers: Vec<&LibAnim> = if procedural { lib.anims.iter().filter(|a| a.group == PROCEDURAL).collect() } else { Vec::new() };
     m.zones
         .iter()
@@ -750,20 +778,20 @@ pub fn zone_locals_with(m: &Model, lib: &Library, anim: &str, t: f32, procedural
             // Animation du modèle (E8) : elle seule compte ; un os sans clés ne bouge pas
             if let Some(a) = own {
                 let base = a.keys.get(&b).map_or(Pose::default(), |k| sample(&Track::Keys { rot: k.clone(), pos: Vec::new(), scale: Vec::new() }, t, a.duration, 1));
-                return layers.iter().filter_map(|a| lib_pose(a, &b, t)).fold(base, |p, q| p.then(&q));
+                return layers.iter().filter_map(|a| race_pose(a, race, &b, t)).fold(base, |p, q| p.then(&q));
             }
             // Le bloc a cette animation : elle seule compte (une partie sans piste ne bouge pas)
             if let Some(d) = def.filter(|d| d.anims.contains_key(block_anim(d, anim))) {
                 let base = part_pose(d, &z.part, block_anim(d, anim), t, &place, pivot, inputs).unwrap_or_default();
-                return layers.iter().filter_map(|a| lib_pose(a, &b, t)).fold(base, |p, q| p.then(&q));
+                return layers.iter().filter_map(|a| race_pose(a, race, &b, t)).fold(base, |p, q| p.then(&q));
             }
             let base = def
                 .and_then(|d| part_pose(d, &z.part, block_anim(d, anim), t, &place, pivot, inputs))
-                .or_else(|| wanted.and_then(|a| lib_pose(a, &b, t)))
+                .or_else(|| wanted.and_then(|a| race_pose(a, race, &b, t)))
                 .or_else(|| def.and_then(|d| part_pose(d, &z.part, "repos", t, &place, pivot, inputs)))
-                .or_else(|| rest.and_then(|a| lib_pose(a, &b, t)))
+                .or_else(|| rest.and_then(|a| race_pose(a, race, &b, t)))
                 .unwrap_or_default();
-            layers.iter().filter_map(|a| lib_pose(a, &b, t)).fold(base, |p, q| p.then(&q))
+            layers.iter().filter_map(|a| race_pose(a, race, &b, t)).fold(base, |p, q| p.then(&q))
         })
         .collect()
 }
@@ -910,7 +938,7 @@ mod tests {
         let q0 = sample(&keys, 0.0, 2.0, 1).rot;
         let q2 = sample(&keys, 2.0, 2.0, 1).rot;
         assert!(q0.angle_between(q2) < 1e-3, "boucle");
-        let wave = |phase| Track::Wave { axis: [0.0, 1.0, 0.0], amplitude: 30.0, period: 2.0, phase, step: 0.25, amp_step: 0.0 };
+        let wave = |phase| Track::Wave { axis: [0.0, 1.0, 0.0], amplitude: 30.0, period: 2.0, phase, step: 0.25, amp_step: 0.0, base: [0.0; 3] };
         let a = sample(&wave(0.0), 0.5, 1.0, 1).rot;
         let b = sample(&wave(0.25), 0.5, 1.0, 1).rot;
         // Le 2e maillon d'une chaîne : décalé de `step`

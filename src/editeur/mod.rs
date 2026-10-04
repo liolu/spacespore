@@ -59,7 +59,7 @@ impl Plugin for EditeurPlugin {
             .add_systems(OnExit(AppState::Editeur), (view::exit_scene, panels::show_game_ui))
             .add_systems(
                 Update,
-                (panels::typing, panels::escape, panels::actions, panels::replace_on_right_click, panels::scroll_panels, view::camera_input, view::tools_input, view::update_mesh, view::animate, view::ghost, view::paste_ghost, panels::rebuild, panels::live_texts, view::draw)
+                (panels::typing, panels::escape, panels::actions, panels::replace_on_right_click, panels::scroll_panels, view::camera_input, view::tools_input, view::update_mesh, view::follow_light, view::animate, view::ghost, view::paste_ghost, panels::rebuild, panels::live_texts, view::draw)
                     .chain()
                     .run_if(in_state(AppState::Editeur)),
             )
@@ -186,10 +186,15 @@ pub struct Editor {
     pub scroll: [f32; 3],
     pub mirror: bool,
     pub grid: bool,
+    /// Lumière du jeu (un soleil fixe) au lieu de la lumière d'atelier qui suit la caméra.
+    pub game_light: bool,
     pub cam: view::OrbitCam,
     /// Case pleine visée, case vide devant elle.
     pub hover: (Option<IVec3>, Option<IVec3>),
     pub last_cell: Option<IVec3>,
+    /// Trait de l'outil Ajouter : le plan du premier bloc (case vide de départ, normale de la face
+    /// visée). En glissant, on ne pose que sur ce plan, jamais sur un bloc posé pendant le trait.
+    pub add_plane: Option<(IVec3, IVec3)>,
     pub overlay: Option<Overlay>,
     pub message: String,
     /// Ouvert pour la création du personnage (premier lancement).
@@ -260,9 +265,11 @@ impl Default for Editor {
             scroll: [0.0; 3],
             mirror: true,
             grid: true,
+            game_light: false,
             cam: view::OrbitCam::default(),
             hover: (None, None),
             last_cell: None,
+            add_plane: None,
             overlay: None,
             message: String::new(),
             welcome: false,
@@ -943,6 +950,11 @@ fn menu_button(interactions: Query<&Interaction, (Changed<Interaction>, With<Edi
 
 /// Tests (développement) : `SPACESPORE_CAPTURE=fichier.png` fait une capture d'écran après
 /// `SPACESPORE_CAPTURE_SECS` secondes (12 par défaut), puis ferme le jeu ; avec
+/// Argument d'un mode de démonstration (`SPACESPORE_EDITOR_DEMO=<prefixe><argument>`).
+fn demo_arg(prefix: &str) -> Option<String> {
+    std::env::var("SPACESPORE_EDITOR_DEMO").ok()?.strip_prefix(prefix).map(str::to_string)
+}
+
 /// `SPACESPORE_EDITOR_DEMO=1`, l'éditeur s'ouvre sur un petit personnage de démonstration.
 #[allow(clippy::too_many_arguments)]
 fn test_capture(
@@ -962,6 +974,33 @@ fn test_capture(
         frames.0 += 1;
         frames.1 += time.delta_secs();
         frames.2 = frames.2.max(time.delta_secs());
+    }
+    // `SPACESPORE_EDITOR_DEMO=vide:<categorie>` : grille vide d'une catégorie, un bloc à chaque coin
+    // (C1 : toutes les grilles s'affichent) ; `fourni:<k>` : copie du modèle fourni k
+    if *done == 0 && *state.get() == AppState::Editeur && t > secs * 0.3 {
+        if let Some(c) = demo_arg("vide:") {
+            *done = 1;
+            let cat = ShipCategory::ALL.into_iter().find(|x| x.name().to_lowercase() == c).unwrap_or(ShipCategory::Corvette);
+            let mut d = Doc::new(format::Model::new("Vide", ModelKind::Vaisseau, Some(cat)), None);
+            let n = cat.grid() as i32 - 1;
+            let i = d.model.color_index(PaletteEntry { rgb: [230, 120, 60], material: format::Material::Mate }).unwrap();
+            for x in [0, n] {
+                for y in [0, n] {
+                    for z in [0, n] {
+                        d.set(IVec3::new(x, y, z), i, false);
+                    }
+                }
+            }
+            editor.overlay = None;
+            editor.race_view = None;
+            editor.docs.push(d);
+            let k = editor.docs.len() - 1;
+            editor.select(k);
+        } else if let Some(k) = demo_arg("fourni:").and_then(|k| k.parse::<usize>().ok()) {
+            *done = 1;
+            editor.lib = motion::Library::load(None).0;
+            editor.open_provided(k);
+        }
     }
     // `SPACESPORE_EDITOR_DEMO=croiseur` : le croiseur 512³ de démonstration
     let demo = std::env::var("SPACESPORE_EDITOR_DEMO").unwrap_or_default();
@@ -1021,7 +1060,7 @@ fn test_capture(
             }
         }
     }
-    if *done == 0 && std::env::var("SPACESPORE_EDITOR_DEMO").is_ok_and(|v| !v.starts_with("race:") && !matches!(v.as_str(), "croiseur" | "hangar" | "vaisseau")) && *state.get() == AppState::Editeur && t > secs * 0.5 {
+    if *done == 0 && std::env::var("SPACESPORE_EDITOR_DEMO").is_ok_and(|v| !v.starts_with("race:") && !v.starts_with("vide:") && !v.starts_with("fourni:") && !matches!(v.as_str(), "croiseur" | "hangar" | "vaisseau")) && *state.get() == AppState::Editeur && t > secs * 0.5 {
         *done = 1;
         let mut m = format::Model::new("Demo", ModelKind::Personnage, None);
         m.race = Some("Humanoide".to_string());
