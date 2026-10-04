@@ -78,6 +78,8 @@ pub struct BodyParams {
     pub asteroid: Option<crate::asteroids::AsteroidShape>,
     /// Marées (C4) : le niveau de la mer monte et descend (mis à jour pendant un séjour).
     pub tide: Tide,
+    /// Géologie active (0.13 T5) : geysers, fumerolles, lave, séismes (`geoactive.rs`).
+    pub geo: crate::geoactive::GeoActivity,
 }
 
 /// Marées (C4) : un renflement de la mer vers chaque astre qui la tire (et à l'opposé), en
@@ -135,6 +137,11 @@ impl BodyParams {
             biomes: p.biomes,
             asteroid: None,
             tide: Default::default(),
+            geo: crate::geoactive::GeoActivity {
+                volcanism: p.geology.volcanism,
+                quakes: p.geology.quakes,
+                cryo: p.hydrology.subsurface_ocean && p.geology.activity > 0.05,
+            },
         }
     }
 
@@ -165,6 +172,7 @@ impl BodyParams {
             biomes: BiomeParams::default(),
             asteroid: None,
             tide: Default::default(),
+            geo: Default::default(),
         }
     }
 
@@ -1501,11 +1509,11 @@ pub fn build_voxel_tile_mesh(t: &Terrain, key: TileKey) -> Mesh {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use bevy::render::mesh::VertexAttributeValues;
 
-    fn earth_like() -> BodyParams {
+    pub(crate) fn earth_like() -> BodyParams {
         BodyParams {
             airless: false,
             atmosphere: true,
@@ -1528,6 +1536,7 @@ mod tests {
             biomes: BiomeParams::default(),
             asteroid: None,
             tide: Default::default(),
+            geo: Default::default(),
         }
     }
 
@@ -2089,6 +2098,7 @@ mod sea_level_tests {
             biomes: BiomeParams::default(),
             asteroid: None,
             tide: Default::default(),
+            geo: Default::default(),
         }
     }
 }
