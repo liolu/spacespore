@@ -1,9 +1,11 @@
 // ─────────────────────────────────────────────────────────────────────────
 //  Scanner de l'astre ciblé (phase 9 de `ROADMAP-0.10.md`)
 //
-//  Panneau à droite de l'écran : type principal et secondaire, gravité, pression, température,
-//  atmosphère, eau, habitabilité, dangers, traits. Touche I : l'afficher ou le masquer. Il lit le
-//  profil de l'astre (`planetgen::profile`), le même que l'export `/profil`.
+//  Panneau à droite de l'écran, en sections fixes (C5 de `ROADMAP-0.11.4-correctifs.md`) :
+//  « Ici et maintenant » (heure, températures, météo, mis à jour une fois par seconde), puis
+//  identité, physique, rotation et orbite, atmosphère, eau, vie, ressources. Libellés et valeurs
+//  en colonnes : rien ne change de place. Touche I : l'afficher ou le masquer. Il lit le profil de
+//  l'astre (`planetgen::profile`), le même que l'export `/profil`.
 // ─────────────────────────────────────────────────────────────────────────
 
 use bevy::prelude::*;
@@ -12,9 +14,10 @@ use crate::chat_cmd::target_body;
 use crate::net_ui::NetPanel;
 use crate::planet::{StarId, StarRoot};
 use crate::planetgen::cache::{profile_of, Profile, ProfileCache};
-use crate::planetgen::profile::{PlanetProfile, Realism, StarProfile};
+use crate::planetgen::profile::{OrbitSection, PlanetProfile, Realism, StarProfile};
 use crate::settings::GameSettings;
 use crate::ui::{CameraTarget, MenuState};
+use crate::world_clock::{duration_text, hour_text};
 
 pub const SCANNER_KEY: KeyCode = KeyCode::KeyI;
 
@@ -26,46 +29,85 @@ impl Plugin for ScannerPlugin {
     }
 }
 
+/// Une section du panneau : titre et lignes (libellé, valeur).
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Section {
+    title: String,
+    rows: Vec<(String, String)>,
+}
+
+impl Section {
+    fn new(title: &str) -> Self {
+        Self { title: title.into(), rows: Vec::new() }
+    }
+
+    fn row(&mut self, label: &str, value: impl Into<String>) {
+        self.rows.push((label.into(), value.into()));
+    }
+
+    /// Lignes « libellé : valeur » d'un texte (sinon toute la ligne en valeur).
+    fn lines(&mut self, text: &str) {
+        for l in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
+            match l.split_once(" : ") {
+                Some((a, b)) if a.len() <= 24 => self.row(a, b),
+                _ => self.row("", l),
+            }
+        }
+    }
+}
+
 #[derive(Resource)]
 struct Scanner {
     visible: bool,
-    /// Astre affiché (clé `BodyId`) et texte calculé pour lui.
+    /// Astre affiché (clé `BodyId`) : son titre, ses sections, son niveau de danger.
     shown: Option<String>,
-    text: String,
+    title: String,
+    sections: Vec<Section>,
     danger: u8,
+    /// « Ici et maintenant » : lignes affichées, et depuis quand (mises à jour à 1 Hz).
+    live: Vec<(String, String)>,
+    live_age: f32,
+    /// Le panneau doit être reconstruit (nouvel astre, ou les lignes vivantes changent).
+    dirty: bool,
 }
 
 impl Default for Scanner {
     fn default() -> Self {
-        Self { visible: true, shown: None, text: String::new(), danger: 0 }
+        Self { visible: true, shown: None, title: String::new(), sections: Vec::new(), danger: 0, live: Vec::new(), live_age: 0.0, dirty: true }
     }
 }
 
 #[derive(Component)]
 struct ScannerPanel;
 
+/// Valeur vivante (rang dans « Ici et maintenant »).
 #[derive(Component)]
-struct ScannerText;
+struct LiveCell(usize);
+
+const TEXT: Color = Color::srgb(0.85, 0.92, 1.0);
+const DIM: Color = Color::srgb(0.55, 0.65, 0.78);
+const TITLE: Color = Color::srgb(0.45, 0.75, 1.0);
+const LABEL_W: f32 = 96.0;
 
 fn setup_scanner(mut commands: Commands) {
-    commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                right: Val::Px(12.0),
-                top: Val::Px(110.0),
-                width: Val::Px(330.0),
-                padding: UiRect::all(Val::Px(10.0)),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.02, 0.03, 0.06, 0.72)),
-            BorderRadius::all(Val::Px(6.0)),
-            Visibility::Hidden,
-            ScannerPanel,
-        ))
-        .with_children(|p| {
-            p.spawn((Text::new(""), TextFont { font_size: 13.0, ..default() }, TextColor(Color::srgb(0.85, 0.92, 1.0)), ScannerText));
-        });
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            right: Val::Px(12.0),
+            top: Val::Px(110.0),
+            width: Val::Px(430.0),
+            max_height: Val::Percent(80.0),
+            overflow: Overflow::clip_y(),
+            padding: UiRect::all(Val::Px(10.0)),
+            flex_direction: FlexDirection::Column,
+            row_gap: Val::Px(1.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.02, 0.03, 0.06, 0.72)),
+        BorderRadius::all(Val::Px(6.0)),
+        Visibility::Hidden,
+        ScannerPanel,
+    ));
 }
 
 fn pct(x: f64) -> String {
@@ -80,25 +122,28 @@ fn realism_mark(r: Realism) -> &'static str {
     }
 }
 
-fn star_text(s: &StarProfile) -> (String, u8) {
-    let mut lines = vec![format!("SCANNER  -  {}", s.name)];
-    lines.push(format!("Type : {}  {}", s.class, s.spectral_type.clone().unwrap_or_default()));
-    let mut l = format!("Temperature {:.0} K", s.temperature_k);
+fn star_sections(s: &StarProfile) -> (String, Vec<Section>, u8) {
+    let mut id = Section::new("IDENTITE");
+    id.row("Type", format!("{}  {}", s.class, s.spectral_type.clone().unwrap_or_default()));
+    let mut ph = Section::new("PHYSIQUE");
+    ph.row("Temperature", format!("{:.0} K", s.temperature_k));
     if let Some(lum) = s.luminosity_sun {
-        l += &format!("   Luminosite {:.3} L sol", lum);
+        ph.row("Luminosite", format!("{lum:.3} L sol"));
     }
-    lines.push(l);
-    if let (Some(m), r) = (s.mass_sun, s.radius_sun) {
-        lines.push(format!("Masse {:.2} M sol   Rayon {:.3} R sol", m, r));
+    if let Some(m) = s.mass_sun {
+        ph.row("Masse", format!("{m:.2} M sol"));
     }
-    if let (Some(age), Some(act)) = (s.age_gyr, s.magnetic_activity) {
-        lines.push(format!("Age {:.2} Gyr   Activite {:.2}   Eruptions {}", age, act, s.flares));
+    ph.row("Rayon", format!("{:.3} R sol", s.radius_sun));
+    let mut act = Section::new("ACTIVITE");
+    if let (Some(age), Some(a)) = (s.age_gyr, s.magnetic_activity) {
+        act.row("Age", format!("{age:.2} Gyr"));
+        act.row("Activite", format!("{a:.2}   eruptions {}", s.flares));
     }
     if let (Some(uv), Some(x)) = (s.uv_flux, s.xray_flux) {
-        lines.push(format!("UV {:.2}   Rayons X {:.1}  (Soleil = 1)", uv, x));
+        act.row("UV / X", format!("{uv:.2} / {x:.1}  (Soleil = 1)"));
     }
     let danger = if s.xray_flux.unwrap_or(0.0) > 20.0 { 2 } else { 0 };
-    (lines.join("\n"), danger)
+    (s.name.clone(), [id, ph, act].into_iter().filter(|x| !x.rows.is_empty()).collect(), danger)
 }
 
 /// Type secondaire : ce qui distingue ce monde (océan, lave, glace, désert, jardin...).
@@ -144,66 +189,73 @@ fn secondary(p: &PlanetProfile) -> String {
     }
 }
 
-fn body_text(p: &PlanetProfile) -> (String, u8) {
-    let mut lines = vec![format!("SCANNER  -  {}", p.name)];
-    let main = match (&p.kind, p.physics.size_class.as_deref()) {
-        (crate::planetgen::profile::BodyKind::Moon, _) => "lune".to_string(),
+/// Durée réelle en heures : « 23,9 h » ou « 12,3 j ».
+fn real_hours(h: f64) -> String {
+    if h < 48.0 { format!("{h:.1} h") } else { format!("{:.1} j", h / 24.0) }
+}
+
+/// Durée réelle en jours : « 225 j » ou « 11,9 ans ».
+fn real_days(d: f64) -> String {
+    if d < 700.0 { format!("{d:.0} j") } else { format!("{:.1} ans", d / 365.25) }
+}
+
+/// Section « Rotation et orbite » (C5) : le jour et l'année, en vraie valeur et en temps de jeu.
+fn rotation_section(o: &OrbitSection, moon: bool) -> Section {
+    let mut s = Section::new("ROTATION ET ORBITE");
+    let game = |x: Option<f64>| x.map(duration_text);
+    match (o.tidally_locked, moon) {
+        (_, true) => s.row("Jour", "synchrone : une face vers sa planete"),
+        (Some(true), _) => s.row("Jour", "synchrone : une face vers l'etoile"),
+        _ => match (o.rotation_period_h, game(o.day_game_s)) {
+            (Some(h), Some(g)) => s.row("Jour", format!("{}  (jeu : {g})", real_hours(h))),
+            (Some(h), None) => s.row("Jour", real_hours(h)),
+            (None, Some(g)) => s.row("Jour", format!("jeu : {g}")),
+            (None, None) => {}
+        },
+    }
+    match (moon, o.period_days, game(o.year_game_s)) {
+        (true, _, Some(g)) => s.row("Annee", format!("celle de sa planete  (saisons en jeu : {g})")),
+        (false, Some(d), Some(g)) => s.row("Annee", format!("{}  (saisons en jeu : {g})", real_days(d))),
+        (false, Some(d), None) => s.row("Annee", real_days(d)),
+        _ => {}
+    }
+    if let Some(g) = game(o.orbit_game_s) {
+        s.row("Orbite", format!("un tour {} en {g} de jeu", if moon { "de sa planete" } else { "de l'etoile" }));
+    }
+    if let Some(t) = o.axial_tilt_deg {
+        s.row("Inclinaison", format!("{t:.0} deg"));
+    }
+    s
+}
+
+fn body_sections(p: &PlanetProfile) -> (String, Vec<Section>, u8) {
+    let moon = matches!(p.kind, crate::planetgen::profile::BodyKind::Moon);
+    let main = match (moon, p.physics.size_class.as_deref()) {
+        (true, _) => "lune".to_string(),
         (_, Some(class)) => class.to_string(),
         _ => "planete".to_string(),
     };
-    lines.push(format!("Type : {main}  -  {}", secondary(p)));
+    let mut id = Section::new("IDENTITE");
+    id.row("Type", main);
+    id.row("", secondary(p));
+    let traits: Vec<String> = p.traits.iter().map(|t| format!("{}{}", t.name, realism_mark(t.realism))).collect();
+    if !traits.is_empty() {
+        id.row("Traits", traits.join(", "));
+    }
+
+    let mut ph = Section::new("PHYSIQUE");
+    ph.row("Gravite", format!("{:.2} g", p.physics.surface_gravity_g));
     let pressure = match p.atmosphere.surface_pressure_bar {
         Some(b) if b >= 0.01 => format!("{b:.2} bar"),
         Some(b) if b > 0.0 => format!("{:.1} mbar", b * 1000.0),
         _ => "vide".into(),
     };
-    lines.push(format!("Gravite {:.2} g   Pression {pressure}", p.physics.surface_gravity_g));
-    let mut t = format!("Temperature {:.0} C", p.climate.mean_temperature_c);
+    ph.row("Pression", pressure);
+    let mut t = format!("{:.0} C", p.climate.mean_temperature_c);
     if let (Some(e), Some(po)) = (p.climate.equator_c, p.climate.pole_c) {
         t += &format!("  (equateur {e:.0}, poles {po:.0})");
     }
-    lines.push(t);
-    if p.atmosphere.gases.is_empty() {
-        lines.push("Atmosphere : aucune".into());
-    } else {
-        let gases: Vec<String> = p
-            .atmosphere
-            .gases
-            .iter()
-            .take(4)
-            .map(|g| format!("{} {}{}", g.formula, pct(g.fraction), realism_mark(g.realism)))
-            .collect();
-        lines.push(format!("Atmosphere : {}", gases.join(", ")));
-        lines.push(format!("Nuages : {}", p.atmosphere.clouds));
-    }
-    let h = &p.hydrology;
-    let water = h.water_state.clone().unwrap_or_else(|| "?".into());
-    let mut w = format!("Eau : {water}");
-    if let (Some(o), Some(liq)) = (h.ocean_fraction, h.ocean_liquid.as_deref()) {
-        if o > 0.0 {
-            w += &format!(", mers {} ({liq})", pct(o));
-        }
-    }
-    if p.gameplay.subsurface_ocean {
-        w += ", ocean sous la glace";
-    }
-    lines.push(w);
-    if let Some(life) = &p.biology.life {
-        let mut l = format!("Vie : {life}");
-        if let Some(chem) = &p.biology.biochemistry {
-            l += &format!("  -  {chem}");
-        }
-        if let Some(f) = &p.biology.fauna {
-            l += &format!("\nFaune : ~{} especes, jusqu'a {:.0} m ({})", f.species, f.max_size_m, f.locomotion.join(", "));
-        }
-        lines.push(l);
-    }
-    if let Some(score) = p.gameplay.habitability {
-        lines.push(format!("Habitabilite : {:.2}  {}", score, p.gameplay.habitability_label.clone().unwrap_or_default()));
-    }
-    if !p.gameplay.hazards.is_empty() {
-        lines.push(format!("Dangers : {}", p.gameplay.hazards.join(", ")));
-    }
+    ph.row("Temperature", t);
     let mut extra = Vec::new();
     if p.gameplay.ring.is_some() {
         extra.push("anneaux".to_string());
@@ -212,8 +264,56 @@ fn body_text(p: &PlanetProfile) -> (String, u8) {
         extra.push(format!("marees {t:.2}"));
     }
     if !extra.is_empty() {
-        lines.push(extra.join("   "));
+        ph.row("Autour", extra.join(", "));
     }
+
+    let rot = rotation_section(&p.orbit, moon);
+
+    let mut air = Section::new("ATMOSPHERE");
+    if p.atmosphere.gases.is_empty() {
+        air.row("Gaz", "aucune");
+    } else {
+        let gases: Vec<String> = p.atmosphere.gases.iter().take(4).map(|g| format!("{} {}{}", g.formula, pct(g.fraction), realism_mark(g.realism))).collect();
+        air.row("Gaz", gases.join(", "));
+        air.row("Nuages", p.atmosphere.clouds.clone());
+    }
+
+    let mut water = Section::new("EAU");
+    let h = &p.hydrology;
+    let mut w = h.water_state.clone().unwrap_or_else(|| "?".into());
+    if let (Some(o), Some(liq)) = (h.ocean_fraction, h.ocean_liquid.as_deref()) {
+        if o > 0.0 {
+            w += &format!(", mers {} ({liq})", pct(o));
+        }
+    }
+    if p.gameplay.subsurface_ocean {
+        w += ", ocean sous la glace";
+    }
+    water.row("Eau", w);
+
+    let mut life = Section::new("VIE");
+    if let Some(l) = &p.biology.life {
+        let mut v = l.clone();
+        if let Some(chem) = &p.biology.biochemistry {
+            v += &format!("  -  {chem}");
+        }
+        life.row("Vie", v);
+        if let Some(f) = &p.biology.fauna {
+            life.row("Faune", format!("~{} especes, jusqu'a {:.0} m ({})", f.species, f.max_size_m, f.locomotion.join(", ")));
+        }
+    }
+    if !p.biology.biomes.is_empty() {
+        let list: Vec<String> = p.biology.biomes.iter().take(3).map(|x| format!("{} {}", x.name, pct(x.fraction))).collect();
+        life.row("Biomes", list.join(", "));
+    }
+    if let Some(score) = p.gameplay.habitability {
+        life.row("Habitabilite", format!("{score:.2}  {}", p.gameplay.habitability_label.clone().unwrap_or_default()));
+    }
+    if !p.gameplay.hazards.is_empty() {
+        life.row("Dangers", p.gameplay.hazards.join(", "));
+    }
+
+    let mut res = Section::new("RESSOURCES");
     if !p.resources.ores.is_empty() {
         let list: Vec<String> = p
             .resources
@@ -222,23 +322,74 @@ fn body_text(p: &PlanetProfile) -> (String, u8) {
             .take(5)
             .map(|o| format!("{}{} ({})", o.ore, realism_mark(o.realism), crate::planetgen::profile::difficulty_label(o.difficulty)))
             .collect();
-        lines.push(format!("Ressources : {}", list.join(", ")));
+        res.row("Minerais", list.join(", "));
     }
-    let traits: Vec<String> = p.traits.iter().map(|t| format!("{}{}", t.name, realism_mark(t.realism))).collect();
-    if !traits.is_empty() {
-        lines.push(format!("Traits : {}", traits.join(", ")));
+    let sections = [id, ph, rot, air, water, life, res].into_iter().filter(|s| !s.rows.is_empty()).collect();
+    (p.name.clone(), sections, p.gameplay.danger_level)
+}
+
+/// Texte d'un panneau (tests, et pour lire ce que montre le scanner).
+#[cfg(test)]
+fn sections_text(title: &str, sections: &[Section]) -> String {
+    let mut out = vec![format!("SCANNER  -  {title}")];
+    for s in sections {
+        out.push(s.title.clone());
+        out.extend(s.rows.iter().map(|(a, b)| format!("{a} : {b}")));
     }
-    if let Some(b) = p.biology.biomes.first() {
-        let list: Vec<String> = p.biology.biomes.iter().take(3).map(|x| format!("{} {}", x.name, pct(x.fraction))).collect();
-        let _ = b;
-        lines.push(format!("Biomes : {}", list.join(", ")));
+    out.join("\n")
+}
+
+/// Lignes « Ici et maintenant » (heure, saison, températures, météo, lunes, grotte), arrondies et
+/// à largeur fixe.
+fn live_rows(weather: &crate::world_clock::LocalWeather, now: Option<&str>, phases: Option<&str>, cave: Option<&str>) -> Vec<(String, String)> {
+    let mut s = Section::new("");
+    if weather.body.is_some() {
+        let h = hour_text(weather.hour);
+        s.row("Heure", format!("{h:>7}, soleil a {:>3.0} deg", weather.sun_deg));
+        s.row("Saison", format!("{} (lat. {:.0} deg)", weather.season, weather.lat_deg));
+        s.row("Temperature", format!("{:>4.0} C", weather.temp));
+        s.row("Aujourd'hui", format!("{:>4.0} a {:>4.0} C", weather.day.0, weather.day.1));
+        s.row("Cette annee", format!("{:>4.0} a {:>4.0} C", weather.year.0, weather.year.1));
     }
-    lines.push("(I : masquer)".into());
-    (lines.join("\n"), p.gameplay.danger_level)
+    for t in [now, phases, cave].into_iter().flatten() {
+        s.lines(t);
+    }
+    s.rows
+}
+
+/// Reconstruit le panneau : titre, sections, « Ici et maintenant », pied.
+fn rebuild(commands: &mut Commands, panel: Entity, scanner: &Scanner) {
+    let danger_color = match scanner.danger {
+        3 => Color::srgb(1.0, 0.6, 0.55),
+        2 => Color::srgb(1.0, 0.85, 0.5),
+        _ => TEXT,
+    };
+    commands.entity(panel).despawn_descendants().with_children(|p| {
+        p.spawn((Text::new(format!("SCANNER  -  {}", scanner.title)), TextFont { font_size: 14.0, ..default() }, TextColor(danger_color)));
+        let live = (!scanner.live.is_empty()).then(|| Section { title: "ICI ET MAINTENANT".into(), rows: scanner.live.clone() });
+        // « Ici et maintenant » d'abord (on le lit sur place) : ses libellés ne changent pas
+        for (k, s) in live.iter().chain(scanner.sections.iter()).enumerate() {
+            let is_live = k == 0 && live.is_some();
+            p.spawn((Text::new(s.title.clone()), TextFont { font_size: 11.0, ..default() }, TextColor(TITLE), Node { margin: UiRect::top(Val::Px(5.0)), ..default() }));
+            for (i, (label, value)) in s.rows.iter().enumerate() {
+                p.spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(6.0), ..default() }).with_children(|r| {
+                    r.spawn((Text::new(label.clone()), TextFont { font_size: 11.5, ..default() }, TextColor(DIM), Node { width: Val::Px(LABEL_W), flex_shrink: 0.0, ..default() }));
+                    let color = if label == "Dangers" { danger_color } else { TEXT };
+                    let mut v = r.spawn((Text::new(value.clone()), TextFont { font_size: 11.5, ..default() }, TextColor(color), Node { flex_grow: 1.0, flex_shrink: 1.0, ..default() }));
+                    if is_live {
+                        v.insert(LiveCell(i));
+                    }
+                });
+            }
+        }
+        p.spawn((Text::new("(I : masquer)"), TextFont { font_size: 11.0, ..default() }, TextColor(DIM), Node { margin: UiRect::top(Val::Px(5.0)), ..default() }));
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
 fn update_scanner(
+    mut commands: Commands,
+    time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     panel_ui: Res<NetPanel>,
     menu: Res<MenuState>,
@@ -246,14 +397,12 @@ fn update_scanner(
     cache: Res<ProfileCache>,
     target: Res<CameraTarget>,
     weather: Res<crate::world_clock::LocalWeather>,
-    cave: Res<crate::surface::NearestCave>,
-    phases: Res<crate::sky::MoonPhases>,
-    weather_now: Res<crate::weather::WeatherNow>,
+    (cave, phases, weather_now): (Res<crate::surface::NearestCave>, Res<crate::sky::MoonPhases>, Res<crate::weather::WeatherNow>),
     field: Res<crate::asteroids::AsteroidField>,
     star_q: Query<&StarId, With<StarRoot>>,
     mut scanner: ResMut<Scanner>,
-    mut panel: Query<&mut Visibility, With<ScannerPanel>>,
-    mut text: Query<(&mut Text, &mut TextColor), With<ScannerText>>,
+    mut panel: Query<(Entity, &mut Visibility), With<ScannerPanel>>,
+    mut cells: Query<(&LiveCell, &mut Text)>,
 ) {
     if keys.just_pressed(SCANNER_KEY) && panel_ui.focus.is_none() && !menu.open {
         scanner.visible = !scanner.visible;
@@ -265,9 +414,15 @@ fn update_scanner(
         if key != scanner.shown {
             if let Some(a) = field.get(&k) {
                 let lum = settings.systems.get(k.sys as usize).and_then(|s| s.lighting()).map_or(1.0, |p| p.luminosity_sun);
-                scanner.text = crate::asteroids::scanner_text(a, field.sources(k.sys as usize), lum);
+                let text = crate::asteroids::scanner_text(a, field.sources(k.sys as usize), lum);
+                let mut lines = text.lines();
+                scanner.title = lines.next().and_then(|l| l.split_once("-  ")).map_or(String::new(), |(_, n)| n.trim().to_string());
+                let mut s = Section::new("ASTRE");
+                s.lines(&lines.filter(|l| !l.starts_with("(I")).collect::<Vec<_>>().join("\n"));
+                scanner.sections = vec![s];
                 scanner.danger = 0;
                 scanner.shown = key;
+                scanner.dirty = true;
             }
         }
     } else {
@@ -276,60 +431,68 @@ fn update_scanner(
         // Recalcul seulement quand la cible change, ou quand le système chargé change (profils en cache)
         if key != scanner.shown || cache.is_changed() {
             scanner.shown = key.clone();
-            (scanner.text, scanner.danger) = match id.and_then(|i| profile_of(&settings, &cache, i)) {
-                Some(Profile::Star(s)) => star_text(&s),
-                Some(Profile::Body(b)) => body_text(&b),
-                None => (String::new(), 0),
+            let (title, mut sections, danger) = match id.and_then(|i| profile_of(&settings, &cache, i)) {
+                Some(Profile::Star(s)) => star_sections(&s),
+                Some(Profile::Body(b)) => body_sections(&b),
+                None => (String::new(), Vec::new(), 0),
             };
-            // Ceintures d'astéroïdes du système de l'étoile
-            if let (Some(crate::planetgen::live::BodyId::Star { system, .. }), false) = (id, scanner.text.is_empty()) {
+            // Ceintures d'astéroïdes et étoiles multiples du système de l'étoile
+            if let (Some(crate::planetgen::live::BodyId::Star { system, .. }), false) = (id, sections.is_empty()) {
+                let mut sys = Section::new("SYSTEME");
                 if let Some(line) = settings.systems.get(system as usize).and_then(|s| crate::asteroids::belts_line(&crate::asteroids::Sources::of(s))) {
-                    scanner.text = format!("{}\n{line}", scanner.text);
+                    sys.lines(&line);
                 }
-                // Étoile double ou triple (C3)
                 if let Some(st) = settings.systems.get(system as usize).and_then(|s| s.stellar()).filter(|st| !st.companions.is_empty()) {
-                    scanner.text = format!("{}\nSysteme : {}, zone habitable pour {:.2} L sol", scanner.text, st.kind.name(), st.luminosity);
+                    sys.row("Etoiles", st.kind.name());
+                    sys.row("Zone habitable", format!("pour {:.2} L sol", st.luminosity));
+                }
+                if !sys.rows.is_empty() {
+                    sections.push(sys);
+                }
+            }
+            scanner.title = title;
+            scanner.sections = sections;
+            scanner.danger = danger;
+            scanner.dirty = true;
+        }
+    }
+    // « Ici et maintenant » : sur l'astre visité ou survolé, une fois par seconde
+    scanner.live_age += time.delta_secs();
+    if scanner.live_age >= 1.0 || scanner.dirty {
+        scanner.live_age = 0.0;
+        let here = weather.body.is_some() && weather.body == Some(target.0);
+        let now_text = (weather_now.body == Some(target.0) && !weather_now.text.is_empty()).then_some(weather_now.text.as_str());
+        let phase_text = (phases.target == Some(target.0) && !phases.text.is_empty()).then_some(phases.text.as_str());
+        let cave_text = (here && !cave.text.is_empty()).then_some(cave.text.as_str());
+        let empty = crate::world_clock::LocalWeather::default();
+        let rows = live_rows(if here { &weather } else { &empty }, now_text, phase_text, cave_text);
+        // Mêmes libellés : seules les valeurs changent (pas de reconstruction)
+        let same = rows.len() == scanner.live.len() && rows.iter().zip(&scanner.live).all(|(a, b)| a.0 == b.0);
+        if !same {
+            scanner.dirty = true;
+        }
+        scanner.live = rows;
+        if !scanner.dirty {
+            for (c, mut t) in &mut cells {
+                if let Some((_, v)) = scanner.live.get(c.0) {
+                    if t.0 != *v {
+                        t.0 = v.clone();
+                    }
                 }
             }
         }
     }
-    // Heure, saison et températures du jour et de l'année, en direct (0.11)
-    let mut live = if weather.body.is_some() && weather.body == Some(target.0) { weather.scanner_line() } else { String::new() };
-    if !live.is_empty() && !cave.text.is_empty() {
-        live = format!("{live}\n{}", cave.text);
-    }
-    // Météo là où l'on est (C5)
-    if weather_now.body == Some(target.0) && !weather_now.text.is_empty() {
-        live = if live.is_empty() { weather_now.text.clone() } else { format!("{live}\n{}", weather_now.text) };
-    }
-    // Phases des lunes (C4)
-    if phases.target == Some(target.0) && !phases.text.is_empty() {
-        live = if live.is_empty() { phases.text.clone() } else { format!("{live}\n{}", phases.text) };
-    }
-    let full = match scanner.text.rsplit_once('\n') {
-        Some((head, tail)) if !live.is_empty() => format!("{head}\n{live}\n{tail}"),
-        _ => scanner.text.clone(),
-    };
-    let show = scanner.visible && !scanner.text.is_empty();
-    for mut v in &mut panel {
+    let show = scanner.visible && !scanner.sections.is_empty();
+    for (e, mut v) in &mut panel {
         let wanted = if show { Visibility::Inherited } else { Visibility::Hidden };
         if *v != wanted {
             *v = wanted;
         }
-    }
-    let color = match scanner.danger {
-        3 => Color::srgb(1.0, 0.6, 0.55),
-        2 => Color::srgb(1.0, 0.85, 0.5),
-        _ => Color::srgb(0.85, 0.92, 1.0),
-    };
-    for (mut t, mut c) in &mut text {
-        if t.0 != full {
-            t.0 = full.clone();
-        }
-        if c.0 != color {
-            c.0 = color;
+        if scanner.dirty {
+            rebuild(&mut commands, e, &scanner);
         }
     }
+    scanner.dirty = false;
 }
 
 #[cfg(test)]
@@ -350,10 +513,14 @@ mod tests {
             BodyId::Moon { system: si as u32, planet: pi as u16, index: 0 },
         ] {
             let (text, danger) = match profile_of(&settings, &cache, id).unwrap() {
-                Profile::Star(s) => star_text(&s),
+                Profile::Star(s) => {
+                    let (t, sec, d) = star_sections(&s);
+                    (sections_text(&t, &sec), d)
+                }
                 Profile::Body(b) => {
-                    let (t, d) = body_text(&b);
-                    for field in ["Type :", "Gravite", "Pression", "Temperature", "Atmosphere", "Eau :", "Habitabilite"] {
+                    let (t, sec, d) = body_sections(&b);
+                    let t = sections_text(&t, &sec);
+                    for field in ["Type :", "Gravite", "Pression", "Temperature", "Gaz", "Eau :", "Habitabilite", "ROTATION ET ORBITE", "Annee", "Orbite"] {
                         assert!(t.contains(field), "{field} absent :\n{t}");
                     }
                     (t, d)
@@ -362,5 +529,30 @@ mod tests {
             assert!(text.starts_with("SCANNER"), "{text}");
             assert!(danger <= 3);
         }
+    }
+
+    /// C5 : le jour et l'année d'une planète, en vrai et en temps de jeu (1 h de la planète = 1 min).
+    #[test]
+    fn the_day_and_year_are_shown_real_and_in_game() {
+        let mut o = OrbitSection { rotation_period_h: Some(24.0), tidally_locked: Some(false), period_days: Some(365.25), day_game_s: Some(1440.0), year_game_s: Some(4.0 * 3600.0), orbit_game_s: Some(7200.0), axial_tilt_deg: Some(23.0), ..Default::default() };
+        let s = rotation_section(&o, false);
+        let text = format!("{:?}", s.rows);
+        assert!(text.contains("24.0 h") && text.contains("jeu : 24 min"), "{text}");
+        assert!(text.contains("365 j") && text.contains("4 h"), "{text}");
+        o.tidally_locked = Some(true);
+        assert!(format!("{:?}", rotation_section(&o, false).rows).contains("synchrone"));
+    }
+
+    /// C5 : « Ici et maintenant » garde les mêmes libellés d'une seconde à l'autre (rien ne bouge).
+    #[test]
+    fn live_rows_keep_their_labels() {
+        let mut w = crate::world_clock::LocalWeather { body: Some(crate::ui::TargetKind::Planet(0)), hour: 9.5, temp: 12.3, ..Default::default() };
+        let a = live_rows(&w, Some("Ciel : clair"), None, None);
+        w.hour = 10.25;
+        w.temp = -3.0;
+        let b = live_rows(&w, Some("Ciel : pluie"), None, None);
+        assert_eq!(a.iter().map(|x| &x.0).collect::<Vec<_>>(), b.iter().map(|x| &x.0).collect::<Vec<_>>());
+        assert_eq!(a[0].1.len(), b[0].1.len(), "{} / {}", a[0].1, b[0].1);
+        assert_eq!(a[2].1.len(), b[2].1.len());
     }
 }

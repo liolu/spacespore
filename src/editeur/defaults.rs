@@ -19,13 +19,11 @@ pub const DEFAULT_SHIP: &str = "vaisseau:chasseur";
 pub const DEFAULT_CHARACTER: &str = "perso:humanoide";
 
 /// Identifiant d'une catégorie (`vaisseau:fregate`).
-#[cfg(test)]
 pub fn ship_id(c: ShipCategory) -> String {
     format!("{SHIP_PREFIX}{}", c.name().to_lowercase())
 }
 
-/// Tous les modèles par défaut.
-#[cfg(test)]
+/// Tous les modèles par défaut : un vaisseau par catégorie, un personnage par famille.
 pub fn all_ids(lib: &Library) -> Vec<String> {
     let mut out: Vec<String> = ShipCategory::ALL.iter().map(|c| ship_id(*c)).collect();
     out.extend(lib.races.iter().map(|r| format!("{CHARACTER_PREFIX}{}", r.id)));

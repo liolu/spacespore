@@ -1,5 +1,8 @@
 # À faire plus tard
 
+> **04/10/2026 : tout le bloc D est repris dans `ROADMAP-0.13.md`** (D1 -> O3, D2 -> T5, D3 -> L2, D4 -> L1, D5 -> L3, D6 -> L4). Ce fichier reste pour l'historique.
+
+
 Ce qui reste du bloc D de la 0.11 (`ROADMAP-0.11.md`), mis de côté le 03/10/2026 après la release
 v0.11.2 (blocs A, B et C terminés). On y reviendra après la 0.12 (éditeur).
 
