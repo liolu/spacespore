@@ -122,6 +122,7 @@ impl Plugin for SurfacePlugin {
             .add_systems(Startup, (setup_hud, spawn_lamps, spawn_suns))
             .add_systems(Update, go_overhang.before(SurfaceControl))
             .add_systems(Update, update_galaxy_dim)
+            .add_systems(Update, remember_walker_cam)
             .add_systems(
                 Update,
                 (surface_control.in_set(SurfaceControl).run_if(crate::editeur::in_game), update_underground, dim_star_light, update_suns, surface_light, update_lamps, update_season, refresh_voxels, update_tiles, update_hud)
@@ -514,7 +515,9 @@ pub struct Surface {
     /// Dimensions du vaisseau (son modèle).
     pub ship_dims: ShipDims,
     /// À pied : vue à la troisième personne ; pose du personnage (monde) et son animation.
-    third_person: bool,
+    /// Vue à pied (F5) : 0 = 1re personne, 1 = de dos, 2 = de face ; distance de la caméra (voxels).
+    view: u8,
+    pub cam_dist: f32,
     walker_local: Option<Transform>,
     walker_world: Option<Transform>,
     walker_anim: &'static str,
@@ -565,7 +568,8 @@ impl Default for Surface {
             rescue: false,
             frame: None,
             ship_dims: ShipDims::default(),
-            third_person: true,
+            view: 1,
+            cam_dist: 6.0,
             walker_local: None,
             walker_world: None,
             walker_anim: "repos",
@@ -677,7 +681,7 @@ impl Surface {
     /// échelle = un voxel du terrain) et animation.
     pub fn walker_view(&self) -> Option<(Transform, &'static str)> {
         match self.phase {
-            Phase::Walking if self.third_person => self.walker_world.map(|t| (t, self.walker_anim)),
+            Phase::Walking if self.view != 0 => self.walker_world.map(|t| (t, self.walker_anim)),
             // On voit toujours le personnage monter dans le vaisseau ou en descendre
             Phase::Boarding | Phase::Disembarking => self.walker_world.map(|t| (t, "marcher")),
             _ => None,
@@ -1261,8 +1265,12 @@ fn surface_control(
                 let sens = ctx.settings.mouse_sensitivity * 0.003;
                 input.look = look_delta.clamp_length_max(300.0) * sens;
             }
+            // F5 : 1re personne -> de dos -> de face ; molette = distance de la caméra
             if ctx.keys.just_pressed(VIEW_KEY) && !ui_open {
-                surface.third_person = !surface.third_person;
+                surface.view = (surface.view + 1) % 3;
+            }
+            if wheel != 0.0 && surface.view != 0 && !ui_open {
+                surface.cam_dist = (surface.cam_dist * (-wheel * 0.12).exp()).clamp(3.0, 12.0);
             }
             let terrain = surface.terrain.take().unwrap();
             let mut walker = surface.walker;
@@ -1294,10 +1302,13 @@ fn surface_control(
             let eye = up * walker.eye_r;
             let v = surface.terrain.as_ref().map_or(1.0, |t| t.voxel());
             surface.walker_local = Some(Transform { translation: walker.pos, rotation: look(Vec3::ZERO, walker.heading, up).rotation, scale: Vec3::splat(v) });
-            // Troisième personne : derrière et un peu au-dessus, jamais sous le sol
-            let fps = if surface.third_person {
+            // Troisième personne : derrière (ou devant, tournée vers le visage) et un peu au-dessus,
+            // jamais sous le sol
+            let fps = if surface.view != 0 {
                 let view = walker.view_dir();
-                let mut cam = eye - view * (v * 4.5) + up * (v * 0.8);
+                let side = if surface.view == 2 { -1.0 } else { 1.0 };
+                let d = surface.cam_dist * v;
+                let mut cam = eye - view * (d * side) + up * (v * 0.8 * surface.cam_dist / 4.5);
                 if let Some(t) = surface.terrain.as_ref() {
                     let floor = t.floor(cam.normalize(), cam.length()).top + v * 0.4;
                     if cam.length() < floor {
@@ -1843,6 +1854,26 @@ fn spawn_lamps(mut commands: Commands) {
     }
 }
 
+/// La distance de la caméra à pied (molette) est reprise au lancement et enregistrée (C4).
+fn remember_walker_cam(mut surface: ResMut<Surface>, mut settings: ResMut<GameSettings>, mut started: Local<bool>, mut since: Local<f32>, time: Res<Time>) {
+    if !*started {
+        *started = true;
+        surface.cam_dist = settings.walker_cam.clamp(3.0, 12.0);
+        return;
+    }
+    if (settings.walker_cam - surface.cam_dist).abs() < 0.01 {
+        *since = 0.0;
+        return;
+    }
+    // Enregistré une seconde après le dernier coup de molette
+    *since += time.delta_secs();
+    if *since > 1.0 {
+        settings.walker_cam = surface.cam_dist;
+        settings.save();
+        *since = 0.0;
+    }
+}
+
 /// Dans le noir, la lampe suit le regard du marcheur ; en vol, les phares éclairent devant et
 /// sous le vaisseau. Leur puissance est réglée sur la lumière de l'étoile à midi (moitié de
 /// celle-ci à quelques mètres), quelle que soit la distance de la planète à son étoile.
@@ -1853,6 +1884,7 @@ fn update_lamps(
     ship_q: Query<&Transform, (With<Ship>, Without<Lamp>, Without<Camera3d>)>,
     cam_q: Query<&Transform, (With<Camera3d>, Without<Lamp>, Without<Ship>)>,
     mut lamps: Query<(&Lamp, &mut SpotLight, &mut Transform, &mut Visibility), (Without<Ship>, Without<Camera3d>)>,
+    hand_q: Query<(&GlobalTransform, &crate::models::Rig), With<crate::models::WalkerRig>>,
 ) {
     let walking = surface.phase == Phase::Walking;
     let on = surface.lamps && surface.dark() && !surface.gaseous();
@@ -1880,7 +1912,15 @@ fn update_lamps(
             let dir = (*ship.forward() * 0.9 - up * 0.42).normalize();
             (scale * 25.0 + 60.0, Transform::from_translation(ship.translation + *ship.forward() * scale * 1.2).looking_to(dir, up))
         } else {
-            (voxel * 6.0, Transform::from_translation(cam.translation + *cam.down() * voxel * 0.3).looking_to(*cam.forward(), *cam.up()))
+            // La lampe est tenue dans la main droite : elle éclaire là où l'on regarde (de face :
+            // là où regarde le personnage)
+            let looking = match (surface.view, surface.walker_world) {
+                (2, Some(w)) => *w.forward(),
+                _ => *cam.forward(),
+            };
+            let hand = hand_q.get_single().ok().filter(|_| surface.view != 0).and_then(|(gt, rig)| rig.hand.map(|h| gt.transform_point(h)));
+            let at = hand.unwrap_or(cam.translation + *cam.right() * voxel * 0.35 + *cam.down() * voxel * 0.3);
+            (voxel * 6.0, Transform::from_translation(at + looking * voxel * 0.2).looking_to(looking, *cam.up()))
         };
         *tf = place;
         light.intensity = 0.5 * sun * 4.0 * std::f32::consts::PI * reach * reach;
@@ -2510,7 +2550,7 @@ fn update_hud(
             let now = if suit.hud.is_empty() { now } else { format!("{now}
 {}", suit.hud) };
             format!(
-                "ZQSD/WASD : marcher   Maj : courir   Espace : sauter   V : decoller   N : lampe\nLat {lat:.1}  Lon {lon:.1}  Alt {alt:.0}   {now}{}",
+                "ZQSD/WASD : marcher   Maj : courir   Espace : sauter   V : decoller   N : lampe   F5 : vue (1re / dos / face)   Molette : distance\nLat {lat:.1}  Lon {lon:.1}  Alt {alt:.0}   {now}{}",
                 match (w.in_water, w.liquid) {
                     (false, _) => "",
                     (_, crate::planet::VoxelType::Methane) => "  (dans le methane)",

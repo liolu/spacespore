@@ -329,6 +329,29 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   destination sans roulis, passage doux a la pose de stationnement a l'approche. Vent `weather::wind` : direction
   qui tourne (heures), force qui varie, rafales de quelques secondes (`Sample::gust`), turbulence d'orage ; plus
   fort en altitude, roulis / tangage (`Surface::tilt`) que le pilote corrige, vent au HUD (`compass`).
+  C4 personnage : F5 = 1re personne -> de dos -> de face (`Surface::view`), molette = distance de la camera
+  (3 a 12 voxels, 6 par defaut, `GameSettings::walker_cam`, `remember_walker_cam`) ; lampe tenue dans la main
+  droite (`Rig::hand` = pivot de `main_d` a la pose de l'image), elle eclaire ou l'on regarde.
+  C5 scanner : panneau en sections (`scanner::Section` : titre + lignes libelle / valeur en colonnes), « Ici et
+  maintenant » en haut (`live_rows`, valeurs a largeur fixe, mises a jour a 1 Hz dans `LiveCell` sans
+  reconstruire tant que les libelles ne changent pas). « Rotation et orbite » : jour et annee reels et en temps
+  de jeu (`OrbitSection::day_game_s / year_game_s / orbit_game_s`, aussi dans `/profil`). Point de mesure de
+  `LocalWeather` dans l'espace = point de stationnement (`Surface::hover_dir`), plus sous le vaisseau.
+  C6 cercles : `main::clickables` = la seule regle « cliquable » (zoom permis, distances de clic, etoiles
+  lointaines, trous de ver, galaxies...), utilisee par `select_world_target` et `draw_body_markers` (un cercle
+  par astre cliquable, fondu 0,2 s, couleur par type `marker_color`, cible en jaune, 60 etoiles lointaines au
+  plus, rien autour d'un astre deja grand a l'ecran ; groupe de gizmos par defaut, pas `IndicatorGizmos`).
+  C7 chargement : `planet::system_to_load` = le systeme de la cible (`target_system`, trou de ver compris), charge
+  tout de suite ou que soit le vaisseau, message « Systeme X charge » ; sans systeme (trou noir, galaxie) on garde
+  celui ou l'on est tant qu'on y est. Plus de chargement au plus proche ni de recherche large. Le verrou du zoom 1
+  (pas d'autre systeme) est dans `clickables` (plus de `lock_system_at_planet_zoom`, qui annulait `/aller`).
+  C8 : comete qui tremble = `ship_collisions` (PostUpdate) repoussait le vaisseau stationne contre sa cible
+  APRES le placement de la camera ; dans l'espace, plus de choc avec l'asteroide / la comete cible, et la camera
+  suit toute poussee. Mesure : `SPACESPORE_COMET_LOG=1` (`asteroids::comet_log`, positions rendues par image) ;
+  `SPACESPORE_TEST_CMD` accepte plusieurs commandes separees par « ; ». Trou noir central (`spawn_galactic_core`)
+  cree au vrai centre de la galaxie, disque d'accretion = enfants du trou noir (avant : au point zero du monde =
+  la ou l'on etait au lancement, visible dans le ciel au sol et decale du trou noir apres un recentrage) ; son
+  eclat suit `GalaxyDim` (`dim_accretion_disk`).
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 
