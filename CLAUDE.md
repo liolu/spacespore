@@ -352,6 +352,9 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   cree au vrai centre de la galaxie, disque d'accretion = enfants du trou noir (avant : au point zero du monde =
   la ou l'on etait au lancement, visible dans le ciel au sol et decale du trou noir apres un recentrage) ; son
   eclat suit `GalaxyDim` (`dim_accretion_disk`).
+  Portee : `Clickable::too_far` (meme regle pour le clic et les cercles : pas de cercle hors du cercle blanc,
+  le clic dit « trop loin ») ; sauts entre galaxies limites aux 5 plus proches (`galaxy_jump_range`, sphere
+  dessinee face a la camera en vue d'ensemble par `draw_travel_range`).
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 
