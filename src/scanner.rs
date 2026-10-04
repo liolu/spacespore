@@ -69,11 +69,13 @@ struct Scanner {
     live_age: f32,
     /// Le panneau doit être reconstruit (nouvel astre, ou les lignes vivantes changent).
     dirty: bool,
+    /// Historique de l'astre (dex, 0.13.1).
+    history: Option<Section>,
 }
 
 impl Default for Scanner {
     fn default() -> Self {
-        Self { visible: true, shown: None, title: String::new(), sections: Vec::new(), danger: 0, live: Vec::new(), live_age: 0.0, dirty: true }
+        Self { visible: true, shown: None, title: String::new(), sections: Vec::new(), danger: 0, live: Vec::new(), live_age: 0.0, dirty: true, history: None }
     }
 }
 
@@ -328,6 +330,11 @@ fn body_sections(p: &PlanetProfile) -> (String, Vec<Section>, u8) {
     (p.name.clone(), sections, p.gameplay.danger_level)
 }
 
+/// Sections au format du dex.
+fn info_sections(sections: &[Section]) -> Vec<crate::dex::InfoSection> {
+    sections.iter().map(|s| (s.title.clone(), s.rows.clone())).collect()
+}
+
 /// Texte d'un panneau (tests, et pour lire ce que montre le scanner).
 #[cfg(test)]
 fn sections_text(title: &str, sections: &[Section]) -> String {
@@ -367,8 +374,9 @@ fn rebuild(commands: &mut Commands, panel: Entity, scanner: &Scanner) {
     commands.entity(panel).despawn_descendants().with_children(|p| {
         p.spawn((Text::new(format!("SCANNER  -  {}", scanner.title)), TextFont { font_size: 14.0, ..default() }, TextColor(danger_color)));
         let live = (!scanner.live.is_empty()).then(|| Section { title: "ICI ET MAINTENANT".into(), rows: scanner.live.clone() });
-        // « Ici et maintenant » d'abord (on le lit sur place) : ses libellés ne changent pas
-        for (k, s) in live.iter().chain(scanner.sections.iter()).enumerate() {
+        // « Ici et maintenant » d'abord (on le lit sur place) : ses libellés ne changent pas ;
+        // l'historique de l'astre (dex) à la fin
+        for (k, s) in live.iter().chain(scanner.sections.iter()).chain(scanner.history.iter()).enumerate() {
             let is_live = k == 0 && live.is_some();
             p.spawn((Text::new(s.title.clone()), TextFont { font_size: 11.0, ..default() }, TextColor(TITLE), Node { margin: UiRect::top(Val::Px(5.0)), ..default() }));
             for (i, (label, value)) in s.rows.iter().enumerate() {
@@ -398,7 +406,7 @@ fn update_scanner(
     target: Res<CameraTarget>,
     weather: Res<crate::world_clock::LocalWeather>,
     (cave, phases, weather_now): (Res<crate::surface::NearestCave>, Res<crate::sky::MoonPhases>, Res<crate::weather::WeatherNow>),
-    field: Res<crate::asteroids::AsteroidField>,
+    (field, mut last, dex, dex_ui): (Res<crate::asteroids::AsteroidField>, ResMut<crate::dex::LastScan>, Res<crate::dex::Dex>, Res<crate::dex::DexUi>),
     star_q: Query<&StarId, With<StarRoot>>,
     mut scanner: ResMut<Scanner>,
     mut panel: Query<(Entity, &mut Visibility), With<ScannerPanel>>,
@@ -421,8 +429,12 @@ fn update_scanner(
                 s.lines(&lines.filter(|l| !l.starts_with("(I")).collect::<Vec<_>>().join("\n"));
                 scanner.sections = vec![s];
                 scanner.danger = 0;
-                scanner.shown = key;
+                scanner.shown = key.clone();
                 scanner.dirty = true;
+                // Au dex : comètes à part, le reste avec les astéroïdes
+                let category = if matches!(k.source(), crate::asteroids::Source::Comet) { "Cometes" } else { "Asteroides" };
+                let title = scanner.title.clone();
+                last.set(key.unwrap_or_default(), category, &title, info_sections(&scanner.sections));
             }
         }
     } else {
@@ -450,9 +462,26 @@ fn update_scanner(
                     sections.push(sys);
                 }
             }
+            // Au dex (seulement une vraie cible : un astre trouvé)
+            if let (Some(k), Some(b), false) = (key.clone(), id, sections.is_empty()) {
+                let category = match b {
+                    crate::planetgen::live::BodyId::Star { .. } => "Etoiles",
+                    crate::planetgen::live::BodyId::Planet { .. } => "Planetes",
+                    crate::planetgen::live::BodyId::Moon { .. } => "Lunes",
+                };
+                last.set(k, category, &title, info_sections(&sections));
+            }
             scanner.title = title;
             scanner.sections = sections;
             scanner.danger = danger;
+            scanner.dirty = true;
+        }
+    }
+    // Historique de l'astre (dex) : à jour à chaque changement du dex
+    if dex.is_changed() || scanner.dirty {
+        let h = scanner.shown.as_deref().and_then(|k| dex.history(k)).map(|(title, rows)| Section { title, rows });
+        if h != scanner.history {
+            scanner.history = h;
             scanner.dirty = true;
         }
     }
@@ -482,7 +511,7 @@ fn update_scanner(
             }
         }
     }
-    let show = scanner.visible && !scanner.sections.is_empty();
+    let show = scanner.visible && !scanner.sections.is_empty() && !dex_ui.open;
     for (e, mut v) in &mut panel {
         let wanted = if show { Visibility::Inherited } else { Visibility::Hidden };
         if *v != wanted {
