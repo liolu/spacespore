@@ -357,6 +357,10 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   (`galaxy_jump_range`, sphere dessinee face a la camera en vue d'ensemble par `draw_travel_range`). Toutes les
   etoiles visibles a portee ont leur cercle (pas les cachees par l'eclaircissement) ; cercles de taille fixe dans
   l'espace (celui d'un trou noir galactique = son disque), 6 px pour un point.
+- 0.13 (`ROADMAP-0.13.md`) : E1 = etude d'echelle (`RAPPORT-echelle-E1.md`) : `terrain::set_voxel_scale(k)` /
+  `layout_scaled`, `/echelle k`, `SPACESPORE_SCALE=k` ; banc `cargo test --release bench_scale -- --ignored
+  --nocapture --test-threads=1` ; mesures en jeu `SPACESPORE_PERF=<fichier>` (+ `_FROM` / `_TO` en s :
+  images/s medianes, 1 % bas, > 33 ms), `SPACESPORE_TEST_WALK=1` (marche tout droit). Choix : k = 16.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

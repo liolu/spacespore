@@ -1262,6 +1262,11 @@ fn surface_control(
                 input.strafe = axis(&[KeyCode::KeyD, KeyCode::ArrowRight], &[KeyCode::KeyA, KeyCode::ArrowLeft]);
                 input.sprint = k.pressed(KeyCode::ShiftLeft) || k.pressed(KeyCode::ShiftRight);
                 input.jump = k.pressed(KeyCode::Space);
+                // Mesures (0.13) : `SPACESPORE_TEST_WALK` = marche tout droit (parcours fixe)
+                if std::env::var("SPACESPORE_TEST_WALK").is_ok() {
+                    input.forward = 1.0;
+                    input.jump = true;
+                }
                 let sens = ctx.settings.mouse_sensitivity * 0.003;
                 input.look = look_delta.clamp_length_max(300.0) * sens;
             }

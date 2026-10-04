@@ -34,7 +34,16 @@ impl Plugin for TestCmdPlugin {
         app.add_event::<GoCommand>()
             .init_resource::<GoState>()
             .add_systems(Update, (run_go_commands, finish_search, finish_arrival).chain())
-            .add_systems(Update, dev_script);
+            .add_systems(Startup, |mut started: Local<bool>| {
+                if !*started {
+                    *started = true;
+                    if let Some(k) = std::env::var("SPACESPORE_SCALE").ok().and_then(|s| s.parse::<u32>().ok()) {
+                        crate::terrain::set_voxel_scale(k);
+                    }
+                }
+            })
+            .add_systems(Update, dev_script)
+            .add_systems(Last, perf_log);
     }
 }
 
@@ -549,5 +558,41 @@ mod tests {
         let first = find(&settings, Family::Star, "g", 0, SEARCH_LIMIT).unwrap().unwrap();
         let next = find(&settings, Family::Star, "g", first.system(), SEARCH_LIMIT).unwrap().unwrap();
         assert_ne!(first.system(), next.system());
+    }
+}
+
+/// Mesure (0.13, règle 18) : avec `SPACESPORE_PERF=<fichier>`, les temps d'image entre
+/// `SPACESPORE_PERF_FROM` et `SPACESPORE_PERF_TO` secondes (14 et 30 par défaut) : images/s
+/// médianes, 1 % bas, images de plus de 33 ms, pire image. Écrit dans le fichier à la fin.
+fn perf_log(time: Res<Time>, mut frames: Local<Vec<f32>>, mut done: Local<bool>) {
+    let Ok(path) = std::env::var("SPACESPORE_PERF") else { return };
+    if *done {
+        return;
+    }
+    let num = |k: &str, d: f32| std::env::var(k).ok().and_then(|s| s.parse().ok()).unwrap_or(d);
+    let (from, to) = (num("SPACESPORE_PERF_FROM", 14.0), num("SPACESPORE_PERF_TO", 30.0));
+    let t = time.elapsed_secs();
+    if t >= from && t <= to {
+        frames.push(time.delta_secs());
+    }
+    if t > to && !frames.is_empty() {
+        *done = true;
+        let mut f = frames.clone();
+        f.sort_by(|a, b| a.total_cmp(b));
+        let median = f[f.len() / 2];
+        let worst: Vec<f32> = f.iter().rev().take((f.len() / 100).max(1)).copied().collect();
+        let low = worst.iter().sum::<f32>() / worst.len() as f32;
+        let spikes = f.iter().filter(|x| **x > 0.033).count();
+        let text = format!(
+            "images {} | median {:.1} images/s | 1 % bas {:.1} images/s | > 33 ms : {} | pire {:.1} ms | echelle x{}\n",
+            f.len(),
+            1.0 / median.max(1e-6),
+            1.0 / low.max(1e-6),
+            spikes,
+            f.last().copied().unwrap_or(0.0) * 1000.0,
+            crate::terrain::voxel_scale()
+        );
+        info!("PERF {text}");
+        let _ = std::fs::write(path, text);
     }
 }

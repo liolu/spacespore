@@ -186,10 +186,32 @@ pub struct Layout {
     pub voxel: f32,
 }
 
+/// Étude d'échelle (0.13 E1) : le voxel est `k` fois plus petit (la planète `k` fois plus grande en
+/// voxels, ses rayons en unités inchangés). Prototype : `/echelle k` ou `SPACESPORE_SCALE`, jamais
+/// sauvegardé ; pris en compte au prochain atterrissage.
+static VOXEL_SCALE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
+pub fn voxel_scale() -> u32 {
+    VOXEL_SCALE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_voxel_scale(k: u32) {
+    VOXEL_SCALE.store(k.clamp(1, 64), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Profondeur maximale du quadtree (k = 64 sur la plus grande planète : 13).
+const MAX_TREE_DEPTH: u32 = 18;
+
 pub fn layout_for(radius: f32) -> Layout {
+    layout_scaled(radius, voxel_scale())
+}
+
+/// Le quadtree d'un corps de rayon `radius` avec un voxel `k` fois plus petit.
+pub fn layout_scaled(radius: f32, k: u32) -> Layout {
     let arc = FRAC_PI_2 * radius;
+    let max_voxel = MAX_VOXEL / k.max(1) as f32;
     let mut depth = 0u32;
-    while depth < 14 && arc / ((TILE_CELLS << depth) as f32) > MAX_VOXEL {
+    while depth < MAX_TREE_DEPTH && arc / ((TILE_CELLS << depth) as f32) > max_voxel {
         depth += 1;
     }
     Layout { max_depth: depth, voxel: arc / (TILE_CELLS << depth) as f32 }
@@ -1818,5 +1840,65 @@ mod geology_tests {
             }
         }
         assert!(checked > 10);
+    }
+}
+
+#[cfg(test)]
+mod scale_study {
+    use super::*;
+
+    /// Étude d'échelle (0.13 E1) : pour k = 1, 8, 16, 32, 64, sur des planètes rocheuses de taille
+    /// différente, ce que coûte un atterrissage (`cargo test --release bench_scale -- --ignored
+    /// --nocapture --test-threads=1`) : quadtree, tuiles à générer autour du marcheur, temps, mémoire
+    /// des maillages, portée des tuiles fines, horizon, précision.
+    #[test]
+    #[ignore]
+    fn bench_scale() {
+        let settings = crate::settings::GameSettings::default();
+        let mut bodies: Vec<BodyParams> = Vec::new();
+        for sys in settings.systems.dense().iter().take(60) {
+            for p in sys.planets() {
+                if !p.gaseous() && p.radius_earth > 0.5 && p.radius_earth < 2.0 && bodies.len() < 6 {
+                    bodies.push(BodyParams::planet(p));
+                }
+            }
+        }
+        println!("ETUDE {} planetes rocheuses, rayons {:?}", bodies.len(), bodies.iter().map(|b| b.radius.round()).collect::<Vec<_>>());
+        for k in [1u32, 8, 16, 32, 64] {
+            set_voxel_scale(k);
+            let (mut tiles, mut fine, mut verts, mut ms, mut reach, mut horizon, mut rvox, mut voxel, mut depth, mut prec) = (0usize, 0usize, 0usize, 0.0f64, 0.0f32, 0.0f32, 0.0f32, 0.0f32, 0u32, 0.0f32);
+            for p in &bodies {
+                let t = Terrain::new(*p);
+                let v = t.layout.voxel;
+                let dir = Vec3::new(0.3, 0.7, -0.4).normalize();
+                let eye = dir * (t.ground(dir).top + 1.8 * v);
+                let mut keys = Vec::new();
+                select_tiles(t.layout, p.radius, eye, &mut keys);
+                let start = std::time::Instant::now();
+                for key in &keys {
+                    let mesh = build_tile_mesh_with(&t, *key);
+                    verts += mesh.count_vertices();
+                }
+                ms += start.elapsed().as_secs_f64() * 1000.0;
+                tiles += keys.len();
+                let finest: Vec<&TileKey> = keys.iter().filter(|k| k.depth as u32 == t.layout.max_depth).collect();
+                fine += finest.len();
+                reach += finest.iter().map(|k| (k.center_dir() * p.radius - eye).length() / v).fold(0.0, f32::max);
+                let rv = p.radius / v;
+                horizon += (2.0 * rv * 1.8).sqrt();
+                rvox += rv;
+                voxel += v;
+                depth = depth.max(t.layout.max_depth);
+                // Précision : écart entre deux f32 voisins au rayon de la planète, en voxels
+                let r = p.radius;
+                prec = prec.max((f32::from_bits(r.to_bits() + 1) - r) / v);
+            }
+            let n = bodies.len() as f32;
+            println!(
+                "ETUDE k={k:>2} | voxel {:.3} u | rayon {:>6.0} voxels | profondeur {depth:>2} | horizon {:>4.0} voxels | tuiles fines jusqu'a {:>4.0} voxels | {:>4.0} tuiles ({:.0} fines) par atterrissage | {:>6.0} ms ({:.2} ms/tuile) | maillages {:.0} Mo | precision f32 {:.4} voxel",
+                voxel / n, rvox / n, horizon / n, reach / n, tiles as f32 / n, fine as f32 / n, ms / n as f64, ms / tiles as f64, verts as f64 * 40.0 / n as f64 / 1.0e6, prec
+            );
+        }
+        set_voxel_scale(1);
     }
 }
