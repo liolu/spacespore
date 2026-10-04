@@ -372,6 +372,11 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   proche 0,1 voxel au sol (`near_plane`), phares en voxels. Marcheur : sort de la roche (coins du cube, limite
   de colonnes) en fin de pas. Saves : `world.json` garde `ground_scale`, cellules d'une autre echelle oubliees.
   PROTOCOL 31.
+  E3 = streaming : `update_tiles` pose les tuiles terminees dans un budget de `TILE_BUDGET_MS` (3 ms) par image,
+  les grosses d'abord ; `max_tile_tasks` = 2 par coeur ; priorite devant la camera. Pas de cache disque : relire
+  une tuile (3,0 ms, 375 Ko) coute plus que la generer (1,7 ms) (`bench_tile_cache`). Mesures : `TileStats`
+  (tuiles a leur finesse, dans `SPACESPORE_PERF`), `SPACESPORE_TEST_FLY=1|climb` (vol bas plein gaz, en montant),
+  `Surface::test_zoom_in` (comme un coup de molette).
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

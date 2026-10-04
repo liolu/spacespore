@@ -1881,6 +1881,54 @@ mod geology_tests {
 mod scale_study {
     use super::*;
 
+    /// Cache disque des tuiles (0.13 E3) : générer une tuile contre la relire d'un fichier
+    /// (`cargo test --release bench_tile_cache -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn bench_tile_cache() {
+        use bevy::render::mesh::VertexAttributeValues;
+        let settings = crate::settings::GameSettings::default();
+        let p = settings.systems.dense().iter().take(40).flat_map(|s| s.planets().iter().filter(|p| !p.gaseous()).map(BodyParams::planet).collect::<Vec<_>>()).next().unwrap();
+        let t = Terrain::new(p);
+        let dir = Vec3::new(0.3, 0.7, -0.4).normalize();
+        let mut keys = Vec::new();
+        select_tiles(t.layout, t.ground(dir).top, dir * (t.ground(dir).top + 2.0 * t.voxel()), &mut keys);
+        let keys: Vec<TileKey> = keys.into_iter().filter(|k| k.depth as u32 >= t.layout.max_depth - 1).take(40).collect();
+        let dir_tmp = std::env::temp_dir().join("spacespore_tile_cache_bench");
+        let _ = std::fs::create_dir_all(&dir_tmp);
+        let (mut gen_ms, mut write_ms, mut read_ms, mut bytes) = (0.0, 0.0, 0.0, 0usize);
+        for (n, key) in keys.iter().enumerate() {
+            let s0 = std::time::Instant::now();
+            let mesh = build_tile_mesh_with(&t, *key);
+            gen_ms += s0.elapsed().as_secs_f64() * 1000.0;
+            // Encodage brut : positions, normales, couleurs, indices
+            let mut buf: Vec<u8> = Vec::new();
+            for attr in [Mesh::ATTRIBUTE_POSITION, Mesh::ATTRIBUTE_NORMAL, Mesh::ATTRIBUTE_COLOR] {
+                match mesh.attribute(attr) {
+                    Some(VertexAttributeValues::Float32x3(v)) => buf.extend(v.iter().flatten().flat_map(|f| f.to_le_bytes())),
+                    Some(VertexAttributeValues::Float32x4(v)) => buf.extend(v.iter().flatten().flat_map(|f| f.to_le_bytes())),
+                    _ => {}
+                }
+            }
+            if let Some(bevy::render::mesh::Indices::U32(i)) = mesh.indices() {
+                buf.extend(i.iter().flat_map(|x| x.to_le_bytes()));
+            }
+            bytes += buf.len();
+            let path = dir_tmp.join(format!("{n}.bin"));
+            let s1 = std::time::Instant::now();
+            std::fs::write(&path, &buf).unwrap();
+            write_ms += s1.elapsed().as_secs_f64() * 1000.0;
+            let s2 = std::time::Instant::now();
+            let back = std::fs::read(&path).unwrap();
+            let floats: Vec<f32> = back.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+            std::hint::black_box(floats);
+            read_ms += s2.elapsed().as_secs_f64() * 1000.0;
+        }
+        let n = keys.len() as f64;
+        println!("CACHE {} tuiles fines : generer {:.2} ms, ecrire {:.2} ms, relire et decoder {:.2} ms par tuile, {:.0} Ko par tuile", keys.len(), gen_ms / n, write_ms / n, read_ms / n, bytes as f64 / n / 1024.0);
+        let _ = std::fs::remove_dir_all(&dir_tmp);
+    }
+
     /// Étude d'échelle (0.13 E1) : pour k = 1, 8, 16, 32, 64, sur des planètes rocheuses de taille
     /// différente, ce que coûte un atterrissage (`cargo test --release bench_scale -- --ignored
     /// --nocapture --test-threads=1`) : quadtree, tuiles à générer autour du marcheur, temps, mémoire
