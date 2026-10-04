@@ -51,8 +51,14 @@ const NIGHT_GALAXY: f32 = 0.75;
 /// Lampe du marcheur et phares du vaisseau (allumés quand il fait sombre).
 pub const LAMP_KEY: KeyCode = KeyCode::KeyN;
 
-/// Nombre maximum de tuiles construites en même temps en arrière-plan.
-const MAX_TILE_TASKS: usize = 10;
+/// Tuiles en construction en même temps (hors du fil principal) : deux par cœur (0.13 E3).
+fn max_tile_tasks() -> usize {
+    std::thread::available_parallelism().map_or(8, |n| n.get()).clamp(4, 32) * 2
+}
+
+/// Temps (ms) accordé par image à la pose des tuiles terminées (envoi des maillages, décor) : au
+/// delà, la suite attend l'image suivante (pas de pic à l'atterrissage, 0.13 E3).
+const TILE_BUDGET_MS: f64 = 3.0;
 /// Au-delà, les tuiles inutilisées depuis longtemps sont supprimées.
 const MAX_TILES: usize = 520;
 const TILE_KEEP_SECS: f64 = 8.0;
@@ -124,6 +130,7 @@ impl Plugin for SurfacePlugin {
             .add_systems(Update, update_galaxy_dim)
             .add_systems(Update, remember_walker_cam)
             .add_systems(Update, near_plane)
+            .init_resource::<TileStats>()
             .add_systems(
                 Update,
                 (surface_control.in_set(SurfaceControl).run_if(crate::editeur::in_game), update_underground, dim_star_light, update_suns, surface_light, update_lamps, update_season, refresh_voxels, update_tiles, update_hud)
@@ -726,6 +733,12 @@ impl Surface {
 
     /// Distance de caméra sous laquelle on passe en vol bas (au moins `FLIGHT_ZOOM`, trois longueurs
     /// du vaisseau).
+    /// Tests (0.13 E3) : comme un coup de molette vers l'astre (passage en vol bas si on est assez
+    /// près).
+    pub fn test_zoom_in(&mut self, now: f64) {
+        self.zoom_in_until = now + 0.7;
+    }
+
     pub fn flight_zoom(&self) -> f32 {
         FLIGHT_ZOOM.max(self.ship_dims.max_length() * 3.0)
     }
@@ -1473,6 +1486,15 @@ fn surface_control(
                 turn = axis(&[KeyCode::KeyA, KeyCode::ArrowLeft], &[KeyCode::KeyD, KeyCode::ArrowRight]);
                 vertical = axis(&[KeyCode::Space], &[KeyCode::ControlLeft]);
                 boost = k.pressed(KeyCode::ShiftLeft);
+                // Mesures (0.13 E3) : `SPACESPORE_TEST_FLY` = plein gaz tout droit avec Maj
+                if let Ok(mode) = std::env::var("SPACESPORE_TEST_FLY") {
+                    forward = 1.0;
+                    boost = true;
+                    // `climb` : en montant (de plus en plus vite, tuiles toujours plus loin)
+                    if mode == "climb" {
+                        vertical = 1.0;
+                    }
+                }
                 if ctx.buttons.pressed(MouseButton::Right) {
                     let sens = ctx.settings.mouse_sensitivity * 0.01;
                     surface.fyaw -= look_delta.x * sens;
@@ -2323,6 +2345,13 @@ fn update_season(
 //  Tuiles de terrain
 // ─────────────────────────────────────────────────────────────────────────
 
+/// Tuiles voulues autour de la caméra et celles déjà prêtes à leur finesse (mesures, 0.13 E3).
+#[derive(Resource, Default)]
+pub struct TileStats {
+    pub leaves: usize,
+    pub ready: usize,
+}
+
 struct TileEntry {
     entity: Entity,
     last_needed: f64,
@@ -2386,6 +2415,7 @@ fn update_tiles(
     children: Query<&Children>,
     far: Query<(), With<FarMesh>>,
     mut vis: Query<&mut Visibility>,
+    mut stats: ResMut<TileStats>,
 ) {
     // Pas de tuiles dans une géante gazeuse : sa sphère reste affichée
     let wanted = if surface.active() && !surface.gaseous() { surface.body } else { None };
@@ -2484,9 +2514,14 @@ fn update_tiles(
         }
     }
 
-    // Récupère les tuiles terminées
-    let finished: Vec<TileKey> = store.tasks.keys().copied().collect();
+    // Récupère les tuiles terminées, dans le budget de l'image (les plus grosses d'abord : jamais de trou)
+    let started = std::time::Instant::now();
+    let mut finished: Vec<TileKey> = store.tasks.keys().copied().collect();
+    finished.sort_by_key(|k| k.depth);
     for key in finished {
+        if started.elapsed().as_secs_f64() * 1000.0 > TILE_BUDGET_MS {
+            break;
+        }
         let Some((task, built_gen)) = store.tasks.get_mut(&key) else { continue };
         let built_gen = *built_gen;
         if let Some((mesh, objects)) = block_on(future::poll_once(task)) {
@@ -2505,17 +2540,23 @@ fn update_tiles(
         }
     }
 
-    // Lance les constructions manquantes : d'abord les grosses tuiles, puis les plus proches
-    // (les tuiles d'une ancienne saison passent après les manquantes)
+    // Lance les constructions manquantes : d'abord les grosses tuiles, puis les plus proches et celles
+    // devant la caméra (au centre de l'écran) ; les tuiles d'une ancienne saison passent après les
+    // manquantes
+    let cam_fwd = root_tf.rotation.inverse() * *cam.forward();
     let mut missing: Vec<(bool, u8, f32, TileKey)> = needed
         .iter()
         .filter(|k| !store.tasks.contains_key(k) && store.built.get(k).is_none_or(|e| e.generation != generation))
-        .map(|k| (store.built.contains_key(k), k.depth, (cam_local - k.center_dir() * params.radius).length_squared(), *k))
+        .map(|k| {
+            let to = k.center_dir() * params.radius - cam_local;
+            let ahead = to.normalize_or(Vec3::Y).dot(cam_fwd);
+            (store.built.contains_key(k), k.depth, to.length_squared() * (1.6 - 0.6 * ahead), *k)
+        })
         .collect();
     missing.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.total_cmp(&b.2)));
     let pool = AsyncComputeTaskPool::get();
     for (_, _, _, key) in missing {
-        if store.tasks.len() >= MAX_TILE_TASKS {
+        if store.tasks.len() >= max_tile_tasks() {
             break;
         }
         let p = params;
@@ -2534,6 +2575,8 @@ fn update_tiles(
         );
     }
 
+    stats.leaves = leaves.len();
+    stats.ready = leaves.iter().filter(|k| store.built.contains_key(k)).count();
     // Tuiles à afficher : la feuille si elle est prête, sinon son plus proche ancêtre prêt
     let mut shown: HashSet<TileKey> = HashSet::new();
     for &leaf in &leaves {
