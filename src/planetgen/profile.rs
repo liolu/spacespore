@@ -147,6 +147,28 @@ pub struct OrbitSection {
     /// Période de rotation (stockée en phase 2, utilisée en 0.11).
     pub rotation_period_h: Option<f64>,
     pub tidally_locked: Option<bool>,
+    /// En temps de jeu (secondes, C5) : un jour (tour sur soi-même ; absent si synchrone), une
+    /// année des saisons, un tour visible autour de l'astre central (étoile, ou planète d'une lune).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub day_game_s: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub year_game_s: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub orbit_game_s: Option<f64>,
+}
+
+/// Durée d'un tour d'orbite affiché (secondes de jeu) : demi-grand axe (unités du jeu) et `mu`
+/// des orbites du jeu (`kepler::OrbitalElements::mean_motion`).
+fn orbit_game_secs(a: f32, mu: f32) -> Option<f64> {
+    (a > 0.0).then(|| std::f64::consts::TAU / ((mu as f64) / (a as f64).powi(3)).sqrt())
+}
+
+/// Temps de jeu d'une lune : synchrone (pas de jour à elle), l'année de sa planète, un tour de
+/// sa planète.
+fn moon_game_times(orbit: &mut OrbitSection, m: &MoonConfig, planet: &PlanetConfig) {
+    orbit.day_game_s = None;
+    orbit.year_game_s = (!planet.rogue).then(|| crate::world_clock::Spin::moon(m, planet).year_s);
+    orbit.orbit_game_s = orbit_game_secs(m.orbit_distance, crate::kepler::DEFAULT_MU * 0.001);
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -621,6 +643,9 @@ impl PlanetProfile {
                 axial_tilt_deg: (p.semi_major_au > 0.0).then(|| f(p.axial_tilt)),
                 rotation_period_h: some(p.rotation_h),
                 tidally_locked: (p.semi_major_au > 0.0).then_some(p.tidally_locked),
+                day_game_s: (p.semi_major_au > 0.0 && !p.tidally_locked && !p.rogue).then(|| crate::world_clock::Spin::planet(p).day_s),
+                year_game_s: (p.semi_major_au > 0.0 && !p.rogue).then(|| crate::world_clock::Spin::planet(p).year_s),
+                orbit_game_s: if p.rogue { None } else { orbit_game_secs(p.orbit_distance, crate::kepler::DEFAULT_MU * crate::planet::PLANET_MU_SCALE) },
             },
             physics: physics(f(p.radius), f(p.radius_earth), f(p.mass_earth), (p.radius_earth > 0.0).then_some(size), id, deltas),
             composition: composition(&p.resources.bulk, id, deltas),
@@ -676,6 +701,7 @@ impl PlanetProfile {
             prof.orbit.period_days = None;
             prof.orbit.rotation_period_h = None;
             prof.orbit.axial_tilt_deg = None;
+            moon_game_times(&mut prof.orbit, m, planet);
             prof.orbit.semi_major_axis_au = Live::new(prof.orbit.semi_major_axis_au.base, delta_of(deltas, id).orbit_au);
             prof.physics = physics(f(m.radius), f(m.radius_earth), f(m.mass_earth), Some("lune"), id, deltas);
             prof.composition = composition(&m.resources.bulk, id, deltas);
@@ -691,7 +717,7 @@ impl PlanetProfile {
         };
         let body = crate::terrain::BodyParams::moon(m, planet);
         let seed = m.seed as u64;
-        Self {
+        let mut prof = Self {
             id: id.key(),
             kind: BodyKind::Moon,
             name: format!("{} {} {}", sys.name, planet_index + 1, (b'a' + index as u8) as char),
@@ -734,7 +760,9 @@ impl PlanetProfile {
             resources: ResourcesSection::default(),
             gameplay: GameplaySection { walkable: true, ..Default::default() },
             traits: Vec::new(),
-        }
+        };
+        moon_game_times(&mut prof.orbit, m, planet);
+        prof
     }
 }
 

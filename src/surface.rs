@@ -122,6 +122,7 @@ impl Plugin for SurfacePlugin {
             .add_systems(Startup, (setup_hud, spawn_lamps, spawn_suns))
             .add_systems(Update, go_overhang.before(SurfaceControl))
             .add_systems(Update, update_galaxy_dim)
+            .add_systems(Update, remember_walker_cam)
             .add_systems(
                 Update,
                 (surface_control.in_set(SurfaceControl).run_if(crate::editeur::in_game), update_underground, dim_star_light, update_suns, surface_light, update_lamps, update_season, refresh_voxels, update_tiles, update_hud)
@@ -454,6 +455,15 @@ pub const FLIGHT_ZOOM: f32 = 1_000.0;
 #[derive(Resource)]
 pub struct Surface {
     phase: Phase,
+    /// Poussée demandée (repère du vaisseau : -z = avant, y = haut ; longueur 0 à 1) et virage :
+    /// les propulseurs du modèle suivent les commandes, pas le déplacement (C3).
+    pub pilot: Vec3,
+    pub pilot_turn: f32,
+    /// Vent en vol bas (repère de l'astre), rafale, texte du HUD ; tangage / roulis qu'il donne.
+    wind: Vec3,
+    gust: f32,
+    wind_text: String,
+    tilt: Vec2,
     body: Option<TargetKind>,
     terrain: Option<Terrain>,
     walker: Walker,
@@ -505,7 +515,9 @@ pub struct Surface {
     /// Dimensions du vaisseau (son modèle).
     pub ship_dims: ShipDims,
     /// À pied : vue à la troisième personne ; pose du personnage (monde) et son animation.
-    third_person: bool,
+    /// Vue à pied (F5) : 0 = 1re personne, 1 = de dos, 2 = de face ; distance de la caméra (voxels).
+    view: u8,
+    pub cam_dist: f32,
     walker_local: Option<Transform>,
     walker_world: Option<Transform>,
     walker_anim: &'static str,
@@ -556,7 +568,8 @@ impl Default for Surface {
             rescue: false,
             frame: None,
             ship_dims: ShipDims::default(),
-            third_person: true,
+            view: 1,
+            cam_dist: 6.0,
             walker_local: None,
             walker_world: None,
             walker_anim: "repos",
@@ -564,6 +577,12 @@ impl Default for Surface {
             board_from: Vec3::ZERO,
             board_to: Vec3::ZERO,
             board_pose: None,
+            pilot: Vec3::ZERO,
+            pilot_turn: 0.0,
+            wind: Vec3::ZERO,
+            gust: 0.0,
+            wind_text: String::new(),
+            tilt: Vec2::ZERO,
         }
     }
 }
@@ -593,6 +612,13 @@ impl Surface {
     /// Centre de l'astre où l'on séjourne (monde, dernière image).
     pub fn center(&self) -> Option<Vec3> {
         self.frame.filter(|_| self.active()).map(|f| f.center)
+    }
+
+    /// Vent du lieu en vol bas (repère de l'astre, m/s poussés), rafale (0..1), texte du HUD.
+    pub fn set_wind(&mut self, v: Vec3, gust: f32, text: String) {
+        self.wind = v;
+        self.gust = gust;
+        self.wind_text = text;
     }
 
     /// En vol bas : le vent déplace le vaisseau de `local` (repère fixe de l'astre, C5).
@@ -655,7 +681,7 @@ impl Surface {
     /// échelle = un voxel du terrain) et animation.
     pub fn walker_view(&self) -> Option<(Transform, &'static str)> {
         match self.phase {
-            Phase::Walking if self.third_person => self.walker_world.map(|t| (t, self.walker_anim)),
+            Phase::Walking if self.view != 0 => self.walker_world.map(|t| (t, self.walker_anim)),
             // On voit toujours le personnage monter dans le vaisseau ou en descendre
             Phase::Boarding | Phase::Disembarking => self.walker_world.map(|t| (t, "marcher")),
             _ => None,
@@ -746,7 +772,7 @@ impl Surface {
         }
     }
 
-    fn params(&self) -> Option<BodyParams> {
+    pub fn params(&self) -> Option<BodyParams> {
         self.terrain.as_ref().map(|t| t.params)
     }
 
@@ -866,15 +892,34 @@ fn begin_descent(
     surface.phase = Phase::Descending;
 }
 
-/// Le dessous du vaisseau reste parallèle à la surface de l'astre : son « haut » est la verticale
-/// locale, et son nez suit l'horizontale.
-///
-/// `prev_forward` est le nez au tour précédent : il n'est abandonné que si le vaisseau fait un vrai
-/// trajet (`cruising`), sinon le petit déplacement qui suit l'astre en orbite ferait trembler le nez.
-pub fn level_ship(ship: &mut Transform, center: Vec3, prev_forward: Vec3, cruising: bool) {
-    let up = (ship.translation - center).normalize_or(Vec3::Y);
-    let forward = tangent(if cruising { *ship.forward() } else { prev_forward }, up);
-    ship.rotation = look(Vec3::ZERO, forward, up).rotation;
+/// Orientation du vaisseau dans l'espace (une seule fonction, C3) : en croisière, le nez (avant du
+/// modèle) vers la destination, sans roulis ; à l'approche d'un astre où l'on se pose, passage en
+/// douceur à la pose de stationnement (dessous parallèle à la surface, nez à l'horizontale) ; virage
+/// doux, sauf `snap`. `step` = pas fait par les moteurs (zéro en stationnement).
+#[allow(clippy::too_many_arguments)]
+pub fn orient_ship(before: Quat, pos: Vec3, step: Vec3, hover: Vec3, center: Vec3, levels: bool, snap: bool, dt: f32) -> Quat {
+    let fwd = before * Vec3::NEG_Z;
+    let travel = (step.length_squared() > 1e-8).then(|| {
+        let d = step.normalize();
+        let up = if d.dot(Vec3::Y).abs() > 0.98 { before * Vec3::Y } else { Vec3::Y };
+        look(Vec3::ZERO, d, up).rotation
+    });
+    let park = levels.then(|| {
+        let up = (pos - center).normalize_or(Vec3::Y);
+        let f = tangent(travel.map_or(fwd, |t| t * Vec3::NEG_Z), up);
+        look(Vec3::ZERO, f, up).rotation
+    });
+    let want = match (travel, park) {
+        (Some(t), Some(p)) => {
+            let hover_r = hover.distance(center).max(1.0);
+            let w = 1.0 - smoothstep((pos.distance(hover) - hover_r * 0.5) / (hover_r * 3.0));
+            t.slerp(p, w)
+        }
+        (Some(t), None) => t,
+        (None, Some(p)) => p,
+        (None, None) => return before,
+    };
+    if snap { want } else { before.slerp(want, 1.0 - (-4.0 * dt).exp()) }
 }
 
 fn smoothstep(x: f32) -> f32 {
@@ -1140,6 +1185,8 @@ fn surface_control(
     // Tout ce qui suit est calculé dans le repère fixe de l'astre (centre à l'origine), puis placé
     // dans le monde à la fin ; la pose de départ des fondus (`cam_from`) est aussi dans ce repère
     let mut ship_local = frame.to_local(*ship_tf);
+    surface.pilot = Vec3::ZERO;
+    surface.pilot_turn = 0.0;
     let mut cam_local_tf = frame.to_local(*cam_tf);
 
     match surface.phase {
@@ -1162,6 +1209,8 @@ fn surface_control(
             surface.heading = tangent(surface.heading, dir);
             let ship_pos = dir * r;
             let ship_rot = look(Vec3::ZERO, surface.heading, dir).rotation;
+            // Décollage : pleine poussée vers le haut ; atterrissage : on freine (poussée vers le haut)
+            surface.pilot = Vec3::Y * if descending { 0.4 * (1.0 - e) + 0.15 } else { 1.0 };
             ship_local = Transform { translation: ship_pos, rotation: ship_rot, scale: Vec3::splat(scale) };
 
             surface.cam_blend = (surface.cam_blend + dt / 0.8).min(1.0);
@@ -1216,8 +1265,12 @@ fn surface_control(
                 let sens = ctx.settings.mouse_sensitivity * 0.003;
                 input.look = look_delta.clamp_length_max(300.0) * sens;
             }
+            // F5 : 1re personne -> de dos -> de face ; molette = distance de la caméra
             if ctx.keys.just_pressed(VIEW_KEY) && !ui_open {
-                surface.third_person = !surface.third_person;
+                surface.view = (surface.view + 1) % 3;
+            }
+            if wheel != 0.0 && surface.view != 0 && !ui_open {
+                surface.cam_dist = (surface.cam_dist * (-wheel * 0.12).exp()).clamp(3.0, 12.0);
             }
             let terrain = surface.terrain.take().unwrap();
             let mut walker = surface.walker;
@@ -1249,10 +1302,13 @@ fn surface_control(
             let eye = up * walker.eye_r;
             let v = surface.terrain.as_ref().map_or(1.0, |t| t.voxel());
             surface.walker_local = Some(Transform { translation: walker.pos, rotation: look(Vec3::ZERO, walker.heading, up).rotation, scale: Vec3::splat(v) });
-            // Troisième personne : derrière et un peu au-dessus, jamais sous le sol
-            let fps = if surface.third_person {
+            // Troisième personne : derrière (ou devant, tournée vers le visage) et un peu au-dessus,
+            // jamais sous le sol
+            let fps = if surface.view != 0 {
                 let view = walker.view_dir();
-                let mut cam = eye - view * (v * 4.5) + up * (v * 0.8);
+                let side = if surface.view == 2 { -1.0 } else { 1.0 };
+                let d = surface.cam_dist * v;
+                let mut cam = eye - view * (d * side) + up * (v * 0.8 * surface.cam_dist / 4.5);
                 if let Some(t) = surface.terrain.as_ref() {
                     let floor = t.floor(cam.normalize(), cam.length()).top + v * 0.4;
                     if cam.length() < floor {
@@ -1387,7 +1443,22 @@ fn surface_control(
             let scale = real;
             surface.fdist = surface.fdist.max(real * surface.ship_dims.icon_len * 1.6);
             let ship_pos = surface.fpos;
-            let ship_rot = look(Vec3::ZERO, surface.heading, next).rotation;
+            // Le vent fait rouler (vent de côté) et tanguer (vent de face) ; le pilote corrige quand
+            // il manœuvre, et le vaisseau se stabilise quand le vent tombe
+            let right = surface.heading.cross(next).normalize_or(Vec3::X);
+            let w = surface.wind;
+            let k = 0.02 * (1.0 + surface.gust);
+            let mut want = Vec2::new((w.dot(surface.heading) * k).clamp(-0.3, 0.3), (-w.dot(right) * k).clamp(-0.4, 0.4));
+            if forward != 0.0 || turn != 0.0 || vertical != 0.0 {
+                want *= 0.35;
+            }
+            let tilt = surface.tilt;
+            surface.tilt = tilt + (want - tilt) * (1.0 - (-2.5 * dt).exp());
+            let ship_rot = look(Vec3::ZERO, surface.heading, next).rotation * Quat::from_rotation_z(surface.tilt.y) * Quat::from_rotation_x(surface.tilt.x);
+            // Propulseurs : avancer (plus fort avec Maj), monter / descendre, tourner
+            let thrust = (surface.fspeed / top_speed.max(1.0)).clamp(-1.0, 1.0) * if boost { 1.0 } else { 0.6 };
+            surface.pilot = Vec3::new(0.0, vertical * 0.6, -thrust).clamp_length_max(1.0);
+            surface.pilot_turn = turn;
             ship_local = Transform { translation: ship_pos, rotation: ship_rot, scale: Vec3::splat(scale) };
 
             // Caméra derrière le vaisseau, orientable à la souris, jamais sous le relief
@@ -1783,6 +1854,26 @@ fn spawn_lamps(mut commands: Commands) {
     }
 }
 
+/// La distance de la caméra à pied (molette) est reprise au lancement et enregistrée (C4).
+fn remember_walker_cam(mut surface: ResMut<Surface>, mut settings: ResMut<GameSettings>, mut started: Local<bool>, mut since: Local<f32>, time: Res<Time>) {
+    if !*started {
+        *started = true;
+        surface.cam_dist = settings.walker_cam.clamp(3.0, 12.0);
+        return;
+    }
+    if (settings.walker_cam - surface.cam_dist).abs() < 0.01 {
+        *since = 0.0;
+        return;
+    }
+    // Enregistré une seconde après le dernier coup de molette
+    *since += time.delta_secs();
+    if *since > 1.0 {
+        settings.walker_cam = surface.cam_dist;
+        settings.save();
+        *since = 0.0;
+    }
+}
+
 /// Dans le noir, la lampe suit le regard du marcheur ; en vol, les phares éclairent devant et
 /// sous le vaisseau. Leur puissance est réglée sur la lumière de l'étoile à midi (moitié de
 /// celle-ci à quelques mètres), quelle que soit la distance de la planète à son étoile.
@@ -1793,6 +1884,7 @@ fn update_lamps(
     ship_q: Query<&Transform, (With<Ship>, Without<Lamp>, Without<Camera3d>)>,
     cam_q: Query<&Transform, (With<Camera3d>, Without<Lamp>, Without<Ship>)>,
     mut lamps: Query<(&Lamp, &mut SpotLight, &mut Transform, &mut Visibility), (Without<Ship>, Without<Camera3d>)>,
+    hand_q: Query<(&GlobalTransform, &crate::models::Rig), With<crate::models::WalkerRig>>,
 ) {
     let walking = surface.phase == Phase::Walking;
     let on = surface.lamps && surface.dark() && !surface.gaseous();
@@ -1820,7 +1912,15 @@ fn update_lamps(
             let dir = (*ship.forward() * 0.9 - up * 0.42).normalize();
             (scale * 25.0 + 60.0, Transform::from_translation(ship.translation + *ship.forward() * scale * 1.2).looking_to(dir, up))
         } else {
-            (voxel * 6.0, Transform::from_translation(cam.translation + *cam.down() * voxel * 0.3).looking_to(*cam.forward(), *cam.up()))
+            // La lampe est tenue dans la main droite : elle éclaire là où l'on regarde (de face :
+            // là où regarde le personnage)
+            let looking = match (surface.view, surface.walker_world) {
+                (2, Some(w)) => *w.forward(),
+                _ => *cam.forward(),
+            };
+            let hand = hand_q.get_single().ok().filter(|_| surface.view != 0).and_then(|(gt, rig)| rig.hand.map(|h| gt.transform_point(h)));
+            let at = hand.unwrap_or(cam.translation + *cam.right() * voxel * 0.35 + *cam.down() * voxel * 0.3);
+            (voxel * 6.0, Transform::from_translation(at + looking * voxel * 0.2).looking_to(looking, *cam.up()))
         };
         *tf = place;
         light.intensity = 0.5 * sun * 4.0 * std::f32::consts::PI * reach * reach;
@@ -2428,8 +2528,9 @@ fn update_hud(
         },
         Phase::Flying if surface.gaseous() => "ZQSD/WASD : voler   A/D : tourner   Maj : accelerer   Espace/Ctrl : monter/descendre\nClic droit : orbiter   Molette : zoom (>1000 : orbite)   Pas de sol : la pression abime la coque".to_string(),
         Phase::Flying => format!(
-            "ZQSD/WASD : voler   A/D : tourner   Maj : accelerer   Espace/Ctrl : monter/descendre\nClic droit : orbiter   Molette : zoom (>1000 : orbite)   V : atterrir   N : phares\n{}",
-            weather.short()
+            "ZQSD/WASD : voler   A/D : tourner   Maj : accelerer   Espace/Ctrl : monter/descendre\nClic droit : orbiter   Molette : zoom (>1000 : orbite)   V : atterrir   N : phares\n{}   {}",
+            weather.short(),
+            surface.wind_text
         ),
         Phase::Descending => "Atterrissage en cours...".to_string(),
         Phase::Ascending => "Decollage en cours...".to_string(),
@@ -2449,7 +2550,7 @@ fn update_hud(
             let now = if suit.hud.is_empty() { now } else { format!("{now}
 {}", suit.hud) };
             format!(
-                "ZQSD/WASD : marcher   Maj : courir   Espace : sauter   V : decoller   N : lampe\nLat {lat:.1}  Lon {lon:.1}  Alt {alt:.0}   {now}{}",
+                "ZQSD/WASD : marcher   Maj : courir   Espace : sauter   V : decoller   N : lampe   F5 : vue (1re / dos / face)   Molette : distance\nLat {lat:.1}  Lon {lon:.1}  Alt {alt:.0}   {now}{}",
                 match (w.in_water, w.liquid) {
                     (false, _) => "",
                     (_, crate::planet::VoxelType::Methane) => "  (dans le methane)",
@@ -2469,6 +2570,31 @@ fn update_hud(
 
 #[cfg(test)]
 mod tests {
+    /// C3 : en croisière, le nez du vaisseau (-Z, avant du modèle) regarde la destination ; près du
+    /// point de stationnement, le dessous est parallèle à la surface.
+    #[test]
+    fn the_ship_points_at_its_destination_then_levels() {
+        let center = Vec3::new(0.0, 0.0, -100_000.0);
+        let hover = center + Vec3::Y * 1_000.0;
+        // Loin : on fonce vers l'astre, le nez suit la route
+        let pos = Vec3::ZERO;
+        let step = (hover - pos).normalize() * 500.0;
+        let mut rot = Quat::IDENTITY;
+        for _ in 0..200 {
+            rot = super::orient_ship(rot, pos, step, hover, center, true, false, 1.0 / 60.0);
+        }
+        assert!((rot * Vec3::NEG_Z).dot(step.normalize()) > 0.99, "nez {:?}", rot * Vec3::NEG_Z);
+        // Sans roulis : l'aile droite reste à l'horizontale
+        assert!((rot * Vec3::X).y.abs() < 0.05);
+        // Arrivé : la pose de stationnement (haut = verticale de l'astre)
+        let pos = hover + Vec3::X * 10.0;
+        for _ in 0..200 {
+            rot = super::orient_ship(rot, pos, Vec3::ZERO, hover, center, true, false, 1.0 / 60.0);
+        }
+        let up = (pos - center).normalize();
+        assert!((rot * Vec3::Y).dot(up) > 0.99, "haut {:?}", rot * Vec3::Y);
+    }
+
     use super::*;
     use crate::planetgen::climate::Climate;
     use crate::terrain::{EARTH_SKY, EARTH_SUNSET};
