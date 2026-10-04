@@ -320,7 +320,7 @@ fn cave_decor(terrain: &Terrain, key: TileKey) -> Vec<DecorInstance> {
     let _ = n;
     let (x0, y0) = (key.x as i64 * TILE_CELLS as i64, key.y as i64 * TILE_CELLS as i64);
     let dirs = [key.center_dir()];
-    for region in caves.for_tile(&dirs, &|d| terrain.surface_r(d)) {
+    for region in caves.for_tile(&dirs, &|d| terrain.surface_r(d), &terrain.cave_windows()) {
         let Some((rc, rr)) = region.room else { continue };
         let (face, i, j) = terrain.cell_of(rc.normalize());
         if face != key.face || !(x0..x0 + TILE_CELLS as i64).contains(&i) || !(y0..y0 + TILE_CELLS as i64).contains(&j) {

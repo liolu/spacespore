@@ -2240,6 +2240,8 @@ struct TileStore {
     generation: u32,
     /// Cellules modifiées de l'astre (minage, 0.14).
     voxels: Option<std::sync::Arc<crate::voxel::BodyVoxels>>,
+    /// Tranche de grottes maillée autour du joueur sous terre (0.13 E2).
+    cave_window: Option<(f32, f32)>,
 }
 
 fn set_far_visibility(
@@ -2316,6 +2318,21 @@ fn update_tiles(
             store.generation = store.generation.wrapping_add(1);
         }
     }
+    // Sous terre, plus bas que les grottes toujours maillées : une tranche autour de la caméra (par
+    // pas d'une demi-tranche, pour ne pas tout reconstruire à chaque pas)
+    let cam_local0 = root_tf.rotation.inverse() * (cam.translation - root_tf.translation);
+    let v = layout.voxel;
+    let depth = terrain.surface_r(cam_local0.normalize_or(Vec3::Y)) - cam_local0.length();
+    let window = (depth > (crate::terrain::NEAR_CAVE_VOXELS - crate::terrain::CAVE_WINDOW_VOXELS) * v).then(|| {
+        let step = crate::terrain::CAVE_WINDOW_VOXELS * 0.5 * v;
+        let mid = (depth / step).round() * step;
+        (mid - crate::terrain::CAVE_WINDOW_VOXELS * v, mid + crate::terrain::CAVE_WINDOW_VOXELS * v)
+    });
+    if window != store.cave_window {
+        store.cave_window = window;
+        store.generation = store.generation.wrapping_add(1);
+    }
+    let cave_window = store.cave_window;
     let generation = store.generation;
     let params = BodyParams { climate: store.climate.unwrap_or(params.climate), tide: store.tide.unwrap_or(params.tide), ..params };
     let voxels = store.voxels.clone();
@@ -2356,7 +2373,7 @@ fn update_tiles(
     if store.built.is_empty() && store.tasks.is_empty() {
         for face in 0..6 {
             let key = TileKey::root(face);
-            let first = Terrain::new(params).with_voxels(voxels.clone()).with_caves(caves.clone()).with_rocks(rocks.clone());
+            let first = Terrain::new(params).with_voxels(voxels.clone()).with_caves(caves.clone()).with_rocks(rocks.clone()).with_cave_window(cave_window);
             let entity = spawn_tile(&mut commands, &mut meshes, &material, root, build_tile_mesh_with(&first, key));
             store.built.insert(key, TileEntry { entity, last_needed: now, generation });
         }
@@ -2404,7 +2421,7 @@ fn update_tiles(
             key,
             (
                 pool.spawn(async move {
-                    let terrain = Terrain::new(p).with_voxels(vx).with_caves(cv).with_rocks(rk);
+                    let terrain = Terrain::new(p).with_voxels(vx).with_caves(cv).with_rocks(rk).with_cave_window(cave_window);
                     (build_tile_mesh_with(&terrain, key), tile_decor(&terrain, key))
                 }),
                 generation,

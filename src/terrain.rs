@@ -365,7 +365,16 @@ pub struct Terrain {
     /// Plus petit cratère calculé (rayon angulaire, bits d'un f32) : plus grand pendant la
     /// construction d'une tuile lointaine (chaque tâche a son propre terrain).
     min_crater: std::sync::atomic::AtomicU32,
+    /// Grottes maillées dans les tuiles (0.13 E2) : jusqu'à `NEAR_CAVE_VOXELS` sous la surface, plus
+    /// une tranche autour du joueur quand il descend plus bas (`with_cave_window`, unités sous la
+    /// surface). Les grottes vont jusqu'à `caves::MAX_DEPTH` (2 000 unités, décision Q2).
+    pub cave_window: Option<(f32, f32)>,
 }
+
+/// Profondeur (voxels) des grottes toujours maillées sous la surface.
+pub const NEAR_CAVE_VOXELS: f32 = 300.0;
+/// Demi-hauteur (voxels) de la tranche de grottes maillée autour du joueur sous terre.
+pub const CAVE_WINDOW_VOXELS: f32 = 150.0;
 
 impl Terrain {
     pub fn new(params: BodyParams) -> Self {
@@ -394,8 +403,22 @@ impl Terrain {
             min_crater: std::sync::atomic::AtomicU32::new((2.0 * params.layout().voxel / params.radius.max(1.0)).to_bits()),
             rocks: (params.atmosphere && !params.airless && !params.gaseous && params.pressure >= 0.05)
                 .then(|| Arc::new(Rocks::new(params.seed, params.radius, params.layout().voxel))),
+            cave_window: None,
         }
         .with_overhang()
+    }
+
+    /// Tranche de grottes en plus à mailler (profondeurs sous la surface, unités).
+    pub fn with_cave_window(mut self, window: Option<(f32, f32)>) -> Self {
+        self.cave_window = window;
+        self
+    }
+
+    /// Tranches de profondeur des grottes à mailler (unités sous la surface).
+    pub fn cave_windows(&self) -> Vec<(f32, f32)> {
+        let mut w = vec![(0.0, NEAR_CAVE_VOXELS * self.layout.voxel)];
+        w.extend(self.cave_window);
+        w
     }
 
     /// Le même terrain avec les grottes (et leur cache) d'un autre terrain du même astre.
@@ -1157,7 +1180,7 @@ pub fn build_voxel_tile_mesh(t: &Terrain, key: TileKey) -> Mesh {
     let regions: Vec<Arc<Region>> = match &t.caves {
         Some(caves) => {
             let dirs = [corner(0, 0), corner(TILE_CELLS, 0), corner(0, TILE_CELLS), corner(TILE_CELLS, TILE_CELLS), tile_dir];
-            caves.for_tile(&dirs, &|d| t.surface_r(d))
+            caves.for_tile(&dirs, &|d| t.surface_r(d), &t.cave_windows())
         }
         None => Vec::new(),
     };
@@ -1910,6 +1933,6 @@ mod scale_study {
                 voxel / n, rvox / n, horizon / n, reach / n, tiles as f32 / n, fine as f32 / n, ms / n as f64, ms / tiles as f64, verts as f64 * 40.0 / n as f64 / 1.0e6, prec
             );
         }
-        set_voxel_scale(1);
+        set_voxel_scale(GROUND_SCALE);
     }
 }
