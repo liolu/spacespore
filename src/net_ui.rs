@@ -85,6 +85,9 @@ pub enum Field {
     GuildTag,
     /// Saisie d'un message de chat (bloque les touches du jeu, comme les champs du panneau).
     Chat,
+    /// Recherche ou note du dex (`dex.rs` lit le clavier lui-même ; ici, seulement le blocage des
+    /// touches du jeu).
+    Dex,
 }
 
 #[derive(Resource, Default)]
@@ -664,6 +667,9 @@ fn handle_text_input(
             }
             continue;
         };
+        if focus == Field::Dex {
+            continue;
+        }
         if !matches!(ev.logical_key, Key::Tab | Key::Shift) {
             panel.tab = None;
         }
@@ -725,6 +731,7 @@ fn handle_text_input(
                 Field::GuildName => { panel.guild_name.pop(); }
                 Field::GuildTag => { panel.guild_tag.pop(); }
                 Field::Chat => { panel.chat.pop(); }
+                Field::Dex => {}
             },
             Key::Space => {
                 if focus == Field::GuildName && panel.guild_name.chars().count() < MAX_GUILD_NAME {
@@ -754,6 +761,7 @@ fn handle_text_input(
                             Field::GuildName => panel.guild_name.clone(),
                             Field::GuildTag => panel.guild_tag.clone(),
                             Field::Chat => panel.chat.clone(),
+                            Field::Dex => String::new(),
                         };
                         if let Ok(mut clip) = arboard::Clipboard::new() {
                             clip.set_text(content).ok();
@@ -765,6 +773,7 @@ fn handle_text_input(
                                 Field::GuildName => panel.guild_name.clear(),
                                 Field::GuildTag => panel.guild_tag.clear(),
                                 Field::Chat => panel.chat.clear(),
+                                Field::Dex => {}
                             }
                         }
                     }
@@ -799,6 +808,7 @@ fn insert_char(focus: Field, c: char, panel: &mut NetPanel, settings: &mut GameS
                 panel.chat.push(c);
             }
         }
+        Field::Dex => {}
         Field::Name => {
             if !c.is_control() && settings.player_name.chars().count() < MAX_NAME_LEN {
                 settings.player_name.push(c);
@@ -870,7 +880,7 @@ fn update_fields(
             Field::GuildName => (panel.guild_name.as_str(), "Nom de la guilde"),
             Field::GuildTag => (panel.guild_tag.as_str(), "TAG"),
             Field::Code => (panel.code.as_str(), "Code de votre ami"),
-            Field::Chat => continue,
+            Field::Chat | Field::Dex => continue,
         };
         let focused = panel.focus == Some(ft.0);
         let shown = if value.is_empty() && !focused {

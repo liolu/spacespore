@@ -25,6 +25,7 @@ pub mod genome;
 pub mod geology;
 pub mod habitability;
 pub mod hydrology;
+pub mod landforms;
 pub mod life;
 pub mod live;
 pub mod multiple;
