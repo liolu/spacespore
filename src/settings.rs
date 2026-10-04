@@ -1341,7 +1341,9 @@ impl GameSettings {
         self.guild_archive = world.guild_archive;
         self.body_deltas = world.body_deltas;
         self.world_clock = world.clock;
-        self.voxel_deltas = world.voxel_deltas;
+        // Cellules repérées à une autre échelle du sol (avant la 0.13) : elles ne tombent plus sur les
+        // mêmes voxels, on les oublie (cratères d'impact ; le minage arrive en 0.14)
+        self.voxel_deltas = if world.ground_scale == crate::terrain::GROUND_SCALE { world.voxel_deltas } else { Default::default() };
     }
 }
 
@@ -1363,6 +1365,12 @@ struct WorldSave {
     #[serde(default)] clock: f64,
     /// Cellules voxel modifiées (0.11 B1 : format prêt, minage en 0.14).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")] voxel_deltas: crate::voxel::VoxelDeltas,
+    /// Échelle du sol avec laquelle les cellules ont été repérées (0.13 E2 : absente = 1).
+    #[serde(default = "old_ground_scale")] ground_scale: u32,
+}
+
+fn old_ground_scale() -> u32 {
+    1
 }
 
 impl From<&GameSettings> for WorldSave {
@@ -1380,6 +1388,7 @@ impl From<&GameSettings> for WorldSave {
             body_deltas: s.body_deltas.clone(),
             clock: crate::world_clock::saved_secs().max(s.world_clock),
             voxel_deltas: s.voxel_deltas.clone(),
+            ground_scale: crate::terrain::GROUND_SCALE,
         }
     }
 }

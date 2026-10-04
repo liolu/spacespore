@@ -62,6 +62,9 @@ fn dev_script(
     ship: Query<&GlobalTransform, With<Ship>>,
     mut step: Local<u8>,
     mut last_log: Local<f32>,
+    mut flying: Local<bool>,
+    mut cams: Query<&mut crate::CameraController>,
+    mut surface: ResMut<crate::surface::Surface>,
 ) {
     let t = time.elapsed_secs();
     if *step == 0 && t > 6.0 {
@@ -72,6 +75,15 @@ fn dev_script(
                 chat.send(crate::chat_cmd::ChatCommand(cmd.to_string()));
             }
         }
+    }
+    // Mesures (0.13 E3) : `SPACESPORE_TEST_FLY` = descendre en vol bas à 8 s (puis plein gaz)
+    if std::env::var("SPACESPORE_TEST_FLY").is_ok() && t > 8.0 && !*flying {
+        for mut c in &mut cams {
+            c.zoom_goal = Some(200.0);
+        }
+        // Comme un coup de molette, à chaque image jusqu'au passage en vol bas
+        surface.test_zoom_in(time.elapsed_secs_f64());
+        *flying = surface.active();
     }
     let Ok(k) = std::env::var("SPACESPORE_TEST_STAR") else { return };
     let at: f32 = std::env::var("SPACESPORE_TEST_STAR_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(35.0);
@@ -564,7 +576,7 @@ mod tests {
 /// Mesure (0.13, règle 18) : avec `SPACESPORE_PERF=<fichier>`, les temps d'image entre
 /// `SPACESPORE_PERF_FROM` et `SPACESPORE_PERF_TO` secondes (14 et 30 par défaut) : images/s
 /// médianes, 1 % bas, images de plus de 33 ms, pire image. Écrit dans le fichier à la fin.
-fn perf_log(time: Res<Time>, mut frames: Local<Vec<f32>>, mut done: Local<bool>) {
+fn perf_log(time: Res<Time>, tiles: Res<crate::surface::TileStats>, mut frames: Local<Vec<f32>>, mut detail: Local<Vec<f32>>, mut done: Local<bool>) {
     let Ok(path) = std::env::var("SPACESPORE_PERF") else { return };
     if *done {
         return;
@@ -574,6 +586,9 @@ fn perf_log(time: Res<Time>, mut frames: Local<Vec<f32>>, mut done: Local<bool>)
     let t = time.elapsed_secs();
     if t >= from && t <= to {
         frames.push(time.delta_secs());
+        if tiles.leaves > 0 {
+            detail.push(tiles.ready as f32 / tiles.leaves as f32);
+        }
     }
     if t > to && !frames.is_empty() {
         *done = true;
@@ -584,13 +599,15 @@ fn perf_log(time: Res<Time>, mut frames: Local<Vec<f32>>, mut done: Local<bool>)
         let low = worst.iter().sum::<f32>() / worst.len() as f32;
         let spikes = f.iter().filter(|x| **x > 0.033).count();
         let text = format!(
-            "images {} | median {:.1} images/s | 1 % bas {:.1} images/s | > 33 ms : {} | pire {:.1} ms | echelle x{}\n",
+            "images {} | median {:.1} images/s | 1 % bas {:.1} images/s | > 33 ms : {} | pire {:.1} ms | echelle x{} | tuiles a leur finesse : moyenne {:.0} %, pire {:.0} %\n",
             f.len(),
             1.0 / median.max(1e-6),
             1.0 / low.max(1e-6),
             spikes,
             f.last().copied().unwrap_or(0.0) * 1000.0,
-            crate::terrain::voxel_scale()
+            crate::terrain::voxel_scale(),
+            100.0 * detail.iter().sum::<f32>() / detail.len().max(1) as f32,
+            100.0 * detail.iter().copied().fold(1.0f32, f32::min)
         );
         info!("PERF {text}");
         let _ = std::fs::write(path, text);
