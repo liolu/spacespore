@@ -353,8 +353,10 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   la ou l'on etait au lancement, visible dans le ciel au sol et decale du trou noir apres un recentrage) ; son
   eclat suit `GalaxyDim` (`dim_accretion_disk`).
   Portee : `Clickable::too_far` (meme regle pour le clic et les cercles : pas de cercle hors du cercle blanc,
-  le clic dit « trop loin ») ; sauts entre galaxies limites aux 5 plus proches (`galaxy_jump_range`, sphere
-  dessinee face a la camera en vue d'ensemble par `draw_travel_range`).
+  le clic dit « trop loin ») ; sauts entre galaxies a 5 tailles de galaxie (diametres) du centre au plus
+  (`galaxy_jump_range`, sphere dessinee face a la camera en vue d'ensemble par `draw_travel_range`). Toutes les
+  etoiles visibles a portee ont leur cercle (pas les cachees par l'eclaircissement) ; cercles de taille fixe dans
+  l'espace (celui d'un trou noir galactique = son disque), 6 px pour un point.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 
