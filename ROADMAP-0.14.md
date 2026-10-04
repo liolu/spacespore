@@ -42,6 +42,8 @@ non fusionnée : tu testes, puis tu dis « push main ». Chaque phase a son **pr
 | Q4 | **Monde exceptionnel près du départ** | **Non** : aucun monde exceptionnel tiré dans les **50 systèmes les plus proches du départ** (système 0). |
 | Q5 | **Son** | **Oui**, `bevy_audio` (intégré à Bevy) ; une autre caisse seulement si un effet manque, à justifier dans la PR. |
 | Q6 | **Temps local** (près d'un trou noir, vallée au temps accéléré) | **D'accord** : seuls l'affichage et la croissance locale (plantes, ruines) changent ; l'horloge du monde reste unique. |
+| Q7 | **Part des planètes actives** | **Très rare** : il faut de la **chance** pour voir un événement. Point de départ : **1 planète solide sur 1 000** (0,1 %), une partie seulement pour les plus destructeurs ; réglé par le test de fréquence (§6.1). |
+| Q8 | **Musique** | Pas en 0.14 : D5 = sons du monde seulement. **La musique est pour plus tard** (notée dans `A-FAIRE-PLUS-TARD.md`). |
 
 ---
 
@@ -107,7 +109,7 @@ Les règles 1 à 19 (0.10, 0.11, 0.13) restent valables. La 0.14 en ajoute :
 | **D2. Géologie active** | Coulées de lave **lumineuses** (visibles la nuit), **geysers** (jets réguliers, f(horloge)), **cryovolcans** (type Encelade), fumerolles, sources chaudes, petits **séismes** (secousse, éboulis) selon l'activité de `geology.rs`. Le trait « geysers géants » devient réel. | Geysers synchronisés entre deux joueurs ; lave visible de l'orbite la nuit | M |
 | **D3. Végétation vivante** | Arbres et herbe qui **bougent avec le vent** (rafales de `weather::wind`), plantes qui s'ouvrent le jour, **bioluminescence** la nuit, feuillage selon la **saison**, forêts denses en instances et LOD. Le trait « forêt pétrifiée » devient réel. | Forêt dense en Ultra sans baisse sous la cible de FPS (mesure) | L |
 | **D4. Faune visible** | Créatures procédurales depuis `Fauna` (corps, pattes, ailes, nageoires) construites avec les **familles de l'éditeur** (squelettes et animations de `assets/editeur/races/`) : troupeaux, volants, aquatiques, fouisseurs, **diurnes / nocturnes**, fuite devant le joueur, pas de combat ; tailles réelles (`max_size_m`) à l'échelle k = 16. Le trait « océan bioluminescent » devient réel (plancton, méduses). Créatures = f(graine, cellule, horloge) : les mêmes pour tous les joueurs. | Deux joueurs voient le même troupeau au même endroit ; aucune créature dans le sol ou dans l'eau si elle ne nage pas | XL |
-| **D5. Son** | `bevy_audio` (Q5) : vent, pluie, tonnerre, vagues, rivières et cascades, écho des grottes, lave, geysers, faune, moteurs et propulseurs du vaisseau, **silence dans le vide**, son étouffé sous l'eau, volume par catégorie dans Options. | Aucun son dans l'espace hors du vaisseau ; transitions sans coupure | L |
+| **D5. Son** | `bevy_audio` (Q5), **sons du monde seulement, pas de musique** (Q8, plus tard) : vent, pluie, tonnerre, vagues, rivières et cascades, écho des grottes, lave, geysers, faune, moteurs et propulseurs du vaisseau, **silence dans le vide**, son étouffé sous l'eau, volume par catégorie dans Options. | Aucun son dans l'espace hors du vaisseau ; transitions sans coupure | L |
 | **D6. Points d'intérêt** | Lieux rares au scanner et dans le dex : grottes géantes, arches, cratères géants, cascades, sources chaudes, geysers, épaves, ruines (fictif, étiqueté), **monolithe** (le trait devient réel), marqueurs posés par les joueurs (réseau). | `/aller` vers chaque sorte ; marqueurs vus par les autres joueurs | M |
 
 ---
@@ -192,8 +194,10 @@ inversé** (X5, aurores ; N3), **arches** (déjà réelles). Aucun ne reste une 
 ### 6.1 Qui, combien, quand
 
 - **Planètes actives** : seules elles ont des événements (règle 24). Condition physique (volcanisme pour
-  N1, lunes ou anneaux pour N2 et N4, étoile active pour N3) **et** tirage : **environ 2 %** des planètes
-  et lunes solides (à régler par le test de fréquence ; tu peux demander plus ou moins).
+  N1, lunes ou anneaux pour N2 et N4, étoile active pour N3) **et** tirage **très rare** (Q7) : environ
+  **1 planète ou lune solide sur 1 000**. Le joueur doit avoir de la **chance** pour tomber sur une
+  planète active au bon moment. Le test de fréquence vérifie qu'il y en a quelques-unes dans la galaxie
+  principale (hors zone calme), jamais une par système.
 - **Rythme** : sur une planète active, **environ un événement par heure de jeu** en moyenne (Q3), tiré
   par tranches de temps comme les orages de `sky.rs`. Les plus destructeurs (impact géant,
   mégatsunami, lune qui se brise) sont réservés à une partie des planètes actives et bien plus rares.
@@ -251,17 +255,14 @@ X5 utilise la skybox et les trous noirs de la 0.13 (C2, V1) ; D4 utilise les fam
 
 ## 9. Questions restantes
 
-| # | Question | Proposition |
-|---|---|---|
-| Q7 | Part des **planètes actives** : 2 % vous va ? | 2 % des planètes et lunes solides ; à ajuster après le test de fréquence. |
-| Q8 | Le **son** joue-t-il aussi la musique d'ambiance (D5) ? | Non : sons du monde seulement ; la musique dans une version plus tard. |
+Aucune pour l'instant : Q1 à Q8 sont tranchées (§1.2).
 
 ---
 
 ## 10. Prompts (à coller dans une nouvelle session, un par phase)
 
 Contexte commun : « Lis `ROADMAP-0.14.md`, `prompt0.14.md`, `ROADMAP-0.13.md` et `CLAUDE.md` (règles 1 à
-28, décisions du §1.2). `git pull origin main` avant de coder. Branche `claude/roadmap-0-14-<phase>`.
+28, décisions Q1 à Q8 du §1.2). `git pull origin main` avant de coder. Branche `claude/roadmap-0-14-<phase>`.
 Build release, tests, mesures avant / après et captures. PR non fusionnée (je dirai « push main »).
 Aucune concession sur la qualité ; ne change ni les tailles ni les décisions sans me demander. »
 
@@ -273,7 +274,8 @@ Aucune concession sur la qualité ; ne change ni les tailles ni les décisions s
   forêts en instances ; trait « forêt pétrifiée » réel. »
 - **D4** — « [contexte commun] Phase D4 : faune procédurale avec les familles de l'éditeur, f(graine,
   cellule, horloge), troupeaux, volants, aquatiques, fuite ; trait « océan bioluminescent » réel. »
-- **D5** — « [contexte commun] Phase D5 : son avec `bevy_audio` (Q5), silence dans le vide, volumes. »
+- **D5** — « [contexte commun] Phase D5 : son avec `bevy_audio` (Q5), sons du monde sans musique (Q8),
+  silence dans le vide, volumes. »
 - **D6** — « [contexte commun] Phase D6 : points d'intérêt au scanner et dans le dex ; monolithe réel ;
   marqueurs des joueurs en réseau. »
 - **X0** — « [contexte commun] Phase X0 : `planetgen/archetypes.rs` (règles 20, 21, 23, 27), traits reliés
@@ -295,7 +297,7 @@ Aucune concession sur la qualité ; ne change ni les tailles ni les décisions s
   habitable (Q1). »
 - **X8** — « [contexte commun] Phase X8 : monde mort, nature reconquise, dévasté, terraformation
   inachevée, observatoire, machine, planète vivante, écho temporel, planète qui évolue. »
-- **N1** — « [contexte commun] Phase N1 : planètes actives (§6.1), éruptions et séismes annoncés,
+- **N1** — « [contexte commun] Phase N1 : planètes actives très rares (§6.1, Q7), éruptions et séismes annoncés,
   conséquences en deltas, `/evenement`. »
 - **N2** — « [contexte commun] Phase N2 : impact complet, hiver d'impact, mégatsunami, anneau qui
   s'effondre, lune qui se brise. »
