@@ -103,3 +103,9 @@ Commandes d'essai a ajouter quand le besoin apparait (pas encore faites) : `/met
 - `FLY` declenche avant la fin du `/aller` : on descend sur le mauvais astre.
 - Nuit sur planete synchrone : eau et ciel invisibles.
 - Deux instances du jeu : la capture / le log sont ecrases par l'autre.
+- Phenomene qui depend de l'horloge (geyser entre deux jets, eruption finie, eclipse passee) : le forcer
+  (commande ou variable de test) ou choisir un instant ou il est actif, sinon la capture ne montre rien.
+- Objet au centre de l'ecran en 3e personne : le personnage le cache. Se placer de cote (decaler le regard)
+  ou passer en 1re personne.
+- Particules et maillages dynamiques invisibles : verifier `NoFrustumCulling` (boite englobante calculee une
+  seule fois sur des sommets a zero) avant d'accuser le monde.
