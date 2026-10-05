@@ -33,7 +33,9 @@ impl Plugin for TestCmdPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<GoCommand>()
             .init_resource::<GoState>()
-            .add_systems(Update, (run_go_commands, finish_search, finish_arrival).chain())
+            .add_event::<DescendCommand>()
+            .init_resource::<Essai>()
+            .add_systems(Update, (run_go_commands, finish_search, finish_arrival, run_descend, run_essai).chain())
             .add_systems(Startup, |mut started: Local<bool>| {
                 if !*started {
                     *started = true;
@@ -91,7 +93,8 @@ fn dev_script(
         }
     }
     // Mesures (0.13 E3) : `SPACESPORE_TEST_FLY` = descendre en vol bas à 8 s (puis plein gaz)
-    if std::env::var("SPACESPORE_TEST_FLY").is_ok() && t > 8.0 && !*flying {
+    let fly_at: f32 = std::env::var("SPACESPORE_TEST_FLY_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(8.0);
+    if std::env::var("SPACESPORE_TEST_FLY").is_ok() && t > fly_at && !*flying {
         for mut c in &mut cams {
             c.zoom_goal = Some(200.0);
         }
@@ -147,7 +150,7 @@ struct GoState {
 }
 
 pub const STAR_TYPES: &str = "o, b, a, f, g, k, m, blanche, brune, sous-geante, geante, double, triple";
-pub const PLANET_TYPES: &str = "rocheuse, mini-neptune, neptune, gazeuse, jupiter-chaud, minuscule, petite, terrestre, \
+pub const PLANET_TYPES: &str = "mer, rocheuse, mini-neptune, neptune, gazeuse, jupiter-chaud, minuscule, petite, terrestre, \
 super-terre, ocean, glace, lave, methane, ammoniac, venus, titan, mars, oxygene, sans-air, vie, plantes, complexe, \
 anneaux, aurores, errante, plaques, volcans, crateres, habitable, rare, legendaire";
 pub const MOON_TYPES: &str = "volcanique, ocean-cache, air, glacee, lave, vie, rare";
@@ -213,6 +216,8 @@ pub fn planet_matches(p: &PlanetConfig, kind: &str) -> Option<bool> {
         "jupiter-chaud" => p.kind == PlanetKind::GasGiant && p.hot,
         "minuscule" | "petite" | "terrestre" | "super-terre" => size == kind.replace("super-terre", "super-Terre"),
         "ocean" => p.hydrology.ocean_fraction > 0.85 && liquid_water(p),
+        // Mer d'eau liquide, air, et une planète qui tourne (il y fait jour à un moment)
+        "mer" => liquid_water(p) && p.hydrology.ocean_fraction > 0.05 && p.atmosphere && !p.tidally_locked && !p.gaseous(),
         "glace" => p.hydrology.hydro.liquid == Liquid::Water && p.hydrology.water_state == WaterState::Ice,
         "lave" => p.hydrology.hydro.liquid == Liquid::Lava,
         "methane" => p.hydrology.hydro.liquid == Liquid::Methane,
@@ -378,10 +383,24 @@ fn run_go_commands(
     mut target: ResMut<CameraTarget>,
     mut net: ResMut<Net>,
     mut ship_q: Query<&mut Transform, With<Ship>>,
+    mut essai: ResMut<Essai>,
 ) {
     let now = time.elapsed_secs_f64();
     for GoCommand(arg) in events.read() {
         let words: Vec<String> = arg.split_whitespace().map(plain).collect();
+        // `/essai mer` : enchaîne /aller planete mer, /jour, /vol, /mer (voir `run_essai`)
+        if words.first().map(String::as_str) == Some("essai") {
+            match words.get(1).map(String::as_str) {
+                Some("mer") => {
+                    essai.stage = 1;
+                    essai.sent = false;
+                    essai.since = now;
+                    net.notify("Essai \"mer\" : recherche d'une planete avec mer qui tourne, puis jour, vol bas, au-dessus de la mer.", now);
+                }
+                _ => net.notify("/essai mer : va de jour au-dessus d'une mer (tests de l'eau).", now),
+            }
+            continue;
+        }
         let (family, kind, after) = match words.first().map(String::as_str) {
             None => {
                 net.notify(&help(), now);
@@ -454,6 +473,92 @@ fn run_go_commands(
         let task = AsyncComputeTaskPool::get().spawn(async move { find_in(&candidates, family, &task_kind) });
         state.search = Some((family, kind.clone(), after, task));
         net.notify(&format!("Recherche d'une {} \"{kind}\"...", describe(family)), now);
+    }
+}
+
+/// `/vol` : descendre en vol bas sur l'astre ciblé (comme un coup de molette, jusqu'au passage).
+#[derive(Event)]
+pub struct DescendCommand;
+
+fn run_descend(
+    time: Res<Time>,
+    mut events: EventReader<DescendCommand>,
+    mut surface: ResMut<crate::surface::Surface>,
+    mut cams: Query<&mut CameraController>,
+    mut net: ResMut<Net>,
+    mut until: Local<f64>,
+) {
+    let now = time.elapsed_secs_f64();
+    if events.read().next().is_some() {
+        *until = now + 20.0;
+        net.notify("Descente en vol bas...", now);
+    }
+    if now < *until {
+        if surface.active() {
+            *until = 0.0;
+            return;
+        }
+        for mut c in &mut cams {
+            c.zoom_goal = Some(200.0);
+        }
+        surface.test_zoom_in(now);
+    }
+}
+
+/// `/essai mer` : étapes automatiques (1 : recherche et arrivée, 2 : jour, 3 : vol bas, 4 : mer).
+#[derive(Resource, Default)]
+struct Essai {
+    stage: u8,
+    since: f64,
+    /// La recherche de l'étape 1 est lancée.
+    sent: bool,
+}
+
+fn run_essai(
+    time: Res<Time>,
+    mut essai: ResMut<Essai>,
+    state: Res<GoState>,
+    target: Res<CameraTarget>,
+    surface: Res<crate::surface::Surface>,
+    mut chat: EventWriter<crate::chat_cmd::ChatCommand>,
+    mut net: ResMut<Net>,
+) {
+    let now = time.elapsed_secs_f64();
+    if essai.stage == 0 {
+        return;
+    }
+    let waited = now - essai.since;
+    if waited > 90.0 {
+        essai.stage = 0;
+        net.notify("Essai abandonne (trop long). Regardez les messages ci-dessus.", now);
+        return;
+    }
+    match essai.stage {
+        1 => {
+            // Lance la recherche, puis attend l'arrivée (astre ciblé, plus de recherche en cours)
+            if !essai.sent {
+                essai.sent = true;
+                chat.send(crate::chat_cmd::ChatCommand("/aller planete mer".to_string()));
+            } else if waited > 1.0 && state.search.is_none() && state.pending.is_none() && matches!(target.0, TargetKind::Planet(_)) {
+                essai.stage = 2;
+                essai.since = now;
+            }
+        }
+        2 => {
+            if waited > 0.5 {
+                chat.send(crate::chat_cmd::ChatCommand("/jour".to_string()));
+                chat.send(crate::chat_cmd::ChatCommand("/vol".to_string()));
+                essai.stage = 3;
+                essai.since = now;
+            }
+        }
+        3 => {
+            if surface.active() && waited > 3.0 {
+                chat.send(crate::chat_cmd::ChatCommand("/mer".to_string()));
+                essai.stage = 0;
+            }
+        }
+        _ => essai.stage = 0,
     }
 }
 

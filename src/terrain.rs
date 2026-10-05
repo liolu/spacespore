@@ -34,6 +34,10 @@ use crate::voxel::{BodyVoxels, Cell, BLOCK};
 /// Colonnes par côté d'une tuile.
 pub const TILE_CELLS: usize = 32;
 
+/// Période (colonnes) des coordonnées de vague des mailles d'eau : les nombres d'onde des vagues
+/// sont des multiples entiers de 2π / WAVE_PERIOD (`water.wgsl`).
+pub const WAVE_PERIOD: i64 = 4096;
+
 /// Taille maximale d'un voxel au niveau le plus fin.
 pub const MAX_VOXEL: f32 = 11.0;
 
@@ -372,7 +376,48 @@ pub struct Column {
     pub color: [f32; 4],
     /// Rayon du sol avant l'arrondi aux couches (pente du sol : couleurs, 0.13 T3).
     pub raw: f32,
+    /// Fond sous un liquide transparent (0.13 O1) : rayon, matière et couleur du dessus du fond
+    /// marin. Sans liquide transparent, ce sont ceux de la colonne.
+    pub bed: f32,
+    pub bed_kind: VoxelType,
+    pub bed_color: [f32; 4],
 }
+
+impl Column {
+    /// Colonne sans liquide transparent : le fond est le dessus.
+    pub fn solid(dir: Vec3, top: f32, kind: VoxelType, color: [f32; 4], raw: f32) -> Self {
+        Self { dir, top, kind, color, raw, bed: top, bed_kind: kind, bed_color: color }
+    }
+
+    /// Mer, lac... d'un liquide transparent : le dessus est la surface de l'eau.
+    pub fn is_sea(&self) -> bool {
+        self.kind.is_clear_liquid()
+    }
+
+    /// Profondeur de l'eau (unités) : 0 sur la terre ferme.
+    pub fn depth(&self) -> f32 {
+        if self.is_sea() { (self.top - self.bed).max(0.0) } else { 0.0 }
+    }
+
+    /// Le dessus solide (le fond marin sous l'eau) : matière, hauteur, couleur du dessus (avec la
+    /// teinte de pente de la tuile pour la terre ferme).
+    pub fn ground_view(&self) -> Column {
+        if self.is_sea() {
+            Column { top: self.bed, kind: self.bed_kind, color: self.bed_color, ..*self }
+        } else {
+            *self
+        }
+    }
+}
+
+/// Couleur d'un dessus immergé : l'alpha (0,5) sert de drapeau aux sommets (le matériau du sol
+/// y met la lumière du fond marin : absorption et caustiques, `caustics.wgsl`) ; ailleurs 1.
+pub fn submerged(color: [f32; 4], under: bool) -> [f32; 4] {
+    [color[0], color[1], color[2], if under { SUBMERGED_ALPHA } else { 1.0 }]
+}
+
+/// Alpha des sommets sous l'eau (voir `submerged`).
+pub const SUBMERGED_ALPHA: f32 = 0.5;
 
 /// Teinte de la roche nue d'un sol de couleur `color` : la pierre, un peu de la couleur du lieu.
 pub fn rock_of(color: [f32; 4]) -> [f32; 4] {
@@ -673,7 +718,7 @@ impl Terrain {
         let p = &self.params;
         // Géante gazeuse : pas de relief, seulement le cœur où le vol s'arrête
         if p.gaseous {
-            return Column { dir, top: p.radius * GAS_CORE, kind: VoxelType::Stone, color: [0.3, 0.25, 0.2, 1.0], raw: p.radius * GAS_CORE };
+            return Column::solid(dir, p.radius * GAS_CORE, VoxelType::Stone, [0.3, 0.25, 0.2, 1.0], p.radius * GAS_CORE);
         }
         // Astéroïde : roche de son type, couleurs de son maillage
         if let Some(shape) = &p.asteroid {
@@ -686,7 +731,7 @@ impl Terrain {
                 AsteroidClass::M => VoxelType::Ore,
                 AsteroidClass::Ice => VoxelType::Ice,
             };
-            return Column { dir, top, kind, color: shape.color_at(dir), raw: h };
+            return Column::solid(dir, top, kind, shape.color_at(dir), h);
         }
         let (h, hv, relief) = self.raw_height_full(dir);
         let rel = ((h - p.radius) / quantum).round();
@@ -710,6 +755,7 @@ impl Terrain {
         }
         let jitter = ((dir.x * 127.1 + dir.y * 311.7 + dir.z * 74.7).sin() * 43758.547).fract().abs() * 0.05 - 0.025;
 
+        let mut bed = None;
         let (top, kind, color) = if water {
             let kind = sea.unwrap_or(VoxelType::Water);
             let base = kind.color();
@@ -720,6 +766,24 @@ impl Terrain {
                 (base[2] * (1.0 - depth * 0.2) + var * 0.4 + jitter).clamp(0.03, 1.0),
                 1.0,
             ];
+            // Fond marin gardé sous un liquide transparent (0.13 O1) : sable près du rivage, vase
+            // et roche sombre vers le large
+            if kind.is_clear_liquid() {
+                let bed_top = p.radius + rel * quantum;
+                let deep = ((p.radius + tide_q * quantum - bed_top) / (self.layout.voxel * 300.0)).clamp(0.0, 1.0);
+                let shore = ((p.radius + tide_q * quantum - bed_top) / (self.layout.voxel * 24.0)).clamp(0.0, 1.0);
+                let bed_kind = if shore < 0.85 { VoxelType::Sand } else { VoxelType::Stone };
+                let sand = VoxelType::Sand.color();
+                let floor = [0.34, 0.33, 0.34, 1.0];
+                let c = mix(mix(sand, [0.52, 0.46, 0.34, 1.0], shore), floor, deep);
+                let bed_color = [
+                    (c[0] + var * 0.7 + jitter).clamp(0.03, 1.0),
+                    (c[1] + var * 0.9 + jitter).clamp(0.03, 1.0),
+                    (c[2] + var * 0.4 + jitter).clamp(0.03, 1.0),
+                    1.0,
+                ];
+                bed = Some((bed_top, bed_kind, bed_color));
+            }
             (p.radius + tide_q * quantum, kind, color)
         } else {
             // Hauteur réelle (collines comprises) : une colline au bord de l'eau n'est pas une plage
@@ -771,7 +835,10 @@ impl Terrain {
             }
             (p.radius + rel * quantum, kind, color)
         };
-        Column { dir, top, kind, color, raw: h }
+        match bed {
+            Some((bed, bed_kind, bed_color)) => Column { dir, top, kind, color, raw: h, bed, bed_kind, bed_color },
+            None => Column::solid(dir, top, kind, color, h),
+        }
     }
 
     /// Surface la plus haute de la colonne du niveau le plus fin qui contient `dir` (dessus d'un
@@ -850,6 +917,11 @@ impl Terrain {
         }
         if k < top_k {
             let v = self.layout.voxel;
+            // Mer : le fond (sable puis roche) sous une eau transparente (0.13 O1)
+            if base.kind.is_clear_liquid() {
+                let bed_k = ((base.bed - self.params.radius) / v).round() as i32;
+                return if k >= bed_k { base.kind } else { base.bed_kind };
+            }
             let r = self.layer_radius(k) + v * 0.5;
             let depth = base.top - r;
             // Sous la mer, pas de grotte (elle se remplirait) ; près de la surface, le sol.
@@ -910,15 +982,45 @@ impl Terrain {
     /// Sol sous le point (`dir`, `r`) : la plus haute surface pleine dont le dessus est au plus à
     /// `r` (le dessus d'un surplomb si l'on est dessus, le sol si l'on est dessous).
     pub fn floor(&self, dir: Vec3, r: f32) -> Column {
+        self.floor_in(dir, r, false)
+    }
+
+    /// Comme `floor`, mais le fond sous l'eau (0.13 O2 : nage, plongée) : les liquides
+    /// transparents ne comptent pas.
+    pub fn seabed(&self, dir: Vec3, r: f32) -> Column {
+        self.floor_in(dir, r, true)
+    }
+
+    /// Le liquide transparent des mers de l'astre à la latitude de `dir` (sans lui : pas de mer, ou
+    /// gelée / de lave).
+    pub fn sea_kind(&self, dir: Vec3) -> Option<VoxelType> {
+        let p = &self.params;
+        if p.gaseous || p.asteroid.is_some() || !p.atmosphere {
+            return None;
+        }
+        sea_material(&p.climate, &p.hydro, p.airless, dir.y).filter(|k| k.is_clear_liquid())
+    }
+
+    /// Surface du liquide transparent au-dessus de `dir` : (rayon, matière), si la colonne en a.
+    pub fn sea_surface(&self, dir: Vec3) -> Option<(f32, VoxelType)> {
+        if self.params.gaseous || self.params.asteroid.is_some() {
+            return None;
+        }
+        let (face, i, j) = self.cell_of(dir);
+        let (base, _) = self.base_cell_column(self.cell_dir(face, i, j));
+        base.is_sea().then_some((base.top, base.kind))
+    }
+
+    fn floor_in(&self, dir: Vec3, r: f32, dry: bool) -> Column {
         let p = &self.params;
         if p.gaseous {
-            return Column { dir, top: p.radius * GAS_CORE, kind: VoxelType::Stone, color: [0.3, 0.25, 0.2, 1.0], raw: p.radius * GAS_CORE };
+            return Column::solid(dir, p.radius * GAS_CORE, VoxelType::Stone, [0.3, 0.25, 0.2, 1.0], p.radius * GAS_CORE);
         }
         let (face, i, j) = self.cell_of(dir);
         let center = self.cell_dir(face, i, j);
         let (base, top_k) = self.base_cell_column(center);
         if !self.has_3d(face, i, j, center) {
-            return base;
+            return if dry { base.ground_view() } else { base };
         }
         let highest = self.highest_layer(face, i, j, top_k);
         // (marges en fraction de voxel : à 10 000 unités du centre, 0,001 est sous la précision
@@ -926,12 +1028,12 @@ impl Terrain {
         let start = if r.is_finite() { (self.layer(r + 0.05 * self.layout.voxel) - 1).min(highest) } else { highest };
         for k in (start - 512..=start).rev() {
             let kind = self.kind_at(face, i, j, k, center, &base, top_k);
-            if kind != VoxelType::Air {
-                let color = if k < top_k { base.color } else { OVERHANG_COLOR };
-                return Column { dir: center, top: self.layer_radius(k + 1), kind, color, raw: base.raw };
+            if kind != VoxelType::Air && !(dry && kind.is_clear_liquid()) {
+                let color = if k < top_k { base.ground_view().color } else { OVERHANG_COLOR };
+                return Column { dir: center, top: self.layer_radius(k + 1), kind, color, raw: base.raw, bed: base.bed, bed_kind: base.bed_kind, bed_color: base.bed_color };
             }
         }
-        base
+        if dry { base.ground_view() } else { base }
     }
 
     /// Plafond au-dessus du point (`dir`, `r`) : bas de la première cellule pleine au-dessus de
@@ -1132,7 +1234,13 @@ pub fn build_tile_mesh(params: &BodyParams, key: TileKey) -> Mesh {
 
 /// Comme `build_tile_mesh`, avec un `Terrain` déjà construit (partagé avec le décor). Au niveau le
 /// plus fin (près du joueur), la tuile est en voxels 3D.
+#[allow(dead_code)]
 pub fn build_tile_mesh_with(terrain: &Terrain, key: TileKey) -> Mesh {
+    build_tile_meshes_with(terrain, key).0
+}
+
+/// La tuile et, s'il y a de l'eau (mer, lac), sa surface transparente à part (0.13 O1).
+pub fn build_tile_meshes_with(terrain: &Terrain, key: TileKey) -> (Mesh, Option<Mesh>) {
     if key.depth as u32 >= terrain.layout.max_depth && !terrain.params.gaseous {
         return build_voxel_tile_mesh(terrain, key);
     }
@@ -1140,7 +1248,7 @@ pub fn build_tile_mesh_with(terrain: &Terrain, key: TileKey) -> Mesh {
 }
 
 /// Tuile en champ de hauteur (tuiles lointaines).
-pub fn build_height_tile_mesh(terrain: &Terrain, key: TileKey) -> Mesh {
+pub fn build_height_tile_mesh(terrain: &Terrain, key: TileKey) -> (Mesh, Option<Mesh>) {
     // Pas de cratère plus petit qu'une colonne et demie de cette tuile (on ne le verrait pas)
     use std::sync::atomic::Ordering;
     let before = terrain.min_crater.load(Ordering::Relaxed);
@@ -1151,7 +1259,7 @@ pub fn build_height_tile_mesh(terrain: &Terrain, key: TileKey) -> Mesh {
     mesh
 }
 
-fn build_height_tile_inner(terrain: &Terrain, key: TileKey) -> Mesh {
+fn build_height_tile_inner(terrain: &Terrain, key: TileKey) -> (Mesh, Option<Mesh>) {
     let layout = terrain.layout;
     let depth = (key.depth as u32).min(layout.max_depth);
     let lattice = (TILE_CELLS as u32) << depth;
@@ -1188,7 +1296,8 @@ fn build_height_tile_inner(terrain: &Terrain, key: TileKey) -> Mesh {
 
     for cj in 0..TILE_CELLS as i32 {
         for ci in 0..TILE_CELLS as i32 {
-            let c = col(ci, cj);
+            let c0 = col(ci, cj);
+            let c = &c0.ground_view();
             let (u, v) = (ci as usize, cj as usize);
 
             buf.quad(
@@ -1199,7 +1308,7 @@ fn build_height_tile_inner(terrain: &Terrain, key: TileKey) -> Mesh {
                     corner(u, v + 1) * c.top,
                 ],
                 c.dir,
-                c.color,
+                submerged(c.color, c0.is_sea()),
             );
 
             // (voisin, extrémités de l'arête partagée)
@@ -1211,7 +1320,8 @@ fn build_height_tile_inner(terrain: &Terrain, key: TileKey) -> Mesh {
             ];
             for ((dx, dy), ea, eb) in sides {
                 let (ni, nj) = (ci + dx, cj + dy);
-                let nb = col(ni, nj);
+                let nb0 = col(ni, nj);
+                let nb = &nb0.ground_view();
                 let boundary = ni < 0 || ni > last || nj < 0 || nj > last;
                 let hi = c.top;
                 let lo = if boundary {
@@ -1228,12 +1338,79 @@ fn build_height_tile_inner(terrain: &Terrain, key: TileKey) -> Mesh {
                 }
                 // Parois : la roche nue (le sol seulement au bord des marches)
                 let wall = if c.top - lo > 1.5 * quantum && !c.kind.is_liquid() { rock_of(c.color) } else { c.color };
-                let shade = [wall[0] * 0.82, wall[1] * 0.82, wall[2] * 0.82, 1.0];
+                let shade = submerged([wall[0] * 0.82, wall[1] * 0.82, wall[2] * 0.82, 1.0], c0.is_sea() || nb0.is_sea());
                 buf.quad([a * lo, b * lo, b * hi, a * hi], n, shade);
             }
         }
     }
-    buf.into_mesh()
+    let water = water_mesh(&cols, nc, &corners, n1, (i0, j0, 1i64 << (layout.max_depth - depth)), |c| c);
+    (buf.into_mesh(), water)
+}
+
+/// Surface de l'eau d'une tuile (0.13 O1) : une grille de sommets (un par coin de colonne) au
+/// niveau de la mer, dont la couleur est celle du liquide et l'alpha la PROFONDEUR (unités, moyenne
+/// des quatre colonnes autour du sommet : 0 au rivage). `None` sans eau.
+///
+/// `lattice` = (i0, j0, pas) : coordonnées du coin (0, 0) de la tuile dans le réseau de colonnes
+/// le plus fin de la face, et pas entre deux colonnes (UV = ces coordonnées modulo `WAVE_PERIOD`,
+/// pour que les vagues, qui ne dépendent que d'elles, se raccordent d'une tuile à l'autre).
+fn water_mesh<T>(cols: &[T], nc: usize, corners: &[Vec3], n1: usize, lattice: (i64, i64, i64), get: impl Fn(&T) -> &Column) -> Option<Mesh> {
+    let at = |ci: usize, cj: usize| get(&cols[cj * nc + ci]);
+    let cells = TILE_CELLS;
+    // Colonnes de la tuile : indices 1..=cells dans `cols` (une rangée de voisines autour)
+    let wet = |i: usize, j: usize| at(i + 1, j + 1).is_sea();
+    if !(0..cells).any(|j| (0..cells).any(|i| wet(i, j))) {
+        return None;
+    }
+    let mut pos = Vec::with_capacity(n1 * n1);
+    let mut nor = Vec::with_capacity(n1 * n1);
+    let mut col = Vec::with_capacity(n1 * n1);
+    let mut uv = Vec::with_capacity(n1 * n1);
+    for cj in 0..n1 {
+        for ci in 0..n1 {
+            uv.push([((lattice.0 + ci as i64 * lattice.2).rem_euclid(WAVE_PERIOD)) as f32, ((lattice.1 + cj as i64 * lattice.2).rem_euclid(WAVE_PERIOD)) as f32]);
+            // Les quatre colonnes autour du coin (ci, cj) : (ci-1, cj-1) .. (ci, cj) de la tuile
+            let mut level = 0.0;
+            let mut count = 0.0;
+            let mut depth = 0.0;
+            let mut tint = [0.0f32; 3];
+            for (di, dj) in [(0usize, 0usize), (1, 0), (0, 1), (1, 1)] {
+                let c = at(ci + di, cj + dj);
+                if c.is_sea() {
+                    level += c.top;
+                    count += 1.0;
+                    depth += c.depth();
+                    let k = c.kind.color();
+                    tint = [tint[0] + k[0], tint[1] + k[1], tint[2] + k[2]];
+                }
+            }
+            let dir = corners[cj * n1 + ci];
+            if count == 0.0 {
+                pos.push((dir * at(ci + 1, cj + 1).top).to_array());
+                col.push([0.0, 0.0, 0.0, 0.0]);
+            } else {
+                pos.push((dir * (level / count)).to_array());
+                col.push([tint[0] / count, tint[1] / count, tint[2] / count, depth / 4.0]);
+            }
+            nor.push(dir.to_array());
+        }
+    }
+    let mut idx = Vec::new();
+    let v = |i: usize, j: usize| (j * n1 + i) as u32;
+    for j in 0..cells {
+        for i in 0..cells {
+            if wet(i, j) {
+                idx.extend_from_slice(&[v(i, j), v(i + 1, j), v(i + 1, j + 1), v(i, j), v(i + 1, j + 1), v(i, j + 1)]);
+            }
+        }
+    }
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, nor);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uv);
+    mesh.insert_indices(Indices::U32(idx));
+    Some(mesh)
 }
 
 /// Couleurs des dessus d'une tuile d'après la pente et les parois (`ground_tint`) ; `cols` a une
@@ -1259,6 +1436,7 @@ fn tint_columns<T>(t: &Terrain, cols: &mut [T], nc: usize, get: impl Fn(&T) -> &
 struct Col3 {
     base: Column,
     top_k: i32,
+    bed_k: i32,
     /// Colonne canonique (une voisine au-delà du bord de la face est rapportée à sa vraie face).
     face: u8,
     i: i64,
@@ -1268,10 +1446,11 @@ struct Col3 {
 /// Couleur d'une cellule : celle de la colonne pour le sol, celle de sa matière pour la roche, les
 /// filons, les cristaux et l'eau des grottes (avec un peu de variation).
 fn cell_color(kind: VoxelType, k: i32, c: &Col3) -> [f32; 4] {
-    if kind == c.base.kind && k < c.top_k {
-        return c.base.color;
+    let ground = c.base.ground_view();
+    if kind == ground.kind && k < c.bed_k {
+        return ground.color;
     }
-    if k >= c.top_k && kind == VoxelType::Stone {
+    if k >= c.bed_k && kind == VoxelType::Stone {
         return OVERHANG_COLOR;
     }
     let base = kind.color();
@@ -1283,7 +1462,7 @@ fn cell_color(kind: VoxelType, k: i32, c: &Col3) -> [f32; 4] {
 /// une cellule vide (dessus, dessous des surplombs, côtés). Sans forme 3D, le résultat a les mêmes
 /// dessus que le champ de hauteur. Une jupe descend le long des bords (raccord avec les tuiles
 /// plus grossières voisines).
-pub fn build_voxel_tile_mesh(t: &Terrain, key: TileKey) -> Mesh {
+pub fn build_voxel_tile_mesh(t: &Terrain, key: TileKey) -> (Mesh, Option<Mesh>) {
     let layout = t.layout;
     let v = layout.voxel;
     let n = t.lattice();
@@ -1308,7 +1487,9 @@ pub fn build_voxel_tile_mesh(t: &Terrain, key: TileKey) -> Mesh {
             let (face, i, j) = if (0..n).contains(&gi) && (0..n).contains(&gj) { (key.face, gi, gj) } else { t.cell_of(dir) };
             let center = t.cell_dir(face, i, j);
             let (base, top_k) = t.base_cell_column(center);
-            cols.push(Col3 { base, top_k, face, i, j });
+            // Première couche vide au-dessus du fond (sous l'eau, le fond marin)
+            let bed_k = ((base.bed - t.params.radius) / v).round() as i32;
+            cols.push(Col3 { base, top_k, bed_k, face, i, j });
         }
     }
     tint_columns(t, &mut cols, nc, |c| &c.base, |c| &mut c.base);
@@ -1318,8 +1499,24 @@ pub fn build_voxel_tile_mesh(t: &Terrain, key: TileKey) -> Mesh {
     let tile_dir = key.center_dir();
     let any_3d = t.overhang.as_ref().is_some_and(|o| tile_dir.dot(o.dir) > (key.arc(t.params.radius) * 0.8 / o.base + 40.0 * v / o.base).cos())
         || t.voxels.as_ref().is_some_and(|vx| cols.iter().any(|c| vx.layers_in(c.face, c.i.div_euclid(BLOCK), c.j.div_euclid(BLOCK)).is_some()));
-    let mut kmin = cols.iter().map(|c| c.top_k).min().unwrap_or(0) - 1;
+    let mut kmin = cols.iter().map(|c| c.bed_k).min().unwrap_or(0) - 1;
     let mut kmax = cols.iter().map(|c| c.top_k).max().unwrap_or(0) + 1;
+    // Sans forme 3D, chaque colonne n'examine que les couches de ses voisines (et pas toute la
+    // hauteur de la tuile : une mer profonde aurait des centaines de couches d'eau)
+    let near = |ci: i32, cj: i32| -> (i32, i32) {
+        let (mut lo, mut hi) = (i32::MAX, i32::MIN);
+        for dj in -1..=1 {
+            for di in -1..=1 {
+                let (a, b) = (ci + di, cj + dj);
+                if (-1..=TILE_CELLS as i32).contains(&a) && (-1..=TILE_CELLS as i32).contains(&b) {
+                    let c = &cols[(b + 1) as usize * nc + (a + 1) as usize];
+                    lo = lo.min(c.bed_k);
+                    hi = hi.max(c.top_k);
+                }
+            }
+        }
+        (lo - 1, hi + 1)
+    };
     if any_3d {
         if let Some(o) = &t.overhang {
             let (lo, hi) = o.layers(t);
@@ -1403,7 +1600,15 @@ pub fn build_voxel_tile_mesh(t: &Terrain, key: TileKey) -> Mesh {
     // Couches à examiner dans une colonne : autour du sol, plus là où passent les grottes
     let ranges = |ci: i32, cj: i32| -> Vec<(i32, i32)> {
         let c = col(ci, cj);
-        let mut out = vec![(kmin.min(c.top_k - 1), kmax)];
+        let mut out = if any_3d {
+            vec![(kmin.min(c.bed_k - 1), kmax)]
+        } else if c.base.is_sea() {
+            // Eau profonde : le fond et la surface, pas les couches d'eau entre les deux
+            let (lo, _) = near(ci, cj);
+            vec![(lo, c.bed_k + 1), (c.top_k - 1, c.top_k + 1)]
+        } else {
+            vec![near(ci, cj)]
+        };
         out.extend(col_spans[index(ci, cj)].iter().copied());
         out.sort();
         let mut merged: Vec<(i32, i32)> = Vec::new();
@@ -1436,7 +1641,12 @@ pub fn build_voxel_tile_mesh(t: &Terrain, key: TileKey) -> Mesh {
     buf.pos.reserve(TILE_CELLS * TILE_CELLS * 8);
     let last = TILE_CELLS as i32 - 1;
     let skirt = v * 8.0;
-    let shade = |c: [f32; 4], k: f32| [c[0] * k, c[1] * k, c[2] * k, 1.0];
+    let shade = |c: [f32; 4], k: f32| [c[0] * k, c[1] * k, c[2] * k, c[3]];
+    // Vide pour le maillage solide : l'air et les liquides transparents (leur surface est à part)
+    let open = |ci: i32, cj: i32, k: i32| {
+        let kind = kind(ci, cj, k);
+        kind == VoxelType::Air || (kind.is_clear_liquid() && col(ci, cj).base.is_sea())
+    };
 
     for cj in 0..TILE_CELLS as i32 {
         for ci in 0..TILE_CELLS as i32 {
@@ -1445,15 +1655,15 @@ pub fn build_voxel_tile_mesh(t: &Terrain, key: TileKey) -> Mesh {
             let up = c.base.dir;
             for k in ranges(ci, cj).into_iter().flat_map(|(a, b)| a..=b) {
                 let here = kind(ci, cj, k);
-                if here == VoxelType::Air {
+                if open(ci, cj, k) {
                     continue;
                 }
-                let color = cell_color(here, k, c);
+                let color = submerged(cell_color(here, k, c), c.base.is_sea());
                 let (r0, r1) = (t.layer_radius(k), t.layer_radius(k + 1));
-                if kind(ci, cj, k + 1) == VoxelType::Air {
+                if open(ci, cj, k + 1) {
                     buf.quad([corner(u, w) * r1, corner(u + 1, w) * r1, corner(u + 1, w + 1) * r1, corner(u, w + 1) * r1], up, color);
                 }
-                if kind(ci, cj, k - 1) == VoxelType::Air {
+                if open(ci, cj, k - 1) {
                     buf.quad([corner(u, w) * r0, corner(u + 1, w) * r0, corner(u + 1, w + 1) * r0, corner(u, w + 1) * r0], -up, shade(color, 0.55));
                 }
                 let sides: [((i32, i32), (usize, usize), (usize, usize)); 4] = [
@@ -1463,7 +1673,7 @@ pub fn build_voxel_tile_mesh(t: &Terrain, key: TileKey) -> Mesh {
                     ((0, -1), (u, w), (u + 1, w)),
                 ];
                 for ((dx, dy), ea, eb) in sides {
-                    if kind(ci + dx, cj + dy, k) != VoxelType::Air {
+                    if !open(ci + dx, cj + dy, k) {
                         continue;
                     }
                     let (a, b) = (corner(ea.0, ea.1), corner(eb.0, eb.1));
@@ -1473,12 +1683,13 @@ pub fn build_voxel_tile_mesh(t: &Terrain, key: TileKey) -> Mesh {
                         nrm = -nrm;
                     }
                     // Paroi sous la couche du dessus : strates de la roche (0.13 T3)
-                    let side = if k < c.top_k - 1 && matches!(here, VoxelType::Stone | VoxelType::Basalt) || (k < c.top_k - 1 && here == c.base.kind) {
-                        strata_color(c.base.color, k, t.params.seed, !t.params.airless && t.params.atmosphere)
+                    let ground = c.base.ground_view();
+                    let side = if k < c.bed_k - 1 && matches!(here, VoxelType::Stone | VoxelType::Basalt) || (k < c.bed_k - 1 && here == ground.kind) {
+                        strata_color(ground.color, k, t.params.seed, !t.params.airless && t.params.atmosphere)
                     } else {
                         color
                     };
-                    buf.quad([a * r0, b * r0, b * r1, a * r1], nrm, shade(side, 0.82));
+                    buf.quad([a * r0, b * r0, b * r1, a * r1], nrm, shade(submerged(side, c.base.is_sea() || nb.base.is_sea()), 0.82));
                 }
             }
             // Jupes au bord de la tuile (raccord avec une voisine plus grossière)
@@ -1494,18 +1705,21 @@ pub fn build_voxel_tile_mesh(t: &Terrain, key: TileKey) -> Mesh {
                     continue;
                 }
                 let nb = col(ni, nj);
-                let hi = c.base.top.min(nb.base.top);
+                let hi = c.base.bed.min(nb.base.bed);
                 let lo = hi - skirt;
                 let (a, b) = (corner(ea.0, ea.1), corner(eb.0, eb.1));
                 let mut nrm = (b - a).cross(up).normalize_or_zero();
                 if nrm.dot(nb.base.dir - up) < 0.0 {
                     nrm = -nrm;
                 }
-                buf.quad([a * lo, b * lo, b * hi, a * hi], nrm, shade(c.base.color, 0.82));
+                buf.quad([a * lo, b * lo, b * hi, a * hi], nrm, shade(submerged(c.base.ground_view().color, c.base.is_sea()), 0.82));
             }
         }
     }
-    buf.into_mesh()
+    // Surface de l'eau : colonnes de mer (le niveau est celui de la colonne), plus l'eau des
+    // grottes dont le dessus touche l'air
+    let water = water_mesh(&cols, nc, &corners, n1, (i0, j0, 1), |c| &c.base);
+    (buf.into_mesh(), water)
 }
 
 #[cfg(test)]
@@ -1706,8 +1920,8 @@ pub(crate) mod tests {
         for face in 0..6u8 {
             for (s, tt) in [(0.1, -0.2), (0.999, 0.3), (-0.999, -0.999)] {
                 let key = finest(&t, face_dir(face, s, tt));
-                let height = build_height_tile_mesh(&t, key);
-                let voxel = build_voxel_tile_mesh(&t, key);
+                let height = build_height_tile_mesh(&t, key).0;
+                let voxel = build_voxel_tile_mesh(&t, key).0;
                 assert_eq!(tops(&height), tops(&voxel), "face {face} ({s}, {tt})");
                 let Some(VertexAttributeValues::Float32x3(pos)) = voxel.attribute(Mesh::ATTRIBUTE_POSITION) else { panic!() };
                 let Some(VertexAttributeValues::Float32x3(nor)) = voxel.attribute(Mesh::ATTRIBUTE_NORMAL) else { panic!() };
@@ -1747,7 +1961,7 @@ pub(crate) mod tests {
         let b = Terrain::new(earth_like());
         let o = a.overhang.expect("une arche sur la terre ferme");
         let key = finest(&a, o.dir);
-        assert_eq!(tops(&build_voxel_tile_mesh(&a, key)), tops(&build_voxel_tile_mesh(&b, key)));
+        assert_eq!(tops(&build_voxel_tile_mesh(&a, key).0), tops(&build_voxel_tile_mesh(&b, key).0));
         let mut h = 0u64;
         let (face, i, j) = a.cell_of(o.dir);
         for di in -15..15 {
@@ -1778,7 +1992,7 @@ pub(crate) mod tests {
         assert!(top.top > roof, "dessus {} plafond {roof}", top.top);
         assert_eq!(top.kind, VoxelType::Stone);
         // Le maillage a des faces tournées vers le bas (dessous de l'auvent)
-        let mesh = build_voxel_tile_mesh(&t, finest(&t, under));
+        let mesh = build_voxel_tile_mesh(&t, finest(&t, under)).0;
         let Some(VertexAttributeValues::Float32x3(pos)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else { panic!() };
         let Some(VertexAttributeValues::Float32x3(nor)) = mesh.attribute(Mesh::ATTRIBUTE_NORMAL) else { panic!() };
         let down = pos.iter().zip(nor).filter(|(p, n)| Vec3::from_array(**n).dot(Vec3::from_array(**p).normalize()) < -0.999).count();

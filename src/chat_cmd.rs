@@ -37,7 +37,7 @@ impl Plugin for ChatCmdPlugin {
 #[derive(Event)]
 pub struct ChatCommand(pub String);
 
-const COMMANDS: [&str; 25] = ["/geologie", "/relief", "/echelle", "/impact", "/ceinture", "/comete", "/eclipse", "/editeur", "/grotte", "/surplomb", "/tp", "/galaxie", "/profil", "/profile", "/graine", "/seed", "/aller", "/go", "/stats", "/aide", "/help", "/heure", "/time", "/temps", "/speed"];
+const COMMANDS: [&str; 30] = ["/mer", "/jour", "/nuit", "/vol", "/essai", "/geologie", "/relief", "/echelle", "/impact", "/ceinture", "/comete", "/eclipse", "/editeur", "/grotte", "/surplomb", "/tp", "/galaxie", "/profil", "/profile", "/graine", "/seed", "/aller", "/go", "/stats", "/aide", "/help", "/heure", "/time", "/temps", "/speed"];
 
 /// La ligne est une commande du jeu (et non un message à envoyer).
 pub fn is_local(line: &str) -> bool {
@@ -96,15 +96,20 @@ fn find_galaxy(arg: &str, settings: &GameSettings, current: usize) -> Result<usi
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Commandes : (nom, arguments, description). Ordre d'affichage des propositions.
-pub const COMMAND_HELP: [(&str, &str, &str); 19] = [
+pub const COMMAND_HELP: [(&str, &str, &str); 24] = [
     ("/aide", "[commande]", "la liste des commandes, ou l'aide d'une commande"),
     ("/aller", "etoile|planete|lune <type> | suivant", "tests : aller a un type d'etoile, de planete ou de lune"),
     ("/stats", "[n | tout]", "statistiques de tous les astres d'une galaxie (F3 : masquer)"),
-    ("/heure", "", "heure locale, hauteur du soleil et saison de l'astre ou l'on est (ou cible)"),
+    ("/heure", "[0-23.9]", "heure locale, hauteur du soleil et saison de l'astre ou l'on est (ou cible) ; avec un nombre : regle l'heure (hote, tests)"),
+    ("/jour", "", "tests : midi sur l'astre cible (hote ; inutile en rotation synchrone)"),
+    ("/nuit", "", "tests : minuit sur l'astre cible (hote)"),
+    ("/vol", "", "tests : descendre en vol bas sur l'astre cible (comme la molette)"),
+    ("/essai", "mer", "tests : va a une planete avec mer, de jour, en vol bas, au-dessus de la mer (enchaine /aller, /jour, /vol, /mer)"),
     ("/temps", "<facteur>", "tests : accelerer le temps (1 = normal, 60 = une heure de la planete par seconde)"),
     ("/surplomb", "", "tests : aller a l'arche de test en voxels 3D de l'astre (pose ou en vol bas)"),
     ("/echelle", "<k : 1, 8, 16, 32, 64>", "tests (0.13 E1) : voxels k fois plus petits au prochain atterrissage"),
     ("/grotte", "", "aller a l'entree de grotte la plus proche (pose ou en vol bas)"),
+    ("/mer", "", "aller au rivage de la mer la plus proche (pose ou en vol bas)"),
     ("/geologie", "[geyser | fumerolle | cryovolcan | lave | seisme]", "aller a l'evenement geologique le plus proche (pose ou en vol bas) ; seisme = tests"),
     ("/relief", "[corniche | grotte | strates | piton | blocs | gorge | pont | arche | cheminee]", "aller a la forme du relief la plus proche (pose ou en vol bas)"),
     ("/ceinture", "", "aller au champ dense d'une ceinture d'asteroides du systeme charge"),
@@ -293,7 +298,7 @@ fn run_chat_commands(
     mut overhang: EventWriter<crate::surface::OverhangCommand>,
     mut cave: EventWriter<crate::surface::CaveCommand>,
     mut impact: EventWriter<crate::meteors::ImpactCommand>,
-    mut small: (EventWriter<crate::asteroids::BeltCommand>, EventWriter<crate::asteroids::CometCommand>, EventWriter<crate::sky::EclipseCommand>, EventWriter<crate::editeur::OpenEditor>),
+    mut small: (EventWriter<crate::asteroids::BeltCommand>, EventWriter<crate::asteroids::CometCommand>, EventWriter<crate::sky::EclipseCommand>, EventWriter<crate::editeur::OpenEditor>, EventWriter<crate::surface::SeaCommand>, EventWriter<crate::test_cmd::DescendCommand>),
     profiles: Res<ProfileCache>,
     star_q: Query<&StarId, With<StarRoot>>,
 ) {
@@ -336,7 +341,27 @@ fn run_chat_commands(
                 }
             }
             "/heure" | "/time" => {
-                clock.send(crate::world_clock::ClockCommand::Hour);
+                match arg.trim().replace(',', ".").replace(['h', 'H'], ".").trim_end_matches('.').parse::<f32>() {
+                    Ok(h) if (0.0..24.0).contains(&h) => {
+                        clock.send(crate::world_clock::ClockCommand::SetHour(h));
+                    }
+                    _ if arg.trim().is_empty() => {
+                        clock.send(crate::world_clock::ClockCommand::Hour);
+                    }
+                    _ => net.notify("/heure [0-23.9] : sans argument, l'heure locale ; avec, regle l'heure (hote).", now),
+                }
+            }
+            "/jour" => {
+                clock.send(crate::world_clock::ClockCommand::SetHour(12.0));
+            }
+            "/nuit" => {
+                clock.send(crate::world_clock::ClockCommand::SetHour(0.0));
+            }
+            "/vol" => {
+                small.5.send(crate::test_cmd::DescendCommand);
+            }
+            "/essai" => {
+                go.send(crate::test_cmd::GoCommand(format!("essai {arg}")));
             }
             "/temps" | "/speed" => {
                 clock.send(crate::world_clock::ClockCommand::Speed(arg.to_string()));
@@ -353,6 +378,9 @@ fn run_chat_commands(
             }
             "/grotte" => {
                 cave.send(crate::surface::CaveCommand);
+            }
+            "/mer" => {
+                small.4.send(crate::surface::SeaCommand);
             }
             "/impact" => {
                 impact.send(crate::meteors::ImpactCommand);

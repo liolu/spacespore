@@ -526,6 +526,12 @@ impl VoxelType {
         matches!(self, VoxelType::Water | VoxelType::Methane | VoxelType::Ammonia | VoxelType::Lava)
     }
 
+    /// Un liquide transparent (0.13 O1) : eau, méthane, ammoniac. Le fond est gardé dessous et la
+    /// surface est un maillage à part ; la lave, elle, reste opaque.
+    pub fn is_clear_liquid(self) -> bool {
+        matches!(self, VoxelType::Water | VoxelType::Methane | VoxelType::Ammonia)
+    }
+
     pub fn is_solid(self) -> bool {
         !matches!(self, VoxelType::Air)
     }
