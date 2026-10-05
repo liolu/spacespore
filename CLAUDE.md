@@ -200,6 +200,7 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   lumiere des soleils voilee (`SunDim`), ciel gris / brun, flash des eclairs, brouillard (`gas.rs`), particules
   autour de la camera (`particle_positions`), vent qui pousse le vaisseau en vol bas (`Surface::drift`), scanner.
   Banc : `cargo test --release bench_cloud_layer -- --ignored --nocapture`.
+  Particules : `NoFrustumCulling` (sommets reecrits a chaque image) ; `SPACESPORE_TEST_PRECIP=<0..1>` force la pluie.
 - 0.12 (`ROADMAP-0.12-editeur.md`) : editeur de modeles voxel, module `src/editeur/`. E0 = fondations : etat
   `AppState` (Jeu / Editeur, `editeur::in_game` coupe le clavier et la souris du jeu), ouvert au premier lancement
   (`GameSettings::first_launch`, creation du personnage), par le bouton du menu (`EditorMenuButton`) et `/editeur`.
