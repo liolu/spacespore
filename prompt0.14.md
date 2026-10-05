@@ -985,3 +985,7 @@ Oui — pour un jeu spatial voxel, le plus intéressant est de mélanger **plan�
 20. **🌍 Planète artificielle** — monde construit comme une gigantesque machine.
 
  Et surtout, pour ton jeu voxel, je ne me limiterais pas aux **"types de planètes"**. Le plus fort serait de créer des planètes qui ont chacune **une règle physique unique** : _la mer monte tous les 10 jours, la lune se rapproche, les montagnes poussent, la nuit dure 20 ans, la gravité change selon les régions, les continents dérivent, etc._ Ça donne des mondes qui ne sont pas seulement visuellement différents, mais qui **se jouent différemment**.
+
+---
+
+> **Constructions** (stations, habitats, mégastructures, bâtiments au sol, idées de gameplay) : voir `IDEES-constructions.md`.
