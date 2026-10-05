@@ -20,6 +20,16 @@ pub const FPS_LIMIT_CHOICES: [u32; 8] = [0, 30, 60, 90, 120, 144, 165, 240];
 pub const LOD_QUALITY_CHOICES: [f32; 4] = [0.5, 0.75, 1.0, 1.5];
 pub const RENDER_SCALE_CHOICES: [f32; 5] = [0.5, 0.67, 0.75, 0.85, 1.0];
 
+/// Distance de détail du sol (0.13 T4) : (nom, facteur de découpe des tuiles, niveaux de tuiles
+/// avec décor). Ultra = tuiles fines jusqu'à l'horizon.
+pub const TERRAIN_DETAIL: [(&str, f32, u32); 4] = [("Bas", crate::terrain::SPLIT_FACTOR, 1), ("Moyen", 2.4, 2), ("Haut", 3.2, 2), ("Ultra", 4.5, 3)];
+
+/// Réglages du détail du sol choisi, et les ombres du relief (option à part, avec les ombres).
+pub fn terrain_detail(s: &GameSettings) -> (&'static str, f32, u32, bool) {
+    let (name, split, decor) = TERRAIN_DETAIL[(s.terrain_detail as usize).min(TERRAIN_DETAIL.len() - 1)];
+    (name, split, decor, s.relief_shadows && s.shadows)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum QualityPreset {
     Low,

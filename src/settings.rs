@@ -1080,6 +1080,7 @@ fn default_stars()    -> Vec<StarConfig>    { vec![StarConfig::default()] }
 fn default_true()        -> bool { true }
 fn default_msaa()        -> u32  { 4 }
 fn default_lod_quality() -> f32  { 1.0 }
+fn default_terrain_detail() -> u8 { 3 }
 fn default_render_scale() -> f32 { 1.0 }
 
 #[derive(Resource, Serialize, Deserialize, Clone, Debug)]
@@ -1106,6 +1107,10 @@ pub struct GameSettings {
     #[serde(default = "default_true")]        pub show_clouds:   bool,
     #[serde(default = "default_true")]        pub show_flares:   bool,
     #[serde(default = "default_render_scale")] pub render_scale: f32,
+    /// Distance de détail du sol (0 Bas .. 3 Ultra, `graphics::TERRAIN_DETAIL`, 0.13 T4).
+    #[serde(default = "default_terrain_detail")] pub terrain_detail: u8,
+    /// Le relief projette des ombres jusqu'à 4 000 voxels (montagnes lointaines ; ~30 % d'images/s).
+    #[serde(default)] pub relief_shadows: bool,
 
     #[serde(default)] pub world_seed: u64,
 
@@ -1186,7 +1191,7 @@ impl Default for GameSettings {
             show_light_indicator: false, show_orbits: false, show_zones: false, show_systems: false,
             planet_chunk_divisions: 6,
             vsync: true, fps_limit: 0, msaa_samples: 4, shadows: true,
-            lod_quality: 1.0, show_clouds: true, show_flares: true, render_scale: 1.0,
+            lod_quality: 1.0, show_clouds: true, show_flares: true, render_scale: 1.0, terrain_detail: 3, relief_shadows: false,
             world_seed: DEFAULT_WORLD_SEED,
             player_name: default_player_name(),
             aura_color: default_aura_color(),

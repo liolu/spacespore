@@ -1,8 +1,9 @@
 # Feuille de route — Des mondes à la bonne échelle (0.13)
 
 Objectif : des planètes **beaucoup plus grandes en voxels**, un **vrai relief** (montagnes, falaises,
-vallées), une **vraie eau**, un ciel et un espace spectaculaires, puis la vie (faune, végétation,
-aliens, terraformation). **Aucune concession sur la qualité** : la performance s'obtient par la mesure,
+vallées), une **vraie eau**, un ciel et un espace spectaculaires, puis les aliens et la terraformation.
+La faune, la végétation vivante, les rivières, la géologie active, le son et les points d'intérêt
+(bloc D de la 0.11) sont dans la **0.14** (`ROADMAP-0.14.md`). **Aucune concession sur la qualité** : la performance s'obtient par la mesure,
 le LOD et le travail en arrière-plan, jamais en retirant du détail.
 
 Cette feuille de route rassemble :
@@ -11,7 +12,7 @@ Cette feuille de route rassemble :
 |---|---|
 | `RAPPORT-generation-terrain.md` | Terrain plat, eau opaque : relief en voxels, vraie eau, couleurs, horizon, **planètes plus grandes** (décision du 04/10) |
 | `IDEES-prochaine-version.md` (supprimé, tout est ici) | R1 détail du terrain, R2 brouillard, V1 skybox, V2 trous noirs, V3 voyage entre galaxies, V4 vue de la galaxie inclinée, A1 aliens, A2 terraformation |
-| `A-FAIRE-PLUS-TARD.md` (bloc D de la 0.11) | D1 eau vivante, D2 géologie active, D3 faune, D4 végétation vivante, D5 son, D6 points d'intérêt |
+| `A-FAIRE-PLUS-TARD.md` (bloc D de la 0.11) | **Déplacé en 0.14** (`ROADMAP-0.14.md`, 04/10/2026) |
 
 Point de départ : **v0.12.0** (éditeur de modèles + correctifs C1 à C8). Les outils de mesure et de
 réglage (panneau, benchmark) restent dans la **0.20** (`ROADMAP-0.20-debug-opti.md`) : la 0.13 mesure
@@ -123,7 +124,7 @@ grande**.
 | **E2. Passage à l'échelle** | Règle 14 : `GroundScale` (voxel, marcheur, vaisseau posé) ; toutes les constantes du §2.2 en voxels ; **plan proche dynamique** (0,1 voxel au sol, plus loin dans l'espace) ; plafond du quadtree relevé ; vitesses de vol bas et de marche revues pour traverser une planète k fois plus grande (vol bas rapide, Maj ×4, **vol suborbital** pour les longues distances) ; transitions orbite → sol plus longues mais fluides ; grottes, rochers, cratères, décor, météores, marées, nuages, particules de météo, lampes, astéroïdes où l'on se pose ; `f64` là où la précision manque (règle 19). Sauvegardes : deltas voxel et position du marcheur convertis (ou remis à zéro si impossible, à dire dans la PR). `PROTOCOL` +1. Tests : planètes reproductibles, marcheur et vaisseau qui se posent partout, `/aller` sur chaque type. | XL |
 | **E3. Streaming à la nouvelle échelle** | Avec k fois plus de voxels sous l'horizon : génération limitée en **ms par image** (plus en nombre de tâches), priorité devant la caméra et au centre de l'écran, **cache disque** des tuiles générées (graine + génération → réutilisable), tuiles lointaines simplifiées mais **même silhouette** (règle 16), aucune tuile manquante en vol bas rapide. Critère : pas de trou ni de pic > 33 ms en vol bas à pleine vitesse. | L |
 
-### Bloc T — Terrain (rapport §5 T1, T3, T4 + R1 + D2)
+### Bloc T — Terrain (rapport §5 T1, T3, T4 + R1)
 
 | Phase | Contenu | Taille |
 |---|---|---|
@@ -131,15 +132,13 @@ grande**.
 | **T2. Falaises et formes 3D** | Pentes > 45° = **parois verticales** en 3D (strates, surplombs, corniches), **pitons**, **chaos de blocs** éboulés, **arches** et **ponts naturels** généralisés (plus seulement l'arche de test), **gorges** étroites, entrées de grottes dans les falaises. Hachés par cellule (règle 12), passent par `kind_at`. Collisions 3D du marcheur et du vaisseau vérifiées. | L |
 | **T3. Couleurs et matières** | Couleur sur plusieurs échelles (taches de 5, 30, 200 voxels), **roche nue sur les pentes fortes**, herbe et neige sur le plat (neige sur les faces tournées vers le haut), **strates** colorées sur les falaises, sable des plages en pente douce, mousse au pied des parois humides. Couleur vue de l'espace = sol (`mesher.rs`). | M |
 | **T4. Détail jusqu'à l'horizon** | (R1) Distance de détail réglable (défaut Ultra = tuiles fines jusqu'à l'horizon), transitions douces entre niveaux (fondu ou morphing des hauteurs, plus de marche visible), coutures sans fissure, ombres des montagnes lointaines, décor lointain en **instances**. Mesures avant / après. | L |
-| **T5. Géologie active** | (D2) Coulées de lave **lumineuses** (visibles la nuit), **geysers**, **cryovolcans** (type Encelade), fumerolles, petits **séismes** (secousse de caméra, éboulis) selon l'activité de `geology.rs`. f(graine, horloge). | M |
 
-### Bloc O — Eau (rapport §5 T2 + D1)
+### Bloc O — Eau (rapport §5 T2 ; rivières et lacs en 0.14 D1)
 
 | Phase | Contenu | Taille |
 |---|---|---|
 | **O1. Vraie eau** | La hauteur du **fond** est gardée sous la mer (`terrain.rs:520`) : fond marin, fosses, plages qui descendent. **Surface d'eau à part** : maillage par tuile au niveau de la mer (marées comprises), matériau **transparent** (`AlphaMode::Blend` ou passe dédiée), couleur et opacité selon la **profondeur** (fond visible près du bord), reflet selon l'angle (**Fresnel**), reflet du ciel et du soleil, réfraction légère. Même chose pour méthane et ammoniac (leurs couleurs) ; lave opaque et lumineuse. De l'espace : mer sombre avec le reflet de l'étoile. `PROTOCOL` +1. | L |
 | **O2. Vagues, rivage, sous l'eau** | **Vagues** selon le vent de `weather.rs` (normales animées + déplacement des sommets près du joueur), **écume** au rivage et sur les crêtes, **sous l'eau** : brouillard coloré, lumière atténuée avec la profondeur, **caustiques** au fond, rayons de lumière, **nage** (marcheur), le vaisseau peut plonger ; bulles. | L |
-| **O3. Eau vivante** | (D1) **Rivières** calculées depuis le relief de T1 (écoulement vers la mer, hachées par bassin), **lacs** dans les cuvettes, **cascades** sur les falaises de T2, glace qui fond et gèle selon la saison (A3), **banquise**, vagues sur les lacs. Les rivières passent par `kind_at` (règle 16) et se voient de l'espace (les grandes). | XL |
 
 ### Bloc C — Ciel et atmosphère (R2, V1 des idées)
 
@@ -156,14 +155,10 @@ grande**.
 | **V2. Voyage entre galaxies** | Séquence de ~10 s (Q4), passable avec Échap : plongée dans la lentille de V1, **tunnel** (étoiles étirées, couleurs du bleu au rouge, distorsion), **flash**, nouvelle galaxie qui grandit jusqu'à la vue d'arrivée ; chargement pendant le tunnel ; en multijoueur, éclair de départ et d'arrivée. Remplace le saut direct (`HYPERJUMP_DIST`, `main.rs`). | L |
 | **V3. Vue de la galaxie inclinée** | En vue galaxie, la caméra prend le **plan de la galaxie** (`tilt`, `settings.rs:708`) au lieu du haut du monde (`main.rs:1252`) ; orbite autour de l'axe de la galaxie, transition douce d'une galaxie à l'autre. | S |
 
-### Bloc L — La vie (D3, D4, D5, D6, A1, A2 des idées)
+### Bloc L — Aliens et terraformation (A1, A2 des idées ; faune, végétation, son et lieux en 0.14)
 
 | Phase | Contenu | Taille |
 |---|---|---|
-| **L1. Végétation vivante** | (D4) Arbres et herbe qui **bougent avec le vent** (`weather.rs`), plantes qui s'ouvrent le jour, **bioluminescence** la nuit, feuillage selon la **saison** (A3), forêts denses à la nouvelle échelle (instances, LOD). | L |
-| **L2. Faune** | (D3) Créatures procédurales depuis `Fauna` (`planetgen/life.rs`), construites avec les **familles de l'éditeur** (squelettes et animations de `assets/editeur/races/`) : troupeaux, volants, aquatiques (O2), diurnes / nocturnes, fuite devant le joueur, pas de combat. | XL |
-| **L3. Son** | (D5) Vent, pluie, tonnerre, vagues (O2), rivières et cascades (O3), écho des grottes, lave, faune (L2), moteurs du vaisseau, **silence dans le vide**. Choix de la caisse audio (`bevy_audio` ou autre) dans la PR. | L |
-| **L4. Points d'intérêt** | (D6) Lieux rares trouvés au scanner : grottes géantes, arches, cratères géants, **cascades** (O3), sources chaudes, geysers (T5), épaves, ruines (fictif, étiqueté), marqueurs posés par les joueurs. | M |
 | **L5. Aliens** | (A1) Espèce intelligente rare sur les mondes habitables, apparence avec les familles de l'éditeur, niveau (tribu → cités → spatial), **villages et bâtiments** voxel posés sur le relief de T1, habitants qui vivent selon le jour et la nuit, scanner (espèce, population, attitude), interaction de base (Q5). | XL |
 | **L6. Terraformation** | (A2) Projets qui changent les **valeurs vivantes** (deltas) : réchauffer / refroidir, épaissir l'atmosphère, apporter de l'eau (comètes), semer la vie ; l'habitabilité, le climat, les biomes, l'eau (O1) et la couleur vue de l'espace suivent ; les aliens spatiaux terraforment aussi (Q6). Réseau par deltas. | XL |
 
@@ -176,20 +171,22 @@ v0.12.0 (éditeur + correctifs)
    │
    E1 (choix de k) → E2 → E3   l'échelle change tout : elle passe en premier
    │
-   T1 → T2 → T3 → T4 → T5      le relief à la nouvelle échelle
+   T1 → T2 → T3 → T4           le relief à la nouvelle échelle
    │
-   O1 → O2 → O3                l'eau sur ce relief (rivières après T1/T2)
+   O1 → O2                     l'eau sur ce relief
    │                           ── release 0.13.0 « Mondes » ──
    C1 → C2                     brouillard, skybox
    V1 → V2 → V3                trous noirs (utilise C2), voyage, vue inclinée
    │                           ── release 0.13.1 « Ciel » ──
-   L1 → L2 → L3 → L4 → L5 → L6 la vie
-                               ── release 0.13.2 « Vie » ──
+   L5 → L6                     aliens, terraformation
+                               ── release 0.13.2 « Aliens » ──
+   │
+   0.14 : le monde qui vit (bloc D) et les mondes exceptionnels
 ```
 
 Pourquoi cet ordre : l'échelle (E) change toutes les distances du sol ; régler le relief (T) ou l'eau
-(O) avant serait à refaire. Le trou noir (V1) déforme la skybox (C2). La faune (L2) et les aliens (L5)
-ont besoin du relief et de l'eau finis.
+(O) avant serait à refaire. Le trou noir (V1) déforme la skybox (C2). Les aliens (L5) ont besoin du
+relief et de l'eau finis.
 
 ---
 
@@ -242,13 +239,10 @@ concession sur la qualité ; ne change ni les tailles de l'espace ni les décisi
   sur les faces du haut, plages ; couleur vue de l'espace cohérente. »
 - **T4** — « [contexte commun] Phase T4 : tuiles fines jusqu'à l'horizon en Ultra, transitions douces,
   coutures, ombres lointaines, décor en instances. »
-- **T5** — « [contexte commun] Phase T5 : lave lumineuse, geysers, cryovolcans, fumerolles, séismes. »
 - **O1** — « [contexte commun] Phase O1 : fond marin gardé, surface d'eau transparente à part,
   profondeur, Fresnel, reflets, autres liquides ; vue de l'espace ; PROTOCOL +1. »
 - **O2** — « [contexte commun] Phase O2 : vagues selon le vent, écume, sous l'eau (brouillard,
   caustiques, rayons), nage, plongée du vaisseau. »
-- **O3** — « [contexte commun] Phase O3 : rivières depuis le relief, lacs, cascades, glace saisonnière,
-  banquise. »
 - **C1** — « [contexte commun] Phase C1 : brouillard au sol, bancs volumétriques de la météo, rayons de
   soleil, couleurs, phares, grottes. »
 - **C2** — « [contexte commun] Phase C2 : skybox générée depuis la galaxie réelle, refaite au changement
@@ -257,9 +251,5 @@ concession sur la qualité ; ne change ni les tailles de l'espace ni les décisi
   disque d'accrétion en shader, étoile aspirée) ; remplace les cubes. »
 - **V2** — « [contexte commun] Phase V2 : séquence de voyage entre galaxies (Q4). »
 - **V3** — « [contexte commun] Phase V3 : vue galaxie dans le plan de la galaxie. »
-- **L1** — « [contexte commun] Phase L1 : végétation vivante (vent, jour, nuit, saisons). »
-- **L2** — « [contexte commun] Phase L2 : faune procédurale avec les familles de l'éditeur. »
-- **L3** — « [contexte commun] Phase L3 : son (propose la caisse audio). »
-- **L4** — « [contexte commun] Phase L4 : points d'intérêt au scanner. »
 - **L5** — « [contexte commun] Phase L5 : aliens (Q5). »
 - **L6** — « [contexte commun] Phase L6 : terraformation par deltas (Q6). »

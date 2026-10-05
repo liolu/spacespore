@@ -72,7 +72,7 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   decompressee, silicates, glaces, gaz) et gisements de minerais reels et fictifs (Xenium, Aetherite, Chronite,
   `Realism::Fictional`) : abondance, profondeur, distribution, rarete, difficulte, quantite (t). Chaque minerai =
   un bien du rayon « Ressources » (`Ore::good`, biens ajoutes a la fin de `economy::GOODS`, une faction n'en vend
-  qu'une partie : `economy::sold_by`). Minage (0.14) : `BodyDelta::ores` = tonnes extraites. Scanner, profil, `/stats`.
+  qu'une partie : `economy::sold_by`). Minage (0.15) : `BodyDelta::ores` = tonnes extraites. Scanner, profil, `/stats`.
   Phase 7 : vie independante de l'habitabilite (`planetgen/life.rs`, sans plantes les biomes verts restent nus),
   decor voxel des tuiles proches (`decor.rs` : `tile_decor` calcule avec la tuile, enfants de la tuile, maillages
   et materiaux partages). Banc : `cargo test --release bench_decor -- --ignored --nocapture`. L'etoile a un type (`planetgen/star.rs`, O..M, naine blanche/brune, sous-geante, geante rouge) :
@@ -119,7 +119,7 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   3D (`build_voxel_tile_mesh`), les autres en champ de hauteur (`build_height_tile_mesh`) ; `column` = vue de dessus.
   Collisions 3D : `Terrain::floor(dir, r)` (sol sous un point) et `ceiling` (marcheur, vol bas, camera).
   Deltas : `voxel.rs` (`BlockKey` 32^3, `BodyVoxels`, `VoxelDeltas` dans `world.json`, message `VoxelEdit`, minage
-  0.14). Banc : `cargo test --release bench_voxel_tiles -- --ignored --nocapture`. PROTOCOL 18.
+  0.15). Banc : `cargo test --release bench_voxel_tiles -- --ignored --nocapture`. PROTOCOL 18.
   B2 = grottes (`caves.rs`) : regions cubiques de 40 voxels hachees (regle 12, cache partage `Arc<Caves>` entre
   les tuiles : `Terrain::with_caves`), salle + tunnels vers des portes partagees avec les voisines, puits d'entree
   pres de la surface ; sortes selon la geologie (`CaveStyle::of`) : tube de lave, karst (lacs, stalactites), glace,
@@ -200,6 +200,7 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   lumiere des soleils voilee (`SunDim`), ciel gris / brun, flash des eclairs, brouillard (`gas.rs`), particules
   autour de la camera (`particle_positions`), vent qui pousse le vaisseau en vol bas (`Surface::drift`), scanner.
   Banc : `cargo test --release bench_cloud_layer -- --ignored --nocapture`.
+  Particules : `NoFrustumCulling` (sommets reecrits a chaque image) ; `SPACESPORE_TEST_PRECIP=<0..1>` force la pluie.
 - 0.12 (`ROADMAP-0.12-editeur.md`) : editeur de modeles voxel, module `src/editeur/`. E0 = fondations : etat
   `AppState` (Jeu / Editeur, `editeur::in_game` coupe le clavier et la souris du jeu), ouvert au premier lancement
   (`GameSettings::first_launch`, creation du personnage), par le bouton du menu (`EditorMenuButton`) et `/editeur`.
@@ -391,6 +392,39 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   bosses (2 a 6 voxels, pas vues de l'espace), vallees d'erosion (mondes a air et eau) ; masque des terres
   `land_mask` (un cinquieme du relief sous la mer). Remplace les anciens bruits `mid` / `fine`. Pentes :
   `cargo test --release slope_distribution -- --nocapture`. PROTOCOL 32.
+- 0.13 T2 = formes 3D du relief (`rocks.rs`, cellules de 60 voxels hachees, `CellForms` : pieces + reperes
+  `Feature`) sur tout astre solide : falaises (pente > 45 deg mesuree sur 3 points de la cellule) = corniche
+  (`Piece::Add` dalle) avec la roche creusee dessous (surplomb), strates (rainures `Carve`), entree de grotte ;
+  pitons (montagnes), chaos de blocs (pied des pentes, mondes nus) ; avec air : gorges etroites (`Carve`,
+  noyees sous la mer si eau), ponts naturels (`Add` qui l'emporte sur `Carve`), arches (jusqu'a 40 voxels),
+  cheminees de fee. `kind_in` evalue les pieces creusees des rocks meme sans grottes ; `has_3d` vrai avec
+  rocks (collisions). Chat : `/relief [forme]` (`go_relief`), `SPACESPORE_TEST_CMD_SECS`. Tests
+  `cliff_forms_are_real_voxels`, `relief_marks_point_at_real_forms`. PROTOCOL 33.
+- 0.13 T3 = couleurs du sol (`terrain.rs`) : taches de 200 / 30 / 5 voxels (`value_noise`, seulement celles plus
+  grandes que 3 fois le quantum de la tuile), `Column::raw` (hauteur avant arrondi) -> `tint_columns` (pente
+  d'apres les 4 voisines, `ground_tint` : roche nue `rock_of` au-dela de 45 deg, sable des plages en pente douce
+  seulement, neige jusqu'a ~60 deg, mousse au pied des parois de 3 voxels sur les mondes humides) ; parois sous la
+  couche du dessus = strates (`strata_color`, bandes de 2 a 4 couches, ocre avec air). `mesher.rs` applique
+  `ground_tint` avec sa pente (regle 16). Test `ground_colors_follow_slope_and_scale`. PROTOCOL inchange.
+- 0.13 T4 = detail jusqu'a l'horizon : `GameSettings::terrain_detail` (0 Bas .. 3 Ultra par defaut, menu Options
+  « Detail du sol », `graphics::TERRAIN_DETAIL` = facteur de decoupe 1,8 / 2,4 / 3,2 / 4,5 et niveaux de tuiles
+  avec decor 1 / 2 / 2 / 3, `Terrain::with_decor_levels`) ; `select_tiles_with(split, relief)` ne decoupe pas une
+  tuile cachee par l'horizon (`Terrain::relief_span`). Fondu : une tuile remplacee reste affichee
+  `TILE_FADE_SECS` (0,35 s) avec un materiau transparent qui s'efface (`TileStore::fading`). Maillages des
+  tuiles `RenderAssetUsages::RENDER_WORLD` (memoire en vol bas Ultra 3,2 Go -> 0,84 Go). Option « Ombres du
+  relief » (`relief_shadows`, defaut non : ~40 % d'images/s) : tuiles ombrantes + 4e cascade jusqu'a 4 000
+  voxels. Mesures : `SPACESPORE_PERF` avec `terrain_detail` / `relief_shadows` dans settings.json. Test
+  `detail_reaches_the_horizon_but_not_beyond`.
+- 0.13 T5 = geologie active (`geoactive.rs`), f(graine, horloge) : `BodyParams::geo` (`GeoActivity` : volcanisme,
+  seismes, `cryo` = ocean sous la glace) ; events haches par cellule de 400 voxels (`cell_vent`) : lave
+  (volcanisme > 0,45, eruptions de quelques heures puis refroidissement), geysers (eau liquide, 8 a 30 s toutes
+  les 1,5 a 8 min), fumerolles (air), cryovolcans (panaches de 300 voxels) ; `strength(vent, t)`. Affichage :
+  particules face camera (`GeoParticles`), coulee lumineuse sans eclairage le long de la plus grande pente
+  (`lava_path`, `GeoLava`) + lumiere orange (`GeoLight`) ; maillages reecrits a chaque image =
+  `NoFrustumCulling`. Seismes : `quake(seed, quakes, t)` (tranches de 4 min), camera qui tremble apres
+  `SurfaceControl`, poussiere, message. Chat : `/geologie [geyser|fumerolle|cryovolcan|lave|seisme]` (evente
+  actif le plus proche ; seisme = force, tests). Tests : `SPACESPORE_TEST_CMD2` (+ `_SECS`, 30 s) = seconde
+  commande apres l'atterrissage. PROTOCOL inchange (rien de nouveau dans le monde partage).
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

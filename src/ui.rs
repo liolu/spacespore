@@ -386,6 +386,7 @@ enum GfxChoice {
     Msaa,
     LodQuality,
     RenderScale,
+    TerrainDetail,
 }
 
 #[derive(Component)]
@@ -399,6 +400,7 @@ struct GfxValueText(GfxChoice);
 enum GfxFlag {
     VSync,
     Shadows,
+    ReliefShadows,
     Clouds,
     Flares,
 }
@@ -408,6 +410,7 @@ impl GfxFlag {
         match self {
             Self::VSync => s.vsync,
             Self::Shadows => s.shadows,
+            Self::ReliefShadows => s.relief_shadows,
             Self::Clouds => s.show_clouds,
             Self::Flares => s.show_flares,
         }
@@ -417,6 +420,7 @@ impl GfxFlag {
         match self {
             Self::VSync => s.vsync = !s.vsync,
             Self::Shadows => s.shadows = !s.shadows,
+            Self::ReliefShadows => s.relief_shadows = !s.relief_shadows,
             Self::Clouds => s.show_clouds = !s.show_clouds,
             Self::Flares => s.show_flares = !s.show_flares,
         }
@@ -991,7 +995,9 @@ fn setup_game_ui(mut commands: Commands, settings: Res<GameSettings>) {
         spawn_gfx_choice(&mut commands, &settings, "Echelle de rendu", GfxChoice::RenderScale),
         spawn_gfx_choice(&mut commands, &settings, "Anti-aliasing (MSAA)", GfxChoice::Msaa),
         spawn_gfx_toggle(&mut commands, &settings, "Ombres des etoiles", GfxFlag::Shadows),
+        spawn_gfx_toggle(&mut commands, &settings, "Ombres du relief", GfxFlag::ReliefShadows),
         spawn_gfx_choice(&mut commands, &settings, "Detail planetes", GfxChoice::LodQuality),
+        spawn_gfx_choice(&mut commands, &settings, "Detail du sol", GfxChoice::TerrainDetail),
         spawn_gfx_toggle(&mut commands, &settings, "Nuages", GfxFlag::Clouds),
         spawn_gfx_toggle(&mut commands, &settings, "Eruptions solaires", GfxFlag::Flares),
     ];
@@ -1305,6 +1311,7 @@ fn gfx_choice_text(choice: GfxChoice, s: &GameSettings) -> String {
         GfxChoice::Msaa => msaa_label(s.msaa_samples),
         GfxChoice::LodQuality => lod_quality_label(s.lod_quality).into(),
         GfxChoice::RenderScale => render_scale_label(s.render_scale),
+        GfxChoice::TerrainDetail => crate::graphics::terrain_detail(s).0.into(),
     }
 }
 
@@ -1652,6 +1659,9 @@ fn handle_gfx_buttons(
                     .find(|q| (q - settings.lod_quality).abs() < 0.01)
                     .unwrap_or(1.0);
                 settings.lod_quality = next_choice(&LOD_QUALITY_CHOICES, current);
+            }
+            GfxChoice::TerrainDetail => {
+                settings.terrain_detail = (settings.terrain_detail + 1) % crate::graphics::TERRAIN_DETAIL.len() as u8;
             }
             GfxChoice::RenderScale => {
                 let current = RENDER_SCALE_CHOICES
