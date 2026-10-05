@@ -17,6 +17,7 @@ use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::render::render_asset::RenderAssetUsages;
+use bevy::render::view::NoFrustumCulling;
 use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task};
 use std::collections::HashMap;
 
@@ -649,7 +650,12 @@ fn weather_fx(
         Some(TargetKind::Moon(pid, mi)) => moons.iter().find(|(_, _, m)| m.planet_idx == pid && m.moon_idx == mi).map(|(e, t, _)| (e, *t)),
         _ => None,
     };
-    let s = now.sample;
+    let mut s = now.sample;
+    // Tests : `SPACESPORE_TEST_PRECIP=<0..1>` force la pluie autour de la caméra
+    if let Some(p) = std::env::var("SPACESPORE_TEST_PRECIP").ok().and_then(|v| v.parse::<f32>().ok()) {
+        s.precip = p;
+        s.dust = 0.0;
+    }
     let active = root.is_some() && now.params.is_some() && surface.active() && surface.underground() < 0.5;
     let (Some((root_e, root_tf)), Ok(cam), true) = (root, cam_q.get_single(), active) else {
         for (_, _, _, mut v, _) in &mut fx {
@@ -674,7 +680,9 @@ fn weather_fx(
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32, 1.0, 0.0]; PARTICLES * 8]);
         let idx: Vec<u32> = (0..PARTICLES as u32 * 2).flat_map(|q| [q * 4, q * 4 + 1, q * 4 + 2, q * 4, q * 4 + 2, q * 4 + 3]).collect();
         mesh.insert_indices(Indices::U32(idx));
-        let e = commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mat), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, WeatherFx)).id();
+        // Sommets réécrits à chaque image : la boîte englobante calculée au départ (tout à zéro, au
+        // centre de l'astre) ferait disparaître les particules hors de la vue
+        let e = commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mat), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, NoFrustumCulling, WeatherFx)).id();
         commands.entity(root_e).add_child(e);
         let bolt_mat = materials.add(StandardMaterial { base_color: Color::linear_rgb(6.0, 6.0, 8.0), unlit: true, ..default() });
         let b = commands.spawn((Mesh3d(meshes.add(bolt_mesh(1))), MeshMaterial3d(bolt_mat), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, Bolt)).id();
