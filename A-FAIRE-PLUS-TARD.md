@@ -49,3 +49,8 @@ ni les décisions sans me demander. »
 
 La 0.15 (minage et destruction, avant prévue en 0.14) : creuser / poser des voxels avec les deltas de B1, ressources de la
 phase 8, astéroïdes minables (C1), destruction de planètes (débris → anneaux, C2).
+
+## Musique (noté le 04/10/2026)
+
+Pas de musique dans la 0.14 : le son (D5) ne joue que les sons du monde. La **musique d'ambiance** (selon
+le lieu : espace, planète, grottes, combat) viendra dans une version plus tard.
