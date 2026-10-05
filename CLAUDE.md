@@ -399,6 +399,31 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   cheminees de fee. `kind_in` evalue les pieces creusees des rocks meme sans grottes ; `has_3d` vrai avec
   rocks (collisions). Chat : `/relief [forme]` (`go_relief`), `SPACESPORE_TEST_CMD_SECS`. Tests
   `cliff_forms_are_real_voxels`, `relief_marks_point_at_real_forms`. PROTOCOL 33.
+- 0.13 T3 = couleurs du sol (`terrain.rs`) : taches de 200 / 30 / 5 voxels (`value_noise`, seulement celles plus
+  grandes que 3 fois le quantum de la tuile), `Column::raw` (hauteur avant arrondi) -> `tint_columns` (pente
+  d'apres les 4 voisines, `ground_tint` : roche nue `rock_of` au-dela de 45 deg, sable des plages en pente douce
+  seulement, neige jusqu'a ~60 deg, mousse au pied des parois de 3 voxels sur les mondes humides) ; parois sous la
+  couche du dessus = strates (`strata_color`, bandes de 2 a 4 couches, ocre avec air). `mesher.rs` applique
+  `ground_tint` avec sa pente (regle 16). Test `ground_colors_follow_slope_and_scale`. PROTOCOL inchange.
+- 0.13 T4 = detail jusqu'a l'horizon : `GameSettings::terrain_detail` (0 Bas .. 3 Ultra par defaut, menu Options
+  « Detail du sol », `graphics::TERRAIN_DETAIL` = facteur de decoupe 1,8 / 2,4 / 3,2 / 4,5 et niveaux de tuiles
+  avec decor 1 / 2 / 2 / 3, `Terrain::with_decor_levels`) ; `select_tiles_with(split, relief)` ne decoupe pas une
+  tuile cachee par l'horizon (`Terrain::relief_span`). Fondu : une tuile remplacee reste affichee
+  `TILE_FADE_SECS` (0,35 s) avec un materiau transparent qui s'efface (`TileStore::fading`). Maillages des
+  tuiles `RenderAssetUsages::RENDER_WORLD` (memoire en vol bas Ultra 3,2 Go -> 0,84 Go). Option « Ombres du
+  relief » (`relief_shadows`, defaut non : ~40 % d'images/s) : tuiles ombrantes + 4e cascade jusqu'a 4 000
+  voxels. Mesures : `SPACESPORE_PERF` avec `terrain_detail` / `relief_shadows` dans settings.json. Test
+  `detail_reaches_the_horizon_but_not_beyond`.
+- 0.13 T5 = geologie active (`geoactive.rs`), f(graine, horloge) : `BodyParams::geo` (`GeoActivity` : volcanisme,
+  seismes, `cryo` = ocean sous la glace) ; events haches par cellule de 400 voxels (`cell_vent`) : lave
+  (volcanisme > 0,45, eruptions de quelques heures puis refroidissement), geysers (eau liquide, 8 a 30 s toutes
+  les 1,5 a 8 min), fumerolles (air), cryovolcans (panaches de 300 voxels) ; `strength(vent, t)`. Affichage :
+  particules face camera (`GeoParticles`), coulee lumineuse sans eclairage le long de la plus grande pente
+  (`lava_path`, `GeoLava`) + lumiere orange (`GeoLight`) ; maillages reecrits a chaque image =
+  `NoFrustumCulling`. Seismes : `quake(seed, quakes, t)` (tranches de 4 min), camera qui tremble apres
+  `SurfaceControl`, poussiere, message. Chat : `/geologie [geyser|fumerolle|cryovolcan|lave|seisme]` (evente
+  actif le plus proche ; seisme = force, tests). Tests : `SPACESPORE_TEST_CMD2` (+ `_SECS`, 30 s) = seconde
+  commande apres l'atterrissage. PROTOCOL inchange (rien de nouveau dans le monde partage).
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

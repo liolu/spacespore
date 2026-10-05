@@ -355,6 +355,20 @@ pub fn build_chunk_mesh(
         }
     }
 
+    // Pente du sol (0.13 T3) : roche nue sur les pentes fortes, comme les tuiles du sol (règle 16)
+    let mut slopes = vec![vec![0.0f32; res]; res];
+    for ix in 0..res {
+        for iy in 0..res {
+            let (a, b) = (ix.saturating_sub(1), (ix + 1).min(res - 1));
+            let (c, d) = (iy.saturating_sub(1), (iy + 1).min(res - 1));
+            let dx = (cell_dirs[b][iy] - cell_dirs[a][iy]).length() * radius;
+            let dy = (cell_dirs[ix][d] - cell_dirs[ix][c]).length() * radius;
+            let gx = (terrain_heights[b][iy] - terrain_heights[a][iy]) / dx.max(1e-3);
+            let gy = (terrain_heights[ix][d] - terrain_heights[ix][c]) / dy.max(1e-3);
+            slopes[ix][iy] = gx.hypot(gy);
+        }
+    }
+
     let mut voxels = vec![vec![vec![VoxelType::Air; res]; res]; layers];
     for layer in 0..layers {
         let r_mid = r_min + ((layer as f32 + 0.5) / layers as f32) * (r_max - r_min);
@@ -411,12 +425,13 @@ pub fn build_chunk_mesh(
             0.0
         };
 
-        [
+        let color = [
             (base[0] * (1.0 - depth_darken) + var * 0.7).clamp(0.03, 1.0),
             (base[1] * (1.0 - depth_darken * 0.4) + var * 0.9).clamp(0.03, 1.0),
             (base[2] * (1.0 - depth_darken * 0.2) + var * 0.4).clamp(0.03, 1.0),
             base[3],
-        ]
+        ];
+        crate::terrain::ground_tint(vtype, color, slopes[ix.min(res - 1)][iy.min(res - 1)], 0.0, false)
     };
 
     for layer in 0..layers {
