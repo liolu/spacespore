@@ -72,7 +72,7 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   decompressee, silicates, glaces, gaz) et gisements de minerais reels et fictifs (Xenium, Aetherite, Chronite,
   `Realism::Fictional`) : abondance, profondeur, distribution, rarete, difficulte, quantite (t). Chaque minerai =
   un bien du rayon « Ressources » (`Ore::good`, biens ajoutes a la fin de `economy::GOODS`, une faction n'en vend
-  qu'une partie : `economy::sold_by`). Minage (0.14) : `BodyDelta::ores` = tonnes extraites. Scanner, profil, `/stats`.
+  qu'une partie : `economy::sold_by`). Minage (0.15) : `BodyDelta::ores` = tonnes extraites. Scanner, profil, `/stats`.
   Phase 7 : vie independante de l'habitabilite (`planetgen/life.rs`, sans plantes les biomes verts restent nus),
   decor voxel des tuiles proches (`decor.rs` : `tile_decor` calcule avec la tuile, enfants de la tuile, maillages
   et materiaux partages). Banc : `cargo test --release bench_decor -- --ignored --nocapture`. L'etoile a un type (`planetgen/star.rs`, O..M, naine blanche/brune, sous-geante, geante rouge) :
@@ -119,7 +119,7 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   3D (`build_voxel_tile_mesh`), les autres en champ de hauteur (`build_height_tile_mesh`) ; `column` = vue de dessus.
   Collisions 3D : `Terrain::floor(dir, r)` (sol sous un point) et `ceiling` (marcheur, vol bas, camera).
   Deltas : `voxel.rs` (`BlockKey` 32^3, `BodyVoxels`, `VoxelDeltas` dans `world.json`, message `VoxelEdit`, minage
-  0.14). Banc : `cargo test --release bench_voxel_tiles -- --ignored --nocapture`. PROTOCOL 18.
+  0.15). Banc : `cargo test --release bench_voxel_tiles -- --ignored --nocapture`. PROTOCOL 18.
   B2 = grottes (`caves.rs`) : regions cubiques de 40 voxels hachees (regle 12, cache partage `Arc<Caves>` entre
   les tuiles : `Terrain::with_caves`), salle + tunnels vers des portes partagees avec les voisines, puits d'entree
   pres de la surface ; sortes selon la geologie (`CaveStyle::of`) : tube de lave, karst (lacs, stalactites), glace,
