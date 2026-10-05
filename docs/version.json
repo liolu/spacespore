@@ -1,10 +1,10 @@
 {
-  "version": "0.13.1",
-  "version_code": 1301,
-  "release_date": "2026-10-04",
-  "download_url": "https://github.com/liolu/spacespore/releases/download/v0.13.1/spacespore-v0.13.1-windows.zip",
-  "download_url_linux": "https://github.com/liolu/spacespore/releases/download/v0.13.1/spacespore-v0.13.1-linux.zip",
-  "download_url_macos": "https://github.com/liolu/spacespore/releases/download/v0.13.1/spacespore-v0.13.1-macos.zip",
-  "release_notes": "Version 0.13.1",
+  "version": "0.13.2",
+  "version_code": 1302,
+  "release_date": "2026-10-05",
+  "download_url": "https://github.com/liolu/spacespore/releases/download/v0.13.2/spacespore-v0.13.2-windows.zip",
+  "download_url_linux": "https://github.com/liolu/spacespore/releases/download/v0.13.2/spacespore-v0.13.2-linux.zip",
+  "download_url_macos": "https://github.com/liolu/spacespore/releases/download/v0.13.2/spacespore-v0.13.2-macos.zip",
+  "release_notes": "Version 0.13.2",
   "min_updater_version": 1
 }

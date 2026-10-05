@@ -419,6 +419,8 @@ fn update_local_weather(
 #[derive(Event, Clone, Debug)]
 pub enum ClockCommand {
     Hour,
+    /// Tests : avance l'horloge jusqu'à cette heure locale (0..24) de l'astre ciblé.
+    SetHour(f32),
     Speed(String),
 }
 
@@ -445,6 +447,19 @@ fn run_clock_commands(
                     }
                     _ if arg.is_empty() => net.notify(&format!("Vitesse du temps : x{} (/temps <facteur>, 1 = normal).", clock.speed), now),
                     _ => net.notify(&format!("/temps <facteur> : de 0 a {MAX_SPEED} (1 = normal)."), now),
+                }
+            }
+            ClockCommand::SetHour(h) => {
+                if !net.may_set_clock() {
+                    net.notify("Seul l'hote de la partie peut changer l'heure.", now);
+                } else if weather.body.is_none() {
+                    net.notify("Ciblez une planete ou une lune (chargee) pour regler son heure.", now);
+                } else if weather.locked {
+                    net.notify("Rotation synchrone : l'heure ne change jamais ici (une face toujours au jour). Choisissez une planete qui tourne.", now);
+                } else {
+                    let ahead = (h - weather.hour).rem_euclid(24.0) as f64 / 24.0 * weather.day_s;
+                    clock.secs += ahead;
+                    net.notify(&format!("Heure reglee a {} (horloge avancee de {}).", hour_text(*h), duration_text(ahead)), now);
                 }
             }
             ClockCommand::Hour => {

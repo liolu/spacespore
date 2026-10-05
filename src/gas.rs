@@ -118,7 +118,7 @@ fn detect_gas(
 }
 
 /// Brouillard et ciel aux couleurs des nuages, de plus en plus sombres avec la profondeur.
-fn gas_atmosphere(
+pub(crate) fn gas_atmosphere(
     mut commands: Commands,
     state: Res<GasState>,
     surface: Res<crate::surface::Surface>,

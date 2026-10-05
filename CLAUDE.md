@@ -16,6 +16,12 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
 - Tuer le process avant rebuild : `Stop-Process -Name "spacespore" -Force`
 - Supprimer `saves/settings.json` ET `saves/astres.json` quand on change les defaults de body type ou le seed
 
+## Tests en jeu
+
+Avant tout test visuel (capture, shader, rendu) : lire `TESTS-JEU.md` et le suivre. Verifier le monde
+(eau liquide, jour, pas synchrone-nuit) AVANT de capturer ; jamais de release sans capture qui montre la
+chose ; ne jamais relancer 2 fois le meme test sans rien changer.
+
 ## Securite
 
 - `doc info/Nouveau dossier/api.txt` contient des cles API en clair — NE JAMAIS COMMIT ce fichier

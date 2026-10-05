@@ -19,7 +19,8 @@ use crate::net_ui::NetPanel;
 use crate::planet::{MoonId, MoonRoot, PlanetId, PlanetRoot, StarId, StarRoot};
 use crate::settings::GameSettings;
 use crate::ship::Ship;
-use crate::terrain::{BodyParams, Terrain, TileKey, build_tile_mesh_with};
+use crate::terrain::{BodyParams, Terrain, TileKey, build_tile_meshes_with};
+use crate::water::{TerrainMaterial, WaterAssets, WaterMaterial, WaterSurface};
 use crate::decor::{tile_decor, DecorAssets, DecorInstance};
 use crate::ui::{CameraTarget, MenuState, TargetKind};
 use crate::{CameraController, ZoomLevel};
@@ -123,6 +124,8 @@ impl Plugin for SurfacePlugin {
             .init_gizmo_group::<IndicatorGizmos>()
             .add_systems(Update, fade_indicators.after(SurfaceControl))
             .add_event::<CaveCommand>()
+            .add_event::<SeaCommand>()
+            .add_systems(Update, go_sea.before(SurfaceControl))
             .init_resource::<NearestCave>()
             .add_systems(Update, (go_cave.before(SurfaceControl), find_nearest_cave))
             .add_systems(Startup, (setup_hud, spawn_lamps, spawn_suns))
@@ -133,7 +136,7 @@ impl Plugin for SurfacePlugin {
             .init_resource::<TileStats>()
             .add_systems(
                 Update,
-                (surface_control.in_set(SurfaceControl).run_if(crate::editeur::in_game), update_underground, dim_star_light, update_suns, surface_light, update_lamps, update_season, refresh_voxels, update_tiles, update_hud)
+                (surface_control.in_set(SurfaceControl).run_if(crate::editeur::in_game), update_underground, dim_star_light, update_suns, surface_light, update_lamps, update_season, refresh_voxels, update_tiles, crate::water::update_water, update_hud)
                     .chain()
                     .after(crate::planet::orbit_planets)
                     .after(crate::planet::orbit_moons),
@@ -1732,7 +1735,7 @@ pub fn combined_sky(p: &BodyParams, suns: &[(Vec3, f32, f32)], up: Vec3, air: f3
 
 /// Lumières directionnelles des soleils près d'un astre : une par étoile, avec ombres.
 #[derive(Component)]
-struct SurfaceSun(usize);
+pub(crate) struct SurfaceSun(pub usize);
 
 const MAX_SUNS: usize = 3;
 
@@ -2209,6 +2212,77 @@ fn go_cave(time: Res<Time>, mut events: EventReader<CaveCommand>, mut surface: R
     }
 }
 
+/// `/mer` (0.13 O2) : aller au rivage le plus proche (à pied : au bord de l'eau ; en vol bas : au-dessus
+/// de la mer).
+#[derive(Event)]
+pub struct SeaCommand;
+
+fn go_sea(time: Res<Time>, mut events: EventReader<SeaCommand>, mut surface: ResMut<Surface>, mut net: ResMut<Net>) {
+    let now = time.elapsed_secs_f64();
+    for _ in events.read() {
+        let (Some(t), Some(p)) = (surface.terrain.as_ref(), surface.local_point()) else {
+            net.notify("Pas de mer trouvee : posez-vous ou volez bas sur un astre solide (zoom sous 1000).", now);
+            continue;
+        };
+        let (v, radius) = (t.voxel(), t.params.radius);
+        let up0 = p.normalize_or(Vec3::Y);
+        let wet = |d: Vec3| t.sea_surface(d).is_some_and(|(r, _)| r - t.seabed(d, f32::INFINITY).top > 4.0 * v);
+        // Anneaux de plus en plus larges autour du point
+        let east = Vec3::Y.cross(up0).normalize_or(Vec3::X);
+        let north = up0.cross(east);
+        let mut found = wet(up0).then_some(up0);
+        let mut ring = 0;
+        while found.is_none() && ring < 60 {
+            let ang = 40.0 * v * 1.25f32.powi(ring) / radius;
+            if ang > 2.5 {
+                break;
+            }
+            found = (0..24).find_map(|k| {
+                let az = k as f32 * std::f32::consts::TAU / 24.0;
+                let d = (up0 * ang.cos() + (east * az.cos() + north * az.sin()) * ang.sin()).normalize();
+                wet(d).then_some(d)
+            });
+            ring += 1;
+        }
+        let Some(w) = found else {
+            net.notify("Pas de mer sur cet astre (ou trop loin).", now);
+            continue;
+        };
+        // Le rivage : entre la terre (le point de départ) et l'eau trouvée
+        let (mut land, mut water) = (up0, w);
+        if !wet(up0) {
+            for _ in 0..16 {
+                let mid = (land + water).normalize();
+                if wet(mid) {
+                    water = mid;
+                } else {
+                    land = mid;
+                }
+            }
+        } else {
+            land = w;
+        }
+        let toward = (water - land).normalize_or(east);
+        let out = (water + toward * (30.0 * v / radius)).normalize();
+        match surface.phase {
+            Phase::Walking => {
+                let back = (land - toward * (8.0 * v / radius)).normalize();
+                let heading = toward - back * toward.dot(back);
+                let w = Walker::spawn(t, back, heading.normalize_or(east));
+                surface.walker = w;
+                net.notify("Au bord de l'eau.", now);
+            }
+            Phase::Flying => {
+                let sea = t.sea_surface(out).map_or(t.ground(out).top, |(r, _)| r);
+                surface.fpos = out * (sea + 14.0 * v);
+                surface.fdescend = false;
+                net.notify("Au-dessus de la mer.", now);
+            }
+            _ => net.notify("Attendez la fin de l'atterrissage.", now),
+        }
+    }
+}
+
 /// Indicateurs visuels de l'espace (orbites, traînées des planètes, cercles autour des astres,
 /// portée du vaisseau, trous de ver, zones) : un groupe de traits à part, qui s'efface en douceur
 /// quand on s'approche d'une planète ou d'une lune, et revient quand on remonte.
@@ -2437,12 +2511,20 @@ struct TileEntry {
     generation: u32,
 }
 
+/// Maillages et matériaux des tuiles (un seul paramètre : `update_tiles` en a déjà beaucoup).
+#[derive(SystemParam)]
+struct TileAssets<'w> {
+    meshes: ResMut<'w, Assets<Mesh>>,
+    materials: ResMut<'w, Assets<TerrainMaterial>>,
+    water: Res<'w, WaterAssets>,
+}
+
 #[derive(Resource, Default)]
 struct TileStore {
     body: Option<TargetKind>,
     built: HashMap<TileKey, TileEntry>,
-    tasks: HashMap<TileKey, (Task<(Mesh, Vec<DecorInstance>)>, u32)>,
-    material: Option<Handle<StandardMaterial>>,
+    tasks: HashMap<TileKey, (Task<(Mesh, Option<Mesh>, Vec<DecorInstance>)>, u32)>,
+    material: Option<Handle<TerrainMaterial>>,
     far_hidden: bool,
     /// Climat des tuiles : quand la saison (ou l'heure, pour le givre) change, on les reconstruit
     /// une à une, en gardant les anciennes affichées en attendant.
@@ -2455,7 +2537,7 @@ struct TileStore {
     /// Tranche de grottes maillée autour du joueur sous terre (0.13 E2).
     cave_window: Option<(f32, f32)>,
     /// Tuiles remplacées qui s'effacent en fondu (0.13 T4) : début et matériau transparent.
-    fading: HashMap<Entity, (f64, Handle<StandardMaterial>)>,
+    fading: HashMap<Entity, (f64, Handle<TerrainMaterial>)>,
     /// Niveaux de tuiles avec décor des tuiles construites (réglage du détail du sol).
     decor_levels: u32,
     /// Les tuiles projettent des ombres (Ultra).
@@ -2492,8 +2574,7 @@ fn update_tiles(
     settings: Res<GameSettings>,
     surface: Res<Surface>,
     mut store: ResMut<TileStore>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut assets: TileAssets,
     decor: Res<DecorAssets>,
     cam_q: Query<&Transform, With<Camera3d>>,
     planets: Query<(Entity, &PlanetId, &Transform), (With<PlanetRoot>, Without<Camera3d>)>,
@@ -2565,11 +2646,14 @@ fn update_tiles(
     let material = store
         .material
         .get_or_insert_with(|| {
-            materials.add(StandardMaterial {
-                base_color: Color::WHITE,
-                perceptual_roughness: 0.95,
-                reflectance: 0.15,
-                ..default()
+            assets.materials.add(TerrainMaterial {
+                base: StandardMaterial {
+                    base_color: Color::WHITE,
+                    perceptual_roughness: 0.95,
+                    reflectance: 0.15,
+                    ..default()
+                },
+                extension: default(),
             })
         })
         .clone();
@@ -2617,7 +2701,8 @@ fn update_tiles(
         for face in 0..6 {
             let key = TileKey::root(face);
             let first = Terrain::new(params).with_voxels(voxels.clone()).with_caves(caves.clone()).with_rocks(rocks.clone()).with_cave_window(cave_window);
-            let entity = spawn_tile(&mut commands, &mut meshes, &material, root, build_tile_mesh_with(&first, key), tile_shadows);
+            let (mesh, water) = build_tile_meshes_with(&first, key);
+            let entity = spawn_tile(&mut commands, &mut assets, &material, root, mesh, water, tile_shadows);
             store.built.insert(key, TileEntry { entity, last_needed: now, generation });
         }
     }
@@ -2632,9 +2717,9 @@ fn update_tiles(
         }
         let Some((task, built_gen)) = store.tasks.get_mut(&key) else { continue };
         let built_gen = *built_gen;
-        if let Some((mesh, objects)) = block_on(future::poll_once(task)) {
+        if let Some((mesh, water, objects)) = block_on(future::poll_once(task)) {
             store.tasks.remove(&key);
-            let entity = spawn_tile(&mut commands, &mut meshes, &material, root, mesh, tile_shadows);
+            let entity = spawn_tile(&mut commands, &mut assets, &material, root, mesh, water, tile_shadows);
             // Décor de la tuile (tuiles proches seulement) : il disparaît avec elle
             decor.spawn(&mut commands, entity, &objects);
             // Nouvelle saison : la tuile remplace l'ancienne (visible jusque-là)
@@ -2676,7 +2761,8 @@ fn update_tiles(
             (
                 pool.spawn(async move {
                     let terrain = Terrain::new(p).with_voxels(vx).with_caves(cv).with_rocks(rk).with_cave_window(cave_window).with_decor_levels(decor_levels);
-                    (build_tile_mesh_with(&terrain, key), tile_decor(&terrain, key))
+                    let (mesh, water) = build_tile_meshes_with(&terrain, key);
+                    (mesh, water, tile_decor(&terrain, key))
                 }),
                 generation,
             ),
@@ -2747,12 +2833,15 @@ fn update_tiles(
         commands.entity(e).try_insert(MeshMaterial3d(material.clone()));
     }
     for e in start_fade {
-        let fade = materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            perceptual_roughness: 0.95,
-            reflectance: 0.15,
-            alpha_mode: AlphaMode::Blend,
-            ..default()
+        let fade = assets.materials.add(TerrainMaterial {
+            base: StandardMaterial {
+                base_color: Color::WHITE,
+                perceptual_roughness: 0.95,
+                reflectance: 0.15,
+                alpha_mode: AlphaMode::Blend,
+                ..default()
+            },
+            extension: default(),
         });
         commands.entity(e).try_insert(MeshMaterial3d(fade.clone()));
         store.fading.insert(e, (now, fade));
@@ -2763,8 +2852,8 @@ fn update_tiles(
         let f = (now - start) / TILE_FADE_SECS;
         if f >= 1.0 || !alive.contains(&e) {
             done.push(e);
-        } else if let Some(m) = materials.get_mut(handle) {
-            m.base_color = Color::WHITE.with_alpha((1.0 - f) as f32);
+        } else if let Some(m) = assets.materials.get_mut(handle) {
+            m.base.base_color = Color::WHITE.with_alpha((1.0 - f) as f32);
         }
     }
     for e in done {
@@ -2818,13 +2907,21 @@ fn find_root(
 
 fn spawn_tile(
     commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    material: &Handle<StandardMaterial>,
+    assets: &mut TileAssets,
+    material: &Handle<TerrainMaterial>,
     root: Entity,
     mesh: Mesh,
+    water: Option<Mesh>,
     shadows: bool,
 ) -> Entity {
-    let entity = commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(material.clone()), Transform::IDENTITY, Visibility::Hidden, SurfaceTile)).id();
+    let entity = commands.spawn((Mesh3d(assets.meshes.add(mesh)), MeshMaterial3d(material.clone()), Transform::IDENTITY, Visibility::Hidden, SurfaceTile)).id();
+    // Surface de l'eau (O1) : enfant de la tuile, elle apparaît et disparaît avec elle
+    if let Some(water) = water {
+        let surface = commands
+            .spawn((Mesh3d(assets.meshes.add(water)), MeshMaterial3d::<WaterMaterial>(assets.water.material.clone()), Transform::IDENTITY, Visibility::Inherited, NotShadowCaster, WaterSurface))
+            .id();
+        commands.entity(entity).add_child(surface);
+    }
     // Ombres du relief (Ultra) : montagnes et falaises ombrent le sol
     if !shadows {
         commands.entity(entity).insert(NotShadowCaster);

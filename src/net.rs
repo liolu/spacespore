@@ -52,7 +52,7 @@ pub const MAX_NAME_LEN: usize = 16;
 pub const MAX_TAG_LEN: usize = 5;
 /// Étoiles revendiquées au plus par joueur.
 pub const MAX_CLAIMS: usize = 5;
-const PROTOCOL: u32 = 33;
+const PROTOCOL: u32 = 34;
 /// Modifications de voxels gardées en attente au plus (protection contre un flot).
 const VOXEL_EDITS_MAX: usize = 512;
 pub const MAX_CHAT_LEN: usize = 120;
@@ -1186,6 +1186,9 @@ impl Net {
 
     /// Affiche un message du jeu dans le chat.
     pub fn notify(&mut self, text: &str, now: f64) {
+        if std::env::var_os("SPACESPORE_TEST_CMD").is_some() {
+            info!("NOTIFY {text}");
+        }
         system_chat(&mut self.chat, text, now);
     }
 

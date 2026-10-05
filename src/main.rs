@@ -45,6 +45,7 @@ mod system_gen;
 mod terrain;
 mod ui;
 mod voxel;
+mod water;
 mod wormhole;
 mod world_clock;
 mod zones;
@@ -229,6 +230,7 @@ fn main() {
         .add_plugins(PlanetPlugin)
         .add_plugins(planetgen::PlanetGenPlugin)
         .add_plugins(gas::GasPlugin)
+        .add_plugins(water::WaterPlugin)
         .add_plugins(scanner::ScannerPlugin)
         .add_plugins(geoactive::GeoActivePlugin)
         .add_plugins(dex::DexPlugin)
