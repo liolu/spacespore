@@ -9,6 +9,20 @@ git pull origin main
 ```
 Si des changements locaux non commites existent, les stash avant le pull puis les reappliquer apres.
 
+## Tests en jeu (captures) : reflechir avant de lancer
+
+L'utilisateur regarde les tests : une capture qui ne peut pas montrer ce qu'on teste est une erreur, pas un essai.
+- Avant de lancer : ecrire ce que la capture doit montrer et les conditions necessaires (eau liquide, air,
+  jour / nuit, volcanisme, saison, phenomene actif a cet instant...). Choisir l'astre et le moment qui les
+  remplissent (`/aller planete <type>` adapte, commande de test, variable `SPACESPORE_TEST_*` qui force le
+  phenomene) au lieu d'esperer.
+- En regardant la capture : lire d'abord le HUD et le scanner (nom de l'astre, Eau, Pression, Heure, Meteo).
+  Si les conditions ne sont pas remplies (ex. tester l'eau sur une planete sans eau, la pluie sans air, une
+  lueur en plein jour), le test ne prouve rien : le dire et corriger la mise en place.
+- Ne jamais relancer le meme test sans avoir change quelque chose et sans savoir pourquoi le precedent a echoue
+  (`/aller` qui n'a rien trouve, phenomene inactif, personnage devant l'objet, camera mal placee...).
+- Si un phenomene depend de l'horloge (geyser, eruption, eclipse), le forcer ou choisir un instant ou il est actif.
+
 ## Build
 
 - Toujours build en release : `cargo build --release`
