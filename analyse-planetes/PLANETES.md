@@ -48,10 +48,10 @@ Les numeros sont **figes** : ajouter une couche ne change jamais les tirages des
 
 | Type | Rayon | Masse | Sol ? | Ou |
 |---|---|---|---|---|
-| **Rocheuse** (`Rocky`) | 0,34 a ~2,4 R_terre | 0,02 a ~8 M_terre | oui | partout |
+| **Rocheuse** (`Rocky`) | 0,34 a ~1,8 R_terre | 0,02 a ~8 M_terre | oui | partout |
 | **Mini-Neptune** (`MiniNeptune`) | 1,5 a 3,5 R_terre | 3 a 12 M_terre | non (enveloppe de gaz) | surtout pres de l'etoile |
 | **Geante de glace** (`IceGiant`) | 3 a 5 R_terre | 10 a 30 M_terre | non | au-dela de la ligne des glaces |
-| **Geante gazeuse** (`GasGiant`) | 8 a 14 R_terre | 40 a 4 000 M_terre | non | au-dela des glaces, ou « Jupiter chaud » |
+| **Geante gazeuse** (`GasGiant`) | 7 a 14 R_terre (17 pour un Jupiter chaud) | 40 a 4 000 M_terre | non | au-dela des glaces, ou « Jupiter chaud » |
 
 `gaseous()` = tout sauf `Rocky` : **pas de sol**, on y vole jusqu'au coeur (`GAS_CORE` = 0,3 du rayon), la pression
 retire des PV au vaisseau (`gas.rs`, `combat.rs`), destruction = retour en orbite.
@@ -117,8 +117,9 @@ retire des PV au vaisseau (`gas.rs`, `combat.rs`), destruction = retour en orbit
 | Geante de glace | `10 x 3^u` | idem |
 | Geante gazeuse | `40 x 100^(u^1,5)` | `1,22 (m/2,04)^0,589` jusqu'a 130 M_terre, puis `12,1 (m/130)^-0,044` |
 
-Relation de Chen & Kipping (2017). Valeurs calibrees sur le Systeme solaire (Terre, Mars, Neptune, Jupiter, Saturne a
-15 % pres : test `mass_radius_matches_the_solar_system`).
+Relation de Chen & Kipping (2017). Valeurs calibrees sur le Systeme solaire (Terre, Mars, Neptune, Jupiter a
+15 % pres : test `mass_radius_matches_the_solar_system`). Saturne n'est verifiee que « > 8 R_terre » : la formule lui donne
+~11,7 R_terre pour 9,45 en vrai (+24 %).
 
 - **Gravite** (g) = masse / rayon².
 - **Echelle d'affichage** : 1 R_terre = echelle G du systeme / 109 (echelle G de 600 000 a 1 500 000), rayon minimum 50.
@@ -201,7 +202,8 @@ lointain** (type S), **triple**. Les luminosites des etoiles du centre s'additio
 
 ### Composition de depart (monde rocheux) d'apres la temperature d'equilibre `T_eq` (albedo 0,3)
 
-Selon un tirage : **25 % des mondes (ou masse < 0,02 M_terre) n'ont aucune atmosphere**. Sinon :
+Selon un tirage : **25 % des mondes (ou masse < 0,02 M_terre) n'ont aucune atmosphere**. Apres la fuite des gaz (voir
+plus bas), **~71 % des rocheuses finissent sans air** (mesure sur 20 000 systemes, `RAPPORT-IA.md`). Sinon :
 
 | Condition | Atmosphere | Pression |
 |---|---|---|
