@@ -2283,7 +2283,37 @@ fn refresh_voxels(settings: Res<GameSettings>, mut changed: ResMut<VoxelsChanged
 pub struct OverhangCommand(pub Option<String>);
 
 /// `/relief [forme]` : aller voir la forme du relief la plus proche (corniche, piton, gorge...).
-fn go_relief(t: &Terrain, surface: &mut Surface, arg: &str) -> Result<String, String> {
+fn go_relief(t: &Terrain, surface: &mut Surface, arg: &str, clock: f64) -> Result<String, String> {
+    // `/geologie` : geysers, fumerolles, cryovolcans, lave (T5)
+    if let Some(geo) = arg.strip_prefix("geo:") {
+        use crate::geoactive::{nearest_vent, VentKind};
+        if geo.trim().starts_with("seis") {
+            crate::geoactive::force_quake(clock);
+            return Ok("Seisme provoque (tests).".into());
+        }
+        let kind = VentKind::parse(geo).ok_or_else(|| format!("Evenements : {}, seisme", VentKind::ALL.map(|k| k.name()).join(", ")))?;
+        let here = surface.local_point().ok_or("Posez-vous ou volez bas d'abord.")?.normalize_or(Vec3::Y);
+        let v = nearest_vent(t, here, kind, 30, clock).ok_or("Aucun evenement de ce genre pres d'ici (voir le scanner : activite).")?;
+        let vx = t.voxel();
+        let at = (v.dir * t.params.radius + v.dir.any_orthonormal_vector() * 30.0 * vx).normalize();
+        return match surface.phase {
+            Phase::Walking => {
+                // Regard un peu de côté : le personnage (au centre de l'écran) ne cache pas l'évent
+                let mut w = Walker::spawn(t, at, Quat::from_axis_angle(at, 0.45) * (v.dir - at));
+                let floor = t.floor(at, f32::INFINITY).top;
+                w.pos = at * floor;
+                w.eye_r = floor + vx * EYE_VOXELS;
+                surface.walker = w;
+                Ok(format!("Devant : {}.", kind.name()))
+            }
+            Phase::Flying => {
+                surface.fpos = at * (t.ground(at).top + 40.0 * vx);
+                surface.fdescend = false;
+                Ok(format!("{} pres du vaisseau (V pour se poser).", kind.name()))
+            }
+            _ => Err("Attendez la fin de l'atterrissage.".into()),
+        };
+    }
     let rocks = t.rocks.clone().ok_or("Pas de formes du relief sur cet astre.")?;
     let want = if arg.trim().is_empty() {
         None
@@ -2315,7 +2345,7 @@ fn go_relief(t: &Terrain, surface: &mut Surface, arg: &str) -> Result<String, St
     }
 }
 
-fn go_overhang(time: Res<Time>, mut events: EventReader<OverhangCommand>, mut surface: ResMut<Surface>, mut net: ResMut<Net>) {
+fn go_overhang(time: Res<Time>, clock: Res<crate::world_clock::WorldClock>, mut events: EventReader<OverhangCommand>, mut surface: ResMut<Surface>, mut net: ResMut<Net>) {
     let now = time.elapsed_secs_f64();
     for ev in events.read() {
         if let Some(arg) = &ev.0 {
@@ -2323,7 +2353,7 @@ fn go_overhang(time: Res<Time>, mut events: EventReader<OverhangCommand>, mut su
                 net.notify("Posez-vous ou volez bas sur une planete ou une lune solide d'abord (zoom sous 1000).", now);
                 continue;
             };
-            let msg = go_relief(&t, &mut surface, arg);
+            let msg = go_relief(&t, &mut surface, arg, clock.secs);
             surface.terrain = Some(t);
             match msg {
                 Ok(m) | Err(m) => net.notify(&m, now),
@@ -2960,6 +2990,7 @@ mod tests {
             biomes: crate::planetgen::biome::BiomeParams::default(),
             asteroid: None,
             tide: Default::default(),
+            geo: Default::default(),
         })
     }
 

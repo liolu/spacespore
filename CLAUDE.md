@@ -414,6 +414,16 @@ Si des changements locaux non commites existent, les stash avant le pull puis le
   relief » (`relief_shadows`, defaut non : ~40 % d'images/s) : tuiles ombrantes + 4e cascade jusqu'a 4 000
   voxels. Mesures : `SPACESPORE_PERF` avec `terrain_detail` / `relief_shadows` dans settings.json. Test
   `detail_reaches_the_horizon_but_not_beyond`.
+- 0.13 T5 = geologie active (`geoactive.rs`), f(graine, horloge) : `BodyParams::geo` (`GeoActivity` : volcanisme,
+  seismes, `cryo` = ocean sous la glace) ; events haches par cellule de 400 voxels (`cell_vent`) : lave
+  (volcanisme > 0,45, eruptions de quelques heures puis refroidissement), geysers (eau liquide, 8 a 30 s toutes
+  les 1,5 a 8 min), fumerolles (air), cryovolcans (panaches de 300 voxels) ; `strength(vent, t)`. Affichage :
+  particules face camera (`GeoParticles`), coulee lumineuse sans eclairage le long de la plus grande pente
+  (`lava_path`, `GeoLava`) + lumiere orange (`GeoLight`) ; maillages reecrits a chaque image =
+  `NoFrustumCulling`. Seismes : `quake(seed, quakes, t)` (tranches de 4 min), camera qui tremble apres
+  `SurfaceControl`, poussiere, message. Chat : `/geologie [geyser|fumerolle|cryovolcan|lave|seisme]` (evente
+  actif le plus proche ; seisme = force, tests). Tests : `SPACESPORE_TEST_CMD2` (+ `_SECS`, 30 s) = seconde
+  commande apres l'atterrissage. PROTOCOL inchange (rien de nouveau dans le monde partage).
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 
