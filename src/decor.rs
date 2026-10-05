@@ -255,7 +255,7 @@ fn unit(h: u32) -> f32 {
 pub fn tile_decor(terrain: &Terrain, key: TileKey) -> Vec<DecorInstance> {
     let layout = terrain.layout;
     let depth = key.depth as u32;
-    if depth + 1 < layout.max_depth || !terrain.params.biomes.defined || terrain.params.gaseous {
+    if depth + terrain.decor_levels.max(1) <= layout.max_depth || !terrain.params.biomes.defined || terrain.params.gaseous {
         return Vec::new();
     }
     let mut out = cave_decor(terrain, key);

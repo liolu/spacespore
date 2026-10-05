@@ -37,7 +37,7 @@ impl Plugin for ChatCmdPlugin {
 #[derive(Event)]
 pub struct ChatCommand(pub String);
 
-const COMMANDS: [&str; 24] = ["/relief", "/echelle", "/impact", "/ceinture", "/comete", "/eclipse", "/editeur", "/grotte", "/surplomb", "/tp", "/galaxie", "/profil", "/profile", "/graine", "/seed", "/aller", "/go", "/stats", "/aide", "/help", "/heure", "/time", "/temps", "/speed"];
+const COMMANDS: [&str; 25] = ["/geologie", "/relief", "/echelle", "/impact", "/ceinture", "/comete", "/eclipse", "/editeur", "/grotte", "/surplomb", "/tp", "/galaxie", "/profil", "/profile", "/graine", "/seed", "/aller", "/go", "/stats", "/aide", "/help", "/heure", "/time", "/temps", "/speed"];
 
 /// La ligne est une commande du jeu (et non un message à envoyer).
 pub fn is_local(line: &str) -> bool {
@@ -96,7 +96,7 @@ fn find_galaxy(arg: &str, settings: &GameSettings, current: usize) -> Result<usi
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Commandes : (nom, arguments, description). Ordre d'affichage des propositions.
-pub const COMMAND_HELP: [(&str, &str, &str); 18] = [
+pub const COMMAND_HELP: [(&str, &str, &str); 19] = [
     ("/aide", "[commande]", "la liste des commandes, ou l'aide d'une commande"),
     ("/aller", "etoile|planete|lune <type> | suivant", "tests : aller a un type d'etoile, de planete ou de lune"),
     ("/stats", "[n | tout]", "statistiques de tous les astres d'une galaxie (F3 : masquer)"),
@@ -105,6 +105,7 @@ pub const COMMAND_HELP: [(&str, &str, &str); 18] = [
     ("/surplomb", "", "tests : aller a l'arche de test en voxels 3D de l'astre (pose ou en vol bas)"),
     ("/echelle", "<k : 1, 8, 16, 32, 64>", "tests (0.13 E1) : voxels k fois plus petits au prochain atterrissage"),
     ("/grotte", "", "aller a l'entree de grotte la plus proche (pose ou en vol bas)"),
+    ("/geologie", "[geyser | fumerolle | cryovolcan | lave | seisme]", "aller a l'evenement geologique le plus proche (pose ou en vol bas) ; seisme = tests"),
     ("/relief", "[corniche | grotte | strates | piton | blocs | gorge | pont | arche | cheminee]", "aller a la forme du relief la plus proche (pose ou en vol bas)"),
     ("/ceinture", "", "aller au champ dense d'une ceinture d'asteroides du systeme charge"),
     ("/comete", "", "aller a la comete la plus active du systeme charge"),
@@ -346,6 +347,9 @@ fn run_chat_commands(
             }
             "/relief" => {
                 overhang.send(crate::surface::OverhangCommand(Some(arg.to_string())));
+            }
+            "/geologie" => {
+                overhang.send(crate::surface::OverhangCommand(Some(format!("geo:{arg}"))));
             }
             "/grotte" => {
                 cave.send(crate::surface::CaveCommand);

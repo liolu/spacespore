@@ -78,6 +78,8 @@ pub struct BodyParams {
     pub asteroid: Option<crate::asteroids::AsteroidShape>,
     /// Marées (C4) : le niveau de la mer monte et descend (mis à jour pendant un séjour).
     pub tide: Tide,
+    /// Géologie active (0.13 T5) : geysers, fumerolles, lave, séismes (`geoactive.rs`).
+    pub geo: crate::geoactive::GeoActivity,
 }
 
 /// Marées (C4) : un renflement de la mer vers chaque astre qui la tire (et à l'opposé), en
@@ -135,6 +137,11 @@ impl BodyParams {
             biomes: p.biomes,
             asteroid: None,
             tide: Default::default(),
+            geo: crate::geoactive::GeoActivity {
+                volcanism: p.geology.volcanism,
+                quakes: p.geology.quakes,
+                cryo: p.hydrology.subsurface_ocean && p.geology.activity > 0.05,
+            },
         }
     }
 
@@ -165,6 +172,7 @@ impl BodyParams {
             biomes: BiomeParams::default(),
             asteroid: None,
             tide: Default::default(),
+            geo: Default::default(),
         }
     }
 
@@ -314,13 +322,31 @@ impl TileKey {
 /// Tuiles (feuilles du quadtree) à afficher pour une caméra à `cam_local` (repère du corps) ;
 /// `ground_r` = rayon du sol sous la caméra : les distances se mesurent au sol, pas à la sphère de
 /// base (à la nouvelle échelle, un plateau à 60 voxels au-dessus n'aurait jamais de tuiles fines).
+#[cfg(test)]
 pub fn select_tiles(layout: Layout, ground_r: f32, cam_local: Vec3, out: &mut Vec<TileKey>) {
-    fn visit(key: TileKey, layout: Layout, radius: f32, cam: Vec3, out: &mut Vec<TileKey>) {
+    select_tiles_with(layout, ground_r, cam_local, SPLIT_FACTOR, f32::INFINITY, out);
+}
+
+/// Comme `select_tiles`, avec un facteur de découpe (`split` : distance de détail, 0.13 T4) et
+/// la hauteur du relief (`relief`, unités) : une tuile tout entière derrière l'horizon (cachée par
+/// la courbure, même ses sommets) n'est pas découpée.
+pub fn select_tiles_with(layout: Layout, ground_r: f32, cam_local: Vec3, split: f32, relief: f32, out: &mut Vec<TileKey>) {
+    // Distance au-delà de laquelle rien n'est visible : horizon de la caméra (sur la sphère du
+    // sol le plus bas) plus l'horizon des plus hauts sommets
+    let low = (ground_r - relief).max(ground_r * 0.5);
+    let cam_r = cam_local.length();
+    let hidden = if relief.is_finite() {
+        (cam_r * cam_r - low * low).max(0.0).sqrt() + ((low + 2.0 * relief).powi(2) - low * low).max(0.0).sqrt()
+    } else {
+        f32::INFINITY
+    };
+    fn visit(key: TileKey, layout: Layout, radius: f32, cam: Vec3, split: f32, hidden: f32, out: &mut Vec<TileKey>) {
         if (key.depth as u32) < layout.max_depth {
             let dist = (cam - key.center_dir() * radius).length();
-            if dist < SPLIT_FACTOR * key.arc(radius) {
+            let arc = key.arc(radius);
+            if dist < split * arc && dist - 0.75 * arc < hidden {
                 for child in key.children() {
-                    visit(child, layout, radius, cam, out);
+                    visit(child, layout, radius, cam, split, hidden, out);
                 }
                 return;
             }
@@ -328,7 +354,7 @@ pub fn select_tiles(layout: Layout, ground_r: f32, cam_local: Vec3, out: &mut Ve
         out.push(key);
     }
     for face in 0..6 {
-        visit(TileKey::root(face), layout, ground_r, cam_local, out);
+        visit(TileKey::root(face), layout, ground_r, cam_local, split, hidden, out);
     }
 }
 
@@ -460,6 +486,8 @@ pub struct Terrain {
     /// une tranche autour du joueur quand il descend plus bas (`with_cave_window`, unités sous la
     /// surface). Les grottes vont jusqu'à `caves::MAX_DEPTH` (2 000 unités, décision Q2).
     pub cave_window: Option<(f32, f32)>,
+    /// Niveaux de tuiles (les plus fins) qui portent du décor.
+    pub decor_levels: u32,
 }
 
 /// Profondeur (voxels) des grottes toujours maillées sous la surface.
@@ -494,11 +522,23 @@ impl Terrain {
                 Arc::new(Rocks::new(params.seed, params.radius, params.layout().voxel, air, wet))
             }),
             cave_window: None,
+            decor_levels: 2,
         }
         .with_overhang()
     }
 
     /// Tranche de grottes en plus à mailler (profondeurs sous la surface, unités).
+    /// Hauteur du relief (unités) : des mers aux plus hauts sommets (horizon des tuiles, T4).
+    pub fn relief_span(&self) -> f32 {
+        self.params.terrain_height + 2.0 * self.forms.max_height()
+    }
+
+    /// Décor sur les tuiles des `levels` niveaux les plus fins (0.13 T4 : plus loin en Ultra).
+    pub fn with_decor_levels(mut self, levels: u32) -> Self {
+        self.decor_levels = levels;
+        self
+    }
+
     pub fn with_cave_window(mut self, window: Option<(f32, f32)>) -> Self {
         self.cave_window = window;
         self
@@ -1059,7 +1099,8 @@ impl MeshBuf {
     }
 
     fn into_mesh(self) -> Mesh {
-        let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+        // Seulement sur la carte graphique : la copie en mémoire est libérée après l'envoi (T4)
+        let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD);
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.pos);
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, self.nor);
         mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, self.col);
@@ -1468,11 +1509,11 @@ pub fn build_voxel_tile_mesh(t: &Terrain, key: TileKey) -> Mesh {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use bevy::render::mesh::VertexAttributeValues;
 
-    fn earth_like() -> BodyParams {
+    pub(crate) fn earth_like() -> BodyParams {
         BodyParams {
             airless: false,
             atmosphere: true,
@@ -1495,6 +1536,7 @@ mod tests {
             biomes: BiomeParams::default(),
             asteroid: None,
             tide: Default::default(),
+            geo: Default::default(),
         }
     }
 
@@ -1952,6 +1994,31 @@ mod tests {
         assert!(differ > 20, "{differ}");
     }
 
+    /// T4 : en Ultra, plus de tuiles fines autour de la caméra ; rien n'est découpé derrière
+    /// l'horizon (moins de tuiles qu'en découpant tout), et la surface reste couverte.
+    #[test]
+    fn detail_reaches_the_horizon_but_not_beyond() {
+        let t = Terrain::new(earth_like());
+        let dir = Vec3::new(0.2, 0.9, 0.3).normalize();
+        let g = t.ground(dir).top;
+        let cam = dir * (g + 3.0 * t.voxel());
+        let count = |split: f32, relief: f32| {
+            let mut out = Vec::new();
+            select_tiles_with(t.layout, g, cam, split, relief, &mut out);
+            let fine = out.iter().filter(|k| k.depth as u32 == t.layout.max_depth).count();
+            // Couverture : l'aire des feuilles fait les 6 faces
+            let area: f64 = out.iter().map(|k| 0.25f64.powi(k.depth as i32)).sum();
+            assert!((area - 6.0).abs() < 1e-6, "{area}");
+            (out.len(), fine)
+        };
+        let (n_low, fine_low) = count(SPLIT_FACTOR, t.relief_span());
+        let (n_ultra, fine_ultra) = count(4.5, t.relief_span());
+        let (n_all, _) = count(4.5, f32::INFINITY);
+        eprintln!("bas {n_low} ({fine_low} fines), ultra {n_ultra} ({fine_ultra} fines), sans horizon {n_all}");
+        assert!(fine_ultra > fine_low * 3, "{fine_low} {fine_ultra}");
+        assert!(n_ultra < n_all, "{n_ultra} {n_all}");
+    }
+
     /// Un delta (minage, 0.14) creuse bien une cellule : le sol descend d'un voxel.
     #[test]
     fn a_delta_digs_a_cell() {
@@ -2031,6 +2098,7 @@ mod sea_level_tests {
             biomes: BiomeParams::default(),
             asteroid: None,
             tide: Default::default(),
+            geo: Default::default(),
         }
     }
 }

@@ -27,6 +27,7 @@ mod planet;
 mod planetgen;
 mod rocks;
 mod scanner;
+mod geoactive;
 mod dex;
 mod settings;
 mod systems;
@@ -229,6 +230,7 @@ fn main() {
         .add_plugins(planetgen::PlanetGenPlugin)
         .add_plugins(gas::GasPlugin)
         .add_plugins(scanner::ScannerPlugin)
+        .add_plugins(geoactive::GeoActivePlugin)
         .add_plugins(dex::DexPlugin)
         .add_plugins(decor::DecorPlugin)
         .add_plugins(test_cmd::TestCmdPlugin)

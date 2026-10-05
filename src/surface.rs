@@ -19,7 +19,7 @@ use crate::net_ui::NetPanel;
 use crate::planet::{MoonId, MoonRoot, PlanetId, PlanetRoot, StarId, StarRoot};
 use crate::settings::GameSettings;
 use crate::ship::Ship;
-use crate::terrain::{select_tiles, BodyParams, Terrain, TileKey, build_tile_mesh_with};
+use crate::terrain::{BodyParams, Terrain, TileKey, build_tile_mesh_with};
 use crate::decor::{tile_decor, DecorAssets, DecorInstance};
 use crate::ui::{CameraTarget, MenuState, TargetKind};
 use crate::{CameraController, ZoomLevel};
@@ -1758,12 +1758,14 @@ fn update_suns(
     };
     // Ombres jusqu'à ~200 voxels autour de la caméra (le marcheur, le vaisseau posé, le décor)
     let voxel = surface.terrain.as_ref().map_or(10.0, |t| t.voxel());
-    let reshape = (*cascades - voxel).abs() > 1e-3;
+    let reshape = (*cascades - voxel).abs() > 1e-3 || settings.is_changed();
     let k = 1.0 - 0.985 * surface.underground();
     for (e, sun, mut light, mut tf) in &mut suns {
         if reshape {
+            // Ultra : une 4e cascade jusqu'à 4 000 voxels pour les ombres des montagnes (T4)
+            let (cascades, far) = if crate::graphics::terrain_detail(&settings).3 { (4, 4000.0) } else { (3, 200.0) };
             commands.entity(e).try_insert(
-                bevy::pbr::CascadeShadowConfigBuilder { num_cascades: 3, minimum_distance: voxel * 0.5, first_cascade_far_bound: voxel * 25.0, maximum_distance: voxel * 200.0, overlap_proportion: 0.2 }.build(),
+                bevy::pbr::CascadeShadowConfigBuilder { num_cascades: cascades, minimum_distance: voxel * 0.5, first_cascade_far_bound: voxel * 25.0, maximum_distance: voxel * far, overlap_proportion: 0.2 }.build(),
             );
         }
         let (illuminance, shadows) = match list.get(sun.0) {
@@ -2281,7 +2283,37 @@ fn refresh_voxels(settings: Res<GameSettings>, mut changed: ResMut<VoxelsChanged
 pub struct OverhangCommand(pub Option<String>);
 
 /// `/relief [forme]` : aller voir la forme du relief la plus proche (corniche, piton, gorge...).
-fn go_relief(t: &Terrain, surface: &mut Surface, arg: &str) -> Result<String, String> {
+fn go_relief(t: &Terrain, surface: &mut Surface, arg: &str, clock: f64) -> Result<String, String> {
+    // `/geologie` : geysers, fumerolles, cryovolcans, lave (T5)
+    if let Some(geo) = arg.strip_prefix("geo:") {
+        use crate::geoactive::{nearest_vent, VentKind};
+        if geo.trim().starts_with("seis") {
+            crate::geoactive::force_quake(clock);
+            return Ok("Seisme provoque (tests).".into());
+        }
+        let kind = VentKind::parse(geo).ok_or_else(|| format!("Evenements : {}, seisme", VentKind::ALL.map(|k| k.name()).join(", ")))?;
+        let here = surface.local_point().ok_or("Posez-vous ou volez bas d'abord.")?.normalize_or(Vec3::Y);
+        let v = nearest_vent(t, here, kind, 30, clock).ok_or("Aucun evenement de ce genre pres d'ici (voir le scanner : activite).")?;
+        let vx = t.voxel();
+        let at = (v.dir * t.params.radius + v.dir.any_orthonormal_vector() * 30.0 * vx).normalize();
+        return match surface.phase {
+            Phase::Walking => {
+                // Regard un peu de côté : le personnage (au centre de l'écran) ne cache pas l'évent
+                let mut w = Walker::spawn(t, at, Quat::from_axis_angle(at, 0.45) * (v.dir - at));
+                let floor = t.floor(at, f32::INFINITY).top;
+                w.pos = at * floor;
+                w.eye_r = floor + vx * EYE_VOXELS;
+                surface.walker = w;
+                Ok(format!("Devant : {}.", kind.name()))
+            }
+            Phase::Flying => {
+                surface.fpos = at * (t.ground(at).top + 40.0 * vx);
+                surface.fdescend = false;
+                Ok(format!("{} pres du vaisseau (V pour se poser).", kind.name()))
+            }
+            _ => Err("Attendez la fin de l'atterrissage.".into()),
+        };
+    }
     let rocks = t.rocks.clone().ok_or("Pas de formes du relief sur cet astre.")?;
     let want = if arg.trim().is_empty() {
         None
@@ -2313,7 +2345,7 @@ fn go_relief(t: &Terrain, surface: &mut Surface, arg: &str) -> Result<String, St
     }
 }
 
-fn go_overhang(time: Res<Time>, mut events: EventReader<OverhangCommand>, mut surface: ResMut<Surface>, mut net: ResMut<Net>) {
+fn go_overhang(time: Res<Time>, clock: Res<crate::world_clock::WorldClock>, mut events: EventReader<OverhangCommand>, mut surface: ResMut<Surface>, mut net: ResMut<Net>) {
     let now = time.elapsed_secs_f64();
     for ev in events.read() {
         if let Some(arg) = &ev.0 {
@@ -2321,7 +2353,7 @@ fn go_overhang(time: Res<Time>, mut events: EventReader<OverhangCommand>, mut su
                 net.notify("Posez-vous ou volez bas sur une planete ou une lune solide d'abord (zoom sous 1000).", now);
                 continue;
             };
-            let msg = go_relief(&t, &mut surface, arg);
+            let msg = go_relief(&t, &mut surface, arg, clock.secs);
             surface.terrain = Some(t);
             match msg {
                 Ok(m) | Err(m) => net.notify(&m, now),
@@ -2422,7 +2454,16 @@ struct TileStore {
     voxels: Option<std::sync::Arc<crate::voxel::BodyVoxels>>,
     /// Tranche de grottes maillée autour du joueur sous terre (0.13 E2).
     cave_window: Option<(f32, f32)>,
+    /// Tuiles remplacées qui s'effacent en fondu (0.13 T4) : début et matériau transparent.
+    fading: HashMap<Entity, (f64, Handle<StandardMaterial>)>,
+    /// Niveaux de tuiles avec décor des tuiles construites (réglage du détail du sol).
+    decor_levels: u32,
+    /// Les tuiles projettent des ombres (Ultra).
+    shadows: bool,
 }
+
+/// Durée du fondu entre deux niveaux de détail du sol (s).
+const TILE_FADE_SECS: f64 = 0.35;
 
 fn set_far_visibility(
     root: Entity,
@@ -2474,6 +2515,7 @@ fn update_tiles(
                 commands.entity(entry.entity).despawn_recursive();
             }
             store.tasks.clear();
+            store.fading.clear();
             if let Some(root) = root {
                 set_far_visibility(root, true, &children, &far, &mut vis);
             }
@@ -2514,7 +2556,6 @@ fn update_tiles(
         store.generation = store.generation.wrapping_add(1);
     }
     let cave_window = store.cave_window;
-    let generation = store.generation;
     let params = BodyParams { climate: store.climate.unwrap_or(params.climate), tide: store.tide.unwrap_or(params.tide), ..params };
     let voxels = store.voxels.clone();
     // Les grottes de l'astre (et leur cache) sont partagées par toutes les tuiles
@@ -2538,7 +2579,28 @@ fn update_tiles(
     let cam_local = root_tf.rotation.inverse() * (cam.translation - root_tf.translation);
     let mut leaves = Vec::new();
     let ground_r = terrain.ground(cam_local.normalize_or(Vec3::Y)).top;
-    select_tiles(layout, ground_r, cam_local, &mut leaves);
+    // Distance de détail réglable (0.13 T4) : rien de plus fin derrière l'horizon
+    let (_, split, decor_levels, tile_shadows) = crate::graphics::terrain_detail(&settings);
+    let tile_shadows = tile_shadows && settings.shadows;
+    crate::terrain::select_tiles_with(layout, ground_r, cam_local, split, terrain.relief_span(), &mut leaves);
+    // Autre réglage : le décor change (tuiles reconstruites), les ombres aussi
+    if store.decor_levels != decor_levels {
+        if store.decor_levels != 0 {
+            store.generation = store.generation.wrapping_add(1);
+        }
+        store.decor_levels = decor_levels;
+    }
+    if store.shadows != tile_shadows {
+        store.shadows = tile_shadows;
+        for entry in store.built.values() {
+            if tile_shadows {
+                commands.entity(entry.entity).remove::<NotShadowCaster>();
+            } else {
+                commands.entity(entry.entity).try_insert(NotShadowCaster);
+            }
+        }
+    }
+    let generation = store.generation;
     let mut needed: HashSet<TileKey> = HashSet::with_capacity(leaves.len() * 2);
     for &leaf in &leaves {
         let mut k = Some(leaf);
@@ -2555,7 +2617,7 @@ fn update_tiles(
         for face in 0..6 {
             let key = TileKey::root(face);
             let first = Terrain::new(params).with_voxels(voxels.clone()).with_caves(caves.clone()).with_rocks(rocks.clone()).with_cave_window(cave_window);
-            let entity = spawn_tile(&mut commands, &mut meshes, &material, root, build_tile_mesh_with(&first, key));
+            let entity = spawn_tile(&mut commands, &mut meshes, &material, root, build_tile_mesh_with(&first, key), tile_shadows);
             store.built.insert(key, TileEntry { entity, last_needed: now, generation });
         }
     }
@@ -2572,7 +2634,7 @@ fn update_tiles(
         let built_gen = *built_gen;
         if let Some((mesh, objects)) = block_on(future::poll_once(task)) {
             store.tasks.remove(&key);
-            let entity = spawn_tile(&mut commands, &mut meshes, &material, root, mesh);
+            let entity = spawn_tile(&mut commands, &mut meshes, &material, root, mesh, tile_shadows);
             // Décor de la tuile (tuiles proches seulement) : il disparaît avec elle
             decor.spawn(&mut commands, entity, &objects);
             // Nouvelle saison : la tuile remplace l'ancienne (visible jusque-là)
@@ -2613,7 +2675,7 @@ fn update_tiles(
             key,
             (
                 pool.spawn(async move {
-                    let terrain = Terrain::new(p).with_voxels(vx).with_caves(cv).with_rocks(rk).with_cave_window(cave_window);
+                    let terrain = Terrain::new(p).with_voxels(vx).with_caves(cv).with_rocks(rk).with_cave_window(cave_window).with_decor_levels(decor_levels);
                     (build_tile_mesh_with(&terrain, key), tile_decor(&terrain, key))
                 }),
                 generation,
@@ -2653,14 +2715,64 @@ fn update_tiles(
         shown.remove(&key);
     }
 
+    // Une tuile remplacée par ses filles (ou par son parent) reste affichée en s'effaçant par-dessus
+    // (0.13 T4) : pas de saut visible d'un niveau de détail à l'autre
+    let mut start_fade = Vec::new();
+    let mut stop_fade = Vec::new();
+    let far_hidden = store.far_hidden;
+    let fading_now: HashSet<Entity> = store.fading.keys().copied().collect();
     for (key, entry) in store.built.iter_mut() {
         if needed.contains(key) {
             entry.last_needed = now;
         }
         if let Ok(mut v) = vis.get_mut(entry.entity) {
             let wanted = if shown.contains(key) { Visibility::Inherited } else { Visibility::Hidden };
-            if *v != wanted {
-                *v = wanted;
+            let fading = fading_now.contains(&entry.entity);
+            if wanted == Visibility::Hidden && *v != Visibility::Hidden && far_hidden {
+                if !fading {
+                    start_fade.push(entry.entity);
+                }
+            } else {
+                if fading && wanted != Visibility::Hidden {
+                    stop_fade.push(entry.entity);
+                }
+                if *v != wanted {
+                    *v = wanted;
+                }
+            }
+        }
+    }
+    for e in stop_fade {
+        store.fading.remove(&e);
+        commands.entity(e).try_insert(MeshMaterial3d(material.clone()));
+    }
+    for e in start_fade {
+        let fade = materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            perceptual_roughness: 0.95,
+            reflectance: 0.15,
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        });
+        commands.entity(e).try_insert(MeshMaterial3d(fade.clone()));
+        store.fading.insert(e, (now, fade));
+    }
+    let alive: HashSet<Entity> = store.built.values().map(|e| e.entity).collect();
+    let mut done = Vec::new();
+    for (&e, (start, handle)) in store.fading.iter() {
+        let f = (now - start) / TILE_FADE_SECS;
+        if f >= 1.0 || !alive.contains(&e) {
+            done.push(e);
+        } else if let Some(m) = materials.get_mut(handle) {
+            m.base_color = Color::WHITE.with_alpha((1.0 - f) as f32);
+        }
+    }
+    for e in done {
+        store.fading.remove(&e);
+        if alive.contains(&e) {
+            commands.entity(e).try_insert(MeshMaterial3d(material.clone()));
+            if let Ok(mut v) = vis.get_mut(e) {
+                *v = Visibility::Hidden;
             }
         }
     }
@@ -2710,17 +2822,13 @@ fn spawn_tile(
     material: &Handle<StandardMaterial>,
     root: Entity,
     mesh: Mesh,
+    shadows: bool,
 ) -> Entity {
-    let entity = commands
-        .spawn((
-            Mesh3d(meshes.add(mesh)),
-            MeshMaterial3d(material.clone()),
-            Transform::IDENTITY,
-            Visibility::Hidden,
-            NotShadowCaster,
-            SurfaceTile,
-        ))
-        .id();
+    let entity = commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(material.clone()), Transform::IDENTITY, Visibility::Hidden, SurfaceTile)).id();
+    // Ombres du relief (Ultra) : montagnes et falaises ombrent le sol
+    if !shadows {
+        commands.entity(entity).insert(NotShadowCaster);
+    }
     commands.entity(root).add_child(entity);
     entity
 }
@@ -2882,6 +2990,7 @@ mod tests {
             biomes: crate::planetgen::biome::BiomeParams::default(),
             asteroid: None,
             tide: Default::default(),
+            geo: Default::default(),
         })
     }
 

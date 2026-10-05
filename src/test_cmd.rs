@@ -64,6 +64,7 @@ fn dev_script(
     mut step: Local<u8>,
     mut last_log: Local<f32>,
     mut flying: Local<bool>,
+    mut second: Local<bool>,
     mut cams: Query<&mut crate::CameraController>,
     mut surface: ResMut<crate::surface::Surface>,
 ) {
@@ -73,6 +74,17 @@ fn dev_script(
         *step = 1;
         // Plusieurs commandes séparées par « ; » (dans l'ordre)
         if let Ok(cmds) = std::env::var("SPACESPORE_TEST_CMD") {
+            for cmd in cmds.split(';').map(str::trim).filter(|c| !c.is_empty()) {
+                chat.send(crate::chat_cmd::ChatCommand(cmd.to_string()));
+            }
+        }
+    }
+    // Seconde commande, plus tard (après un atterrissage) : `SPACESPORE_TEST_CMD2` à
+    // `SPACESPORE_TEST_CMD2_SECS` (30 s par défaut)
+    let cmd2_at: f32 = std::env::var("SPACESPORE_TEST_CMD2_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(30.0);
+    if !*second && t > cmd2_at {
+        *second = true;
+        if let Ok(cmds) = std::env::var("SPACESPORE_TEST_CMD2") {
             for cmd in cmds.split(';').map(str::trim).filter(|c| !c.is_empty()) {
                 chat.send(crate::chat_cmd::ChatCommand(cmd.to_string()));
             }
