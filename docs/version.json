@@ -1,10 +1,10 @@
 {
-  "version": "0.13.3",
-  "version_code": 1303,
-  "release_date": "2026-10-05",
-  "download_url": "https://github.com/liolu/spacespore/releases/download/v0.13.3/spacespore-v0.13.3-windows.zip",
-  "download_url_linux": "https://github.com/liolu/spacespore/releases/download/v0.13.3/spacespore-v0.13.3-linux.zip",
-  "download_url_macos": "https://github.com/liolu/spacespore/releases/download/v0.13.3/spacespore-v0.13.3-macos.zip",
-  "release_notes": "0.13 O1/O2: vraie eau (fond marin, surface transparente, vagues, ecume, sous l'eau, caustiques), commandes de test (/essai /jour /nuit /vol /mer), TESTS-JEU.md, PROTOCOL 34, version 0.13.3",
+  "version": "0.13.4",
+  "version_code": 1304,
+  "release_date": "2026-10-07",
+  "download_url": "https://github.com/liolu/spacespore/releases/download/v0.13.4/spacespore-v0.13.4-windows.zip",
+  "download_url_linux": "https://github.com/liolu/spacespore/releases/download/v0.13.4/spacespore-v0.13.4-linux.zip",
+  "download_url_macos": "https://github.com/liolu/spacespore/releases/download/v0.13.4/spacespore-v0.13.4-macos.zip",
+  "release_notes": "0.13 bloc P (P1-P9) : approche planetaire en un seul vol continu, rentree (plasma, bang, condensation), nuages qui s'ecartent, poser / decoller, aides d'approche, cockpit, premier son, autres joueurs ; PROTOCOL 35, version 0.13.4",
   "min_updater_version": 1
 }
