@@ -50,6 +50,8 @@ mod approche;
 mod approche_fx;
 mod approche_ui;
 mod sound;
+mod fog;
+mod skybox;
 mod wormhole;
 mod world_clock;
 mod zones;
@@ -238,6 +240,8 @@ fn main() {
         .add_plugins(approche_fx::ApprocheFxPlugin)
         .add_plugins(approche_ui::ApprocheUiPlugin)
         .add_plugins(sound::SoundPlugin)
+        .add_plugins(fog::FogPlugin)
+        .add_plugins(skybox::SkyboxPlugin)
         .add_plugins(scanner::ScannerPlugin)
         .add_plugins(geoactive::GeoActivePlugin)
         .add_plugins(dex::DexPlugin)

@@ -71,6 +71,8 @@ test reutilisable vaut mieux qu'un essai de plus.
 | `/vol` | descend en vol bas sur l'astre cible (remplace `SPACESPORE_TEST_FLY`) |
 | `/mer` | rivage de la mer la plus proche (en vol bas ou a pied) |
 | `/nuage [dedans\|dessus\|dessous]` | en vol bas : va dans la couche de nuages (ou au-dessus : mer de nuages, ombre du vaisseau) |
+| `/brouillard [oui\|non\|auto\|0-100]` | brouillard volumetrique : option, ou densite forcee en % (tests) |
+| `/meteo [clair\|auto]` | ciel clair force (ni nuages, ni pluie, ni brouillard) : indispensable pour voir les etoiles ou le ciel |
 | `/volume [0-100]` | volume du son ; `/bouclier [oui\|non]` : bouclier thermique (surchauffe puis degats a la rentree) |
 | `/aller etoile\|planete\|lune <type>`, `/aller suivant` | cherche un type d'astre et s'y rend (types : `/aller`) |
 | `/heure` | heure locale, soleil, saison de l'astre cible |
@@ -96,6 +98,10 @@ Commandes d'essai a ajouter quand le besoin apparait (pas encore faites) : `/met
 - **Nuages** : `/essai mer` puis `SPACESPORE_TEST_CMD2="/nuage"` (dedans) ou `"/nuage dessus"`.
 - **Pente** : `/essai mer`, `CMD2="/relief piton"`, `SPACESPORE_TEST_LAND=<s>` : « Pente de 53 deg : trop raide ».
 - **Cockpit** : ajouter `SPACESPORE_TEST_COCKPIT=1`.
+- **Brouillard** : `/essai mer`, `CMD2="/brouillard 60"` (jour) ; de nuit : `CMD2="/nuit;/brouillard 60"` (phares dans le brouillard).
+- **Ciel etoile au sol** : `/essai mer`, `CMD2="/nuit;/meteo clair"`, `SPACESPORE_TEST_LOOKUP=1` + `SPACESPORE_TEST_COCKPIT=1`
+  (la vue de derriere regarde toujours le vaisseau : seul le cockpit regarde en l'air) ; depuis l'espace : `/aller planete mer`, capture a 24 s.
+  Le log donne `Ciel : calcul ... pret en N s`.
 - **Liseré** : `/aller planete mer`, capture a 20 s (vue espace).
 - Le son ne se voit pas : `cargo test --release sound approche` verifie la synthese ; ecouter en vrai.
 

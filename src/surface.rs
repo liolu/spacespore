@@ -187,7 +187,9 @@ pub fn hover_radius(p: &BodyParams) -> f32 {
 /// Épaisseur d'air visible depuis le sol : le ciel s'efface avec l'altitude (plus vite sous une
 /// atmosphère ténue).
 pub(crate) fn atmosphere_depth(p: &BodyParams) -> f32 {
-    (p.radius * 0.12).max(300.0) * (0.5 + 0.5 * p.pressure.clamp(0.0, 10.0).powf(0.3))
+    // Assez haute pour contenir les nuages (relief + altitude des nuages + épaisseur des dalles, ~0,16 rayon) :
+    // les nuages ne sont jamais au-dessus de l'atmosphère (0.13.5)
+    (p.radius * 0.26).max(3.0 * p.terrain_height).max(300.0) * (0.5 + 0.5 * p.pressure.clamp(0.0, 10.0).powf(0.3))
 }
 
 /// Couleur du ciel vue d'un astre. `sun_height` : sinus de la hauteur de l'étoile au-dessus de
@@ -488,6 +490,8 @@ const FLY_MIN_VOXELS: f32 = 40.0;
 const FLY_MAX_VOXELS: f32 = 4_000.0;
 const CLIMB_MIN_VOXELS: f32 = 20.0;
 const CLIMB_MAX_VOXELS: f32 = 3_000.0;
+/// Montée maximale dans l'atmosphère (voxels/s), sans Maj.
+const CLIMB_AIR_VOXELS: f32 = 350.0;
 /// Vol continu de l'orbite au sol (0.13 P1, P2) : plafond du vol (rayons de l'astre depuis son
 /// centre), distance de la vue espace (rayons) sous laquelle ZQSD pilote, hauteur maximale pour se
 /// poser (Q9, voxels), pente maximale pour se poser (Q10, degrés).
@@ -1382,7 +1386,7 @@ fn surface_control(
                 .any(|c| ctx.keys.pressed(*c));
         // Tests : `SPACESPORE_TEST_FLYKEY=<s>` = la touche W est tenue à partir de <s> secondes
         let fly_key = fly_key || std::env::var("SPACESPORE_TEST_FLYKEY").ok().and_then(|v| v.parse::<f64>().ok()).is_some_and(|t| now > t);
-        let zoom_enter = ctrl.distance < fz && now < surface.zoom_in_until;
+        let zoom_enter = body_params(&ctx.settings, &kind).is_some_and(|p| ctrl.distance < FLIGHT_ENTER_RADII * p.radius) && now < surface.zoom_in_until;
         if zoom_enter || fly_key {
             if let (Some(params), Some(frame)) = (body_params(&ctx.settings, &kind), ctx.pose(&kind)) {
                 let local = frame.point(ship_tf.translation);
@@ -1713,10 +1717,14 @@ fn surface_control(
                 if ctx.buttons.pressed(MouseButton::Right) {
                     let sens = ctx.settings.mouse_sensitivity * 0.01;
                     surface.fyaw -= look_delta.x * sens;
-                    surface.fpitch = (surface.fpitch + look_delta.y * sens).clamp(-0.2, 1.4);
+                    surface.fpitch = (surface.fpitch + look_delta.y * sens).clamp(-1.3, 1.45);
                 }
                 if wheel != 0.0 {
                     let ship_len = surface.ship_dims.real_scale(terrain.voxel()) * surface.ship_dims.icon_len;
+                    // Déjà au plus près : la molette fait descendre vers le sol (sans toucher à V)
+                    if wheel > 0.0 && surface.fdist <= ship_len * 1.25 && !terrain.params.gaseous {
+                        surface.fdescend = true;
+                    }
                     surface.fdist = (surface.fdist * (-wheel * 0.12).exp()).max(ship_len * 1.2);
                 }
                 if vertical != 0.0 {
@@ -1725,6 +1733,10 @@ fn surface_control(
                 // F5 : vue cockpit (1re personne) ou de derrière
                 if k.just_pressed(VIEW_KEY) {
                     surface.fcockpit = !surface.fcockpit;
+                }
+                // Tests : `SPACESPORE_TEST_LOOKUP=1` regarde vers le haut (le ciel)
+                if std::env::var_os("SPACESPORE_TEST_LOOKUP").is_some() {
+                    surface.fpitch = -1.25;
                 }
                 // Tests : `SPACESPORE_TEST_COCKPIT=1` garde la vue cockpit
                 if std::env::var_os("SPACESPORE_TEST_COCKPIT").is_some() {
@@ -1771,7 +1783,10 @@ fn surface_control(
             surface.fspeed += (forward * top_speed - surface.fspeed) * (1.0 - (-2.0 * dt).exp());
             // Dans une géante (des dizaines de milliers d'unités d'atmosphère), on monte et
             // descend plus vite
-            let climb = if terrain.params.gaseous { 400.0 * (terrain.params.radius / 8000.0).max(1.0) } else { drag_climb(alt.max(CLIMB_MIN_VOXELS).min((ORBIT_SPEED_FRAC * radius_vox).max(CLIMB_MIN_VOXELS))) * v };
+            let in_air = alt * v < crate::surface::atmosphere_depth(&params);
+            // Dans l'atmosphère la montée est posée (Maj la multiplie par 4) ; au-dessus elle suit l'altitude
+            let climb_cap = if in_air { CLIMB_AIR_VOXELS * if boost { 4.0 } else { 1.0 } } else { f32::MAX };
+            let climb = if terrain.params.gaseous { 400.0 * (terrain.params.radius / 8000.0).max(1.0) } else { drag_climb(alt.max(CLIMB_MIN_VOXELS).min((ORBIT_SPEED_FRAC * radius_vox).max(CLIMB_MIN_VOXELS)).min(climb_cap)) * v };
             surface.fvert += (vertical * climb - surface.fvert) * (1.0 - (-4.0 * dt).exp());
             let next = (surface.fpos + heading * surface.fspeed * dt).normalize();
             // Voxels 3D : le sol sous le vaisseau (on peut passer sous une arche) et le plafond
@@ -2049,6 +2064,7 @@ fn update_suns(
     settings: Res<GameSettings>,
     stars: Query<(&Transform, &StarId), (With<StarRoot>, Without<SurfaceSun>)>,
     dim: Res<crate::sky::SunDim>,
+    fog: Res<crate::fog::FogState>,
     mut suns: Query<(Entity, &SurfaceSun, &mut DirectionalLight, &mut Transform)>,
     mut cascades: Local<f32>,
 ) {
@@ -2072,7 +2088,7 @@ fn update_suns(
             Some(&(dir, w, lux)) if w > 0.02 => {
                 // La lumière va de l'étoile vers l'astre
                 *tf = Transform::default().looking_to(-dir, if dir.y.abs() > 0.99 { Vec3::X } else { Vec3::Y });
-                (lux * k, settings.shadows)
+                (lux * k, settings.shadows || fog.density > 0.03)
             }
             _ => (0.0, false),
         };
@@ -2273,7 +2289,7 @@ fn surface_light(
 // ─────────────────────────────────────────────────────────────────────────
 
 #[derive(Component)]
-struct Lamp {
+pub(crate) struct Lamp {
     /// Phares du vaisseau (sinon, lampe du marcheur).
     headlight: bool,
 }
@@ -2977,11 +2993,11 @@ fn update_tiles(
             store.far_hidden = false;
             set_far_visibility(root, far_now, &children, &far, &mut vis);
             if far_now {
-                for entry in store.built.values() {
-                    if let Ok(mut v) = vis.get_mut(entry.entity) {
-                        *v = Visibility::Hidden;
-                    }
+                // Les tuiles libèrent la carte graphique (maillages) : elles reviennent à la descente
+                for (_, entry) in store.built.drain() {
+                    commands.entity(entry.entity).despawn_recursive();
                 }
+                store.tasks.clear();
                 store.fading.clear();
             }
         }
@@ -3291,6 +3307,7 @@ fn update_hud(
     settings: Res<GameSettings>,
     weather: Res<crate::world_clock::LocalWeather>,
     suit: Res<crate::suit::Suit>,
+    plan: Res<crate::approche_ui::Approach>,
     mut hud: Query<&mut Text, With<SurfaceHud>>,
 ) {
     let label = match surface.phase {
@@ -3305,9 +3322,18 @@ fn update_hud(
             let f = &surface.flight;
             let approach = if f.time_to_ground.is_finite() && f.time_to_ground < 60.0 { format!("   sol dans {:.0} s", f.time_to_ground) } else { String::new() };
             let land = if f.alt / f.voxel.max(1e-3) <= LAND_ALT_VOXELS { "   V : se poser" } else { "" };
+            // Points plats proches (cercles verts) : le plus proche, ou celui choisi avec L
+            let flat = plan
+                .selected
+                .and_then(|i| plan.flats.get(i))
+                .or(plan.flats.first())
+                .filter(|_| f.alt / f.voxel.max(1e-3) < 900.0)
+                .map(|p| format!("
+Point plat (L : suivant) : {} a {:.0} voxels, {}, pente {:.0} deg", p.kind, p.dist, crate::approche_ui::bearing_text(p.bearing), p.slope))
+                .unwrap_or_default();
             format!(
                 "ZQSD/WASD : voler   A/D : tourner   Maj : accelerer   Espace/Ctrl : monter/descendre{land}   N : phares   J : saut suborbital
-Alt {:.0}   Vit {:.0}   Vert {:+.0}   Mach {:.1}{approach}
+Alt {:.0}   Vit {:.0}   Vert {:+.0}   Mach {:.1}{approach}{flat}
 {}   {}",
                 f.alt / f.voxel.max(1e-3),
                 f.speed_vox,

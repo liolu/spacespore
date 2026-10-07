@@ -37,7 +37,7 @@ impl Plugin for ChatCmdPlugin {
 #[derive(Event)]
 pub struct ChatCommand(pub String);
 
-const COMMANDS: [&str; 33] = ["/bouclier", "/nuage", "/volume", "/mer", "/jour", "/nuit", "/vol", "/essai", "/geologie", "/relief", "/echelle", "/impact", "/ceinture", "/comete", "/eclipse", "/editeur", "/grotte", "/surplomb", "/tp", "/galaxie", "/profil", "/profile", "/graine", "/seed", "/aller", "/go", "/stats", "/aide", "/help", "/heure", "/time", "/temps", "/speed"];
+const COMMANDS: [&str; 36] = ["/meteo", "/brouillard", "/vent", "/bouclier", "/nuage", "/volume", "/mer", "/jour", "/nuit", "/vol", "/essai", "/geologie", "/relief", "/echelle", "/impact", "/ceinture", "/comete", "/eclipse", "/editeur", "/grotte", "/surplomb", "/tp", "/galaxie", "/profil", "/profile", "/graine", "/seed", "/aller", "/go", "/stats", "/aide", "/help", "/heure", "/time", "/temps", "/speed"];
 
 /// La ligne est une commande du jeu (et non un message à envoyer).
 pub fn is_local(line: &str) -> bool {
@@ -96,7 +96,7 @@ fn find_galaxy(arg: &str, settings: &GameSettings, current: usize) -> Result<usi
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Commandes : (nom, arguments, description). Ordre d'affichage des propositions.
-pub const COMMAND_HELP: [(&str, &str, &str); 27] = [
+pub const COMMAND_HELP: [(&str, &str, &str); 30] = [
     ("/aide", "[commande]", "la liste des commandes, ou l'aide d'une commande"),
     ("/aller", "etoile|planete|lune <type> | suivant", "tests : aller a un type d'etoile, de planete ou de lune"),
     ("/stats", "[n | tout]", "statistiques de tous les astres d'une galaxie (F3 : masquer)"),
@@ -111,6 +111,9 @@ pub const COMMAND_HELP: [(&str, &str, &str); 27] = [
     ("/grotte", "", "aller a l'entree de grotte la plus proche (pose ou en vol bas)"),
     ("/mer", "", "aller au rivage de la mer la plus proche (pose ou en vol bas)"),
     ("/volume", "[0-100]", "volume du son (0 = muet)"),
+    ("/meteo", "[clair | auto]", "tests : ciel clair (ni nuages, ni pluie, ni brouillard) ou la meteo du monde"),
+    ("/brouillard", "[oui | non | auto | 0-100]", "brouillard volumetrique : option, ou densite forcee en % (tests)"),
+    ("/vent", "[oui | non]", "stabilisateur de vent : le vent ne deplace plus le vaisseau en vol (actif par defaut)"),
     ("/bouclier", "[oui | non]", "bouclier thermique (option) : trop vite trop bas a la rentree = surchauffe puis degats (desactive par defaut)"),
     ("/nuage", "[dedans | dessus | dessous]", "tests : va dans la couche de nuages (en vol bas) pour traverser, ou au-dessus (mer de nuages)"),
     ("/geologie", "[geyser | fumerolle | cryovolcan | lave | seisme]", "aller a l'evenement geologique le plus proche (pose ou en vol bas) ; seisme = tests"),
@@ -301,7 +304,7 @@ fn run_chat_commands(
     mut overhang: EventWriter<crate::surface::OverhangCommand>,
     mut cave: EventWriter<crate::surface::CaveCommand>,
     mut impact: EventWriter<crate::meteors::ImpactCommand>,
-    mut small: (EventWriter<crate::asteroids::BeltCommand>, EventWriter<crate::asteroids::CometCommand>, EventWriter<crate::sky::EclipseCommand>, EventWriter<crate::editeur::OpenEditor>, EventWriter<crate::surface::SeaCommand>, EventWriter<crate::test_cmd::DescendCommand>, EventWriter<crate::approche_fx::CloudCommand>),
+    mut small: (EventWriter<crate::asteroids::BeltCommand>, EventWriter<crate::asteroids::CometCommand>, EventWriter<crate::sky::EclipseCommand>, EventWriter<crate::editeur::OpenEditor>, EventWriter<crate::surface::SeaCommand>, EventWriter<crate::test_cmd::DescendCommand>, EventWriter<crate::approche_fx::CloudCommand>, EventWriter<crate::fog::FogCommand>, EventWriter<crate::weather::WeatherCommand>),
     profiles: Res<ProfileCache>,
     star_q: Query<&StarId, With<StarRoot>>,
 ) {
@@ -381,6 +384,22 @@ fn run_chat_commands(
             }
             "/grotte" => {
                 cave.send(crate::surface::CaveCommand);
+            }
+            "/meteo" => {
+                small.8.send(crate::weather::WeatherCommand(arg.to_string()));
+            }
+            "/brouillard" => {
+                small.7.send(crate::fog::FogCommand(arg.to_string()));
+            }
+            "/vent" => {
+                let a = arg.trim().to_lowercase();
+                settings.wind_stabilizer = match a.as_str() {
+                    "oui" | "on" | "1" | "actif" => true,
+                    "non" | "off" | "0" => false,
+                    _ => !settings.wind_stabilizer,
+                };
+                settings.save();
+                net.notify(if settings.wind_stabilizer { "Stabilisateur de vent actif : le vent ne vous deplace plus." } else { "Stabilisateur de vent coupe : le vent pousse le vaisseau." }, now);
             }
             "/bouclier" => {
                 let a = arg.trim().to_lowercase();

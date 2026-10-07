@@ -1,9 +1,9 @@
 # Feuille de route technique (05/10/2026, après la v0.13.3)
 
 Objectif : rendre le projet **solide, mesurable et facile à faire évoluer**, sans ajouter de contenu de jeu.
-Elle ne remplace pas `roadmaps/a-faire/ROADMAP-0.20-debug-opti.md` (réglages, mesures, benchmark, LOD, lumière) : elle la
-**complète** et s'y réfère (« voir 0.20 »). Les phases s'appellent **TECH-n** pour ne pas se confondre avec
-les T1..T9 de la 0.20 et les T1..T5 du terrain.
+Elle ne remplace pas `roadmaps/a-faire/ROADMAP-0.17-debug-opti.md` (réglages, mesures, benchmark, LOD, lumière) : elle la
+**complète** et s'y réfère (« voir 0.17 »). Les phases s'appellent **TECH-n** pour ne pas se confondre avec
+les T1..T9 de la 0.17 et les T1..T5 du terrain.
 
 Constats tirés du code (vérifiés le 05/10/2026) :
 
@@ -48,12 +48,12 @@ Constats tirés du code (vérifiés le 05/10/2026) :
 | **TECH-7. Découpage du code** | Voir §9 | L (étalé) |
 | **TECH-8. Journaux, crashs, télémétrie locale** | Voir §10 | S |
 | **TECH-9. Outils de test en jeu** | Voir §11 | M |
-| **TECH-10. Performances moteur (hors 0.20)** | Voir §12 | L |
+| **TECH-10. Performances moteur (hors 0.17)** | Voir §12 | L |
 | **TECH-11. Multiplateforme et distribution** | Voir §13 | M |
 | **TECH-12. Mise à jour de Bevy** | Voir §14 | XL |
 
 Ordre conseillé : **1 → 2 → 3 → 4 → 5** (le socle), puis **6, 7, 8, 9** dans l'ordre qui t'arrange, puis
-**10** (après la 0.20 T2 pour avoir des mesures), **11**, et **12** en dernier, hors d'une phase de fonctionnalité.
+**10** (après la 0.17 T2 pour avoir des mesures), **11**, et **12** en dernier, hors d'une phase de fonctionnalité.
 Les phases 1, 3 et 8 sont petites et peuvent se glisser n'importe quand.
 
 ---
@@ -176,7 +176,7 @@ visible, pas de limites de débit, `PROTOCOL` strict.
 - **Handshake** : `Hello` avec `proto`, hash de la graine et des constantes de génération ; message clair si
   la version diffère, avec lien vers le launcher.
 - **Mot de passe / jeton** de partie, option « liste blanche ».
-- **Hôte dédié** (`--server`, sans fenêtre ni rendu) : prérequis pour la 0.20 T5 (benchmark sans réseau) et
+- **Hôte dédié** (`--server`, sans fenêtre ni rendu) : prérequis pour la 0.17 T5 (benchmark sans réseau) et
   pour les serveurs de communauté. Utiliser `MinimalPlugins` + les systèmes de monde seulement.
 - **Tests réseau** : simulateur de perte / latence / réordonnancement (une socket factice), tests d'intégration
   à deux clients dans le même processus, hachage des tuiles identique des deux côtés.
@@ -228,7 +228,7 @@ temps de build incrémental mesuré avant / après.
 
 ## 11. TECH-9 — Outils de test en jeu
 
-(Complète `TESTS-JEU.md` et la 0.20 T4 / T5.)
+(Complète `TESTS-JEU.md` et la 0.17 T4 / T5.)
 
 **À faire.**
 - **Commandes de test manquantes** : `/meteo <type> <force>`, `/saison <n>`, `/tp <lat> <lon> [alt]`,
@@ -245,13 +245,13 @@ temps de build incrémental mesuré avant / après.
 - **Banc de régression de performance** : `bench_*` existants lancés en CI nocturne, résultats comparés à la
   dernière valeur (alerte si > +15 %).
 
-## 12. TECH-10 — Performances moteur (hors 0.20)
+## 12. TECH-10 — Performances moteur (hors 0.17)
 
-(À faire **après** la 0.20 T2 : on ne devine pas, on mesure.)
+(À faire **après** la 0.17 T2 : on ne devine pas, on mesure.)
 
 **Pistes.**
 - **Budgets par système** : chaque système lourd (`rebuild_clouds`, `stream_galaxy_stars`, `update_tiles`,
-  `stats`) reçoit un budget en ms par image (règle 5 de la 0.20) et rend la main.
+  `stats`) reçoit un budget en ms par image (règle 5 de la 0.17) et rend la main.
 - **Instancing et lots de rendu** : décor, cailloux d'astéroïdes, étoiles lointaines (`StarSectors`) ; moins de
   matériaux distincts (atlas), moins de changements d'état.
 - **Culling** : par horizon (fait pour les tuiles), par occlusion des gros reliefs, par distance angulaire pour
@@ -311,7 +311,7 @@ en plus chère.
 - `CLAUDE.md` : 466 lignes, très denses ; en tirer `docs/ARCHITECTURE.md` (carte des modules, règles numérotées,
   procédure de test) et garder dans `CLAUDE.md` seulement les consignes.
 - `version.json` à la racine et `docs/version.json` : documenter qui écrit quoi (le bot de la release).
-- `roadmaps/a-faire/prompt0.14.md` / `roadmaps/a-faire/prompt0.20.md` (991 lignes chacun, apparemment les mêmes) : archiver dans `docs/archive/`.
+- `roadmaps/a-faire/prompt0.14.md` / `roadmaps/a-faire/prompt0.17.md` (991 lignes chacun, apparemment les mêmes) : archiver dans `docs/archive/`.
 - Fichiers de roadmaps éparpillés (`ROADMAP-*.md`, `roadmaps/`) : un index `ROADMAPS.md`.
 - Constantes de génération dispersées : un fichier `constants.rs` par domaine avec la **raison** de chaque valeur
   (la règle « valeurs = f(graine) » est dans le code, mais pas leur justification).
@@ -367,7 +367,7 @@ le bouton « Signaler un bug » et le filtrage des secrets. »
 **TECH-9** : « Lis §11 et `TESTS-JEU.md`. Ajoute les commandes de test manquantes, le lanceur de scénarios
 `SPACESPORE_SCENARIO`, les captures de référence avec comparaison, et le refus de capturer hors conditions. »
 
-**TECH-10** : « Lis §12 et les résultats de la 0.20 T2. Prends UNE piste, mesure avant / après avec le banc
+**TECH-10** : « Lis §12 et les résultats de la 0.17 T2. Prends UNE piste, mesure avant / après avec le banc
 correspondant, joins les chiffres à la PR. »
 
 **TECH-11** : « Lis §13. Ajoute les tests de démarrage Linux / macOS en CI, vérifie les chemins et la casse,

@@ -5100,7 +5100,7 @@ dependencies = [
 
 [[package]]
 name = "spacespore"
-version = "0.13.4"
+version = "0.13.5"
 dependencies = [
  "arboard",
  "bevy",
@@ -5118,7 +5118,7 @@ dependencies = [
 
 [[package]]
 name = "spacespore-common"
-version = "0.13.4"
+version = "0.13.5"
 dependencies = [
  "dirs",
  "serde",

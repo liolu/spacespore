@@ -162,7 +162,7 @@ Elles relient la surface et l'espace.
 - **Ville souterraine** [réel] — dans les grottes (`caves.rs`) ou les tubes de lave (lunes, Mars).
 - **Arcologie** [théorique] — une seule tour-ville immense qui contient toute une ville.
 - **Écuménopole (Coruscant)** [fiction] — planète entièrement couverte de ville. **En jeu** : type de planète
-  rare des civilisations avancées (L5), lumières la nuit vues de l'espace.
+  rare des civilisations avancées (L5), lumières la nuit vues de l'espace. **Planifié** : `ROADMAP-0.18-capitales.md`.
 - **Processeur d'atmosphère** [fiction] — usines de terraformation (Aliens). **En jeu** : bâtiment de la
   terraformation (L6) qui change les valeurs vivantes (deltas).
 - **Pare-soleil / miroir orbital** [théorique] — miroir géant au point de Lagrange pour refroidir ou réchauffer

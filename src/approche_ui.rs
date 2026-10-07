@@ -47,7 +47,7 @@ pub struct Approach {
 //  Points d'atterrissage (P7, Q10)
 // ─────────────────────────────────────────────────────────────────────────
 
-fn bearing_text(b: f32) -> &'static str {
+pub(crate) fn bearing_text(b: f32) -> &'static str {
     match b.abs() {
         a if a < 25.0 => "devant",
         a if a > 155.0 => "derriere",
@@ -292,7 +292,7 @@ fn draw_approach(mut gizmos: Gizmos, surface: Res<Surface>, ap: Res<Approach>) {
         let col = if soft { Color::srgba(0.4, 1.0, 0.5, 0.8) } else { Color::srgba(1.0, 0.4, 0.25, 0.9) };
         // Point d'impact prévu
         ring(&mut gizmos, hit.normalize_or(up) * (hit.length() + 0.1 * f.voxel), hit.normalize_or(up), real_len * 1.4, Color::srgba(1.0, 0.25, 0.2, 0.9));
-        if tt < 40.0 {
+        if tt < 40.0 && alt_v < 800.0 {
             for k in 1..6 {
                 let u = k as f32 / 6.0;
                 let tg = tt * u;

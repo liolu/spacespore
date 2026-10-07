@@ -7,7 +7,7 @@ Objectif : une **image cohérente et marquante** — lumière, matière, atmosph
 **jouable** (budgets de ms par image mesurés) et **lisible** (réglable, accessible), sans toucher à la génération.
 
 Cette feuille de route **complète** : `roadmaps/a-faire/ROADMAP-0.13.md` (C1 brouillard, C2 skybox, V1 trous noirs, O1 / O2 eau,
-P3 rentrée, P4 nuages traversables, P5 poussière), `roadmaps/a-faire/ROADMAP-0.14.md` (D3 végétation, D4 faune) et `roadmaps/a-faire/ROADMAP-0.20-debug-opti.md`
+P3 rentrée, P4 nuages traversables, P5 poussière), `roadmaps/a-faire/ROADMAP-0.14.md` (D3 végétation, D4 faune) et `roadmaps/a-faire/ROADMAP-0.17-debug-opti.md`
 (LOD, lumière). Elle **ne refait pas** ce qui y figure : elle y ajoute l'**ambiance**, les **effets de caméra et de
 visière** et le **post-traitement**.
 
@@ -25,7 +25,7 @@ visière** et le **post-traitement**.
 - **Effets déjà présents** : eau (vagues, écume, sous l'eau, caustiques), lave lumineuse (`GeoLava`, `GeoLight`),
   particules face caméra (`GeoParticles`, météo), aurores (rideaux la nuit), queues de comètes, éruptions solaires,
   lampes (marcheur, phares) puissance calée sur l'étoile.
-- **Limites connues** : lumière et LOD = les deux plus gros problèmes (0.20), nuages = cubes, pas de post-traitement
+- **Limites connues** : lumière et LOD = les deux plus gros problèmes (0.17), nuages = cubes, pas de post-traitement
   poussé (pas de bloom / flare / profondeur de champ / flou de mouvement vus dans les options), pas de réflexions
   de la mer, pas d'effets de visière / cockpit.
 
@@ -33,7 +33,7 @@ visière** et le **post-traitement**.
 
 1. **Un effet = un réglage** dans Options (Désactivé / Bas / Haut / Ultra) et une **valeur de repli** : tout doit
    se couper pour une petite machine.
-2. **Budget** : chaque effet reçoit un budget (ms GPU) mesuré par `RenderDiagnosticsPlugin` (0.20 T2) ; rien n'est
+2. **Budget** : chaque effet reçoit un budget (ms GPU) mesuré par `RenderDiagnosticsPlugin` (0.17 T2) ; rien n'est
    fusionné sans le chiffre avant / après.
 3. **Réalisme physique d'abord** : couleurs de l'atmosphère, diffusion, lumière des étoiles viennent des profils
    (`atmosphere.rs`, `lumens`), pas de valeurs peintes à la main.
@@ -59,11 +59,11 @@ visière** et le **post-traitement**.
 | **REN-10. Anti-crénelage et échelle** | **TAA** (avec netteté et rejet des fantômes), **FXAA / SMAA** de repli, **échelle de rendu dynamique** (la résolution interne s'adapte pour tenir 60 images/s : `render_scale` existe), **upscale** type FSR (si licence compatible), amélioration du **`msaa_samples`** avec les nouveaux effets, **détection de la machine** au premier lancement (GPU / RAM) → préréglage proposé. | 32 | M |
 | **REN-11. Accessibilité visuelle** | **Daltonisme** (filtres deutéranopie / protanopie / tritanopie, palette de l'interface), **contraste élevé** de l'interface, **réduction des flashs** (éclairs, éruptions, bloom soudain), **réduction de la secousse**, **réduction du mouvement** (parallaxe, flou), **taille du texte**, **mode HDR** réel (écran HDR : luminosité de pointe réglable), **sous-titres** visuels pour les alertes sonores (D5). | 33 | M |
 | **REN-12. Mode photo** | Touche dédiée (CTL-9 ou palette) : **caméra libre** détachée (gèle le temps en solo), FOV, exposition, DoF, bloom, grain, **cadres**, **filtres** par monde, **HUD masqué**, **sauvegarde** dans `export/photos/` avec métadonnées (astre, heure, graine) et **lien au dex** (« photo prise »). | — | M |
-| **REN-13. Qualité et mesures** | **Préréglages** Patate / Bas / Moyen / Haut / Ultra qui regroupent tous les effets ci-dessus (lié 0.20 T9), **tableau de bord** des coûts par effet (0.20 T3, F6), tests de capture de référence (TECH-9) pour détecter une régression visuelle, **profil de couleur** neutre pour les captures de test. | — | M |
+| **REN-13. Qualité et mesures** | **Préréglages** Patate / Bas / Moyen / Haut / Ultra qui regroupent tous les effets ci-dessus (lié 0.17 T9), **tableau de bord** des coûts par effet (0.17 T3, F6), tests de capture de référence (TECH-9) pour détecter une régression visuelle, **profil de couleur** neutre pour les captures de test. | — | M |
 
 Ordre conseillé : **REN-1** (le socle HDR / tonemapping) → **REN-3** (atmosphère) → **REN-2 et REN-5** → **REN-6**
 (effets de visière : forte valeur ressentie) → **REN-4, 7** → **REN-9** → **REN-8** (le plus lourd, après les mesures
-de la 0.20) → **REN-10, 11, 12, 13** au fil de l'eau.
+de la 0.17) → **REN-10, 11, 12, 13** au fil de l'eau.
 
 ## 4. Détails importants
 
@@ -91,7 +91,7 @@ poussière, gel, lumière. Pas de simulation : une valeur → un motif de goutte
 
 ### 4.5 Ce qui n'est **pas** inclus ici
 Lentille gravitationnelle, skybox, brouillard sol : déjà en 0.13. Végétation et faune : 0.14. LOD et lumière du
-moteur : 0.20. Seul le **rendu** de ce qui est listé ci-dessus est traité ; pas de nouvelle génération.
+moteur : 0.17. Seul le **rendu** de ce qui est listé ci-dessus est traité ; pas de nouvelle génération.
 
 ## 5. Mesures et tests
 

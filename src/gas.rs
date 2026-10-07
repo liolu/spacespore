@@ -158,6 +158,14 @@ pub(crate) fn gas_atmosphere(
                 let visibility = ((5_700.0 / pressure.max(0.01).sqrt()).clamp(430.0, 17_000.0) * voxel).max(height * 4.0) * weather.visibility();
                 let dust = weather.sample.dust;
                 let c = Color::srgb(c.to_srgba().red + (0.55 - c.to_srgba().red) * dust * 0.7, c.to_srgba().green + (0.42 - c.to_srgba().green) * dust * 0.7, c.to_srgba().blue + (0.28 - c.to_srgba().blue) * dust * 0.7);
+                // Couleur du soleil : près de l'horizon, la brume prend la teinte du coucher de soleil (0.13 C1)
+                let warm = (1.0 - surface.sun_height() / 0.35).clamp(0.0, 1.0) * surface.daylight().clamp(0.0, 1.0).max(0.25) * 0.6;
+                let sunset = surface.params().map_or([1.0, 0.6, 0.35], |p| p.sunset);
+                let c = {
+                    let s = c.to_srgba();
+                    let l = (s.red + s.green + s.blue) / 3.0;
+                    Color::srgb(s.red + (sunset[0] * l * 1.2 - s.red) * warm, s.green + (sunset[1] * l * 1.2 - s.green) * warm, s.blue + (sunset[2] * l * 1.2 - s.blue) * warm)
+                };
                 // La nuit, la brume ne cache plus les lunes, les planètes ni les étoiles
                 // Dans l'espace (peu d'air au-dessus de la caméra) la brume s'efface (0.13 P2)
                 let air = surface.air();

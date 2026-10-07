@@ -1,6 +1,6 @@
 # Rapport — Toutes les améliorations possibles pour SpaceSpore (05/10/2026, après la v0.13.3)
 
-Sources : `CLAUDE.md`, `ROADMAP-0.13/0.14/0.20`, `roadmaps/a-faire/A-FAIRE-PLUS-TARD.md`, `roadmaps/a-faire/IDEES-constructions.md`,
+Sources : `CLAUDE.md`, `ROADMAP-0.13/0.14/0.17`, `roadmaps/a-faire/A-FAIRE-PLUS-TARD.md`, `roadmaps/a-faire/IDEES-constructions.md`,
 `roadmaps/fait/RAPPORT-generation-terrain.md`, `TESTS-JEU.md`, et un survol du code (43 000 lignes, 318 tests,
 ~238 `unwrap()`, `PROTOCOL` 34).
 
@@ -44,7 +44,7 @@ Légende : **[Planifié]** = déjà dans une feuille de route · **[Idée]** = b
   N3 éruption solaire majeure / inversion des pôles, N4 grandes marées et temps long.
 
 ### 1.3 Plus tard
-- **0.15 Minage et destruction** (deltas voxel déjà là) ; **musique** (reportée) ; **0.20 Débogage et optimisation**
+- **0.15 Minage et destruction** (deltas voxel déjà là) ; **musique** (reportée) ; **0.17 Débogage et optimisation**
   (T1 réglages centralisés, T2 mesures, T3 panneau F6, T4 vues de debug, T5 benchmark automatique, T6 balayage,
   T7 optimiser le LOD, T8 optimiser la lumière, T9 préréglages Bas→Ultra).
 - **Constructions** (`roadmaps/a-faire/IDEES-constructions.md`) : mégastructures (Dyson, anneaux), habitats massifs, infrastructure
@@ -113,7 +113,7 @@ Légende : **[Planifié]** = déjà dans une feuille de route · **[Idée]** = b
     rentrée P3, végétation qui bouge D3, faune D4.
 27. **[Nouveau] Nuages volumétriques / dessous de cloud réaliste** — la couche en cubes marche, mais un rendu
     volumétrique (ray-march limité) ferait un grand effet depuis l'orbite. L
-28. **[Nouveau] Ombres et lumière** — voir 0.20 T8 : retirer l'ombre cubemap de l'étoile près d'une planète,
+28. **[Nouveau] Ombres et lumière** — voir 0.17 T8 : retirer l'ombre cubemap de l'étoile près d'une planète,
     cascades ajustées, `relief_shadows` plus rapide (coûte ~40 % d'images/s aujourd'hui). M
 29. **[Nouveau] Post-traitement** — bloom, étoile qui éblouit, flare d'objectif, correction de couleurs selon le
     type d'étoile, adaptation de l'œil (nuit/jour). M
@@ -142,7 +142,7 @@ Légende : **[Planifié]** = déjà dans une feuille de route · **[Idée]** = b
     (`Msg::ModelPart`), limites de débit, liste de bannissement, mot de passe de partie. M
 40. **[Nouveau] Découverte de parties** — liste de serveurs / code d'invitation (UPnP via `igd-next` déjà là),
     lancement depuis le launcher. M
-41. **[Nouveau] Hôte dédié** — mode serveur sans rendu (`--server`), utile aussi pour le benchmark 0.20. L
+41. **[Nouveau] Hôte dédié** — mode serveur sans rendu (`--server`), utile aussi pour le benchmark 0.17. L
 42. **[Nouveau] Chat enrichi** — canaux (guilde, local, global), mentions, historique, émotes. S–M
 43. **[Nouveau] Compatibilité de version** — `PROTOCOL` est un `u32` strict : message clair + téléchargement
     automatique de la bonne version via le launcher. S
@@ -162,12 +162,12 @@ Légende : **[Planifié]** = déjà dans une feuille de route · **[Idée]** = b
 49. **[Nouveau] HUD configurable** — masquer / déplacer des éléments, mode « photo » sans HUD, indicateurs de
     vol (P7). S–M
 50. **[Nouveau] Aide en jeu** — liste des raccourcis, `COMMAND_HELP` du chat déjà là : l'afficher dans une fenêtre. S
-51. **[Nouveau] Menu Options** — préréglages graphiques (0.20 T9), détail du sol déjà (T4), échelle de l'UI,
+51. **[Nouveau] Menu Options** — préréglages graphiques (0.17 T9), détail du sol déjà (T4), échelle de l'UI,
     FOV, sensibilité. S–M
 52. **[Nouveau] Dex** — filtres par type de monde / rareté, comparaisons, badges de « première découverte »,
     export visuel (image). S–M
 
-## 9. Performances et optimisation (voir `ROADMAP-0.20`)
+## 9. Performances et optimisation (voir `ROADMAP-0.17`)
 
 53. **[Planifié]** panneau F6, mesures, vues de debug, benchmark automatique, optimisation LOD et lumière.
 54. **[Nouveau] Mémoire** — le mode Ultra en vol bas atteint ~0,84 Go de maillages (déjà divisé par 4) ; viser un
@@ -319,7 +319,7 @@ Légende : **[Planifié]** = déjà dans une feuille de route · **[Idée]** = b
     clic : valeur pédagogique forte. S–M
 
 ### H. Outils de développement et de test
-126. **[Planifié 0.20]** benchmark, mesures, panneau F6. **[Nouveau]** y ajouter un **test de non-régression
+126. **[Planifié 0.17]** benchmark, mesures, panneau F6. **[Nouveau]** y ajouter un **test de non-régression
     visuelle** : captures de référence par monde (`TESTS-JEU.md`) comparées automatiquement. M–L
 127. **[Nouveau] Commandes de test manquantes** — heure, météo, position, vue déjà ? Ajouter `/meteo`,
     `/saison`, `/tp lat lon`, `/camera` pour ne plus tâtonner (règle de `TESTS-JEU.md`). S

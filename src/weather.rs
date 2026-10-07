@@ -30,11 +30,41 @@ use crate::surface::{Surface, SurfaceControl};
 use crate::ui::TargetKind;
 use crate::world_clock::{LocalWeather, WorldClock};
 
+/// Tests : `/meteo clair` supprime nuages, pluie, brouillard, poussière et orages (le vent reste).
+#[derive(Resource, Default)]
+pub struct WeatherForce {
+    pub clear: bool,
+}
+
+/// `/meteo [clair | auto]`.
+#[derive(Event)]
+pub struct WeatherCommand(pub String);
+
+fn weather_commands(time: Res<Time>, mut events: EventReader<WeatherCommand>, mut force: ResMut<WeatherForce>, mut net: ResMut<crate::net::Net>) {
+    let now = time.elapsed_secs_f64();
+    for WeatherCommand(arg) in events.read() {
+        match arg.trim().to_lowercase().as_str() {
+            "clair" | "clear" => {
+                force.clear = true;
+                net.notify("Meteo forcee : ciel clair (pas de nuages, de pluie ni de brouillard). /meteo auto pour revenir.", now);
+            }
+            "auto" | "" => {
+                force.clear = false;
+                net.notify("Meteo : celle du monde (graine et horloge).", now);
+            }
+            _ => net.notify("/meteo [clair | auto]", now),
+        }
+    }
+}
+
 pub struct WeatherPlugin;
 
 impl Plugin for WeatherPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<WeatherNow>()
+            .init_resource::<WeatherForce>()
+            .add_event::<WeatherCommand>()
+            .add_systems(Update, weather_commands)
             .init_resource::<CloudTasks>()
             .add_systems(Update, (update_weather_now, push_ship).chain().before(SurfaceControl))
             .add_systems(Update, (rebuild_clouds, weather_fx).after(SurfaceControl));
@@ -389,6 +419,7 @@ fn update_weather_now(
     settings: Res<GameSettings>,
     surface: Res<Surface>,
     local: Res<LocalWeather>,
+    force: Res<WeatherForce>,
     mut now: ResMut<WeatherNow>,
 ) {
     let (Some(kind), Some(p)) = (surface.body(), surface.local_point()) else {
@@ -418,13 +449,21 @@ fn update_weather_now(
         }
     }
     let under = surface.underground() > 0.5;
+    // Au-dessus de l'atmosphère : plus de pluie, de nuages, de poussière ni de vent
+    let gate = {
+        let a = surface.air();
+        let t = ((a - 0.05) / 0.3).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    let gate = if force.clear { 0.0 } else { gate };
+    let s = Sample { cloud: s.cloud * gate, precip: s.precip * gate, storm: s.storm * gate, dust: s.dust * gate, fog: s.fog * gate, east: s.east * gate, north: s.north * gate, gust: s.gust * gate, ..s };
     now.sample = if under { Sample { east: s.east, north: s.north, ..Default::default() } } else { s };
     now.text = describe(&now.sample);
 }
 
 /// En vol bas, le vent pousse le vaisseau (plus fort en altitude, en rafale et dans les orages) et
 /// le fait tanguer et rouler (`Surface::set_wind`).
-fn push_ship(time: Res<Time>, now: Res<WeatherNow>, mut surface: ResMut<Surface>) {
+fn push_ship(time: Res<Time>, now: Res<WeatherNow>, settings: Res<GameSettings>, mut surface: ResMut<Surface>) {
     if !surface.flying() || now.params.is_none() {
         surface.set_wind(Vec3::ZERO, 0.0, String::new());
         return;
@@ -439,15 +478,40 @@ fn push_ship(time: Res<Time>, now: Res<WeatherNow>, mut surface: ResMut<Surface>
     let radius = surface.params().map_or(p.length(), |b| b.radius);
     let height = ((p.length() - radius) / (radius * 0.01).max(50.0)).clamp(0.0, 3.0);
     let k = 1.5 * (1.0 + s.storm) * (0.6 + 0.4 * height);
-    let v = (east * s.east + north * s.north) * k;
-    surface.drift(v * time.delta_secs().min(0.1));
+    let mut v = (east * s.east + north * s.north) * k;
+    // Le vent suit le relief : il se canalise le long des pentes, des vallées et des failles
+    if let Some(t) = surface.terrain() {
+        let voxel = t.voxel();
+        let alt = ((p.length() - t.ground(up).top) / voxel).max(0.0);
+        let near = (1.0 - alt / 400.0).clamp(0.0, 1.0);
+        if near > 0.0 && v.length() > 1e-3 {
+            let span = 40.0 * voxel;
+            let ds = span / t.params.radius;
+            let at = |d: Vec3| t.ground(d.normalize()).top;
+            let gx = (at(up + east * ds) - at(up - east * ds)) / (2.0 * span);
+            let gy = (at(up + north * ds) - at(up - north * ds)) / (2.0 * span);
+            let slope = gx.hypot(gy);
+            if slope > 0.03 {
+                let g = (east * gx + north * gy) / slope;
+                let contour = up.cross(g).normalize_or(east);
+                let k = (slope / 0.45).clamp(0.0, 0.8) * near;
+                let along = v.dot(contour);
+                let channel = contour * v.length() * if along < 0.0 { -1.0 } else { 1.0 };
+                v = v * (1.0 - k) + channel * k;
+            }
+        }
+    }
+    // Stabilisateur de vent (option) : le vaisseau ne se laisse plus déplacer
+    if !settings.wind_stabilizer {
+        surface.drift(v * time.delta_secs().min(0.1));
+    }
     let speed = s.wind_speed() * (0.6 + 0.4 * height);
     let text = if speed < 0.5 {
         "Vent : calme".to_string()
     } else {
         format!("Vent : {:.0} m/s, du {}{}", speed, compass(-s.east, -s.north), if s.gust > 0.3 { ", rafale !" } else { "" })
     };
-    surface.set_wind(v, s.gust, text);
+    surface.set_wind(if settings.wind_stabilizer { v * 0.0 } else { v }, s.gust, text);
 }
 
 /// Point cardinal d'une direction (vers l'est, vers le nord).

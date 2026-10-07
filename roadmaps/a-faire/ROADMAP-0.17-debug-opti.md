@@ -1,4 +1,4 @@
-# Feuille de route — Débogage et optimisation (0.20)
+# Feuille de route — Débogage et optimisation (0.17, ex 0.20)
 
 Objectif : **reprendre le contrôle** du LOD et de la lumière (les deux plus gros problèmes actuels) et
 **mesurer** au lieu de deviner. Trois outils, dans cet ordre :
@@ -10,9 +10,9 @@ Objectif : **reprendre le contrôle** du LOD et de la lumière (les deux plus gr
 
 Ensuite seulement, on **optimise** le LOD et la lumière à partir des chiffres.
 
-Source : conversation avec ChatGPT (`roadmaps/a-faire/prompt0.20.md`), qui ne connaissait pas le projet. Cette feuille
+Source : conversation avec ChatGPT (`roadmaps/a-faire/prompt0.17.md`), qui ne connaissait pas le projet. Cette feuille
 de route garde ses bonnes idées et les **adapte au code réel** (Bevy 0.15, origine flottante,
-~12 500 systèmes, tuiles de terrain asynchrones).
+~145 000 systèmes et 10 000 galaxies, tuiles de terrain asynchrones à l'échelle k = 16).
 
 Chaque phase se termine par un build instable jouable. Une PR par phase, non fusionnée : tu testes,
 puis tu dis « push main ». Chaque phase a son **prompt prêt à coller** (section « Prompts »).
@@ -47,7 +47,7 @@ puis tu dis « push main ». Chaque phase a son **prompt prêt à coller** (sect
 
 ---
 
-## 2. Point de départ (code actuel, v0.11.0)
+## 2. Point de départ (écrit en v0.11.0, mis à jour en v0.13.4 : voir §2.4)
 
 Le problème principal : **les réglages sont des constantes éparpillées dans six fichiers**. Une IA qui
 « optimise le LOD » ne sait pas lesquelles toucher, et rien ne se règle en jeu.
@@ -86,7 +86,24 @@ Le problème principal : **les réglages sont des constantes éparpillées dans 
 | `/heure`, `/temps` | Horloge du monde (0.11 A1) : permet de **figer l'heure** pendant un test | `world_clock.rs` |
 | Bancs `bench_tiles`, `bench_decor` | Coût d'une tuile et du décor, hors jeu | `planetgen` (tests) |
 
-Touches F déjà prises : F1 (vaisseau), F2 (réseau), F3 (statistiques), F12 (journal).
+### 2.4 Ce qui a changé depuis (v0.11.0 → v0.13.4)
+
+Renumérotée **0.17** le 07/10/2026 (avant : 0.20). Elle vient après la 0.16 (amélioration des mondes) et avant
+la 0.18 (capitales). Entre-temps, le code a bougé ; la phase T1 doit partir de **cet** état :
+
+| Domaine | Nouveau depuis la v0.11.0 | Effet sur la 0.17 |
+|---|---|---|
+| Échelle | Voxel 16 fois plus petit (`terrain::GROUND_SCALE = 16`, 0.13 E2), vol bas en voxels (`HOVER_VOXELS`) | Les distances de LOD du terrain se règlent **en voxels** |
+| Streaming | **Budget en ms déjà là** pour poser les tuiles (`surface::TILE_BUDGET_MS` = 3 ms, 0.13 E3), `max_tile_tasks` = 2 par cœur, priorité devant la caméra, `TILE_KEEP_SECS` = 8, `MAX_TILES` = 520 | Règle 5 en partie faite : T7 l'étend aux autres couches (décor, astres, étoiles) |
+| Détail du sol | Réglage **Détail du sol** Bas → Ultra (`graphics::TERRAIN_DETAIL` : facteur de découpe 1,8 / 2,4 / 3,2 / 4,5, niveaux avec décor), horizon qui coupe les tuiles cachées, **fondu** des tuiles (`TILE_FADE_SECS` = 0,35 s) | Ces réglages passent dans `Tuning` (T1) |
+| Lumière | Au sol, **un soleil directionnel par étoile** avec ombres (`surface::SurfaceSun`, 3 cascades jusqu'à ~200 voxels, 4e jusqu'à 4 000 avec l'option **Ombres du relief**, −40 % d'images/s) ; la lumière ponctuelle de l'étoile est éteinte près d'un astre solide (`dim_star_light`) | Une partie de T8 est faite ; reste à mesurer et régler cascades, biais, ombres du relief |
+| Mémoire | Maillages des tuiles `RENDER_WORLD` (vol bas Ultra : 3,2 Go → 0,84 Go) | Compteur de RAM de T2 pour garder ce gain |
+| Mesures existantes | `SPACESPORE_PERF=<fichier>` (images/s médianes, 1 % bas, > 33 ms, `TileStats`), `SPACESPORE_TEST_FLY`, `SPACESPORE_TEST_WALK`, bancs `bench_tiles`, `bench_voxel_tiles`, `bench_decor`, `bench_scale`, `bench_tile_cache`, `bench_cloud_layer`, `bench_asteroids`, `bench_editor` | T2 et T5 **réutilisent** ces mesures au lieu d'en refaire |
+| Nouveaux coûts à mesurer | Grottes (fenêtre sous terre), formes 3D (`rocks.rs`), eau transparente et caustiques (0.13 O), météo et nuages en cubes, géologie active (particules), astéroïdes et comètes, approche planétaire (plasma, nuages qui s'écartent, son), éditeur jusqu'à 1024³ | Ajoutés aux scénarios du benchmark (§5.1 : grotte, mer, orage, ceinture, rentrée) |
+| Outils prévus ailleurs | `0.13.5-correctifs` F0 : `/astre`, `/pos`, affichage des bords de tuiles et de cellules | T4 part de cet affichage ; le benchmark utilise `/pos` pour ses points fixes |
+
+Touches F déjà prises : F1 (vaisseau), F2 (réseau), F3 (statistiques), F5 (vue du personnage / cockpit),
+F12 (journal) ; F9 réservée à la capture d'écran (`0.13.5-correctifs` F9). Libres pour la 0.17 : F4, F6, F7.
 
 ---
 
@@ -172,6 +189,11 @@ Lancement : `spacespore.exe --bench <plan.json>` (ou `/bench <nom>` dans le chat
 | D | **Galaxie** : on recule jusqu'à voir la galaxie entière, puis les galaxies voisines | secteurs d'étoiles, effets de galaxie (`galaxy_fx.rs`) | nombre d'objets, LOD des étoiles |
 | E | **Géante gazeuse** : on entre jusqu'au cœur | brouillard, `gas.rs` | brouillard, transparence |
 | F | **Pire cas** : planète à vie dense (beaucoup de décor), au coucher du soleil, ombres activées, lune visible, phares allumés, vol rapide à basse altitude | tout en même temps | ce qui casse en premier |
+| G | **Grotte** : entrée, descente jusqu'à 300 voxels, lampe, champignons lumineux | fenêtre de grottes, `caves.rs`, lumière locale | tuiles 3D, lumière |
+| H | **Mer et orage** : vol au ras de l'eau, plongée, orage avec pluie et éclairs | eau transparente, caustiques, météo, particules | GPU (transparence), particules |
+| I | **Ceinture et comète** : traversée d'un champ dense, passage dans une chevelure | astéroïdes (3 niveaux), queues | maillages asynchrones, transparence |
+| J | **Rentrée** : orbite → sol en un vol (plasma, nuages qui s'écartent, bang) | approche planétaire (0.13 P) | pics de chargement des tuiles |
+| K | **Capitale** (dès la 0.18) : survol d'une ville-planète, plongée dans un canyon de tours, nuit éclairée | blocs de ville, trafic, lumières | objets dessinés, lumières, instances |
 
 Les astres du parcours sont trouvés **une fois** par la recherche de `/aller` puis **figés par leur
 identifiant** dans le plan : le parcours ne change jamais. La caméra suit des **trajectoires écrites**
@@ -274,11 +296,11 @@ depuis elle) et on se promène avec une seconde caméra pour voir le monde « de
 | **T2. Mesures** | Spans `tracing` sur les systèmes du §4.2, compteurs (tuiles, tâches, entités, maillages, triangles, lumières), `RenderDiagnosticsPlugin` (GPU par passe si possible), RAM du processus, 1 % / 0,1 % bas sur une fenêtre glissante, pics. Petit affichage F4 (FPS, ms, CPU / GPU, budget). Le journal F12 utilise ces mesures et écrit un CSV. Option `trace_tracy`. | M |
 | **T3. Panneau de réglages** | Le panneau F6 du §6, réglage en direct (chaque changement s'applique à l'image suivante, sans recharger le monde quand c'est possible, sinon bouton « reconstruire »), préréglages, export / import JSON, comparaison A / B. | L |
 | **T4. Vues de débogage** | Les vues du §7, forcer et geler le LOD, caméra libre détachée. | M |
-| **T5. Benchmark** | Mode `--bench` : sauvegarde de benchmark à graine fixe, réseau coupé, heure figée, trajectoires écrites, scénarios A à F (§5.1), fichiers du §5.2, captures d'écran aux mêmes instants. | L |
+| **T5. Benchmark** | Mode `--bench` : sauvegarde de benchmark à graine fixe, réseau coupé, heure figée, trajectoires écrites, scénarios A à K (§5.1), fichiers du §5.2, captures d'écran aux mêmes instants. | L |
 | **T6. Balayage** | `plan.json` (§5.3) : base, une variable à la fois, croisements, répétitions, médianes, `rapport.md` avec le classement des variables. Première campagne complète, résultats joints à la PR. | M |
 | **T7. Optimiser le LOD** | À partir des résultats de T6. Pistes : **budget en ms** au lieu de 10 tâches (règle 5) ; **hystérésis** contre le clignotement ; distances séparées rendu / génération / collision (règle 4) ; tuiles prioritaires devant la caméra et au centre de l'écran ; **transition** douce entre niveaux (fondu ou morphing des hauteurs) ; seuils de sphère reliés à la taille **à l'écran** (pixels) plutôt qu'en rayons ; décor en **instances** partagées ; libération vérifiée des maillages. | L |
 | **T8. Optimiser la lumière** | À partir des résultats de T6. Pistes : **plus d'ombre cubemap** de l'étoile près d'une planète (6 rendus) : le soleil directionnel à cascades fait les ombres au sol, la lumière ponctuelle seulement l'éclairage lointain ; cascades réglées sur l'altitude ; une seule lumière avec ombres à la fois ; portée des phares et de la lampe limitée ; ambiante et brume continues entre espace, orbite et sol (plus de saut) ; exposition automatique douce. | L |
-| **T9. Préréglages finaux** | Bas / Moyen / Haut / Ultra / Patate recalculés depuis les mesures (chaque préréglage = un objectif de FPS sur la machine de test), proposés dans le menu Options. Benchmark rejoué : tableau avant / après 0.20 dans la PR. | S |
+| **T9. Préréglages finaux** | Bas / Moyen / Haut / Ultra / Patate recalculés depuis les mesures (chaque préréglage = un objectif de FPS sur la machine de test), proposés dans le menu Options. Benchmark rejoué : tableau avant / après 0.17 dans la PR. | S |
 
 Ordre : T1 → T2 → T3 → T4 → T5 → T6 → (T7 et T8 dans l'ordre que donnent les mesures) → T9.
 
@@ -315,11 +337,11 @@ Ordre : T1 → T2 → T3 → T4 → T5 → T6 → (T7 et T8 dans l'ordre que don
 
 ## 11. Prompts (à coller dans une nouvelle session, une par phase)
 
-Chaque prompt suppose : « Lis `roadmaps/a-faire/ROADMAP-0.20-debug-opti.md` et `CLAUDE.md`. Crée la branche
-`claude/roadmap-0-20-tX` depuis `main`. Build release. Ouvre une PR non fusionnée avec mesures et
+Chaque prompt suppose : « Lis `roadmaps/a-faire/ROADMAP-0.17-debug-opti.md` et `CLAUDE.md`. Crée la branche
+`claude/roadmap-0-17-tX` depuis `main`. Build release. Ouvre une PR non fusionnée avec mesures et
 captures. »
 
-- **T1** — « Phase T1 de `roadmaps/a-faire/ROADMAP-0.20-debug-opti.md` : crée `src/tuning.rs` avec la ressource `Tuning`
+- **T1** — « Phase T1 de `roadmaps/a-faire/ROADMAP-0.17-debug-opti.md` : crée `src/tuning.rs` avec la ressource `Tuning`
   rangée par groupes (règle 1). Remplace toutes les constantes listées au §2 (`lod.rs`, `terrain.rs`,
   `surface.rs`, `planet.rs`, `decor.rs`, `gas.rs`, `graphics.rs`, `astre/mod.rs`) par des lectures de
   `Tuning`, avec les valeurs actuelles par défaut. JSON dans `saves/vX.Y.Z/tuning/`. Aucun changement
@@ -331,7 +353,7 @@ captures. »
   préréglages, export / import JSON, comparaison A / B. »
 - **T4** — « Phase T4 : vues de débogage du §7 (F7), forcer et geler le LOD, caméra libre détachée. »
 - **T5** — « Phase T5 : mode `--bench` du §5 : graine fixe, réseau coupé, heure figée, trajectoires
-  écrites, scénarios A à F, fichiers `frames.csv`, `resume.csv`, `rapport.md`, `machine.json`,
+  écrites, scénarios A à K, fichiers `frames.csv`, `resume.csv`, `rapport.md`, `machine.json`,
   captures. »
 - **T6** — « Phase T6 : balayage `plan.json` du §5.3 (base, une variable à la fois, croisements,
   3 répétitions, médianes, classement). Lance une première campagne sur les variables de LOD et
@@ -341,4 +363,4 @@ captures. »
 - **T8** — « Phase T8 : optimise la lumière et les ombres d'après le dernier `rapport.md` (pistes du §8),
   benchmark avant / après et captures jour, nuit, coucher, espace. »
 - **T9** — « Phase T9 : recalcule les préréglages depuis les mesures, mets-les dans le menu Options,
-  rejoue le benchmark complet et joins le tableau avant / après 0.20. »
+  rejoue le benchmark complet et joins le tableau avant / après 0.17. »

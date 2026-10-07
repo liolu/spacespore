@@ -2016,11 +2016,12 @@ fn update_flare_voxels(
 
 fn rotate_clouds(
     clock: Res<WorldClock>,
+    force: Res<crate::weather::WeatherForce>,
     settings: Res<GameSettings>,
     planet_q: Query<(&Transform, &PlanetId), (With<PlanetRoot>, Without<CloudVoxel>)>,
     mut cloud_q: Query<(&CloudVoxel, &mut Transform, &mut Visibility)>,
 ) {
-    if !settings.show_clouds {
+    if !settings.show_clouds || force.clear {
         for (_, _, mut vis) in &mut cloud_q {
             if *vis != Visibility::Hidden { *vis = Visibility::Hidden; }
         }

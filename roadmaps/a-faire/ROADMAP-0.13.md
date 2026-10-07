@@ -15,7 +15,7 @@ Cette feuille de route rassemble :
 | `roadmaps/a-faire/A-FAIRE-PLUS-TARD.md` (bloc D de la 0.11) | **Déplacé en 0.14** (`roadmaps/a-faire/ROADMAP-0.14.md`, 04/10/2026) |
 
 Point de départ : **v0.12.0** (éditeur de modèles + correctifs C1 à C8). Les outils de mesure et de
-réglage (panneau, benchmark) restent dans la **0.20** (`roadmaps/a-faire/ROADMAP-0.20-debug-opti.md`) : la 0.13 mesure
+réglage (panneau, benchmark) restent dans la **0.17** (`roadmaps/a-faire/ROADMAP-0.17-debug-opti.md`) : la 0.13 mesure
 avec ce qui existe (bancs `bench_*`, FPS, captures).
 
 Chaque phase = une branche `claude/roadmap-0-13-<phase>`, une PR non fusionnée : tu testes, puis tu dis
@@ -169,7 +169,7 @@ de la planète en pilotant ; on ne se pose que **près du sol** ; l'entrée dans
 | Phase | Ce qui est fait | Limites connues |
 |---|---|---|
 | P1 | Vol orbital : ZQSD pilote depuis la vue espace (`FLIGHT_ENTER_RADII` 8 rayons), vitesse ∝ altitude (au plus 0,35 rayon / s), HUD altitude / vitesse / vertical / Mach, trajectoire + point au sol + point d'impact (gizmos), V seulement sous 200 voxels (Q9), plus de descente automatique (Q7) | Pas de vraie mécanique orbitale : sans touche, le vaisseau s'arrête (il garde sa position, pas sa vitesse) |
-| P2 | Une seule loi du sol à l'orbite : ceiling 4 rayons, vaisseau qui grossit avec l'altitude (jamais moins de 1/30 de l'altitude), caméra qui recule et se penche vers la planète (`cam_blend`), ciel et brume selon `air`, maillage lointain lisse au-dessus de 0,30 rayon (hystérésis 0,20) | Bascule tuiles / maillage lointain instantanée (pas de fondu) ; tuiles pas encore demandées « devant la trajectoire » ; le maillage lointain garde ses terrasses (bug B1 de `ROADMAP-0.13.4-correctifs.md`). Mesure (`SPACESPORE_PERF`, montée puis rentrée puis pose, 27 s) : médiane 179 images/s, 1 % bas 54, aucune image > 33 ms, pire 29,5 ms |
+| P2 | Une seule loi du sol à l'orbite : ceiling 4 rayons, vaisseau qui grossit avec l'altitude (jamais moins de 1/30 de l'altitude), caméra qui recule et se penche vers la planète (`cam_blend`), ciel et brume selon `air`, maillage lointain lisse au-dessus de 0,30 rayon (hystérésis 0,20) | Bascule tuiles / maillage lointain instantanée (pas de fondu) ; tuiles pas encore demandées « devant la trajectoire » ; le maillage lointain garde ses terrasses (bug B1 de `ROADMAP-0.13.5-correctifs.md`). Mesure (`SPACESPORE_PERF`, montée puis rentrée puis pose, 27 s) : médiane 179 images/s, 1 % bas 54, aucune image > 33 ms, pire 29,5 ms |
 | P3 | Plasma selon chaleur = f(densité x Mach^3) (`approche::heat`), couleur selon l'air (`BodyParams::plasma`), traînée, lueur (lumière ponctuelle), secousses, freinage de l'air (`DRAG_Q0`), géantes x1,6, rétrofusées dans le vide, flammes moitié moins fortes à la montée, état « rentrée » dans `Looks` (PROTOCOL 35) | Pas de matériau émissif sur les blocs de la coque (la lumière rougeoie à la place) |
 | P4 | Nuages (`CloudMaterial`) tramés autour du vaisseau et de son sillage de 6 s ; brouillard gris / blanc dans la dalle, phares, turbulences, éclairs (secousse + message, sans dégâts), givre, gouttes sur la vitre (cockpit), ombre du vaisseau sur la mer de nuages | Les nuages sont des dalles : le brouillard n'est dedans que dans la dalle |
 | P5 | Ombre projetée selon le soleil, train d'atterrissage (état « atterrissage » du modèle sous 240 voxels et 160 voxels/s), poussière / neige / sable / eau selon la matière (`dust_color`), pente maxi 25 deg (Q10) avec point plat proposé (cercle vert) et V pour s'y poser, poser et décoller avec les mêmes effets | Les flammes de tuyères restent celles du modèle |
@@ -188,6 +188,16 @@ Commandes de test ajoutées : `/vol`, `/mer`, `/nuage`, `/essai mer`, `/jour`, `
 |---|---|---|
 | **C1. Brouillard** | (R2) **Brouillard au ras du sol**, plus épais dans les vallées (T1) et au-dessus de l'eau, qui monte avec l'altitude ; **bancs de brouillard** de la météo (matin, mers froides, marécages) en volumes (`FogVolume`, `VolumetricFog` de Bevy 0.15) ; **rayons de soleil** dans le brouillard ; couleur selon le soleil ; phares et lampe éclairent le brouillard ; brouillard léger dans les grottes ; brume de l'horizon en voxels (règle 14). | L |
 | **C2. Skybox** | (V1) **Skybox générée** depuis la vraie galaxie vue du système courant (étoiles avec leur couleur et leur éclat, bande de la galaxie, nébuleuses, autres galaxies), cubemap haute résolution rendue en arrière-plan, refaite au changement de système ; étoiles proches restent de vrais objets cliquables ; au sol : visible la nuit, effacée par le ciel de jour, voilée par les nuages. | M |
+
+**État du bloc C : fait** (`fog.rs`, `skybox.rs`, `sky_dome.wgsl`).
+
+| Phase | Ce qui est fait | Limites connues |
+|---|---|---|
+| C1 | Bancs de brouillard volumétriques (`FogVolume` + `VolumetricFog`) posés sur le sol sous le joueur, densité = météo (`Sample::fog`, matin) + mers froides + marais + vallées (`fog_density`), hauteur qui monte avec la densité (18 à 150 voxels), texture de densité 3D (pleine au sol, qui s'efface vers le haut et les bords), faisceaux du soleil et des phares (`VolumetricLight`, ombres forcées dans le brouillard), couleur selon le ciel et le jour, brume de l'horizon teintée par le soleil bas (`gas.rs`), brouillard léger sous terre (`cave_fog`), option `/brouillard oui\|non` | Le banc ne dépasse pas la portée des ombres du soleil (400 voxels de large, 1 800 avec « Ombres du relief ») : au-delà c'est la brume de l'horizon ; le brouillard reste un banc plat qui suit le sol (pas de brouillard dans une grotte autre que le voile léger) ; pas de banc d'eau libre sur les lacs hors du lieu du joueur |
+| C2 | Cubemap 1 024 x 6 calculée en arrière-plan (0,6 à 0,8 s) depuis le système le plus proche : étoiles réelles (couleur, éclat), bande de la galaxie tirée de sa vraie forme (`galaxy_shape::Shape`), poussière, nébuleuses, 48 galaxies voisines en ellipses ; refaite au changement de système ; dôme `SkyMaterial` en arrière-plan (profondeur 0), qui dessine aussi la couleur du ciel : le jour efface les étoiles, nuages et brouillard les voilent, sous l'eau et sous terre elles disparaissent, aux zooms lointains elles s'effacent (la vraie galaxie est affichée) | Pas de scintillement ; les 40 étoiles les plus proches ne sont pas dans la cubemap (ce sont de vrais objets) ; la bande est celle d'un tirage de 1,6 x 512² points, pas de la vraie liste d'étoiles |
+
+Commandes de test : `/brouillard [oui\|non\|auto\|0-100]`, `/meteo [clair\|auto]`, `SPACESPORE_TEST_FOG=<0..1>`,
+`SPACESPORE_TEST_LOOKUP=1` (avec `SPACESPORE_TEST_COCKPIT=1` pour regarder le ciel).
 
 ### Bloc V — Espace spectaculaire (V2, V3, V4 des idées)
 
