@@ -186,7 +186,7 @@ pub fn hover_radius(p: &BodyParams) -> f32 {
 
 /// Épaisseur d'air visible depuis le sol : le ciel s'efface avec l'altitude (plus vite sous une
 /// atmosphère ténue).
-fn atmosphere_depth(p: &BodyParams) -> f32 {
+pub(crate) fn atmosphere_depth(p: &BodyParams) -> f32 {
     (p.radius * 0.12).max(300.0) * (0.5 + 0.5 * p.pressure.clamp(0.0, 10.0).powf(0.3))
 }
 
@@ -488,6 +488,15 @@ const FLY_MIN_VOXELS: f32 = 40.0;
 const FLY_MAX_VOXELS: f32 = 4_000.0;
 const CLIMB_MIN_VOXELS: f32 = 20.0;
 const CLIMB_MAX_VOXELS: f32 = 3_000.0;
+/// Vol continu de l'orbite au sol (0.13 P1, P2) : plafond du vol (rayons de l'astre depuis son
+/// centre), distance de la vue espace (rayons) sous laquelle ZQSD pilote, hauteur maximale pour se
+/// poser (Q9, voxels), pente maximale pour se poser (Q10, degrés).
+const ORBIT_CEILING: f32 = 4.0;
+const FLIGHT_ENTER_RADII: f32 = 8.0;
+pub const LAND_ALT_VOXELS: f32 = 200.0;
+pub const LAND_MAX_SLOPE: f32 = 25.0;
+/// La vitesse d'un vol ne dépasse pas cette part du rayon de l'astre par seconde (voxels).
+const ORBIT_SPEED_FRAC: f32 = 0.35;
 
 /// Vol suborbital (Q3) : touche, distance minimale (voxels).
 pub const HOP_KEY: KeyCode = KeyCode::KeyJ;
@@ -599,6 +608,15 @@ pub struct Surface {
     board_from: Vec3,
     board_to: Vec3,
     board_pose: Option<Transform>,
+    /// État du vol (altitude, vitesse, densité de l'air, Mach, chaleur) pour les effets (bloc P).
+    flight: crate::approche::FlightInfo,
+    /// Part d'atmosphère au-dessus de la caméra (1 au sol, 0 dans l'espace).
+    air: f32,
+    /// Point d'atterrissage plat proposé (direction, repère de l'astre) quand la pente est trop forte.
+    land_hint: Option<Vec3>,
+    /// Vue cockpit en vol (F5) ; part de nuage autour du vaisseau (phares allumés dedans).
+    fcockpit: bool,
+    cloud_dark: f32,
 }
 
 impl Default for Surface {
@@ -656,6 +674,11 @@ impl Default for Surface {
             gust: 0.0,
             wind_text: String::new(),
             tilt: Vec2::ZERO,
+            flight: Default::default(),
+            air: 1.0,
+            land_hint: None,
+            fcockpit: false,
+            cloud_dark: 0.0,
         }
     }
 }
@@ -752,6 +775,8 @@ impl Surface {
             Phase::Walking | Phase::Boarding | Phase::Disembarking => "pose",
             Phase::Descending => "atterrissage",
             Phase::Ascending => "decollage",
+            // Près du sol et lent : le train d'atterrissage sort (blocs de vaisseau de l'éditeur, P5)
+            Phase::Flying if self.flight.active && self.flight.alt / self.flight.voxel.max(1e-3) < LAND_ALT_VOXELS * 1.2 && self.flight.speed_vox < 160.0 => "atterrissage",
             Phase::Flying | Phase::Orbit => "vol",
         }
     }
@@ -874,6 +899,63 @@ impl Surface {
         self.daylight
     }
 
+    /// État du vol à la dernière image (`FlightInfo::active` faux hors vol).
+    pub fn flight(&self) -> &crate::approche::FlightInfo {
+        &self.flight
+    }
+
+    /// Part d'atmosphère au-dessus de la caméra : 1 au sol, 0 dans l'espace.
+    pub fn air(&self) -> f32 {
+        if self.active() { self.air } else { 1.0 }
+    }
+
+    /// Repère de l'astre où l'on séjourne (centre et rotation, dernière image).
+    pub fn frame(&self) -> Option<Frame> {
+        self.frame.filter(|_| self.active())
+    }
+
+    /// Vue cockpit (1re personne) en vol.
+    pub fn cockpit(&self) -> bool {
+        self.fcockpit && self.phase == Phase::Flying
+    }
+
+    /// Dans un nuage (0..1) : il fait sombre, les phares s'allument.
+    pub fn set_cloud_dark(&mut self, v: f32) {
+        self.cloud_dark = v;
+    }
+
+    /// Secousse de roulis / tangage (turbulences, foudre).
+    pub fn jolt(&mut self, v: Vec2) {
+        if self.phase == Phase::Flying {
+            self.tilt = (self.tilt + v).clamp(Vec2::splat(-0.5), Vec2::splat(0.5));
+        }
+    }
+
+    /// Tests (`/nuage`) : place le vaisseau en vol à cette position (repère de l'astre).
+    pub fn teleport_flight(&mut self, pos: Vec3) {
+        if self.phase == Phase::Flying {
+            self.fpos = pos;
+            self.fspeed = 0.0;
+            self.fvert = 0.0;
+            self.fdescend = false;
+        }
+    }
+
+    /// En vol bas (pas pendant un atterrissage automatique).
+    pub fn phase_is_flying(&self) -> bool {
+        self.phase == Phase::Flying
+    }
+
+    /// Désigne (ou efface) le point d'atterrissage choisi.
+    pub fn set_land_hint(&mut self, hint: Option<Vec3>) {
+        self.land_hint = hint;
+    }
+
+    /// Point d'atterrissage plat proposé (repère fixe de l'astre).
+    pub fn land_hint(&self) -> Option<Vec3> {
+        self.land_hint.filter(|_| self.phase == Phase::Flying)
+    }
+
     /// Opacité maximale de la brume : forte le jour, faible la nuit (lunes et étoiles visibles).
     pub fn haze_opacity(&self) -> f32 {
         NIGHT_HAZE + (DAY_HAZE - NIGHT_HAZE) * self.daylight
@@ -881,7 +963,7 @@ impl Surface {
 
     /// Il fait sombre là où l'on est : l'étoile est sous l'horizon (ou à peine levée).
     pub fn dark(&self) -> bool {
-        self.active() && (self.sun_height < 0.06 || self.underground > 0.5)
+        self.active() && (self.sun_height < 0.06 || self.underground > 0.5 || self.cloud_dark > 0.5)
     }
 
     /// Sous terre (0 à 1).
@@ -942,6 +1024,94 @@ fn cockpit(surface: &Surface, models: &crate::models::GameModels) -> Vec3 {
         .map(|z| Vec3::from_array(z.pivot))
         .unwrap_or(Vec3::new(l.center().x, l.hi.y, l.center().z + l.size().z * 0.25));
     m.transform_point3(entry)
+}
+
+/// État du vol (`FlightInfo`) d'après la position, la vitesse horizontale et verticale (unités/s).
+#[allow(clippy::too_many_arguments)]
+fn flight_info(params: &BodyParams, voxel: f32, pos: Vec3, up: Vec3, heading: Vec3, ground: f32, scale: f32, icon_len: f32, speed: f32, vert: f32, boost: bool) -> crate::approche::FlightInfo {
+    let alt = (pos.length() - ground).max(0.0);
+    let speed_vox = speed.hypot(vert) / voxel;
+    let sound = crate::approche::sound_speed(params);
+    let dens = crate::approche::air_density(params, alt);
+    crate::approche::FlightInfo {
+        active: true,
+        alt,
+        voxel,
+        speed_vox,
+        vert_vox: vert / voxel,
+        density: dens,
+        sound,
+        mach: speed_vox / sound.max(1.0),
+        // à la montée (décollage) les flammes sont plus faibles que dans la rentrée
+        heat: crate::approche::heat(dens, speed_vox, sound) * if vert > 0.0 { 0.5 } else { 1.0 },
+        boost,
+        up,
+        heading,
+        pos,
+        ground_r: ground,
+        radius: params.radius,
+        scale,
+        length: scale * icon_len,
+        time_to_ground: if vert < -1e-3 { alt / -vert } else { f32::INFINITY },
+    }
+}
+
+/// Issue d'une demande de se poser (P1, P5).
+enum Landing {
+    TooHigh,
+    /// Pente (deg), point plat proposé (direction), distance (voxels).
+    Steep(f32, Vec3, f32),
+    NoFlat(f32),
+    Go(Vec3),
+}
+
+/// Le cap `heading` ramené dans le plan tangent en `up`.
+pub fn tangent_of(heading: Vec3, up: Vec3) -> Vec3 {
+    tangent(heading, up)
+}
+
+/// Pente du sol (degrés) sous `dir`, mesurée sur `span` unités autour du point.
+pub fn slope_deg(t: &Terrain, dir: Vec3, heading: Vec3, span: f32) -> f32 {
+    let radius = t.params.radius;
+    let h = tangent(heading, dir);
+    let right = h.cross(dir).normalize_or(Vec3::X);
+    let at = |d: Vec3| t.ground(d.normalize()).top;
+    let ds = span / radius;
+    let (e, w) = (at(dir + right * ds), at(dir - right * ds));
+    let (n, s) = (at(dir + h * ds), at(dir - h * ds));
+    let gx = (e - w) / (2.0 * span);
+    let gy = (n - s) / (2.0 * span);
+    gx.hypot(gy).atan().to_degrees()
+}
+
+/// Le point plat le plus proche de `dir` (pente sous le maximum, pas sur l'eau) : (direction,
+/// distance en unités).
+pub fn find_flat(t: &Terrain, dir: Vec3, heading: Vec3, span: f32) -> Option<(Vec3, f32)> {
+    let radius = t.params.radius;
+    let v = t.voxel();
+    let up = dir.normalize();
+    let east = tangent(heading, up);
+    let north = up.cross(east).normalize_or(Vec3::X);
+    for ring in 0..7 {
+        let dist = 40.0 * v * 1.8f32.powi(ring);
+        let ang = dist / radius;
+        let mut best: Option<(f32, Vec3)> = None;
+        for k in 0..16 {
+            let az = k as f32 * std::f32::consts::TAU / 16.0;
+            let d = (up * ang.cos() + (east * az.cos() + north * az.sin()) * ang.sin()).normalize();
+            if t.ground(d).kind.is_liquid() {
+                continue;
+            }
+            let slope = slope_deg(t, d, east, span);
+            if slope < LAND_MAX_SLOPE * 0.7 && best.is_none_or(|(b, _)| slope < b) {
+                best = Some((slope, d));
+            }
+        }
+        if let Some((_, d)) = best {
+            return Some((d, dist));
+        }
+    }
+    None
 }
 
 /// Lance la descente du vaisseau vers `dir1` depuis (`dir0`, `r0`).
@@ -1162,7 +1332,13 @@ fn surface_control(
     mut net: ResMut<Net>,
     mut ship_q: Query<(&mut Transform, &mut Visibility), (With<Ship>, Without<Camera3d>)>,
     mut cam_q: Query<(&Camera, &GlobalTransform, &mut Transform, &mut CameraController), (With<Camera3d>, Without<Ship>)>,
+    ship_mode: Res<crate::ship::ShipMode>,
+    mut test_t0: Local<Option<f64>>,
+    mut test_log: Local<f64>,
 ) {
+    if !matches!(surface.phase, Phase::Flying | Phase::Descending | Phase::Ascending) && surface.flight.active {
+        surface.flight = Default::default();
+    }
     let mut look_delta = Vec2::ZERO;
     for ev in ctx.motion.read() {
         look_delta += ev.delta;
@@ -1198,10 +1374,20 @@ fn surface_control(
         if wheel > 0.0 {
             surface.zoom_in_until = now + 0.7;
         }
-        if ctrl.distance < fz && now < surface.zoom_in_until {
+        // P1 : près d'un astre, ZQSD pilote le vaisseau (au lieu de tourner la caméra)
+        let fly_key = !ui_open
+            && *ship_mode == crate::ship::ShipMode::Ship
+            && [KeyCode::KeyW, KeyCode::KeyS, KeyCode::KeyA, KeyCode::KeyD, KeyCode::ArrowUp, KeyCode::ArrowDown, KeyCode::ArrowLeft, KeyCode::ArrowRight, KeyCode::Space]
+                .iter()
+                .any(|c| ctx.keys.pressed(*c));
+        // Tests : `SPACESPORE_TEST_FLYKEY=<s>` = la touche W est tenue à partir de <s> secondes
+        let fly_key = fly_key || std::env::var("SPACESPORE_TEST_FLYKEY").ok().and_then(|v| v.parse::<f64>().ok()).is_some_and(|t| now > t);
+        let zoom_enter = ctrl.distance < fz && now < surface.zoom_in_until;
+        if zoom_enter || fly_key {
             if let (Some(params), Some(frame)) = (body_params(&ctx.settings, &kind), ctx.pose(&kind)) {
                 let local = frame.point(ship_tf.translation);
-                if (local.length() - hover_radius(&params)).abs() < params.radius * 0.1 + 250.0 {
+                let near = zoom_enter || ctrl.distance < FLIGHT_ENTER_RADII * params.radius;
+                if near && (local.length() - hover_radius(&params)).abs() < params.radius * 0.1 + 250.0 {
                     let up = local.normalize_or(Vec3::Y);
                     surface.terrain = Some(Terrain::new(params).with_voxels(crate::voxel::body_voxels(&ctx.settings, &kind)));
                     surface.body = Some(kind);
@@ -1213,11 +1399,18 @@ fn surface_control(
                     // petit à l'échelle 0.13 ; la molette recule jusqu'à la vue orbitale
                     let voxel = surface.terrain.as_ref().map_or(1.0, |t| t.voxel());
                     let ship_len = surface.ship_dims.real_scale(voxel) * surface.ship_dims.icon_len;
-                    surface.fdist = (ship_len * 4.0).min(ctrl.distance).clamp(ship_len * 1.2, fz * 0.95);
+                    // La caméra reste où elle est (pas de saut) : on part de sa distance, et la pose
+                    // de chasse la rejoint en douceur (`cam_blend`)
+                    let alt0 = local.length() - surface.terrain.as_ref().map_or(0.0, |t| t.ground(up).top);
+                    let stretch = (alt0 / 30.0 / ship_len).max(1.0);
+                    surface.fdist = if zoom_enter { (ship_len * 4.0).min(ctrl.distance).clamp(ship_len * 1.2, fz * 0.95) } else { (ctrl.distance / stretch).max(ship_len * 1.2) };
                     surface.fyaw = 0.0;
                     surface.fpitch = 0.35;
+                    surface.cam_from = frame.to_local(*cam_tf);
+                    surface.cam_blend = if zoom_enter { 1.0 } else { 0.0 };
+                    surface.land_hint = None;
                     // Une géante n'a pas de sol : on ne plonge pas d'office vers son cœur
-                    surface.fdescend = !params.gaseous;
+                    surface.fdescend = !params.gaseous && zoom_enter;
                     surface.phase = Phase::Flying;
                     *ship_vis = Visibility::Inherited;
                     if params.gaseous {
@@ -1225,7 +1418,7 @@ fn surface_control(
                     } else if params.asteroid.is_some() {
                         net.notify("Champ d'asteroides : ZQSD/WASD voler, Maj accelerer (attention aux chocs : degats selon la vitesse), V se poser, molette pour revenir.", now);
                     } else {
-                        net.notify("Navigation : ZQSD/WASD voler, Maj accelerer, Espace/Ctrl monter/descendre, V atterrir, molette pour revenir.", now);
+                        net.notify("Vol : ZQSD/WASD voler, Maj accelerer, Espace/Ctrl monter/descendre, V se poser (sous 200 voxels), molette pour revenir a la vue espace.", now);
                     }
                     return;
                 }
@@ -1234,26 +1427,13 @@ fn surface_control(
         if !enter {
             return;
         }
-        let Some(params) = body_params(&ctx.settings, &kind) else {
-            net.notify("Selectionnez une planete, une lune ou un gros asteroide pour atterrir.", now);
-            return;
-        };
-        let Some(frame) = ctx.pose(&kind) else {
-            net.notify("Cet astre est trop loin : approchez-vous de son systeme.", now);
-            return;
-        };
-        if params.gaseous {
-            net.notify("Pas de sol : une geante gazeuse n'a pas de surface. Zoomez sous 1000 pour entrer dans son atmosphere (la pression abime la coque).", now);
-            return;
+        // Q7 : plus de descente automatique, V sert seulement à se poser près du sol
+        let _ = (camera, cam_gt);
+        match body_params(&ctx.settings, &kind) {
+            None => net.notify("Selectionnez une planete, une lune ou un gros asteroide.", now),
+            Some(p) if p.gaseous => net.notify("Pas de sol : une geante gazeuse n'a pas de surface. Pilotez dans son atmosphere (ZQSD, Ctrl) : la pression abime la coque.", now),
+            Some(_) => net.notify("V sert a se poser : pilotez vers l'astre (ZQSD), descendez (Ctrl) jusqu'a moins de 200 voxels du sol, puis V.", now),
         }
-        let terrain = Terrain::new(params).with_voxels(crate::voxel::body_voxels(&ctx.settings, &kind));
-        let dir1 = ctx.aimed_dir(camera, cam_gt, &frame, &params);
-        let local0 = frame.point(ship_tf.translation);
-        let dir0 = local0.normalize_or(dir1);
-        let heading = dir1 - dir0 * dir0.dot(dir1);
-        begin_descent(&mut surface, kind, terrain, dir0, local0.length(), dir1, heading, ship_tf.scale.x, frame.to_local(*cam_tf));
-        *ship_vis = Visibility::Inherited;
-        net.notify("Atterrissage... (V pour redecoller une fois au sol)", now);
         return;
     }
 
@@ -1303,6 +1483,14 @@ fn surface_control(
             // Décollage : pleine poussée vers le haut ; atterrissage : on freine (poussée vers le haut)
             surface.pilot = Vec3::Y * if descending { 0.4 * (1.0 - e) + 0.15 } else { 1.0 };
             ship_local = Transform { translation: ship_pos, rotation: ship_rot, scale: Vec3::splat(scale) };
+            // Ombre, poussière et flammes servent aussi à l'atterrissage et au décollage
+            if let Some(t) = surface.terrain.as_ref() {
+                let v = t.voxel();
+                let rate = (r - surface.r0).abs().max(1e-3) / surface.dur.max(1e-3);
+                let vert = if descending { -rate * (1.0 - e).max(0.05) } else { rate * e.max(0.1) };
+                let info = flight_info(&t.params, v, ship_pos, dir, surface.heading, t.ground(dir).top, scale, surface.ship_dims.icon_len, 0.0, vert, false);
+                surface.flight = info;
+            }
 
             surface.cam_blend = (surface.cam_blend + dt / 0.8).min(1.0);
             let chase = chase_pose(ship_pos, dir, surface.heading, scale);
@@ -1497,6 +1685,30 @@ fn surface_control(
                     if mode == "climb" {
                         vertical = 1.0;
                     }
+                    // `reentry` : on monte 4 s, puis plein gaz en descendant (rentrée, bang, traînées) ;
+                    // `reentry:<s>` change la durée de la montée ; `slow` : descente lente, sans Maj
+                    if let Some(rest) = mode.strip_prefix("reentry") {
+                        let t0 = *test_t0.get_or_insert(now);
+                        let climb_for: f64 = rest.trim_start_matches(':').parse().unwrap_or(4.0);
+                        let ft = now - t0;
+                        if ft < climb_for {
+                            vertical = 1.0;
+                            boost = false;
+                        } else {
+                            vertical = -0.6;
+                        }
+                    }
+                    // `up` : monte droit, sans avancer (traverser les nuages)
+                    if mode == "up" {
+                        boost = false;
+                        vertical = 1.0;
+                        forward = 0.0;
+                    }
+                    if mode == "slow" {
+                        boost = false;
+                        vertical = -1.0;
+                        forward = 0.0;
+                    }
                 }
                 if ctx.buttons.pressed(MouseButton::Right) {
                     let sens = ctx.settings.mouse_sensitivity * 0.01;
@@ -1509,6 +1721,14 @@ fn surface_control(
                 }
                 if vertical != 0.0 {
                     surface.fdescend = false;
+                }
+                // F5 : vue cockpit (1re personne) ou de derrière
+                if k.just_pressed(VIEW_KEY) {
+                    surface.fcockpit = !surface.fcockpit;
+                }
+                // Tests : `SPACESPORE_TEST_COCKPIT=1` garde la vue cockpit
+                if std::env::var_os("SPACESPORE_TEST_COCKPIT").is_some() {
+                    surface.fcockpit = true;
                 }
                 // Vol suborbital : vers le point visé au centre de l'écran, s'il est loin
                 if k.just_pressed(HOP_KEY) && surface.hop.is_none() && !terrain.params.gaseous && params.asteroid.is_none() {
@@ -1539,11 +1759,19 @@ fn surface_control(
             // altitude rapide : la planète est 16 fois plus grande en voxels), Maj x4
             let v = terrain.voxel();
             let alt = ((r - terrain.floor(up, r).top) / v).max(0.0);
-            let top_speed = (alt * 1.5).clamp(FLY_MIN_VOXELS, FLY_MAX_VOXELS) * v * if boost { 4.0 } else { 1.0 };
+            // Une seule loi du sol à l'orbite (P2) : vitesse proportionnelle à l'altitude, jamais plus
+            // d'une part du rayon par seconde ; l'air freine (P3) : la vitesse maximale baisse avec
+            // la densité (pression dynamique)
+            let radius_vox = terrain.params.radius / v;
+            let air = crate::approche::air_density(&params, alt * v);
+            let mut top_vox = (alt * 1.5).max(FLY_MIN_VOXELS).min((ORBIT_SPEED_FRAC * radius_vox).max(FLY_MIN_VOXELS)) * if boost { 4.0 } else { 1.0 };
+            top_vox /= 1.0 + air * top_vox * top_vox / crate::approche::DRAG_Q0;
+            let drag_climb = |c: f32| c / (1.0 + air * c * c / crate::approche::DRAG_Q0);
+            let top_speed = top_vox * v;
             surface.fspeed += (forward * top_speed - surface.fspeed) * (1.0 - (-2.0 * dt).exp());
             // Dans une géante (des dizaines de milliers d'unités d'atmosphère), on monte et
             // descend plus vite
-            let climb = if terrain.params.gaseous { 400.0 * (terrain.params.radius / 8000.0).max(1.0) } else { alt.clamp(CLIMB_MIN_VOXELS, CLIMB_MAX_VOXELS) * v };
+            let climb = if terrain.params.gaseous { 400.0 * (terrain.params.radius / 8000.0).max(1.0) } else { drag_climb(alt.max(CLIMB_MIN_VOXELS).min((ORBIT_SPEED_FRAC * radius_vox).max(CLIMB_MIN_VOXELS))) * v };
             surface.fvert += (vertical * climb - surface.fvert) * (1.0 - (-4.0 * dt).exp());
             let next = (surface.fpos + heading * surface.fspeed * dt).normalize();
             // Voxels 3D : le sol sous le vaisseau (on peut passer sous une arche) et le plafond
@@ -1552,7 +1780,7 @@ fn surface_control(
             // Astéroïde : on peut s'éloigner davantage pour circuler dans le champ
             let ceiling = match &params.asteroid {
                 Some(s) => s.max_radius() * 3.0 + 1500.0,
-                None => hover_radius(&params),
+                None => hover_radius(&params).max(params.radius * ORBIT_CEILING),
             };
             // Entrée en navigation : on descend d'abord à `HOVER_VOXELS` au-dessus du relief
             let mut r = r + surface.fvert * dt;
@@ -1567,6 +1795,9 @@ fn surface_control(
             let real = surface.ship_dims.real_scale(terrain.voxel());
             let clearance = (surface.ship_dims.half_h * real + 0.7 * v).max(3.5 * v);
             let r = r.clamp(ground + clearance, ceiling.max(ground + 15.0 * v)).min((roof - clearance).max(ground + clearance));
+            if r >= ceiling.max(ground + 15.0 * v) - 1e-3 && surface.fvert > 0.0 {
+                surface.fvert = 0.0;
+            }
             surface.fpos = next * r;
             surface.heading = tangent(heading, next);
             if let Some(mut hop) = surface.hop {
@@ -1580,9 +1811,14 @@ fn surface_control(
                 surface.hop = (u < 1.0).then_some(hop);
             }
 
-            // Vol bas : la vraie taille du vaisseau, la caméra assez loin pour le voir en entier
-            let scale = real;
-            surface.fdist = surface.fdist.max(real * surface.ship_dims.icon_len * 1.6);
+            // La vraie taille du vaisseau au sol ; en altitude il grossit (jamais moins d'un trentième
+            // de l'altitude) et la caméra recule avec lui : un seul vol, sans bascule (P2)
+            let len_real = real * surface.ship_dims.icon_len;
+            surface.fdist = surface.fdist.max(len_real * 1.6);
+            let alt_u = (r - ground).max(0.0);
+            let stretch = (alt_u / 30.0 / len_real.max(1e-3)).max(1.0);
+            let scale = real * stretch;
+            let cam_dist = surface.fdist * stretch;
             let ship_pos = surface.fpos;
             // Le vent fait rouler (vent de côté) et tanguer (vent de face) ; le pilote corrige quand
             // il manœuvre, et le vaisseau se stabilise quand le vent tombe
@@ -1607,7 +1843,10 @@ fn surface_control(
 
             // Caméra derrière le vaisseau, orientable à la souris, jamais sous le relief
             let back = Quat::from_axis_angle(next, surface.fyaw) * -surface.heading;
-            let offset = (back * surface.fpitch.cos() + next * surface.fpitch.sin()) * surface.fdist;
+            // En altitude la caméra monte et regarde la planète (jusqu'à presque à la verticale)
+            let high = (alt_u / (0.25 * params.radius).max(1.0)).clamp(0.0, 1.0);
+            let pitch = (surface.fpitch + high * 0.95).min(1.45);
+            let offset = (back * pitch.cos() + next * pitch.sin()) * cam_dist;
             let mut cam_local = surface.fpos + offset;
             let floor = terrain.floor(cam_local.normalize(), cam_local.length()).top + 1.5 * terrain.voxel();
             if cam_local.length() < floor {
@@ -1615,13 +1854,40 @@ fn surface_control(
             }
             let cam_pos = cam_local;
             cam_local_tf = look(cam_pos, ship_pos + next * (0.4 * scale) - cam_pos, next);
+            if surface.fcockpit {
+                // Cockpit : l'œil près du nez, on regarde devant (la souris oriente la tête)
+                let len = surface.ship_dims.icon_len * scale;
+                let eye = ship_pos + next * (0.07 * len) + surface.heading * (0.12 * len);
+                let right = surface.heading.cross(next).normalize_or(Vec3::X);
+                let look_dir = Quat::from_axis_angle(next, surface.fyaw) * (Quat::from_axis_angle(right, -(surface.fpitch - 0.35)) * surface.heading);
+                cam_local_tf = look(eye, look_dir, next);
+            }
+            // Venue de la vue espace : la caméra rejoint la pose de chasse en douceur
+            if surface.cam_blend < 1.0 {
+                surface.cam_blend = (surface.cam_blend + dt / 0.8).min(1.0);
+                cam_local_tf = blend_pose(&surface.cam_from, cam_local_tf, smoothstep(surface.cam_blend));
+            }
+            // État du vol pour les effets (bloc P) : vitesses en voxels/s, air, Mach, chaleur
+            surface.flight = flight_info(&params, v, ship_pos, next, surface.heading, ground, scale, surface.ship_dims.icon_len, surface.fspeed, surface.fvert, boost);
+            // Tests : `SPACESPORE_TEST_FLY` journalise le vol toutes les 0,5 s (FLIGHT)
+            if std::env::var_os("SPACESPORE_TEST_FLY").is_some() && now - *test_log > 0.5 {
+                *test_log = now;
+                let f = &surface.flight;
+                info!("FLIGHT t={now:.1} alt={:.0} vit={:.0} vert={:.0} mach={:.2} dens={:.3} heat={:.2} cloud={:.2}", f.alt / f.voxel, f.speed_vox, f.vert_vox, f.mach, f.density, f.heat, surface.cloud_dark);
+            }
+            if let Some(h) = surface.land_hint {
+                if h.angle_between(next) * params.radius > 3000.0 * v {
+                    surface.land_hint = None;
+                }
+            }
             surface.terrain = Some(terrain);
-            ctrl.distance = surface.fdist;
+            ctrl.distance = cam_dist;
 
-            // Dézoom au-delà de 1000 : retour à la vue orbitale, au-dessus de l'endroit survolé
-            if surface.fdist >= fz {
+            // Dézoom : retour à la vue orbitale, au-dessus de l'endroit survolé (la caméra à plus de
+            // 1000 du vaisseau, et à plus de deux fois son altitude)
+            if wheel < 0.0 && cam_dist >= fz.max(2.0 * alt_u) {
                 surface.hover = Some((kind, next));
-                ctrl.distance = fz * 1.05;
+                ctrl.distance = cam_dist.max(fz) * 1.05;
                 ctrl.zoom_goal = None;
                 ctrl.last_target_pos = center;
                 surface.abort();
@@ -1629,13 +1895,43 @@ fn surface_control(
             } else if enter && params.gaseous {
                 net.notify("Pas de sol : une geante gazeuse n'a pas de surface. Zoomez sous 1000 pour entrer dans son atmosphere (la pression abime la coque).", now);
             } else if enter {
-                // Atterrir juste devant le vaisseau
-                let terrain = surface.terrain.take().unwrap();
-                let dir1 = (surface.fpos + surface.heading * scale * 6.0).normalize();
-                let heading = surface.heading;
-                let cam_from = cam_local_tf;
-                begin_descent(&mut surface, kind, terrain, next, r, dir1, heading, scale, cam_from);
-                net.notify("Atterrissage...", now);
+                // Se poser : près du sol (Q9) et sur une pente douce (Q10)
+                let (alt_v, verdict) = {
+                    let t = surface.terrain.as_ref().unwrap();
+                    let v = t.voxel();
+                    let span = (len_real * 0.5).max(3.0 * v);
+                    let ahead = (surface.fpos + surface.heading * real * 6.0).normalize();
+                    let slope = slope_deg(t, ahead, surface.heading, span);
+                    let verdict = if alt_u / v > LAND_ALT_VOXELS {
+                        Landing::TooHigh
+                    } else if slope <= LAND_MAX_SLOPE {
+                        Landing::Go(ahead)
+                    } else if let Some(h) = surface.land_hint {
+                        Landing::Go(h)
+                    } else {
+                        match find_flat(t, ahead, surface.heading, span) {
+                            Some((h, d)) => Landing::Steep(slope, h, d / v),
+                            None => Landing::NoFlat(slope),
+                        }
+                    };
+                    (alt_u / v, verdict)
+                };
+                match verdict {
+                    Landing::TooHigh => net.notify(&format!("Trop haut pour atterrir ({alt_v:.0} voxels) : descendez (Ctrl) sous {LAND_ALT_VOXELS:.0} voxels."), now),
+                    Landing::Steep(slope, hint, dist) => {
+                        surface.land_hint = Some(hint);
+                        net.notify(&format!("Pente de {slope:.0} deg : trop raide (max {LAND_MAX_SLOPE:.0}). Point plat propose a {dist:.0} voxels (cercle vert) : V pour s'y poser."), now);
+                    }
+                    Landing::NoFlat(slope) => net.notify(&format!("Pente de {slope:.0} deg : trop raide (max {LAND_MAX_SLOPE:.0}) et aucun point plat a proximite : deplacez-vous."), now),
+                    Landing::Go(dir1) => {
+                        let terrain = surface.terrain.take().unwrap();
+                        let heading = surface.heading;
+                        let cam_from = cam_local_tf;
+                        surface.land_hint = None;
+                        begin_descent(&mut surface, kind, terrain, next, r, dir1, heading, scale, cam_from);
+                        net.notify("Atterrissage...", now);
+                    }
+                }
             }
         }
         Phase::Orbit => {}
@@ -1674,6 +1970,7 @@ fn surface_control(
         clear.0 = Color::srgb(c[0] * dark, c[1] * dark, c[2] * dark);
         surface.daylight = day;
         surface.sun_height = height;
+        surface.air = air;
         if surface.dark() && !surface.night_told && !params.gaseous {
             surface.night_told = true;
             let what = if surface.phase == Phase::Walking { "lampe" } else { "phares" };
@@ -2542,7 +2839,14 @@ struct TileStore {
     decor_levels: u32,
     /// Les tuiles projettent des ombres (Ultra).
     shadows: bool,
+    /// Vu de haut, le maillage lointain remplace les tuiles (`FAR_ABOVE`).
+    far_mode: bool,
 }
+
+/// Altitude (rayons de l'astre) au-dessus de laquelle le maillage lointain remplace les tuiles, et
+/// en dessous de laquelle les tuiles reviennent.
+const FAR_ABOVE: f32 = 0.30;
+const FAR_BELOW: f32 = 0.20;
 
 /// Durée du fondu entre deux niveaux de détail du sol (s).
 const TILE_FADE_SECS: f64 = 0.35;
@@ -2602,6 +2906,7 @@ fn update_tiles(
             }
         }
         store.far_hidden = false;
+        store.far_mode = false;
         store.body = wanted;
         store.climate = None;
         store.tide = None;
@@ -2661,6 +2966,31 @@ fn update_tiles(
     // Tuiles voulues autour de la caméra, avec leurs ancêtres (repli le temps de la construction).
     // Caméra dans le repère fixe de l'astre : les tuiles tournent avec lui.
     let cam_local = root_tf.rotation.inverse() * (cam.translation - root_tf.translation);
+    // Haut au-dessus du sol (0.13 P2) : le maillage lointain, lisse, remplace les tuiles (même
+    // forme, règle 16) ; hystérésis pour ne pas clignoter à la limite
+    {
+        let alt = cam_local.length() - terrain.ground(cam_local.normalize_or(Vec3::Y)).top;
+        let limit = params.radius * if store.far_mode { FAR_BELOW } else { FAR_ABOVE };
+        let far_now = alt > limit;
+        if far_now != store.far_mode {
+            store.far_mode = far_now;
+            store.far_hidden = false;
+            set_far_visibility(root, far_now, &children, &far, &mut vis);
+            if far_now {
+                for entry in store.built.values() {
+                    if let Ok(mut v) = vis.get_mut(entry.entity) {
+                        *v = Visibility::Hidden;
+                    }
+                }
+                store.fading.clear();
+            }
+        }
+        if store.far_mode {
+            stats.leaves = 0;
+            stats.ready = 0;
+            return;
+        }
+    }
     let mut leaves = Vec::new();
     let ground_r = terrain.ground(cam_local.normalize_or(Vec3::Y)).top;
     // Distance de détail réglable (0.13 T4) : rien de plus fin derrière l'horizon
@@ -2965,17 +3295,28 @@ fn update_hud(
 ) {
     let label = match surface.phase {
         Phase::Orbit => match body_params(&settings, &target.0) {
-            Some(p) if p.gaseous => "Geante gazeuse (pas de sol)   Zoomez sous 1000 pour entrer dans son atmosphere   P : planete suivante   M : lune".to_string(),
-            Some(_) => "Zoomez sous 1000 pour naviguer autour de l'astre   V : atterrir   P : planete suivante   M : lune".to_string(),
+            Some(p) if p.gaseous => "Geante gazeuse (pas de sol)   ZQSD : piloter vers son atmosphere   P : planete suivante   M : lune".to_string(),
+            Some(_) => "ZQSD : piloter autour de l'astre   Molette : zoom (sous 1000 : vol bas)   V : se poser (pres du sol)   P : planete suivante   M : lune".to_string(),
             None if matches!(target.0, TargetKind::Star(_)) => "P : aller a la planete suivante du systeme".to_string(),
             None => String::new(),
         },
         Phase::Flying if surface.gaseous() => "ZQSD/WASD : voler   A/D : tourner   Maj : accelerer   Espace/Ctrl : monter/descendre\nClic droit : orbiter   Molette : zoom (>1000 : orbite)   Pas de sol : la pression abime la coque".to_string(),
-        Phase::Flying => format!(
-            "ZQSD/WASD : voler   A/D : tourner   Maj : accelerer   Espace/Ctrl : monter/descendre\nClic droit : orbiter   Molette : zoom (>1000 : orbite)   V : atterrir   N : phares   J : saut suborbital (point vise, > 5 000 voxels)\n{}   {}",
-            weather.short(),
-            surface.wind_text
-        ),
+        Phase::Flying => {
+            let f = &surface.flight;
+            let approach = if f.time_to_ground.is_finite() && f.time_to_ground < 60.0 { format!("   sol dans {:.0} s", f.time_to_ground) } else { String::new() };
+            let land = if f.alt / f.voxel.max(1e-3) <= LAND_ALT_VOXELS { "   V : se poser" } else { "" };
+            format!(
+                "ZQSD/WASD : voler   A/D : tourner   Maj : accelerer   Espace/Ctrl : monter/descendre{land}   N : phares   J : saut suborbital
+Alt {:.0}   Vit {:.0}   Vert {:+.0}   Mach {:.1}{approach}
+{}   {}",
+                f.alt / f.voxel.max(1e-3),
+                f.speed_vox,
+                f.vert_vox,
+                f.mach,
+                weather.short(),
+                surface.wind_text
+            )
+        }
         Phase::Descending => "Atterrissage en cours...".to_string(),
         Phase::Ascending => "Decollage en cours...".to_string(),
         Phase::Boarding => "Embarquement...".to_string(),
@@ -3088,6 +3429,7 @@ mod tests {
             asteroid: None,
             tide: Default::default(),
             geo: Default::default(),
+            plasma: crate::approche::PLASMA_DEFAULT,
         })
     }
 

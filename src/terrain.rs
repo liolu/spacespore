@@ -84,6 +84,8 @@ pub struct BodyParams {
     pub tide: Tide,
     /// Géologie active (0.13 T5) : geysers, fumerolles, lave, séismes (`geoactive.rs`).
     pub geo: crate::geoactive::GeoActivity,
+    /// Couleur des flammes de rentrée selon l'air (0.13 P3 : azote orange, CO2 rose, méthane vert-bleu...).
+    pub plasma: [f32; 3],
 }
 
 /// Marées (C4) : un renflement de la mer vers chaque astre qui la tire (et à l'opposé), en
@@ -146,6 +148,7 @@ impl BodyParams {
                 quakes: p.geology.quakes,
                 cryo: p.hydrology.subsurface_ocean && p.geology.activity > 0.05,
             },
+            plasma: if p.air.present() { crate::approche::plasma_color(&p.air.gases) } else { crate::approche::PLASMA_DEFAULT },
         }
     }
 
@@ -177,6 +180,7 @@ impl BodyParams {
             asteroid: None,
             tide: Default::default(),
             geo: Default::default(),
+            plasma: crate::approche::PLASMA_DEFAULT,
         }
     }
 
@@ -1751,6 +1755,7 @@ pub(crate) mod tests {
             asteroid: None,
             tide: Default::default(),
             geo: Default::default(),
+            plasma: crate::approche::PLASMA_DEFAULT,
         }
     }
 
@@ -2313,6 +2318,7 @@ mod sea_level_tests {
             asteroid: None,
             tide: Default::default(),
             geo: Default::default(),
+            plasma: crate::approche::PLASMA_DEFAULT,
         }
     }
 }

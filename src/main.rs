@@ -46,6 +46,10 @@ mod terrain;
 mod ui;
 mod voxel;
 mod water;
+mod approche;
+mod approche_fx;
+mod approche_ui;
+mod sound;
 mod wormhole;
 mod world_clock;
 mod zones;
@@ -231,6 +235,9 @@ fn main() {
         .add_plugins(planetgen::PlanetGenPlugin)
         .add_plugins(gas::GasPlugin)
         .add_plugins(water::WaterPlugin)
+        .add_plugins(approche_fx::ApprocheFxPlugin)
+        .add_plugins(approche_ui::ApprocheUiPlugin)
+        .add_plugins(sound::SoundPlugin)
         .add_plugins(scanner::ScannerPlugin)
         .add_plugins(geoactive::GeoActivePlugin)
         .add_plugins(dex::DexPlugin)

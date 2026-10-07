@@ -51,6 +51,12 @@ test reutilisable vaut mieux qu'un essai de plus.
 | `SPACESPORE_TEST_CMD2`, `..._CMD2_SECS` | seconde commande (30 s par defaut), apres l'atterrissage |
 | `SPACESPORE_TEST_FLY=1`, `..._FLY_SECS=<s>` | descend en vol bas a `<s>` s (8 par defaut) : le mettre APRES l'arrivee du `/aller` |
 | `SPACESPORE_TEST_LAND=<s>[,<s>]` | appuie sur V a ces instants |
+| `SPACESPORE_TEST_FLY=up\|reentry[:s]\|slow\|climb` | vol automatique (a partir du vol bas, **sans** `/vol` : mettre `SPACESPORE_TEST_FLY_SECS=9999` si on ne veut que le mode) : `up` monte droit, `reentry:8` monte 8 s puis descend plein gaz (rentree, bang, condensation), `slow` descend doucement, `climb` monte en avancant |
+| `SPACESPORE_TEST_FLYKEY=<s>` | la touche W est tenue a partir de `<s>` (entree en vol depuis la vue espace) |
+| `SPACESPORE_TEST_COCKPIT=1` | vue cockpit en vol (F5) |
+| `SPACESPORE_TEST_PRECIP=0` | pas de pluie (captures plus claires) |
+| `SPACESPORE_TEST_RIM=1` | journalise le liseré de l'atmosphere (`RIM`) |
+| `FLIGHT` / `CLOUD` dans le log | avec `SPACESPORE_TEST_FLY` : etat du vol toutes les 0,5 s (alt, vit, vert, mach, dens, heat) : **s'en servir pour choisir l'instant de la capture** |
 | `SPACESPORE_CAPTURE=<fichier.png>`, `..._CAPTURE_SECS=<s>` | capture a `<s>` s puis ferme le jeu |
 | `SPACESPORE_PERF=<fichier>` (+ `_FROM`, `_TO`) | images/s |
 | `NOTIFY` dans le log | tous les messages systeme (actif si `SPACESPORE_TEST_CMD` est defini) |
@@ -64,6 +70,8 @@ test reutilisable vaut mieux qu'un essai de plus.
 | `/jour`, `/nuit`, `/heure <h>` | regle l'heure locale de l'astre cible (hote) ; refuse en rotation synchrone et le dit |
 | `/vol` | descend en vol bas sur l'astre cible (remplace `SPACESPORE_TEST_FLY`) |
 | `/mer` | rivage de la mer la plus proche (en vol bas ou a pied) |
+| `/nuage [dedans\|dessus\|dessous]` | en vol bas : va dans la couche de nuages (ou au-dessus : mer de nuages, ombre du vaisseau) |
+| `/volume [0-100]` | volume du son ; `/bouclier [oui\|non]` : bouclier thermique (surchauffe puis degats a la rentree) |
 | `/aller etoile\|planete\|lune <type>`, `/aller suivant` | cherche un type d'astre et s'y rend (types : `/aller`) |
 | `/heure` | heure locale, soleil, saison de l'astre cible |
 | `/temps <facteur>` | accelere l'horloge du monde (hote) |
@@ -77,6 +85,19 @@ test reutilisable vaut mieux qu'un essai de plus.
 
 Commandes d'essai a ajouter quand le besoin apparait (pas encore faites) : `/meteo clair|pluie|orage`
 (forcer la meteo), `/cam <vue>` (placer la camera sous l'eau, de loin...).
+
+## Recettes (0.13 P : approche planetaire)
+
+- **Rentree** (plasma, alerte, couloir, bang, condensation) : `SPACESPORE_TEST_CMD="/essai mer"`,
+  `SPACESPORE_TEST_FLY=reentry:8`, `SPACESPORE_TEST_FLY_SECS=9999`, `SPACESPORE_TEST_PRECIP=0` ; lire les lignes
+  `FLIGHT` : le plasma est au maximum quand `heat` > 0,6 (vers t = vol + 9 a 10 s), le bang quand `mach` passe par 1.
+  Une planete dense (> 0,5 bar) est necessaire : `/aller planete mer` la choisit.
+- **Entree en vol depuis la vue espace** : `/aller planete mer` + `SPACESPORE_TEST_FLYKEY=25`.
+- **Nuages** : `/essai mer` puis `SPACESPORE_TEST_CMD2="/nuage"` (dedans) ou `"/nuage dessus"`.
+- **Pente** : `/essai mer`, `CMD2="/relief piton"`, `SPACESPORE_TEST_LAND=<s>` : « Pente de 53 deg : trop raide ».
+- **Cockpit** : ajouter `SPACESPORE_TEST_COCKPIT=1`.
+- **Liseré** : `/aller planete mer`, capture a 20 s (vue espace).
+- Le son ne se voit pas : `cargo test --release sound approche` verifie la synthese ; ecouter en vrai.
 
 ## Choisir le bon monde
 

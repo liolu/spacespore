@@ -24,7 +24,7 @@ Les touches du jeu sont coupees quand on tape dans un champ de texte (chat, guil
 | Clic gauche | Selectionner un astre (etoile, planete, lune, galaxie, trou de ver...) |
 | Clic droit maintenu + souris | Tourner la camera |
 | Molette | Zoom avant / arriere (zoomer sous 1000 sur une planete ou une lune = vol bas) |
-| Z / Q / S / D ou fleches | Tourner la camera (haut / gauche / bas / droite) |
+| Z / Q / S / D ou fleches | Pres d'une planete, d'une lune ou d'un asteroide (moins de 8 rayons) : piloter le vaisseau (voir Vol) ; ailleurs : tourner la camera |
 | P | Cibler une planete du systeme charge (suivante) |
 | M | Cibler la lune suivante |
 | T | Entrer dans le trou de ver cible |
@@ -57,9 +57,11 @@ Les touches du jeu sont coupees quand on tape dans un champ de texte (chat, guil
 | Ctrl gauche | Descendre |
 | Maj gauche | Turbo (x4) |
 | Clic droit maintenu + souris | Regarder |
-| Molette | Distance de la camera au vaisseau |
+| Molette | Distance de la camera au vaisseau (en la reculant tout en haut : retour a la vue espace) |
 | J | Vol suborbital : saut vers le point vise au centre de l'ecran |
-| V | Atterrir (sortir du vaisseau) |
+| V | Se poser, sous 200 voxels du sol seulement (pente 25 deg au plus, sinon un point plat est propose) ; plus de descente automatique depuis l'orbite |
+| L | Point d'atterrissage plat suivant (cercle vert, liste au scanner) |
+| F5 | Vue cockpit (1re personne) <-> de derriere |
 | N | Phares |
 | I / K / E / F / C / G | Comme dans l'espace (scanner, dex, parler, tirer, revendiquer, guilde) |
 

@@ -1082,10 +1082,16 @@ fn default_msaa()        -> u32  { 4 }
 fn default_lod_quality() -> f32  { 1.0 }
 fn default_terrain_detail() -> u8 { 3 }
 fn default_render_scale() -> f32 { 1.0 }
+fn default_sound_volume() -> f32 { 0.6 }
 
 #[derive(Resource, Serialize, Deserialize, Clone, Debug)]
 pub struct GameSettings {
     #[serde(default)] pub save_version: u32,
+
+    /// Bouclier thermique (0.13 P6, option, désactivée par défaut) : trop vite trop bas = surchauffe, puis dégâts.
+    #[serde(default)] pub heat_shield: bool,
+    /// Volume du son (0.13 P9), 0 à 1.
+    #[serde(default = "default_sound_volume")] pub sound_volume: f32,
 
     pub mouse_sensitivity:      f32,
     pub scroll_speed:           f32,
@@ -1186,6 +1192,8 @@ impl Default for GameSettings {
     fn default() -> Self {
         Self {
             save_version: SAVE_VERSION,
+            sound_volume: 0.6,
+            heat_shield: false,
             mouse_sensitivity: 0.5, scroll_speed: 10.0,
             keyboard_speed: 2.0, invert_y: true,
             show_light_indicator: false, show_orbits: false, show_zones: false, show_systems: false,

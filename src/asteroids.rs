@@ -728,6 +728,7 @@ impl Asteroid {
             asteroid: Some(self.shape),
             tide: Default::default(),
             geo: Default::default(),
+            plasma: crate::approche::PLASMA_DEFAULT,
         }
     }
 

@@ -52,7 +52,7 @@ pub const MAX_NAME_LEN: usize = 16;
 pub const MAX_TAG_LEN: usize = 5;
 /// Étoiles revendiquées au plus par joueur.
 pub const MAX_CLAIMS: usize = 5;
-const PROTOCOL: u32 = 34;
+const PROTOCOL: u32 = 35;
 /// Modifications de voxels gardées en attente au plus (protection contre un flot).
 const VOXEL_EDITS_MAX: usize = 512;
 pub const MAX_CHAT_LEN: usize = 120;
@@ -1442,6 +1442,8 @@ pub(crate) fn net_update(
             ss: surface.ship_state().to_string(),
             walk: surface.walker_state().and_then(|(b, t, a)| crate::net_models::WalkState::new(b, t, a)),
             dock: net.dock,
+            heat: (surface.flight().heat * 255.0) as u8,
+            mach: (surface.flight().mach * 20.0).clamp(0.0, 255.0) as u8,
         },
     };
     // Modèles des autres joueurs qui nous manquent : à demander (règle 7)

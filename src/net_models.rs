@@ -97,6 +97,16 @@ pub struct Looks {
     pub walk: Option<WalkState>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dock: Option<DockState>,
+    /// Rentrée atmosphérique (0.13 P9) : chaleur (0..255) et vitesse en dixièmes... de Mach x 20 :
+    /// les autres le voient comme une étoile filante, et entendent son bang.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub heat: u8,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub mach: u8,
+}
+
+fn is_zero(x: &u8) -> bool {
+    *x == 0
 }
 
 impl Looks {
@@ -295,6 +305,8 @@ mod tests {
             ss: "combat".into(),
             walk: WalkState::new(TargetKind::Moon(3, 1), bevy::prelude::Transform::from_xyz(1.0, 2.0, 3.0).with_scale(Vec3::splat(4.0)), "courir"),
             dock: Some(DockState { carrier: 2, hangar: 0, phase: 1, t: 3.0 }),
+            heat: 200,
+            mach: 60,
         };
         let back: Looks = serde_json::from_str(&serde_json::to_string(&l).unwrap()).unwrap();
         assert_eq!(back, l);

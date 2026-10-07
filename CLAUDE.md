@@ -433,6 +433,26 @@ chose ; ne jamais relancer 2 fois le meme test sans rien changer.
   `SurfaceControl`, poussiere, message. Chat : `/geologie [geyser|fumerolle|cryovolcan|lave|seisme]` (evente
   actif le plus proche ; seisme = force, tests). Tests : `SPACESPORE_TEST_CMD2` (+ `_SECS`, 30 s) = seconde
   commande apres l'atterrissage. PROTOCOL inchange (rien de nouveau dans le monde partage).
+- 0.13 bloc P (v0.13.4, `roadmaps/a-faire/ROADMAP-0.13.md`) = approche planetaire, un seul vol continu de l'orbite au sol :
+  `surface.rs::Flying` (ceiling `ORBIT_CEILING` 4 rayons, vitesse ∝ altitude plafonnee a `ORBIT_SPEED_FRAC` du rayon / s,
+  freinage de l'air `approche::DRAG_Q0`, vaisseau qui grossit avec l'altitude (`stretch`, jamais moins de 1/30 de
+  l'altitude), camera `cam_dist` qui recule et se penche, entree par ZQSD depuis la vue espace a moins de
+  `FLIGHT_ENTER_RADII` rayons, sortie en reculant la molette, `cam_blend` pour le fondu) ; V seulement sous
+  `LAND_ALT_VOXELS` (200, Q9) et sur une pente <= `LAND_MAX_SLOPE` (25, Q10, `slope_deg` / `find_flat`) ; plus de descente
+  automatique. Maillage lointain lisse au-dessus de 0,30 rayon d'altitude de la camera (`TileStore::far_mode`,
+  `FAR_ABOVE` / `FAR_BELOW`). `approche.rs` = physique commune (`FlightInfo` rempli par `surface.rs::flight_info`,
+  `air_density`, `sound_speed` (1 voxel ~ 1 m : 340 voxels/s), `heat` = densite x Mach^3 : lent = rien, rapide = flammes,
+  Q11) ; `BodyParams::plasma` = couleur des flammes selon l'air. `approche_fx.rs` = effets : plasma / traine / cone de
+  condensation / retrofusees / feux de position (enfants du `Ship`, `ShipFx`), ombre / poussiere / traines /
+  onde du bang (enfants de la racine de l'astre, `BodyFx`), nuages qui s'ecartent (`CloudMaterial` = materiau standard +
+  `cloud_clear.wgsl`, conversion des dalles de `planet.rs` par `convert_clouds`, sillage de 6 s), brouillard dans la
+  dalle (`cloud_state`, `cloud_fog`), liseré de l'atmosphere (`RimMaterial`, `rim.wgsl`, coque a `relief + 0,35 x
+  atmosphere_depth`), secousses, autres joueurs (`remote_fx`, `Looks::heat` / `mach`, PROTOCOL 35). `approche_ui.rs` =
+  indicateurs (gizmos : trajectoire, point d'impact, portes du couloir, points plats), alertes, points d'atterrissage
+  (scanner, touche L), bouclier thermique en option (`GameSettings::heat_shield`, `HeatDamage`), vitre du cockpit (F5).
+  `sound.rs` = premier son du jeu, synthetise en WAV en memoire (feature bevy `wav`), boucles pilotees par la vitesse et la
+  densite (`air_gain` : silence dans le vide), bang, tonnerre retarde, `/volume` (`GameSettings::sound_volume`). Tests :
+  `/essai mer`, `/nuage`, `SPACESPORE_TEST_FLY=reentry` (voir `TESTS-JEU.md`), `cargo test --release approche sound`.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

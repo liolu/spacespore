@@ -37,7 +37,7 @@ impl Plugin for ChatCmdPlugin {
 #[derive(Event)]
 pub struct ChatCommand(pub String);
 
-const COMMANDS: [&str; 30] = ["/mer", "/jour", "/nuit", "/vol", "/essai", "/geologie", "/relief", "/echelle", "/impact", "/ceinture", "/comete", "/eclipse", "/editeur", "/grotte", "/surplomb", "/tp", "/galaxie", "/profil", "/profile", "/graine", "/seed", "/aller", "/go", "/stats", "/aide", "/help", "/heure", "/time", "/temps", "/speed"];
+const COMMANDS: [&str; 33] = ["/bouclier", "/nuage", "/volume", "/mer", "/jour", "/nuit", "/vol", "/essai", "/geologie", "/relief", "/echelle", "/impact", "/ceinture", "/comete", "/eclipse", "/editeur", "/grotte", "/surplomb", "/tp", "/galaxie", "/profil", "/profile", "/graine", "/seed", "/aller", "/go", "/stats", "/aide", "/help", "/heure", "/time", "/temps", "/speed"];
 
 /// La ligne est une commande du jeu (et non un message à envoyer).
 pub fn is_local(line: &str) -> bool {
@@ -96,7 +96,7 @@ fn find_galaxy(arg: &str, settings: &GameSettings, current: usize) -> Result<usi
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Commandes : (nom, arguments, description). Ordre d'affichage des propositions.
-pub const COMMAND_HELP: [(&str, &str, &str); 24] = [
+pub const COMMAND_HELP: [(&str, &str, &str); 27] = [
     ("/aide", "[commande]", "la liste des commandes, ou l'aide d'une commande"),
     ("/aller", "etoile|planete|lune <type> | suivant", "tests : aller a un type d'etoile, de planete ou de lune"),
     ("/stats", "[n | tout]", "statistiques de tous les astres d'une galaxie (F3 : masquer)"),
@@ -110,6 +110,9 @@ pub const COMMAND_HELP: [(&str, &str, &str); 24] = [
     ("/echelle", "<k : 1, 8, 16, 32, 64>", "tests (0.13 E1) : voxels k fois plus petits au prochain atterrissage"),
     ("/grotte", "", "aller a l'entree de grotte la plus proche (pose ou en vol bas)"),
     ("/mer", "", "aller au rivage de la mer la plus proche (pose ou en vol bas)"),
+    ("/volume", "[0-100]", "volume du son (0 = muet)"),
+    ("/bouclier", "[oui | non]", "bouclier thermique (option) : trop vite trop bas a la rentree = surchauffe puis degats (desactive par defaut)"),
+    ("/nuage", "[dedans | dessus | dessous]", "tests : va dans la couche de nuages (en vol bas) pour traverser, ou au-dessus (mer de nuages)"),
     ("/geologie", "[geyser | fumerolle | cryovolcan | lave | seisme]", "aller a l'evenement geologique le plus proche (pose ou en vol bas) ; seisme = tests"),
     ("/relief", "[corniche | grotte | strates | piton | blocs | gorge | pont | arche | cheminee]", "aller a la forme du relief la plus proche (pose ou en vol bas)"),
     ("/ceinture", "", "aller au champ dense d'une ceinture d'asteroides du systeme charge"),
@@ -287,7 +290,7 @@ fn export_profile(settings: &GameSettings, cache: &ProfileCache, kind: &TargetKi
 fn run_chat_commands(
     time: Res<Time>,
     mut events: EventReader<ChatCommand>,
-    settings: Res<GameSettings>,
+    mut settings: ResMut<GameSettings>,
     travel: Res<WormholeTravel>,
     mut target: ResMut<CameraTarget>,
     mut cam_q: Query<&mut CameraController>,
@@ -298,7 +301,7 @@ fn run_chat_commands(
     mut overhang: EventWriter<crate::surface::OverhangCommand>,
     mut cave: EventWriter<crate::surface::CaveCommand>,
     mut impact: EventWriter<crate::meteors::ImpactCommand>,
-    mut small: (EventWriter<crate::asteroids::BeltCommand>, EventWriter<crate::asteroids::CometCommand>, EventWriter<crate::sky::EclipseCommand>, EventWriter<crate::editeur::OpenEditor>, EventWriter<crate::surface::SeaCommand>, EventWriter<crate::test_cmd::DescendCommand>),
+    mut small: (EventWriter<crate::asteroids::BeltCommand>, EventWriter<crate::asteroids::CometCommand>, EventWriter<crate::sky::EclipseCommand>, EventWriter<crate::editeur::OpenEditor>, EventWriter<crate::surface::SeaCommand>, EventWriter<crate::test_cmd::DescendCommand>, EventWriter<crate::approche_fx::CloudCommand>),
     profiles: Res<ProfileCache>,
     star_q: Query<&StarId, With<StarRoot>>,
 ) {
@@ -379,6 +382,27 @@ fn run_chat_commands(
             "/grotte" => {
                 cave.send(crate::surface::CaveCommand);
             }
+            "/bouclier" => {
+                let a = arg.trim().to_lowercase();
+                settings.heat_shield = match a.as_str() {
+                    "oui" | "on" | "1" | "actif" => true,
+                    "non" | "off" | "0" => false,
+                    _ => !settings.heat_shield,
+                };
+                settings.save();
+                net.notify(if settings.heat_shield { "Bouclier thermique actif : trop vite trop bas = surchauffe, puis degats." } else { "Bouclier thermique desactive : la rentree ne fait aucun degat." }, now);
+            }
+            "/nuage" => {
+                small.6.send(crate::approche_fx::CloudCommand(arg.to_string()));
+            }
+            "/volume" => match arg.trim().trim_end_matches('%').parse::<f32>() {
+                Ok(v) if (0.0..=100.0).contains(&v) => {
+                    settings.sound_volume = v / 100.0;
+                    settings.save();
+                    net.notify(&format!("Volume du son : {v:.0} %."), now);
+                }
+                _ => net.notify(&format!("Volume du son : {:.0} %. /volume <0-100> pour le changer.", settings.sound_volume * 100.0), now),
+            },
             "/mer" => {
                 small.4.send(crate::surface::SeaCommand);
             }
