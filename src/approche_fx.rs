@@ -990,7 +990,7 @@ fn rim_fx(
         if let (Some(k @ TargetKind::Planet(id)), Some(p)) = (wanted, wanted.and_then(|k| if let TargetKind::Planet(id) = k { settings.systems.get(id / 1000).and_then(|s| s.planets().get(id % 1000)) } else { None })) {
             if let Some((root, _, _)) = planets.iter().find(|(_, pid, _)| pid.0 == id) {
                 let bp = crate::terrain::BodyParams::planet(p);
-                let shell = p.radius + p.terrain_height + 2.0 * crate::terrain::landforms_of(&bp).max_height() + 0.35 * crate::surface::atmosphere_depth(&bp);
+                let shell = p.radius + p.terrain_height + 2.0 * crate::terrain::landforms_of(&bp).max_height() + 0.17 * crate::surface::atmosphere_depth(&bp);
                 let mesh = meshes.add(Sphere::new(1.0).mesh().ico(5).unwrap());
                 let col = [p.air.sky[0], p.air.sky[1], p.air.sky[2]];
                 let mat = rims.add(RimMaterial { params: RimParams { color: Vec4::new(col[0], col[1], col[2], 0.0), sun: Vec4::new(0.0, 1.0, 0.0, 0.0), center: Vec4::new(0.0, 0.0, 0.0, shell) } });

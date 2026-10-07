@@ -187,7 +187,9 @@ pub fn hover_radius(p: &BodyParams) -> f32 {
 /// Épaisseur d'air visible depuis le sol : le ciel s'efface avec l'altitude (plus vite sous une
 /// atmosphère ténue).
 pub(crate) fn atmosphere_depth(p: &BodyParams) -> f32 {
-    (p.radius * 0.12).max(300.0) * (0.5 + 0.5 * p.pressure.clamp(0.0, 10.0).powf(0.3))
+    // Assez haute pour contenir les nuages (relief + altitude des nuages + épaisseur des dalles, ~0,16 rayon) :
+    // les nuages ne sont jamais au-dessus de l'atmosphère (0.13.5)
+    (p.radius * 0.26).max(3.0 * p.terrain_height).max(300.0) * (0.5 + 0.5 * p.pressure.clamp(0.0, 10.0).powf(0.3))
 }
 
 /// Couleur du ciel vue d'un astre. `sun_height` : sinus de la hauteur de l'étoile au-dessus de

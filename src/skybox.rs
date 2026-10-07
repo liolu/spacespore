@@ -334,6 +334,27 @@ pub fn render_cube(input: &SkyInput) -> Vec<u8> {
         }
     });
 
+    // ── Fond d'étoiles : des centaines de milliers de petites étoiles lointaines, de couleurs variées ──
+    {
+        let mut rng = Rng::new(seed ^ 0x57A2);
+        let count = (size * size) as f32 * 0.24;
+        for _ in 0..count as usize {
+            let (u, v, w) = (rng.f() * 2.0 - 1.0, rng.f() * 2.0 - 1.0, rng.f() * 2.0 - 1.0);
+            let d = Vec3::new(u, v, w);
+            let l = d.length();
+            if !(0.05..=1.0).contains(&l) {
+                continue;
+            }
+            // Température : surtout blanches et bleutées, des jaunes, quelques orangées
+            let t = rng.f();
+            let color = if t < 0.5 { [0.8, 0.88, 1.0] } else if t < 0.78 { [1.0, 0.96, 0.82] } else if t < 0.93 { [1.0, 0.82, 0.58] } else { [1.0, 0.6, 0.45] };
+            let m = rng.f();
+            let k = 0.08 + 1.5 * m.powi(6);
+            let sigma = 0.5 + 0.4 * m.powi(6);
+            out.splat(d / l, [color[0] * k, color[1] * k, color[2] * k], sigma);
+        }
+    }
+
     // ── Étoiles réelles : un point par étoile, éclat selon son flux ──
     let (scale, mean_l) = match &input.galaxy {
         Some(g) if !input.stars.is_empty() => (g.radius, input.stars.iter().map(|s| s.2).sum::<f32>() / input.stars.len() as f32),
@@ -630,7 +651,7 @@ mod tests {
         let lum: Vec<f32> = a.chunks(4).map(|p| (p[0] as f32 + p[1] as f32 + p[2] as f32) / 3.0).collect();
         let mean = lum.iter().sum::<f32>() / lum.len() as f32;
         let max = lum.iter().cloned().fold(0.0, f32::max);
-        assert!(mean > 3.0 && mean < 140.0, "ciel ni noir ni blanc : {mean}");
+        assert!(mean > 3.0 && mean < 160.0, "ciel ni noir ni blanc : {mean}");
         assert!(max > 200.0, "des etoiles brillantes : {max}");
         // La bande : le ciel n'est pas uniforme (les pixels les plus clairs sont bien plus clairs que la moyenne)
         let mut sorted = lum.clone();
