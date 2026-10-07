@@ -55,12 +55,19 @@ fn wave(m: vec2<f32>, amp: f32, phase: f32, weight: f32, uv: vec2<f32>) -> vec3<
     return vec3<f32>(a * sin(arg), a * cos(arg) * k.x, a * cos(arg) * k.y);
 }
 
-fn waves(uv: vec2<f32>) -> vec3<f32> {
+fn waves(uv0: vec2<f32>) -> vec3<f32> {
+    // Le domaine est déformé lentement : les crêtes ne forment plus un réseau régulier
+    let uv = uv0 + 11.0 * vec2<f32>(sin(uv0.y * 0.019 + water.time.x * 0.06), cos(uv0.x * 0.023 - water.time.x * 0.05))
+        + 5.0 * vec2<f32>(sin(uv0.x * 0.047 + 1.7), sin(uv0.y * 0.041 + 4.1));
     var w = wave(vec2<f32>(96.0, 0.0), 1.0, 0.0, water.w1.x, uv);
     w += wave(vec2<f32>(-70.0, 150.0), 0.55, 1.3, water.w1.y, uv);
     w += wave(vec2<f32>(190.0, 90.0), 0.32, 2.6, water.w1.z, uv);
     w += wave(vec2<f32>(-60.0, -310.0), 0.18, 3.9, water.w1.w, uv);
     w += wave(vec2<f32>(410.0, -120.0), 0.10, 5.2, water.w2.x, uv);
+    // Trois vagues de plus, dans d'autres directions et d'autres longueurs (non multiples des autres)
+    w += wave(vec2<f32>(-233.0, -197.0), 0.2, 6.1, water.w1.z * 0.8, uv);
+    w += wave(vec2<f32>(151.0, 383.0), 0.13, 0.7, water.w1.y * 0.7, uv);
+    w += wave(vec2<f32>(37.0, -71.0), 0.7, 2.2, water.w1.w * 0.9, uv);
     return w;
 }
 
@@ -123,7 +130,12 @@ fn fragment(in: VOut) -> @location(0) vec4<f32> {
         let lu = max(length(eu), 1e-6);
         let lv = max(length(ev), 1e-6);
         // pente (colonnes de haut par colonne) : même unité en haut et en bas
-        n = normalize(up - (eu / lu) * (w.y * nfade) - (ev / lv) * (w.z * nfade));
+        // Petites ondulations de plus (bruit qui avance) : aucune répétition visible
+        let t = water.time.x;
+        let nu = vnoise(in.uv * 0.37 + vec2<f32>(t * 0.21, -t * 0.13)) - 0.5;
+        let nv = vnoise(in.uv * 0.41 + vec2<f32>(-t * 0.17, t * 0.23) + 17.0) - 0.5;
+        let micro = 0.12 * clamp(water.time.y * 3.0 + 0.2, 0.0, 1.0);
+        n = normalize(up - (eu / lu) * ((w.y + nu * micro) * nfade) - (ev / lv) * ((w.z + nv * micro) * nfade));
     }
 
     let under = view_below(view, up);
@@ -166,7 +178,7 @@ fn fragment(in: VOut) -> @location(0) vec4<f32> {
 
         // Écume : au rivage (bande qui avance et recule) et sur les crêtes par vent fort
         let hn = w.x / max(water.time.y * 1.6, 1e-3);
-        let swash = 0.5 + 0.5 * sin(water.time.x * 0.9 + in.uv.x * 0.07 + in.uv.y * 0.05);
+        let swash = vnoise(in.uv * 0.06 + vec2<f32>(water.time.x * 0.35, 0.0));
         let band = (1.0 + 1.6 * swash) ;
         let n1 = vnoise(in.uv * 0.45 + vec2<f32>(water.time.x * 0.25, 0.0));
         let n2 = vnoise(in.uv * 1.3 - vec2<f32>(0.0, water.time.x * 0.4));

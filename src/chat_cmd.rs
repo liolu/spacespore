@@ -37,7 +37,7 @@ impl Plugin for ChatCmdPlugin {
 #[derive(Event)]
 pub struct ChatCommand(pub String);
 
-const COMMANDS: [&str; 33] = ["/bouclier", "/nuage", "/volume", "/mer", "/jour", "/nuit", "/vol", "/essai", "/geologie", "/relief", "/echelle", "/impact", "/ceinture", "/comete", "/eclipse", "/editeur", "/grotte", "/surplomb", "/tp", "/galaxie", "/profil", "/profile", "/graine", "/seed", "/aller", "/go", "/stats", "/aide", "/help", "/heure", "/time", "/temps", "/speed"];
+const COMMANDS: [&str; 34] = ["/vent", "/bouclier", "/nuage", "/volume", "/mer", "/jour", "/nuit", "/vol", "/essai", "/geologie", "/relief", "/echelle", "/impact", "/ceinture", "/comete", "/eclipse", "/editeur", "/grotte", "/surplomb", "/tp", "/galaxie", "/profil", "/profile", "/graine", "/seed", "/aller", "/go", "/stats", "/aide", "/help", "/heure", "/time", "/temps", "/speed"];
 
 /// La ligne est une commande du jeu (et non un message à envoyer).
 pub fn is_local(line: &str) -> bool {
@@ -96,7 +96,7 @@ fn find_galaxy(arg: &str, settings: &GameSettings, current: usize) -> Result<usi
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Commandes : (nom, arguments, description). Ordre d'affichage des propositions.
-pub const COMMAND_HELP: [(&str, &str, &str); 27] = [
+pub const COMMAND_HELP: [(&str, &str, &str); 28] = [
     ("/aide", "[commande]", "la liste des commandes, ou l'aide d'une commande"),
     ("/aller", "etoile|planete|lune <type> | suivant", "tests : aller a un type d'etoile, de planete ou de lune"),
     ("/stats", "[n | tout]", "statistiques de tous les astres d'une galaxie (F3 : masquer)"),
@@ -111,6 +111,7 @@ pub const COMMAND_HELP: [(&str, &str, &str); 27] = [
     ("/grotte", "", "aller a l'entree de grotte la plus proche (pose ou en vol bas)"),
     ("/mer", "", "aller au rivage de la mer la plus proche (pose ou en vol bas)"),
     ("/volume", "[0-100]", "volume du son (0 = muet)"),
+    ("/vent", "[oui | non]", "stabilisateur de vent : le vent ne deplace plus le vaisseau en vol (actif par defaut)"),
     ("/bouclier", "[oui | non]", "bouclier thermique (option) : trop vite trop bas a la rentree = surchauffe puis degats (desactive par defaut)"),
     ("/nuage", "[dedans | dessus | dessous]", "tests : va dans la couche de nuages (en vol bas) pour traverser, ou au-dessus (mer de nuages)"),
     ("/geologie", "[geyser | fumerolle | cryovolcan | lave | seisme]", "aller a l'evenement geologique le plus proche (pose ou en vol bas) ; seisme = tests"),
@@ -381,6 +382,16 @@ fn run_chat_commands(
             }
             "/grotte" => {
                 cave.send(crate::surface::CaveCommand);
+            }
+            "/vent" => {
+                let a = arg.trim().to_lowercase();
+                settings.wind_stabilizer = match a.as_str() {
+                    "oui" | "on" | "1" | "actif" => true,
+                    "non" | "off" | "0" => false,
+                    _ => !settings.wind_stabilizer,
+                };
+                settings.save();
+                net.notify(if settings.wind_stabilizer { "Stabilisateur de vent actif : le vent ne vous deplace plus." } else { "Stabilisateur de vent coupe : le vent pousse le vaisseau." }, now);
             }
             "/bouclier" => {
                 let a = arg.trim().to_lowercase();

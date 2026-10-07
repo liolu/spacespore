@@ -418,13 +418,20 @@ fn update_weather_now(
         }
     }
     let under = surface.underground() > 0.5;
+    // Au-dessus de l'atmosphère : plus de pluie, de nuages, de poussière ni de vent
+    let gate = {
+        let a = surface.air();
+        let t = ((a - 0.05) / 0.3).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    let s = Sample { cloud: s.cloud * gate, precip: s.precip * gate, storm: s.storm * gate, dust: s.dust * gate, fog: s.fog * gate, east: s.east * gate, north: s.north * gate, gust: s.gust * gate, ..s };
     now.sample = if under { Sample { east: s.east, north: s.north, ..Default::default() } } else { s };
     now.text = describe(&now.sample);
 }
 
 /// En vol bas, le vent pousse le vaisseau (plus fort en altitude, en rafale et dans les orages) et
 /// le fait tanguer et rouler (`Surface::set_wind`).
-fn push_ship(time: Res<Time>, now: Res<WeatherNow>, mut surface: ResMut<Surface>) {
+fn push_ship(time: Res<Time>, now: Res<WeatherNow>, settings: Res<GameSettings>, mut surface: ResMut<Surface>) {
     if !surface.flying() || now.params.is_none() {
         surface.set_wind(Vec3::ZERO, 0.0, String::new());
         return;
@@ -439,15 +446,40 @@ fn push_ship(time: Res<Time>, now: Res<WeatherNow>, mut surface: ResMut<Surface>
     let radius = surface.params().map_or(p.length(), |b| b.radius);
     let height = ((p.length() - radius) / (radius * 0.01).max(50.0)).clamp(0.0, 3.0);
     let k = 1.5 * (1.0 + s.storm) * (0.6 + 0.4 * height);
-    let v = (east * s.east + north * s.north) * k;
-    surface.drift(v * time.delta_secs().min(0.1));
+    let mut v = (east * s.east + north * s.north) * k;
+    // Le vent suit le relief : il se canalise le long des pentes, des vallées et des failles
+    if let Some(t) = surface.terrain() {
+        let voxel = t.voxel();
+        let alt = ((p.length() - t.ground(up).top) / voxel).max(0.0);
+        let near = (1.0 - alt / 400.0).clamp(0.0, 1.0);
+        if near > 0.0 && v.length() > 1e-3 {
+            let span = 40.0 * voxel;
+            let ds = span / t.params.radius;
+            let at = |d: Vec3| t.ground(d.normalize()).top;
+            let gx = (at(up + east * ds) - at(up - east * ds)) / (2.0 * span);
+            let gy = (at(up + north * ds) - at(up - north * ds)) / (2.0 * span);
+            let slope = gx.hypot(gy);
+            if slope > 0.03 {
+                let g = (east * gx + north * gy) / slope;
+                let contour = up.cross(g).normalize_or(east);
+                let k = (slope / 0.45).clamp(0.0, 0.8) * near;
+                let along = v.dot(contour);
+                let channel = contour * v.length() * if along < 0.0 { -1.0 } else { 1.0 };
+                v = v * (1.0 - k) + channel * k;
+            }
+        }
+    }
+    // Stabilisateur de vent (option) : le vaisseau ne se laisse plus déplacer
+    if !settings.wind_stabilizer {
+        surface.drift(v * time.delta_secs().min(0.1));
+    }
     let speed = s.wind_speed() * (0.6 + 0.4 * height);
     let text = if speed < 0.5 {
         "Vent : calme".to_string()
     } else {
         format!("Vent : {:.0} m/s, du {}{}", speed, compass(-s.east, -s.north), if s.gust > 0.3 { ", rafale !" } else { "" })
     };
-    surface.set_wind(v, s.gust, text);
+    surface.set_wind(if settings.wind_stabilizer { v * 0.0 } else { v }, s.gust, text);
 }
 
 /// Point cardinal d'une direction (vers l'est, vers le nord).

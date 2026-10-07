@@ -1088,6 +1088,8 @@ fn default_sound_volume() -> f32 { 0.6 }
 pub struct GameSettings {
     #[serde(default)] pub save_version: u32,
 
+    /// Stabilisateur de vent : le vent ne déplace plus le vaisseau en vol (0.13.5).
+    #[serde(default = "default_true")] pub wind_stabilizer: bool,
     /// Bouclier thermique (0.13 P6, option, désactivée par défaut) : trop vite trop bas = surchauffe, puis dégâts.
     #[serde(default)] pub heat_shield: bool,
     /// Volume du son (0.13 P9), 0 à 1.
@@ -1194,6 +1196,7 @@ impl Default for GameSettings {
             save_version: SAVE_VERSION,
             sound_volume: 0.6,
             heat_shield: false,
+            wind_stabilizer: true,
             mouse_sensitivity: 0.5, scroll_speed: 10.0,
             keyboard_speed: 2.0, invert_y: true,
             show_light_indicator: false, show_orbits: false, show_zones: false, show_systems: false,

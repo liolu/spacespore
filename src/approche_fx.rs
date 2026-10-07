@@ -207,6 +207,13 @@ pub struct FxState {
     wake: Vec<Wake>,
     wake_acc: f32,
     ring: Option<Ring>,
+    /// Anneaux de choc remplacés avant la fin : à retirer.
+    dead: Vec<Entity>,
+    /// Bang : côté du mur du son (-1 dessous, +1 dessus) et instant du dernier (anti-rebond).
+    boom_side: i8,
+    boom_at: f32,
+    sparks: Vec<Particle>,
+    spark_acc: f32,
     contrail_acc: f32,
     dust_acc: f32,
     /// Corps dont on a posé les effets (racine) ; ombre de l'ombre au sol.
@@ -224,6 +231,7 @@ pub struct FxState {
 #[derive(Clone)]
 struct FxMeshes {
     sphere: Handle<Mesh>,
+    cone: Handle<Mesh>,
     low: Handle<Mesh>,
     ring: Handle<Mesh>,
     disc: Handle<Mesh>,
@@ -245,6 +253,8 @@ fn fx_meshes(state: &mut FxState, meshes: &mut Assets<Mesh>) -> FxMeshes {
         .meshes
         .get_or_insert_with(|| FxMeshes {
             sphere: meshes.add(Sphere::new(1.0).mesh().ico(3).unwrap()),
+            // Cône de rayon 1 et de hauteur 1 : base en bas (y = -0,5), pointe en haut
+            cone: meshes.add(Cone::new(1.0, 1.0).mesh().resolution(24).build()),
             low: meshes.add(Sphere::new(1.0).mesh().ico(1).unwrap()),
             ring: meshes.add(Torus::new(0.93, 1.0).mesh().build()),
             disc: meshes.add(Circle::new(1.0).mesh().build()),
@@ -254,6 +264,12 @@ fn fx_meshes(state: &mut FxState, meshes: &mut Assets<Mesh>) -> FxMeshes {
 
 fn glow(color: [f32; 3], alpha: f32) -> StandardMaterial {
     StandardMaterial { base_color: Color::srgba(color[0], color[1], color[2], alpha), unlit: true, alpha_mode: AlphaMode::Add, cull_mode: None, ..default() }
+}
+
+/// Un cône dont la base (rayon `r`) est au plan z = `z0` du vaisseau et dont la pointe va vers +Z sur
+/// `len` : (centre, échelle) pour le maillage de cône unitaire, tourné de +Y vers +Z.
+fn cone(r: f32, z0: f32, len: f32) -> (Vec3, Vec3) {
+    (Vec3::new(0.0, 0.0, z0 + len * 0.5), Vec3::new(r, len, r))
 }
 
 fn smooth(a: f32, b: f32, x: f32) -> f32 {
@@ -303,8 +319,9 @@ fn spawn_ship_fx(
     let Ok(ship) = ship_q.get_single() else { return };
     let m = fx_meshes(&mut state, &mut meshes);
     let mut add = |kind: FxKind, color: [f32; 3], commands: &mut Commands| {
+        let mesh = if matches!(kind, FxKind::Sheath | FxKind::Core | FxKind::Trail | FxKind::Cone) { m.cone.clone() } else { m.sphere.clone() };
         let e = commands
-            .spawn((Mesh3d(m.sphere.clone()), MeshMaterial3d(materials.add(glow(color, 0.0))), Transform::default(), Visibility::Hidden, NotShadowCaster, NotShadowReceiver, ShipFx(kind)))
+            .spawn((Mesh3d(mesh), MeshMaterial3d(materials.add(glow(color, 0.0))), Transform::default(), Visibility::Hidden, NotShadowCaster, NotShadowReceiver, ShipFx(kind)))
             .id();
         commands.entity(ship).add_child(e);
     };
@@ -363,11 +380,27 @@ fn ship_fx(
     let retro = if f.active && f.density < 0.02 && f.speed_vox > 30.0 { (decel / f.speed_vox.max(1.0) * 1.2).clamp(0.0, 1.0) } else { 0.0 };
 
     // Bang supersonique : franchissement du mur du son, avec de l'air
-    if f.active && f.density > 0.02 && state.prev_mach > 0.0 && ((state.prev_mach < 1.0) != (f.mach < 1.0)) {
-        let strength = (f.density.sqrt() * (0.5 + 0.5 * (f.mach - 1.0).abs().min(1.0) + 0.3)).clamp(0.2, 1.0);
-        state.boom = state.boom.max(strength);
-        booms.send(Boom { strength });
-        state.ring = Some(Ring { pos: f.pos, axis: f.heading, age: 0.0, len: f.length, strength, entity: Entity::PLACEHOLDER });
+    // (anti-rebond : le mur du son se franchit en accélérant, de franchement dessous à franchement
+    // dessus, et pas plus d'un bang toutes les 4 s ; ralentir ou reculer doucement n'en fait pas)
+    if f.active {
+        if f.mach < 0.9 {
+            state.boom_side = -1;
+        }
+        if f.mach > 1.12 && state.boom_side < 0 && f.density > 0.02 && f.speed_vox > 120.0 && t - state.boom_at > 4.0 && f.vert_vox.abs() <= f.speed_vox {
+            state.boom_side = 1;
+            state.boom_at = t;
+            let strength = (f.density.sqrt() * 0.8 + 0.2).clamp(0.2, 1.0);
+            state.boom = state.boom.max(strength);
+            booms.send(Boom { strength });
+            if let Some(old) = state.ring.take() {
+                if old.entity != Entity::PLACEHOLDER {
+                    state.dead.push(old.entity);
+                }
+            }
+            state.ring = Some(Ring { pos: f.pos, axis: f.heading, age: 0.0, len: f.length, strength, entity: Entity::PLACEHOLDER });
+        }
+    } else {
+        state.boom_side = 0;
     }
     state.prev_mach = if f.active { f.mach } else { 0.0 };
     state.prev_speed = if f.active { f.speed_vox } else { 0.0 };
@@ -378,16 +411,24 @@ fn ship_fx(
     let nav_size = (0.035 * l).max(cam_dist * 0.0035 / s);
     for (kind, mat, mut tf, mut vis) in &mut fx {
         let (alpha, color, center, scale): (f32, [f32; 3], Vec3, Vec3) = match kind.0 {
-            FxKind::Sheath => (0.28 * heat, plasma, Vec3::new(0.0, 0.0, -0.05 * l), Vec3::new(0.42 * l, 0.34 * l, 0.75 * l) * (1.0 + 0.3 * heat) * flicker(0.0)),
+            // Le plasma est un cône qui part du nez et s'effile vers l'arrière (pointe vers +Z)
+            FxKind::Sheath => {
+                let (c, s) = cone(0.5 * l, -0.55 * l, (1.4 + 1.8 * heat) * l * flicker(0.0));
+                (0.3 * heat, plasma, c, s)
+            }
             FxKind::Core => {
-                let c = [plasma[0] + (1.0 - plasma[0]) * 0.75, plasma[1] + (1.0 - plasma[1]) * 0.75, plasma[2] + (1.0 - plasma[2]) * 0.75];
-                (0.5 * heat, c, Vec3::new(0.0, 0.0, -0.4 * l), Vec3::new(0.2 * l, 0.16 * l, 0.42 * l) * (1.0 + 0.25 * heat) * flicker(2.0))
+                let white = [plasma[0] + (1.0 - plasma[0]) * 0.75, plasma[1] + (1.0 - plasma[1]) * 0.75, plasma[2] + (1.0 - plasma[2]) * 0.75];
+                let (c, s) = cone(0.26 * l, -0.5 * l, (0.9 + 1.2 * heat) * l * flicker(2.0));
+                (0.55 * heat, white, c, s)
             }
             FxKind::Trail => {
-                let long = (0.4 + heat * 1.6) * 2.5 * l;
-                (0.3 * heat, plasma, Vec3::new(0.0, 0.0, 0.5 * l + long), Vec3::new(0.13 * l * (0.5 + heat), 0.11 * l * (0.5 + heat), long) * flicker(4.0))
+                let (c, s) = cone(0.34 * l, 0.1 * l, (2.5 + 7.0 * heat) * l * flicker(4.0));
+                (0.22 * heat, plasma, c, s)
             }
-            FxKind::Cone => (0.4 * cond, [1.0, 1.0, 1.0], Vec3::new(0.0, 0.0, 0.8 * l), Vec3::new(0.6 * l, 0.6 * l, 1.3 * l)),
+            FxKind::Cone => {
+                let (c, s) = cone(0.5 * l, 0.25 * l, 1.6 * l);
+                (0.4 * cond, [1.0, 1.0, 1.0], c, s)
+            }
             FxKind::RetroL => (0.8 * retro, [0.6, 0.8, 1.0], Vec3::new(-0.2 * l, 0.0, -0.75 * l), Vec3::new(0.1 * l, 0.1 * l, 0.5 * l) * flicker(6.0)),
             FxKind::RetroR => (0.8 * retro, [0.6, 0.8, 1.0], Vec3::new(0.2 * l, 0.0, -0.75 * l), Vec3::new(0.1 * l, 0.1 * l, 0.5 * l) * flicker(7.0)),
             FxKind::NavRed => (if blink && f.active { 1.0 } else { 0.0 }, [1.0, 0.1, 0.1], Vec3::new(-0.5 * l, 0.0, 0.1 * l), Vec3::splat(nav_size)),
@@ -404,6 +445,7 @@ fn ship_fx(
         }
         tf.translation = center;
         tf.scale = scale;
+        tf.rotation = if matches!(kind.0, FxKind::Sheath | FxKind::Core | FxKind::Trail | FxKind::Cone) { Quat::from_rotation_arc(Vec3::Y, Vec3::Z) } else { Quat::IDENTITY };
         if let Some(m) = materials.get_mut(&mat.0) {
             m.base_color = Color::srgba(color[0], color[1], color[2], alpha.clamp(0.0, 1.0));
         }
@@ -477,6 +519,7 @@ fn body_fx(
             }
             state.dust.clear();
             state.trail.clear();
+            state.sparks.clear();
             state.ring = None;
             state.shadow = None;
             state.wake.clear();
@@ -485,6 +528,11 @@ fn body_fx(
         if !f.active {
             state.above_clouds = None;
             return;
+        }
+    }
+    for e in std::mem::take(&mut state.dead) {
+        if let Some(mut c) = commands.get_entity(e) {
+            c.despawn_recursive();
         }
     }
     let (Some(root), Some(terrain)) = (root, surface.terrain()) else { return };
@@ -611,6 +659,46 @@ fn body_fx(
         }
     }
     update_pool(&mut state.dust, dt, &mut tfs, &mut vis, &mats, &mut materials, false);
+
+    // ── Étincelles de la rentrée : des points brillants arrachés au nez, qui restent sur place ──
+    let spark_rate = f.heat * 150.0;
+    state.spark_acc += dt * spark_rate;
+    let up_s = f.up;
+    let east_s = Vec3::Y.cross(up_s).normalize_or(Vec3::X);
+    let north_s = up_s.cross(east_s);
+    let white = [params.plasma[0] * 0.4 + 0.6, params.plasma[1] * 0.4 + 0.6, params.plasma[2] * 0.4 + 0.6];
+    let speed_h = (f.speed_vox * f.speed_vox - f.vert_vox * f.vert_vox).max(0.0).sqrt() * f.voxel;
+    while state.spark_acc >= 1.0 {
+        state.spark_acc -= 1.0;
+        let (a, b, c) = (state.signed(), state.signed(), state.signed());
+        let side = (east_s * a + north_s * b) * len * 0.3;
+        let p = Particle {
+            entity: Entity::PLACEHOLDER,
+            pos: f.pos + f.heading * (0.4 * len) + up_s * (c * len * 0.12) + side,
+            vel: (side + up_s * c * len * 0.4) * 3.0 - f.heading * speed_h * 0.1,
+            age: 0.0,
+            life: 0.45 + 0.6 * state.rand(),
+            size0: len * 0.035,
+            size1: len * 0.012,
+            color: if state.rand() < 0.5 { params.plasma } else { white },
+            alpha: 0.95,
+            live: true,
+        };
+        if state.sparks.len() < 130 {
+            let e = commands
+                .spawn((Mesh3d(m.low.clone()), MeshMaterial3d(materials.add(glow(p.color, p.alpha))), Transform::from_translation(p.pos).with_scale(Vec3::splat(p.size0)), Visibility::Inherited, NotShadowCaster, NotShadowReceiver, BodyFx))
+                .id();
+            commands.entity(root).add_child(e);
+            state.sparks.push(Particle { entity: e, ..p });
+        } else if let Some(slot) = state.sparks.iter_mut().find(|q| !q.live) {
+            *slot = Particle { entity: slot.entity, ..p };
+            slot_visible(&mut vis, slot.entity, true);
+        } else {
+            state.spark_acc = 0.0;
+            break;
+        }
+    }
+    update_pool(&mut state.sparks, dt, &mut tfs, &mut vis, &mats, &mut materials, true);
 
     // ── Traînées de condensation en haute altitude (P6) ──
     let high = f.density > 0.004 && f.density < 0.22 && humid(&params);
@@ -981,7 +1069,7 @@ fn remote_fx(
             spawned.insert(e);
             for (kind, color) in [(FxKind::Sheath, [1.0, 0.55, 0.2]), (FxKind::Core, [1.0, 0.9, 0.7]), (FxKind::Trail, [1.0, 0.5, 0.2])] {
                 let c = commands
-                    .spawn((Mesh3d(m.sphere.clone()), MeshMaterial3d(materials.add(glow(color, 0.0))), Transform::default(), Visibility::Hidden, NotShadowCaster, NotShadowReceiver, RemoteFx(kind)))
+                    .spawn((Mesh3d(m.cone.clone()), MeshMaterial3d(materials.add(glow(color, 0.0))), Transform::default(), Visibility::Hidden, NotShadowCaster, NotShadowReceiver, RemoteFx(kind)))
                     .id();
                 commands.entity(e).add_child(c);
             }
@@ -996,11 +1084,17 @@ fn remote_fx(
         let far = (cam.distance(ship_tf.translation) / ship_tf.scale.x.max(1e-6) / 125.0).clamp(1.0, 3.0);
         let flick = 1.0 + 0.1 * (t * 37.0).sin();
         let (alpha, color, center, scale) = match kind.0 {
-            FxKind::Sheath => (0.35 * heat, [1.0, 0.55, 0.2], Vec3::new(0.0, 0.0, -0.05 * l), Vec3::new(0.42 * l, 0.34 * l, 0.75 * l) * (1.0 + 0.3 * heat) * flick),
-            FxKind::Core => (0.6 * heat, [1.0, 0.92, 0.75], Vec3::new(0.0, 0.0, -0.4 * l), Vec3::new(0.2 * l, 0.16 * l, 0.42 * l) * flick),
+            FxKind::Sheath => {
+                let (c, s) = cone(0.5 * l, -0.55 * l, (1.4 + 1.8 * heat) * l * flick);
+                (0.35 * heat, [1.0, 0.55, 0.2], c, s)
+            }
+            FxKind::Core => {
+                let (c, s) = cone(0.26 * l, -0.5 * l, (0.9 + 1.2 * heat) * l * flick);
+                (0.6 * heat, [1.0, 0.92, 0.75], c, s)
+            }
             _ => {
-                let long = (0.4 + heat * 1.6) * 2.5 * l * far;
-                (0.45 * heat, [1.0, 0.55, 0.25], Vec3::new(0.0, 0.0, 0.5 * l + long), Vec3::new(0.13 * l * (0.5 + heat), 0.11 * l * (0.5 + heat), long))
+                let (c, s) = cone(0.34 * l, 0.1 * l, (2.5 + 7.0 * heat) * l * far);
+                (0.4 * heat, [1.0, 0.55, 0.25], c, s)
             }
         };
         let on = alpha > 0.01;
@@ -1011,6 +1105,7 @@ fn remote_fx(
         if on {
             tf.translation = center;
             tf.scale = scale;
+            tf.rotation = Quat::from_rotation_arc(Vec3::Y, Vec3::Z);
             if let Some(mm) = materials.get_mut(&mat.0) {
                 mm.base_color = Color::srgba(color[0], color[1], color[2], alpha);
             }
