@@ -1,4 +1,4 @@
-# Feuille de route — Correctifs et petites idées (0.13.4)
+# Feuille de route — Correctifs et petites idées (0.13.5)
 
 Objectif : corriger **tous les bugs ouverts** de `doctravail/LISTE.md` (tri du 07/10/2026 : 21 captures de la
 v0.13.3.1 + tes notes) et faire les **petites idées** qui ne demandent pas une feuille de route à elles seules.
@@ -13,7 +13,7 @@ Chaque bug a sa **cause cherchée dans le code** (§2) : on corrige la cause, pa
 Ce qui est **déjà prévu ailleurs** n'est pas repris ici (skybox, trous noirs, voyage entre galaxies, aliens :
 0.13 C2, V1-V3, L5-L6 ; glaciers, végétation : 0.14 ; quantités de matière : 0.15 ; mondes variés : 0.16).
 
-Chaque phase = une branche `claude/correctifs-0-13-4-<phase>`, une PR non fusionnée : tu testes, puis tu dis
+Chaque phase = une branche `claude/correctifs-0-13-5-<phase>`, une PR non fusionnée : tu testes, puis tu dis
 « push main ». Chaque phase a son **prompt prêt à coller** (§6).
 
 ---
@@ -189,16 +189,16 @@ Changement de la génération partagée : **PROTOCOL +1**.
 ## 4. Ordre et versions
 
 ```
-v0.13.3
+v0.13.4 (bloc P de la 0.13)
    │
    F0                   outils (tout le reste s'en sert)
    F1 → F2              ce qu'on voit en premier : la planète de loin, puis le sol en vol bas
    F3                   comètes
-   │                    ── release 0.13.4 « Correctifs : rendu » ──
+   │                    ── release 0.13.5 « Correctifs : rendu » ──
    F4 → F5 → F6         formes naturelles (PROTOCOL +1), lave et météo, lumière
-   │                    ── release 0.13.5 « Correctifs : mondes » ──
+   │                    ── release 0.13.6 « Correctifs : mondes » ──
    F7 → F8 → F9 → F10   interface, plantage, petites idées, éditeur
-                        ── release 0.13.6 « Correctifs : confort » ──
+                        ── release 0.13.7 « Correctifs : confort » ──
    │
    suite de la 0.13 (P, C, V, L) puis 0.14
 ```
@@ -220,10 +220,10 @@ Aucune bloquante ; choix par défaut, à changer si tu veux :
 
 ## 6. Prompts (à coller dans une nouvelle session, un par phase)
 
-Contexte commun : « Lis `roadmaps/a-faire/ROADMAP-0.13.4-correctifs.md` (règles §1, causes §2), `CLAUDE.md`, `TESTS-JEU.md` et
+Contexte commun : « Lis `roadmaps/a-faire/ROADMAP-0.13.5-correctifs.md` (règles §1, causes §2), `CLAUDE.md`, `TESTS-JEU.md` et
 `C:\Users\thomr\Desktop\Nouveau dossier\doctravail\LISTE.md` ; regarde les captures du bug dans
 `doctravail\01-bugs\actuels-v0.13\`. `git pull origin main` avant de coder. Branche
-`claude/correctifs-0-13-4-<phase>`. Reproduis d'abord, écris la cause dans la PR, puis corrige ; capture avant /
+`claude/correctifs-0-13-5-<phase>`. Reproduis d'abord, écris la cause dans la PR, puis corrige ; capture avant /
 après au même endroit ; tests ; mesures si terrain ou rendu. PR non fusionnée (je dirai « push main »). »
 
 - **F0** — « [contexte commun] Phase F0 : `/astre <nom>`, `/pos` et `SPACESPORE_TEST_POS`, affichage de débogage
