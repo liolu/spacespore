@@ -54,3 +54,9 @@ phase 8, astéroïdes minables (C1), destruction de planètes (débris → annea
 
 Pas de musique dans la 0.14 : le son (D5) ne joue que les sons du monde. La **musique d'ambiance** (selon
 le lieu : espace, planète, grottes, combat) viendra dans une version plus tard.
+
+## Pollution (noté le 07/10/2026)
+
+Idée des notes de jeu : **pollution** de l'air, de l'eau et du sol (constructions, aliens, minage de la 0.15), qui
+change le ciel, l'eau, la vie et l'habitabilité. Trop grosse pour les correctifs de la 0.13.4 : à placer après les
+constructions et les aliens (0.13 L5-L6).
