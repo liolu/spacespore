@@ -316,11 +316,13 @@ pub struct WormholeTravel {
     trip: Option<Trip>,
     /// Instant (temps de jeu, en secondes) avant lequel un nouveau voyage est impossible.
     cooldown_until: f64,
+    /// Un tunnel du sub-espace (creusement ou vol, `tunnel.rs`) pilote le vaisseau : mêmes commandes bloquées.
+    pub external: bool,
 }
 
 impl WormholeTravel {
     pub fn active(&self) -> bool {
-        self.trip.is_some()
+        self.trip.is_some() || self.external
     }
 
 }

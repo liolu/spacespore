@@ -45,7 +45,7 @@ pub const GROUPS: [&str; 7] = ["Armes", "Boucliers", "Modules de vaisseau", "Car
 
 /// (nom, groupe, prix de base en crédits). L'index est l'identifiant stable de la marchandise.
 /// Biens : (nom, rayon, prix de base). On n'ajoute qu'à la fin (les sauvegardes gardent les numéros).
-pub const GOODS: [(&str, usize, i64); 34] = [
+pub const GOODS: [(&str, usize, i64); 38] = [
     ("Laser leger", 0, 1200),
     ("Canon a plasma", 0, 4800),
     ("Lance-missiles", 0, 7500),
@@ -81,7 +81,15 @@ pub const GOODS: [(&str, usize, i64); 34] = [
     ("Xenium (fictif)", 4, 2500),
     ("Aetherite (fictif)", 4, 4000),
     ("Chronite (fictif)", 4, 9000),
+    // Foreuses de tunnel du sub-espace (0.13 V4, `tunnel.rs`) : portee max 100 / 500 / 5 000 u, speciale 250 u (clandestine)
+    ("Foreuse de tunnel I (100 u)", 2, 4000),
+    ("Foreuse de tunnel II (500 u)", 2, 16000),
+    ("Foreuse de tunnel III (5000 u)", 2, 90000),
+    ("Foreuse clandestine (250 u)", 2, 40000),
 ];
+
+/// Premiere foreuse de tunnel (toujours en vente) ; les minerais vont de `FIRST_ORE_GOOD` a ici.
+pub const FIRST_TUNNEL_GOOD: GoodId = 34;
 
 /// Premier bien de minerai ajouté en phase 8.
 pub const FIRST_ORE_GOOD: GoodId = 19;
@@ -96,7 +104,7 @@ pub fn goods_of_group(group: usize) -> impl Iterator<Item = GoodId> {
 /// Une faction ne vend pas tous les minerais : les biens d'origine partout, ~1 minerai sur 3,
 /// et les minerais fictifs (très chers) rarement. Elle les rachète tous.
 pub fn sold_by(faction: usize, good: GoodId) -> bool {
-    if good < FIRST_ORE_GOOD {
+    if good < FIRST_ORE_GOOD || good >= FIRST_TUNNEL_GOOD {
         return true;
     }
     let roll = hash(faction, good, 11) % 100;
@@ -526,9 +534,9 @@ mod tests {
         }
         // Chaque faction vend au moins quelques minerais, jamais tous
         for f in 0..20 {
-            let n = (FIRST_ORE_GOOD..GOODS.len()).filter(|&g| sold_by(f, g)).count();
-            assert!(n < GOODS.len() - FIRST_ORE_GOOD);
+            let n = (FIRST_ORE_GOOD..FIRST_TUNNEL_GOOD).filter(|&g| sold_by(f, g)).count();
+            assert!(n < FIRST_TUNNEL_GOOD - FIRST_ORE_GOOD);
         }
-        assert!((0..20).map(|f| (FIRST_ORE_GOOD..GOODS.len()).filter(|&g| sold_by(f, g)).count()).sum::<usize>() > 40);
+        assert!((0..20).map(|f| (FIRST_ORE_GOOD..FIRST_TUNNEL_GOOD).filter(|&g| sold_by(f, g)).count()).sum::<usize>() > 40);
     }
 }

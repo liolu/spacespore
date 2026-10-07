@@ -59,6 +59,7 @@ test reutilisable vaut mieux qu'un essai de plus.
 | `FLIGHT` / `CLOUD` dans le log | avec `SPACESPORE_TEST_FLY` : etat du vol toutes les 0,5 s (alt, vit, vert, mach, dens, heat) : **s'en servir pour choisir l'instant de la capture** |
 | `SPACESPORE_CAPTURE=<fichier.png>`, `..._CAPTURE_SECS=<s>` | capture a `<s>` s puis ferme le jeu |
 | `SPACESPORE_PERF=<fichier>` (+ `_FROM`, `_TO`) | images/s |
+| `SPACESPORE_TEST_CINE=dig\|ride\|galaxie[:t]` | lance la sequence plein ecran a 3 s, a l'instant `t` (la capture a `<s>` s montre `t + s - 3`) : ne depend pas du monde (le shader recouvre le jeu) |
 | `NOTIFY` dans le log | tous les messages systeme (actif si `SPACESPORE_TEST_CMD` est defini) |
 
 ## Commandes du chat pour les tests

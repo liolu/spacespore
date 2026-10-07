@@ -461,6 +461,14 @@ chose ; ne jamais relancer 2 fois le meme test sans rien changer.
   (pur, testable : tirages de `galaxy_shape::Shape` + etoiles reelles + galaxies voisines, 6 x 1 024^2, threads) lance en tache
   de fond par `watch_system` quand le systeme le plus proche change, `SkyMaterial` + `sky_dome.wgsl` (sphere sans profondeur,
   `z = 0`) qui dessine aussi `ClearColor` (le jour efface les etoiles). Tests : `/meteo clair`, `bench_sky`.
+- 0.13 bloc V (`roadmaps/a-faire/ROADMAP-0.13.md`) : `cinematic.rs` + `cinematic.wgsl` = sequences plein ecran (noeud d'interface
+  `UiMaterial`, tout en shader) : `Dig` (foreuse a vise, dezoom, grille 2D puis 3D, espace qui tourne comme un trou noir, zoom, elle
+  avance et le tunnel se forme ; `dig_params` = le scenario, 34 s), `Ride` (interieur d'un tunnel), `Galaxy` (saut entre galaxies,
+  10 s, lance par `watch_jumps` quand le vaisseau saute de plus de 5 portees). Echap passe (`skip_with_escape`, `Last`).
+  `tunnel.rs` (V4) : 4 foreuses = biens `FIRST_TUNNEL_GOOD..` (I 100 u, II 500, III 5000, clandestine 250 ; 1 u = 1 000 000), energie = 1 cellule
+  de carburant par u, tunnels absolus f64 dans `tunnels.json` (1 a 3 voies 5 / 15 / 40 u/s, 3e a peage 3 cr/u, clandestin = 1 voie,
+  ouvertures cachees), `WormholeTravel::external` bloque les commandes pendant creusement et vol. Chat `/tunnel`. Pas de partage
+  multijoueur. Test : `SPACESPORE_TEST_CINE`.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

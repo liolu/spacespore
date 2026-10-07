@@ -37,7 +37,7 @@ impl Plugin for ChatCmdPlugin {
 #[derive(Event)]
 pub struct ChatCommand(pub String);
 
-const COMMANDS: [&str; 36] = ["/meteo", "/brouillard", "/vent", "/bouclier", "/nuage", "/volume", "/mer", "/jour", "/nuit", "/vol", "/essai", "/geologie", "/relief", "/echelle", "/impact", "/ceinture", "/comete", "/eclipse", "/editeur", "/grotte", "/surplomb", "/tp", "/galaxie", "/profil", "/profile", "/graine", "/seed", "/aller", "/go", "/stats", "/aide", "/help", "/heure", "/time", "/temps", "/speed"];
+const COMMANDS: [&str; 37] = ["/tunnel", "/meteo", "/brouillard", "/vent", "/bouclier", "/nuage", "/volume", "/mer", "/jour", "/nuit", "/vol", "/essai", "/geologie", "/relief", "/echelle", "/impact", "/ceinture", "/comete", "/eclipse", "/editeur", "/grotte", "/surplomb", "/tp", "/galaxie", "/profil", "/profile", "/graine", "/seed", "/aller", "/go", "/stats", "/aide", "/help", "/heure", "/time", "/temps", "/speed"];
 
 /// La ligne est une commande du jeu (et non un message à envoyer).
 pub fn is_local(line: &str) -> bool {
@@ -96,7 +96,8 @@ fn find_galaxy(arg: &str, settings: &GameSettings, current: usize) -> Result<usi
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Commandes : (nom, arguments, description). Ordre d'affichage des propositions.
-pub const COMMAND_HELP: [(&str, &str, &str); 30] = [
+pub const COMMAND_HELP: [(&str, &str, &str); 31] = [
+    ("/tunnel", "[creuser <1|2|3|c> [voies] | liste | entrer [n] | sortir | reboucher <n>]", "tunnels du sub-espace : 1 cellule de carburant = 1 u, foreuses I 100 u, II 500 u, III 5000 u, c clandestine 250 u"),
     ("/aide", "[commande]", "la liste des commandes, ou l'aide d'une commande"),
     ("/aller", "etoile|planete|lune <type> | suivant", "tests : aller a un type d'etoile, de planete ou de lune"),
     ("/stats", "[n | tout]", "statistiques de tous les astres d'une galaxie (F3 : masquer)"),
@@ -304,7 +305,7 @@ fn run_chat_commands(
     mut overhang: EventWriter<crate::surface::OverhangCommand>,
     mut cave: EventWriter<crate::surface::CaveCommand>,
     mut impact: EventWriter<crate::meteors::ImpactCommand>,
-    mut small: (EventWriter<crate::asteroids::BeltCommand>, EventWriter<crate::asteroids::CometCommand>, EventWriter<crate::sky::EclipseCommand>, EventWriter<crate::editeur::OpenEditor>, EventWriter<crate::surface::SeaCommand>, EventWriter<crate::test_cmd::DescendCommand>, EventWriter<crate::approche_fx::CloudCommand>, EventWriter<crate::fog::FogCommand>, EventWriter<crate::weather::WeatherCommand>),
+    mut small: (EventWriter<crate::asteroids::BeltCommand>, EventWriter<crate::asteroids::CometCommand>, EventWriter<crate::sky::EclipseCommand>, EventWriter<crate::editeur::OpenEditor>, EventWriter<crate::surface::SeaCommand>, EventWriter<crate::test_cmd::DescendCommand>, EventWriter<crate::approche_fx::CloudCommand>, EventWriter<crate::fog::FogCommand>, EventWriter<crate::weather::WeatherCommand>, EventWriter<crate::tunnel::TunnelCommand>),
     profiles: Res<ProfileCache>,
     star_q: Query<&StarId, With<StarRoot>>,
 ) {
@@ -387,6 +388,9 @@ fn run_chat_commands(
             }
             "/meteo" => {
                 small.8.send(crate::weather::WeatherCommand(arg.to_string()));
+            }
+            "/tunnel" => {
+                small.9.send(crate::tunnel::TunnelCommand(arg.to_string()));
             }
             "/brouillard" => {
                 small.7.send(crate::fog::FogCommand(arg.to_string()));

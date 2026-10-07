@@ -52,6 +52,8 @@ mod approche_ui;
 mod sound;
 mod fog;
 mod skybox;
+mod cinematic;
+mod tunnel;
 mod wormhole;
 mod world_clock;
 mod zones;
@@ -242,6 +244,8 @@ fn main() {
         .add_plugins(sound::SoundPlugin)
         .add_plugins(fog::FogPlugin)
         .add_plugins(skybox::SkyboxPlugin)
+        .add_plugins(cinematic::CinematicPlugin)
+        .add_plugins(tunnel::TunnelPlugin)
         .add_plugins(scanner::ScannerPlugin)
         .add_plugins(geoactive::GeoActivePlugin)
         .add_plugins(dex::DexPlugin)

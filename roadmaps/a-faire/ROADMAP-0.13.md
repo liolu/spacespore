@@ -201,6 +201,8 @@ Commandes de test : `/brouillard [oui\|non\|auto\|0-100]`, `/meteo [clair\|auto]
 
 ### Bloc V — Espace spectaculaire (V2, V3, V4 des idées)
 
+**État : V2 (animation « chute, tunnel d'étoiles, flash, éclosion », sans la lentille de V1) et V4 (tunnels du sub-espace, `tunnel.rs`, `cinematic.rs`, `cinematic.wgsl`) faits ; V1 et V3 restent à faire.**
+
 | Phase | Contenu | Taille |
 |---|---|---|
 | **V1. Trous noirs** | **Horizon invisible** (seulement l'ombre et la déformation), **lentille gravitationnelle** en post-traitement plein écran (skybox de C2 et étoiles déformées, **anneau d'Einstein**, image dédoublée), **disque d'accrétion** en shader (plus chaud à l'intérieur, effet Doppler, arrière du disque visible au-dessus et en dessous de l'ombre), **étoile aspirée** en spirale qui trahit le trou noir. Remplace l'anneau photonique en cubes (`black_hole.rs`). | XL |
