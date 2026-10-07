@@ -222,7 +222,7 @@ pub struct PlanetConfig {
     #[serde(default)] pub ascending_node: f32,
     #[serde(default)] pub arg_periapsis:  f32,
     #[serde(default)] pub mean_anomaly_0: f32,
-    // ── Physique réelle (phase 2 de `ROADMAP-0.10.md`, voir `planetgen::system`) ──
+    // ── Physique réelle (phase 2 de `roadmaps/fait/ROADMAP-0.10.md`, voir `planetgen::system`) ──
     /// Rocheuse, mini-Neptune, géante de glace ou gazeuse (sans sol).
     #[serde(default)] pub kind:           PlanetKind,
     /// Géante chaude (Jupiter chaud, tout près de son étoile).
@@ -322,7 +322,7 @@ pub struct StarConfig {
     #[serde(default = "default_flare_speed")]         pub flare_speed:    f32,
     #[serde(default = "default_flare_size")]          pub flare_size:     f32,
     #[serde(default = "default_flare_distance")]      pub flare_distance: f32,
-    /// Type de l'étoile (phase 1 de `ROADMAP-0.10.md`) ; sa physique complète se recalcule depuis
+    /// Type de l'étoile (phase 1 de `roadmaps/fait/ROADMAP-0.10.md`) ; sa physique complète se recalcule depuis
     /// la graine du système (`planetgen::star::StarPhysics`).
     #[serde(default)]                                 pub class:          StarClass,
     /// Température de surface (K) ; 0 = inconnue (déduite de la couleur).
@@ -489,7 +489,7 @@ pub fn to_abs(local: Vec3) -> DVec3 {
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Un système stellaire. Ses planètes et ses lunes ne sont pas stockées (règle 1 de
-/// `ROADMAP-0.10.md`) : `planets()` les recalcule depuis le génome à la première demande et les
+/// `roadmaps/fait/ROADMAP-0.10.md`) : `planets()` les recalcule depuis le génome à la première demande et les
 /// garde en cache tant que le système est proche du vaisseau (`planetgen::cache`).
 #[derive(Clone, Debug)]
 pub struct StarSystemConfig {

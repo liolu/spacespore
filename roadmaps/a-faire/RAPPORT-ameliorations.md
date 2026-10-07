@@ -1,7 +1,7 @@
 # Rapport — Toutes les améliorations possibles pour SpaceSpore (05/10/2026, après la v0.13.3)
 
-Sources : `CLAUDE.md`, `ROADMAP-0.13/0.14/0.20`, `A-FAIRE-PLUS-TARD.md`, `IDEES-constructions.md`,
-`RAPPORT-generation-terrain.md`, `TESTS-JEU.md`, et un survol du code (43 000 lignes, 318 tests,
+Sources : `CLAUDE.md`, `ROADMAP-0.13/0.14/0.20`, `roadmaps/a-faire/A-FAIRE-PLUS-TARD.md`, `roadmaps/a-faire/IDEES-constructions.md`,
+`roadmaps/fait/RAPPORT-generation-terrain.md`, `TESTS-JEU.md`, et un survol du code (43 000 lignes, 318 tests,
 ~238 `unwrap()`, `PROTOCOL` 34).
 
 Ce document est une **liste d'améliorations et d'idées**, pas une feuille de route : rien n'est décidé ni daté.
@@ -47,7 +47,7 @@ Légende : **[Planifié]** = déjà dans une feuille de route · **[Idée]** = b
 - **0.15 Minage et destruction** (deltas voxel déjà là) ; **musique** (reportée) ; **0.20 Débogage et optimisation**
   (T1 réglages centralisés, T2 mesures, T3 panneau F6, T4 vues de debug, T5 benchmark automatique, T6 balayage,
   T7 optimiser le LOD, T8 optimiser la lumière, T9 préréglages Bas→Ultra).
-- **Constructions** (`IDEES-constructions.md`) : mégastructures (Dyson, anneaux), habitats massifs, infrastructure
+- **Constructions** (`roadmaps/a-faire/IDEES-constructions.md`) : mégastructures (Dyson, anneaux), habitats massifs, infrastructure
   orbitale, stations, transport (portes, ascenseur spatial), structures vivantes, bâtiments au sol, plans `.ssvox`
   échangeables, défis de construction, catastrophes qui abîment les bases, gravité de rotation dans les habitats,
   énergie selon le type d'étoile, onglet « Constructions » du dex.
@@ -263,7 +263,7 @@ Légende : **[Planifié]** = déjà dans une feuille de route · **[Idée]** = b
 92. **[Nouveau] Autopilote de croisière optionnel** — Q7 interdit l'autopilote d'atterrissage ; garder une
     croisière entre astres avec alertes de collision (`ship.rs` existe). S
 
-### C. Construction et bases (voir `IDEES-constructions.md`)
+### C. Construction et bases (voir `roadmaps/a-faire/IDEES-constructions.md`)
 93. **[Idée] Premier palier réaliste** — avant les mégastructures : poser une **base sur une planète** (modules
     éditeur placés sur le sol avec collisions, `collision_boxes`), alimentée, protégée. L
 94. **[Idée] Stations en orbite** — amarrage (`dock.rs`) étendu aux stations de joueur avec hangars. L

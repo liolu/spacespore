@@ -1,6 +1,6 @@
 # Feuille de route — N. Instruments (scanner, outils de mesure, navigation)
 
-Source : bloc **N** de `RAPPORT-ameliorations.md` (idées 185 à 194) + idées 77 à 80, 82, 190 à 193.
+Source : bloc **N** de `roadmaps/a-faire/RAPPORT-ameliorations.md` (idées 185 à 194) + idées 77 à 80, 82, 190 à 193.
 Les phases s'appellent **INS-n**.
 
 Objectif : faire du **scanner** (aujourd'hui un panneau qui lit tout) un **ensemble d'instruments** que le joueur
@@ -104,11 +104,11 @@ limite à N balises par joueur et par astre, expire les anciennes ; les balises 
 
 ## 7. Prompts
 
-**INS-1** : « Lis `CLAUDE.md` (0.10 phase 9, 0.13.1 dex, scanner) et `ROADMAP-instruments.md` §3 INS-1 et §4.1. Crée
+**INS-1** : « Lis `CLAUDE.md` (0.10 phase 9, 0.13.1 dex, scanner) et `roadmaps/a-faire/ROADMAP-instruments.md` §3 INS-1 et §4.1. Crée
 `instruments/mod.rs` (trait, registre, `Known<T>`), fais du scanner existant le premier instrument sans changer son
 contenu par défaut (« tout révélé »). Tests de stabilité de `Known<T>`. »
 
 **INS-2** : « §3 INS-2 : trois niveaux de scan avec barre de progression, valeurs ≈ avec intervalle, enregistrement
 dans le dex. Capture des 3 niveaux sur un monde varié. »
 
-**INS-3 à INS-11** : « Lis `ROADMAP-instruments.md` §3 INS-n, implémente, teste, capture, PR non fusionnée. »
+**INS-3 à INS-11** : « Lis `roadmaps/a-faire/ROADMAP-instruments.md` §3 INS-n, implémente, teste, capture, PR non fusionnée. »

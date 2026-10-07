@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────
-//  Relief à l'échelle du marcheur (0.13 T1, `ROADMAP-0.13.md`)
+//  Relief à l'échelle du marcheur (0.13 T1, `roadmaps/a-faire/ROADMAP-0.13.md`)
 //
 //  La forme générale (continents, plaques, mers) reste en fraction du rayon (`geology.rs`) ; ces
 //  couches-ci ont une hauteur et une largeur en **voxels** (règle 14) :

@@ -1,4 +1,4 @@
-//! Phénomènes du ciel (C4 de `ROADMAP-0.11.md`).
+//! Phénomènes du ciel (C4 de `roadmaps/fait/ROADMAP-0.11.md`).
 //!
 //! - **Orages magnétiques** : chaque étoile a des orages tirés par tranches de 15 min de jeu
 //!   (graine + horloge, règle 9), plus fréquents si elle est active : éruptions plus hautes, puis

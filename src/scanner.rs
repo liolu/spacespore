@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────
-//  Scanner de l'astre ciblé (phase 9 de `ROADMAP-0.10.md`)
+//  Scanner de l'astre ciblé (phase 9 de `roadmaps/fait/ROADMAP-0.10.md`)
 //
-//  Panneau à droite de l'écran, en sections fixes (C5 de `ROADMAP-0.11.4-correctifs.md`) :
+//  Panneau à droite de l'écran, en sections fixes (C5 de `roadmaps/fait/ROADMAP-0.12-correctifs.md`) :
 //  « Ici et maintenant » (heure, températures, météo, mis à jour une fois par seconde), puis
 //  identité, physique, rotation et orbite, atmosphère, eau, vie, ressources. Libellés et valeurs
 //  en colonnes : rien ne change de place. Touche I : l'afficher ou le masquer. Il lit le profil de

@@ -1,4 +1,4 @@
-//! Maillage glouton par chunk (E3, règle 3 de `ROADMAP-0.12-editeur.md`).
+//! Maillage glouton par chunk (E3, règle 3 de `roadmaps/fait/ROADMAP-0.12-editeur.md`).
 //!
 //! Un chunk 32³ est maillé seul, hors du fil principal : `ChunkJob` emporte le chunk et ses 26
 //! voisins (données partagées : rien n'est copié), la palette, les calques cachés et la coupe ;

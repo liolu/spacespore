@@ -1,13 +1,13 @@
 # Feuille de route — O. Rendu et ambiance
 
-Source : bloc **O** de `RAPPORT-ameliorations.md` (idées 195 à 206) + idées 27 à 33.
+Source : bloc **O** de `roadmaps/a-faire/RAPPORT-ameliorations.md` (idées 195 à 206) + idées 27 à 33.
 Les phases s'appellent **REN-n**.
 
 Objectif : une **image cohérente et marquante** — lumière, matière, atmosphère, post-traitement — qui reste
 **jouable** (budgets de ms par image mesurés) et **lisible** (réglable, accessible), sans toucher à la génération.
 
-Cette feuille de route **complète** : `ROADMAP-0.13.md` (C1 brouillard, C2 skybox, V1 trous noirs, O1 / O2 eau,
-P3 rentrée, P4 nuages traversables, P5 poussière), `ROADMAP-0.14.md` (D3 végétation, D4 faune) et `ROADMAP-0.20-debug-opti.md`
+Cette feuille de route **complète** : `roadmaps/a-faire/ROADMAP-0.13.md` (C1 brouillard, C2 skybox, V1 trous noirs, O1 / O2 eau,
+P3 rentrée, P4 nuages traversables, P5 poussière), `roadmaps/a-faire/ROADMAP-0.14.md` (D3 végétation, D4 faune) et `roadmaps/a-faire/ROADMAP-0.20-debug-opti.md`
 (LOD, lumière). Elle **ne refait pas** ce qui y figure : elle y ajoute l'**ambiance**, les **effets de caméra et de
 visière** et le **post-traitement**.
 
@@ -118,12 +118,12 @@ moteur : 0.20. Seul le **rendu** de ce qui est listé ci-dessus est traité ; pa
 
 ## 7. Prompts
 
-**REN-1** : « Lis `CLAUDE.md`, `TESTS-JEU.md` et `ROADMAP-rendu-ambiance.md` §3 REN-1 et §4.1. Passe en HDR avec
+**REN-1** : « Lis `CLAUDE.md`, `TESTS-JEU.md` et `roadmaps/a-faire/ROADMAP-rendu-ambiance.md` §3 REN-1 et §4.1. Passe en HDR avec
 tonemapping, bloom et exposition automatique réglables, recale les lumières existantes avec une table, capture
 avant / après sur les mondes de test, mesure images/s. Option « Classique » proche de l'image actuelle. »
 
 **REN-2** : « §3 REN-2 : disque solaire, éblouissement, flare discret, rayons crépusculaires, ombres colorées de
 plusieurs soleils. Capture sur un système double de jour et au coucher. »
 
-**REN-3 à REN-13** : « Lis `ROADMAP-rendu-ambiance.md` §3 REN-n, implémente avec réglage + repli, mesure avant /
+**REN-3 à REN-13** : « Lis `roadmaps/a-faire/ROADMAP-rendu-ambiance.md` §3 REN-n, implémente avec réglage + repli, mesure avant /
 après, capture sur monde adapté, PR non fusionnée. »

@@ -29,6 +29,8 @@ chose ; ne jamais relancer 2 fois le meme test sans rien changer.
 
 ## Structure
 
+- Feuilles de route et rapports : `roadmaps/fait/` (terminés) et `roadmaps/a-faire/` (en cours ou à venir),
+  sommaire dans `roadmaps/README.md`. Une feuille de route terminée passe de `a-faire/` à `fait/`.
 - Cargo workspace : root = jeu, `tools/` = common/installer/updater/launcher
 - Origine flottante (`src/origin.rs`, `settings::origin/to_local/to_abs`) : les positions des entites sont des f32
   relatives a une origine absolue en f64 qui suit le vaisseau (recentrage au-dela de 100 000). Ne jamais garder une
@@ -88,7 +90,7 @@ chose ; ne jamais relancer 2 fois le meme test sans rien changer.
   droit, molette), `V` = atterrir (sortir du vaisseau) puis marcher, `V` = redecoller. Le dessous du vaisseau reste
   parallele a la surface. `src/terrain.rs` = terrain voxel (champ de hauteur, quadtree de tuiles),
   `src/surface.rs` = vol, atterrissage, marche, lumiere. Saves : `saves/vX.Y.Z/` (settings, world, info).
-- Generation 0.10 (`ROADMAP-0.10.md`) : module `src/planetgen/`. Les planetes et lunes ne sont plus stockees :
+- Generation 0.10 (`roadmaps/fait/ROADMAP-0.10.md`) : module `src/planetgen/`. Les planetes et lunes ne sont plus stockees :
   `sys.planets()` les recalcule depuis le genome du systeme (cache libere loin du vaisseau), `planets_mut()`
   pour l'editeur, `planets_uncached()` pour parcourir tous les systemes. Profils `StarProfile`/`PlanetProfile`,
   sous-graines par couche (`seeds.rs`, numeros figes), conversions dans `units.rs` uniquement, valeurs
@@ -101,7 +103,7 @@ chose ; ne jamais relancer 2 fois le meme test sans rien changer.
   comptes et pourcentages de tous les astres d'une galaxie (`stats.rs`, calcul en arriere-plan, panneau F3,
   fichier `saves/vX.Y.Z/stats/`). Option « Afficher zones » (menu Options) : zones chaude / habitable / froide du
   systeme charge (`zones.rs`, limites interpolees entre les vraies planetes).
-- 0.11 (`ROADMAP-0.11.md`) : A1 = horloge du monde `world_clock.rs` (`WorldClock`, secondes de jeu f64, `clock` de
+- 0.11 (`roadmaps/fait/ROADMAP-0.11.md`) : A1 = horloge du monde `world_clock.rs` (`WorldClock`, secondes de jeu f64, `clock` de
   `world.json` ecrit toutes les 30 s, donnee par l'hote : `net::follow_host_clock`, PROTOCOL 16). Orbites
   (`kepler::position(t: f64)`) et rotation = f(horloge). 1 h de la planete = 1 min de jeu (jour <= 3 h), saisons
   1 h en moyenne (`season_secs`, `SEASON_REF_DAYS`). `Spin` : rotation autour de l'axe incline (l'axe penche vers
@@ -207,7 +209,7 @@ chose ; ne jamais relancer 2 fois le meme test sans rien changer.
   autour de la camera (`particle_positions`), vent qui pousse le vaisseau en vol bas (`Surface::drift`), scanner.
   Banc : `cargo test --release bench_cloud_layer -- --ignored --nocapture`.
   Particules : `NoFrustumCulling` (sommets reecrits a chaque image) ; `SPACESPORE_TEST_PRECIP=<0..1>` force la pluie.
-- 0.12 (`ROADMAP-0.12-editeur.md`) : editeur de modeles voxel, module `src/editeur/`. E0 = fondations : etat
+- 0.12 (`roadmaps/fait/ROADMAP-0.12-editeur.md`) : editeur de modeles voxel, module `src/editeur/`. E0 = fondations : etat
   `AppState` (Jeu / Editeur, `editeur::in_game` coupe le clavier et la souris du jeu), ouvert au premier lancement
   (`GameSettings::first_launch`, creation du personnage), par le bouton du menu (`EditorMenuButton`) et `/editeur`.
   Format `.ssvox` (`format.rs`) : archive zip (meta.json + voxels.bin + zones.bin), palette 255 couleurs +
@@ -317,7 +319,7 @@ chose ; ne jamais relancer 2 fois le meme test sans rien changer.
   0,12 a 0,24 de la largeur, Kuiper plate). `StarOrbit::period` = vraie periode (paire serree 1 a 200 j =
   24 min a 80 h de jeu, compagnon lointain en siecles) ; paire serree a un quart de la premiere orbite permise.
   PROTOCOL 30.
-- 0.11.4 correctifs (`ROADMAP-0.11.4-correctifs.md`, une PR par phase C1..C8). C1 editeur : outil Ajouter =
+- 0.11.4 correctifs (`roadmaps/fait/ROADMAP-0.12-correctifs.md`, une PR par phase C1..C8). C1 editeur : outil Ajouter =
   un clic un bloc, le trait reste sur le plan du premier bloc (`Editor::add_plane`, `view::plane_cell`) ;
   panneaux qui defilent jusqu'au bout du contenu des que la souris est dedans, barre `ScrollThumb` tirable ;
   `view::UiHover` (panneaux + boutons) ; lumiere d'atelier qui suit la camera + contre-jour (`follow_light`,
@@ -364,7 +366,7 @@ chose ; ne jamais relancer 2 fois le meme test sans rien changer.
   (`galaxy_jump_range`, sphere dessinee face a la camera en vue d'ensemble par `draw_travel_range`). Toutes les
   etoiles visibles a portee ont leur cercle (pas les cachees par l'eclaircissement) ; cercles de taille fixe dans
   l'espace (celui d'un trou noir galactique = son disque), 6 px pour un point.
-- 0.13 (`ROADMAP-0.13.md`) : E1 = etude d'echelle (`RAPPORT-echelle-E1.md`) : `terrain::set_voxel_scale(k)` /
+- 0.13 (`roadmaps/a-faire/ROADMAP-0.13.md`) : E1 = etude d'echelle (`roadmaps/fait/RAPPORT-echelle-E1.md`) : `terrain::set_voxel_scale(k)` /
   `layout_scaled`, `/echelle k`, `SPACESPORE_SCALE=k` ; banc `cargo test --release bench_scale -- --ignored
   --nocapture --test-threads=1` ; mesures en jeu `SPACESPORE_PERF=<fichier>` (+ `_FROM` / `_TO` en s :
   images/s medianes, 1 % bas, > 33 ms), `SPACESPORE_TEST_WALK=1` (marche tout droit). Choix : k = 16.

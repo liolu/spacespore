@@ -1,4 +1,4 @@
-//! Format des modèles voxel `.ssvox` (règles 1 et 2 de `ROADMAP-0.12-editeur.md`).
+//! Format des modèles voxel `.ssvox` (règles 1 et 2 de `roadmaps/fait/ROADMAP-0.12-editeur.md`).
 //!
 //! - Un modèle : type (personnage, vaisseau, autre), race ou catégorie, taille de grille, palette de
 //!   255 couleurs au plus (chacune avec sa matière : mate, métal, verre, lumineuse), voxels, zones de

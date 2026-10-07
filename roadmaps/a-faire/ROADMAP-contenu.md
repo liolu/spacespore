@@ -1,6 +1,6 @@
 # Feuille de route — Q. Contenu (structure du jeu, histoires, défis)
 
-Source : bloc **Q** de `RAPPORT-ameliorations.md` (idées 215 à 224) + idées 1, 2, 9, 10, 13, 14, 82 à 84, 105 à 110.
+Source : bloc **Q** de `roadmaps/a-faire/RAPPORT-ameliorations.md` (idées 215 à 224) + idées 1, 2, 9, 10, 13, 14, 82 à 84, 105 à 110.
 Les phases s'appellent **CON-n**.
 
 Objectif : donner au joueur **des raisons de voyager, de chercher et de revenir** : un début guidé, des
@@ -110,7 +110,7 @@ construit par gabarits **traduisibles** avec accords (genre, nombre) gérés par
 
 ## 7. Prompts
 
-**CON-1** : « Lis `CLAUDE.md` et `ROADMAP-contenu.md` §3 CON-1 et §4.4. Crée le tutoriel guidé et sautable avec
+**CON-1** : « Lis `CLAUDE.md` et `roadmaps/a-faire/ROADMAP-contenu.md` §3 CON-1 et §4.4. Crée le tutoriel guidé et sautable avec
 invites contextuelles, la mission d'accueil, le choix du mode de jeu, et le monde de départ scénarisé (système 0).
 Capture de chaque étape. »
 
@@ -120,5 +120,5 @@ Sauvegarde dans `dex.json`. Tests de déclenchement. »
 **CON-3** : « §3 CON-3 et §4.1 : `lore.rs` (histoire, factions, noms, textes) déterministe depuis la graine, lore
 dans le dex. Test : même graine → même histoire. »
 
-**CON-4 à CON-12** : « Lis `ROADMAP-contenu.md` §3 CON-n, implémente, teste (réalisable, déterministe), capture,
+**CON-4 à CON-12** : « Lis `roadmaps/a-faire/ROADMAP-contenu.md` §3 CON-n, implémente, teste (réalisable, déterministe), capture,
 PR non fusionnée. »

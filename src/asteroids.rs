@@ -1,4 +1,4 @@
-//! Astéroïdes des ceintures (C1 de `ROADMAP-0.11.md`).
+//! Astéroïdes des ceintures (C1 de `roadmaps/fait/ROADMAP-0.11.md`).
 //!
 //! - Pas de liste (règle 12) : chaque ceinture (`planetgen::belts`) est découpée en cellules dans
 //!   le repère qui tourne avec elle (anneau, secteur à l'instant 0, couche). La graine d'une cellule

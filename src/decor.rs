@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────
-//  Décor des surfaces (phase 7 de `ROADMAP-0.10.md`)
+//  Décor des surfaces (phase 7 de `roadmaps/fait/ROADMAP-0.10.md`)
 //
 //  Arbres, buissons, roseaux, cactus, rochers, cristaux, champignons géants, cosses de spores,
 //  pics de glace... posés sur les tuiles de terrain selon le biome de chaque endroit. Seules les

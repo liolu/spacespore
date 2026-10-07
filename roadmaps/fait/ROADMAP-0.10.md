@@ -101,7 +101,7 @@ Ordre : **0 → 1 → 2 → 3 → 4 → 5 → 6 → 9 → 7 → 8**. L'interface
 jeu que les chiffres sont cohérents.
 
 ### 0.11 — Temps, profondeur, ciel et vie
-Détaillé dans **`ROADMAP-0.11.md`** : jour/nuit, saisons, voxels 3D, grottes, montagnes, cratères,
+Détaillé dans **`roadmaps/fait/ROADMAP-0.11.md`** : jour/nuit, saisons, voxels 3D, grottes, montagnes, cratères,
 ceintures d'astéroïdes, anneaux, comètes, étoiles multiples, météo, eau vivante, faune, son.
 Copie de cette feuille de route avant ce changement : `roadmaps/ROADMAP-0.10-sauvegarde.md`.
 
@@ -119,7 +119,7 @@ Chaque prompt commence par la même phrase de contexte. Colle **un prompt à la 
 par phase, sans la fusionner : tu testes, puis tu me dis « push main ».
 
 > **Contexte commun** (à mettre en tête de chaque prompt) :
-> « Lis `ROADMAP-0.10.md` et `CLAUDE.md`. On travaille sur la génération 0.10, en respectant les règles
+> « Lis `roadmaps/fait/ROADMAP-0.10.md` et `CLAUDE.md`. On travaille sur la génération 0.10, en respectant les règles
 > d'architecture 1 à 8 de la feuille de route. Fais `git pull origin main` avant de coder. Montre-moi
 > en jeu (captures) ce qui change, ajoute des tests, ouvre une PR non fusionnée. Ne change pas les
 > tailles ni les décisions de la feuille de route sans me demander. »
@@ -206,10 +206,10 @@ difficulté d'extraction. Branche-les sur l'économie existante (biens « Ressou
 Pas encore de minage (0.14), mais les données doivent être prêtes pour lui. »
 
 ### 0.11 — Temps et profondeur
-Remplacé par la feuille de route détaillée **`ROADMAP-0.11.md`** (phases et prompts).
+Remplacé par la feuille de route détaillée **`roadmaps/fait/ROADMAP-0.11.md`** (phases et prompts).
 
 ### 0.14 — Minage et destruction (à coller plus tard)
-« Lis `ROADMAP-0.10.md` et `CLAUDE.md`. Version 0.14 : minage réel du terrain voxel 3D avec les
+« Lis `roadmaps/fait/ROADMAP-0.10.md` et `CLAUDE.md`. Version 0.14 : minage réel du terrain voxel 3D avec les
 ressources de la phase 8, et destruction de planètes. Toute modification est un delta enregistré dans
 `world.json` et partagé en réseau (règle 7). Quand la masse change, recalcule gravité, rétention de
 l'atmosphère, orbite et marées ; une planète détruite laisse des débris ou un anneau. »

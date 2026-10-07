@@ -1,4 +1,4 @@
-//! La grande palette (E2, §2 de `ROADMAP-0.12-editeur.md`).
+//! La grande palette (E2, §2 de `roadmaps/fait/ROADMAP-0.12-editeur.md`).
 //!
 //! Rangée dans l'espace **OKLCH** (clarté perçue L, saturation C, teinte H) : deux couleurs de même
 //! L paraissent vraiment aussi claires, contrairement au HSV (où les jaunes semblent plus clairs

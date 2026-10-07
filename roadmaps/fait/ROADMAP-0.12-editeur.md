@@ -305,40 +305,40 @@ valider le système d'animation **avant** de s'attaquer aux grilles géantes des
 
 ## 9. Prompts (à coller dans une nouvelle session, une par phase)
 
-Chaque prompt suppose : « Lis `ROADMAP-0.12-editeur.md` et `CLAUDE.md`. Crée la branche `claude/editeur-eX`
+Chaque prompt suppose : « Lis `roadmaps/fait/ROADMAP-0.12-editeur.md` et `CLAUDE.md`. Crée la branche `claude/editeur-eX`
 depuis `main`. Build release. Ouvre une PR non fusionnée avec mesures (FPS, mémoire) et captures. »
 
-- **E0** — « Phase E0 de `ROADMAP-0.12-editeur.md` : crée `src/editeur/` et l'état `AppState::Editeur`,
+- **E0** — « Phase E0 de `roadmaps/fait/ROADMAP-0.12-editeur.md` : crée `src/editeur/` et l'état `AppState::Editeur`,
   ouvert à la création du personnage et depuis le menu du jeu. Implémente le format `.ssvox` (règles 1 et 2 : palette 255
   couleurs + matière, chunks 32³ creux, compression RLE + deflate) avec tests aller-retour, et l'import
   du JSON de Pixel World (lis `D:\... logiciel\unity\Pixel world\Assets\Scripts\VoxelEditor\VoxelModelSerializer.cs`
   et `VoxelTerrain\BlockType.cs`, associe une couleur à chaque `BlockType`). »
-- **E1** — « Phase E1 de `ROADMAP-0.12-editeur.md` : porte l'éditeur de Pixel World
+- **E1** — « Phase E1 de `roadmaps/fait/ROADMAP-0.12-editeur.md` : porte l'éditeur de Pixel World
   (`VoxelEditorManager.cs`, `VoxelEditorCamera.cs`) en Bevy : écran de choix du type puis race /
   catégorie, grille aux tailles du §1, caméra orbitale, outils ajouter / retirer / peindre / pipette,
   survol, annuler / rétablir par lots, grille, cadrage, symétrie miroir, bibliothèque de modèles avec
   étiquettes. Clavier AZERTY. »
-- **E2** — « Phase E2 de `ROADMAP-0.12-editeur.md` : palette OKLCH du §2 (grille 36 teintes × 12 clartés,
+- **E2** — « Phase E2 de `roadmaps/fait/ROADMAP-0.12-editeur.md` : palette OKLCH du §2 (grille 36 teintes × 12 clartés,
   4 saturations, gris à part, nuancier libre, récentes, palettes thématiques, palette du modèle triée,
   remplacer une couleur partout) et matières mate / métal / verre / lumineuse, rendues dans l'éditeur. »
-- **E3** — « Phase E3 de `ROADMAP-0.12-editeur.md` : grilles jusqu'à 1024³. Chunks creux, maillage glouton
+- **E3** — « Phase E3 de `roadmaps/fait/ROADMAP-0.12-editeur.md` : grilles jusqu'à 1024³. Chunks creux, maillage glouton
   asynchrone par chunk (réutilise `mesher.rs` si possible), outils de volume (boîte, sphère, cylindre,
   ligne, remplissage, sélection avec copier / coller / tourner / miroir), calques, vue en coupe, annuler
   par chunk. Respecte le budget de la règle 8 et mesure-le dans la PR. »
-- **E4** — « Phase E4 de `ROADMAP-0.12-editeur.md` : blocs de mouvement du §4. Gabarit blanc animé qui suit
+- **E4** — « Phase E4 de `roadmaps/fait/ROADMAP-0.12-editeur.md` : blocs de mouvement du §4. Gabarit blanc animé qui suit
   la souris, pose qui fige le gabarit en zone, remplacement des blocs, zones emboîtées, alerte de
   collision, aperçu ▶. Lecteur d'animations rigides (images clés, chaînes procédurales, mélange) avec
   des données dans `assets/editeur/` (règle 4). »
-- **E5** — « Phase E5 de `ROADMAP-0.12-editeur.md` : les 23 familles de races du §3.2 en fichiers de données
+- **E5** — « Phase E5 de `roadmaps/fait/ROADMAP-0.12-editeur.md` : les 23 familles de races du §3.2 en fichiers de données
   (os, pivots, gabarit, parties fixes, membres optionnels) et la bibliothèque d'animations du §3.3.
   Écran de choix de race avec aperçu animé. Vérifie chaque race dans l'aperçu (capture par famille). »
-- **E6** — « Phase E6 de `ROADMAP-0.12-editeur.md` : blocs de mouvement de vaisseau du §5 (portes, verrière,
+- **E6** — « Phase E6 de `roadmaps/fait/ROADMAP-0.12-editeur.md` : blocs de mouvement de vaisseau du §5 (portes, verrière,
   ailes repliables, ailes en X, train, propulseurs, tourelles, radar, anneau, panneaux, feux), états du
   vaisseau et leur déclenchement, hangars des porte-vaisseaux du §5.1 (places, chemins d'entrée et de
   sortie, soutes à cargos). »
-- **E7** — « Phase E7 de `ROADMAP-0.12-editeur.md` : utilise les modèles en jeu. Vaisseau du joueur
+- **E7** — « Phase E7 de `roadmaps/fait/ROADMAP-0.12-editeur.md` : utilise les modèles en jeu. Vaisseau du joueur
   (`ship.rs`) et personnage à pied (`surface.rs`) tirés de leur `.ssvox`, échelle 4 voxels = 1 bloc du jeu (Q2),
   collisions, animations pilotées par le jeu, envoi des modèles aux autres joueurs par empreinte
   (règle 7, `net.rs`). Modèles par défaut fournis. »
-- **E8** — « Phase E8 de `ROADMAP-0.12-editeur.md` : mode avancé (pivots, éditeur d'images clés, blocs de
+- **E8** — « Phase E8 de `roadmaps/fait/ROADMAP-0.12-editeur.md` : mode avancé (pivots, éditeur d'images clés, blocs de
   mouvement personnalisés), import / export MagicaVoxel `.vox`. »

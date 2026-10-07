@@ -9,9 +9,9 @@ qui échoue si un chiffre sort de sa cible.
 
 | Source | Ce qui est repris |
 |---|---|
-| `analyse-planetes/RAPPORT-IA.md` | Mesures sur 20 000 systèmes, priorités P0-P3, vérification des 5 analyses d'IA |
-| `analyse-planetes/ia-*.md` | Idées des 5 IA (Kimi, DeepSeek, ChatGPT, Qwen, Gemini), triées et vérifiées contre le code |
-| `analyse-planetes/PLANETES.md` | Description de la génération actuelle (point de départ) |
+| `roadmaps/a-faire/analyse-planetes/RAPPORT-IA.md` | Mesures sur 20 000 systèmes, priorités P0-P3, vérification des 5 analyses d'IA |
+| `roadmaps/a-faire/analyse-planetes/ia-*.md` | Idées des 5 IA (Kimi, DeepSeek, ChatGPT, Qwen, Gemini), triées et vérifiées contre le code |
+| `roadmaps/a-faire/analyse-planetes/PLANETES.md` | Description de la génération actuelle (point de départ) |
 
 Point de départ : la 0.15 terminée (minage et destruction). La 0.16 **adapte** ce que la 0.14 (archétypes,
 événements) et la 0.15 (gisements, minage) ont construit sur l'ancienne génération (§14). Chaque phase = une
@@ -444,7 +444,7 @@ excentricités, inclinaisons et nature des planètes **ensemble** :
 ### K3 — Calibrage final
 
 - Tous les chiffres de l'audit dans leurs cibles (§13), `PLANETES.md` réécrit pour la nouvelle chaîne,
-  `analyse-planetes/RAPPORT-IA.md` complété par un « après ».
+  `roadmaps/a-faire/analyse-planetes/RAPPORT-IA.md` complété par un « après ».
 
 ---
 
@@ -546,7 +546,7 @@ Aucune bloquante : Q1 à Q15 sont tranchées (§1.2). À trancher pendant les ph
 
 ## 18. Prompts (à coller dans une nouvelle session, un par phase)
 
-Contexte commun : « Lis `ROADMAP-0.16.md`, `analyse-planetes/RAPPORT-IA.md`, `analyse-planetes/PLANETES.md` et
+Contexte commun : « Lis `roadmaps/a-faire/ROADMAP-0.16.md`, `roadmaps/a-faire/analyse-planetes/RAPPORT-IA.md`, `roadmaps/a-faire/analyse-planetes/PLANETES.md` et
 `CLAUDE.md` (règles M1 à M12, décisions Q1 à Q15 du §1.2). `git pull origin main` avant de coder. Branche
 `claude/roadmap-0-16-<phase>`. Build release, tests, audit de population avant / après (§13), `bench_system_gen`
 et `bench_tiles`, captures. PROTOCOL +1 si la génération change. PR non fusionnée (je dirai « push main »).

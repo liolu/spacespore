@@ -1,4 +1,4 @@
-//! Blocs de mouvement (E4, §4 de `ROADMAP-0.12-editeur.md`) : des pièces déjà animées que le joueur
+//! Blocs de mouvement (E4, §4 de `roadmaps/fait/ROADMAP-0.12-editeur.md`) : des pièces déjà animées que le joueur
 //! pose comme des blocs, puis repeint et complète.
 //!
 //! - Données, pas code (règle 4) : chaque bloc est un fichier JSON de `assets/editeur/blocs/`

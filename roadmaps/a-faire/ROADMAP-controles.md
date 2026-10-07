@@ -1,6 +1,6 @@
 # Feuille de route — P. Contrôles (entrées, touches, manette, confort)
 
-Source : bloc **P** de `RAPPORT-ameliorations.md` (idées 207 à 214) + idées 44, 45, 47, 49, 50 du même rapport.
+Source : bloc **P** de `roadmaps/a-faire/RAPPORT-ameliorations.md` (idées 207 à 214) + idées 44, 45, 47, 49, 50 du même rapport.
 Les phases s'appellent **CTL-n** (le « P » est déjà pris par l'approche planétaire de la 0.13).
 
 Objectif : que **chaque action du jeu** passe par une couche unique « action → touche / bouton », réglable par
@@ -67,7 +67,7 @@ Ordre : **CTL-1 → 2 → 3** (sans rien changer pour le joueur qui ne touche à
   manette = analogique) pour que le vol marche avec les deux sans code différent.
 - Le contexte `Chat` / champ de texte (`net_ui::Field`) **masque** tous les autres contextes (comme aujourd'hui).
 - Les systèmes lisent `Res<ActionState>` ; les tests peuvent **injecter** des actions (utile pour
-  `SPACESPORE_TEST_*` et pour les scénarios de `ROADMAP-technique.md` TECH-9).
+  `SPACESPORE_TEST_*` et pour les scénarios de `roadmaps/a-faire/ROADMAP-technique.md` TECH-9).
 
 ## 5. Mesures et tests
 
@@ -89,7 +89,7 @@ Ordre : **CTL-1 → 2 → 3** (sans rien changer pour le joueur qui ne touche à
 
 ## 7. Prompts (à coller dans une nouvelle session, un par phase)
 
-**CTL-1** : « Lis `CLAUDE.md` et `ROADMAP-controles.md`. Fais l'inventaire de tous les `KeyCode::` et
+**CTL-1** : « Lis `CLAUDE.md` et `roadmaps/a-faire/ROADMAP-controles.md`. Fais l'inventaire de tous les `KeyCode::` et
 `MouseButton::`, crée `controls.rs` (`Context`, `Action`, `Bindings`, `ActionState`) avec les liaisons par défaut
 identiques aux touches actuelles, remplace chaque lecture directe par une action, ajoute les tests. Comportement
 inchangé. PR non fusionnée. »
@@ -103,5 +103,5 @@ zone morte, « basculer au lieu de maintenir » ; menu Options. »
 **CTL-4** : « Ajoute la manette (`Gamepad` Bevy) : déplacement, vue, gâchettes, croix, vibration, curseur ou focus
 pour les menus, icônes par disposition ; tests de branchement à chaud. »
 
-**CTL-5 à CTL-10** : un prompt par phase sur le modèle « Lis `ROADMAP-controles.md` §3 CTL-n, implémente, teste,
+**CTL-5 à CTL-10** : un prompt par phase sur le modèle « Lis `roadmaps/a-faire/ROADMAP-controles.md` §3 CTL-n, implémente, teste,
 capture, PR ».

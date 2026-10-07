@@ -988,4 +988,4 @@ Oui — pour un jeu spatial voxel, le plus intéressant est de mélanger **plan�
 
 ---
 
-> **Constructions** (stations, habitats, mégastructures, bâtiments au sol, idées de gameplay) : voir `IDEES-constructions.md`.
+> **Constructions** (stations, habitats, mégastructures, bâtiments au sol, idées de gameplay) : voir `roadmaps/a-faire/IDEES-constructions.md`.

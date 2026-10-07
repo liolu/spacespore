@@ -1,4 +1,4 @@
-//! Étoiles doubles et triples (C3 de `ROADMAP-0.11.md`).
+//! Étoiles doubles et triples (C3 de `roadmaps/fait/ROADMAP-0.11.md`).
 //!
 //! Environ un système sur trois (plus souvent autour des étoiles massives) :
 //! - **double serrée** : deux étoiles proches tournent autour de leur centre de masse, les planètes

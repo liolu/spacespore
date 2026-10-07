@@ -196,7 +196,7 @@ pub struct Layout {
 
 /// Échelle du sol (0.13, règle 14) : le voxel est `GROUND_SCALE` fois plus petit qu'en 0.12 (la
 /// planète 16 fois plus grande en voxels, ses rayons en unités inchangés : règle 15). Changer
-/// l'échelle = changer ce nombre (décision Q1 après l'étude E1, `RAPPORT-echelle-E1.md`).
+/// l'échelle = changer ce nombre (décision Q1 après l'étude E1, `roadmaps/fait/RAPPORT-echelle-E1.md`).
 pub const GROUND_SCALE: u32 = 16;
 
 /// Échelle en cours : `GROUND_SCALE`, ou un autre `k` pour les tests (`/echelle k`,

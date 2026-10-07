@@ -1,7 +1,7 @@
 # Feuille de route technique (05/10/2026, après la v0.13.3)
 
 Objectif : rendre le projet **solide, mesurable et facile à faire évoluer**, sans ajouter de contenu de jeu.
-Elle ne remplace pas `ROADMAP-0.20-debug-opti.md` (réglages, mesures, benchmark, LOD, lumière) : elle la
+Elle ne remplace pas `roadmaps/a-faire/ROADMAP-0.20-debug-opti.md` (réglages, mesures, benchmark, LOD, lumière) : elle la
 **complète** et s'y réfère (« voir 0.20 »). Les phases s'appellent **TECH-n** pour ne pas se confondre avec
 les T1..T9 de la 0.20 et les T1..T5 du terrain.
 
@@ -311,7 +311,7 @@ en plus chère.
 - `CLAUDE.md` : 466 lignes, très denses ; en tirer `docs/ARCHITECTURE.md` (carte des modules, règles numérotées,
   procédure de test) et garder dans `CLAUDE.md` seulement les consignes.
 - `version.json` à la racine et `docs/version.json` : documenter qui écrit quoi (le bot de la release).
-- `prompt0.14.md` / `prompt0.20.md` (991 lignes chacun, apparemment les mêmes) : archiver dans `docs/archive/`.
+- `roadmaps/a-faire/prompt0.14.md` / `roadmaps/a-faire/prompt0.20.md` (991 lignes chacun, apparemment les mêmes) : archiver dans `docs/archive/`.
 - Fichiers de roadmaps éparpillés (`ROADMAP-*.md`, `roadmaps/`) : un index `ROADMAPS.md`.
 - Constantes de génération dispersées : un fichier `constants.rs` par domaine avec la **raison** de chaque valeur
   (la règle « valeurs = f(graine) » est dans le code, mais pas leur justification).
@@ -335,11 +335,11 @@ en plus chère.
 
 ## 17. Prompts (à coller dans une nouvelle session, un par phase)
 
-**TECH-1** : « Lis `CLAUDE.md` et `ROADMAP-technique.md` §3. Ajoute `.github/workflows/ci.yml` (fmt, clippy,
+**TECH-1** : « Lis `CLAUDE.md` et `roadmaps/a-faire/ROADMAP-technique.md` §3. Ajoute `.github/workflows/ci.yml` (fmt, clippy,
 test, build des outils, cache Cargo, audit hebdomadaire) et fais dépendre `unstable.yml` / `stable.yml` de son
 succès. Corrige les avertissements qui bloquent. PR, ne fusionne pas. »
 
-**TECH-2** : « Lis `ROADMAP-technique.md` §4. Écris les tests d'empreinte du monde (50 graines) et du terrain
+**TECH-2** : « Lis `roadmaps/a-faire/ROADMAP-technique.md` §4. Écris les tests d'empreinte du monde (50 graines) et du terrain
 (20 planètes), le test terrain / maillage, et le fuzz de 5 000 graines. Remplace les `HashMap` dont l'ordre
 influence la génération. Les fichiers de référence vont dans `tests/golden/`. »
 

@@ -1,6 +1,6 @@
 # Feuille de route — K. Astres et espace
 
-Source : bloc **K** de `RAPPORT-ameliorations.md` (idées 141 à 155) + idées 12, 73, 74, 144 à 155.
+Source : bloc **K** de `roadmaps/a-faire/RAPPORT-ameliorations.md` (idées 141 à 155) + idées 12, 73, 74, 144 à 155.
 Les phases s'appellent **AST-n**.
 
 Objectif : que l'espace entre les mondes soit aussi riche que leur surface : des astres qui **évoluent**, des
@@ -24,7 +24,7 @@ phénomènes **rares et reconnaissables**, des dangers et des ressources, tout e
 - **Petits corps** : ceintures, Troyens, anneaux, comètes (`asteroids.rs`, `belts.rs`, `comets.rs`), planète errante
   (1 système sur 30).
 - Le trou noir central existe (`spawn_galactic_core`) ; l'effet de lentille est prévu en 0.13 V1.
-- Nommage : `Remnant_stellaire` avec majuscule (Linux sensible à la casse : voir `ROADMAP-technique.md` TECH-7).
+- Nommage : `Remnant_stellaire` avec majuscule (Linux sensible à la casse : voir `roadmaps/a-faire/ROADMAP-technique.md` TECH-7).
 
 ## 2. Règles
 
@@ -35,7 +35,7 @@ phénomènes **rares et reconnaissables**, des dangers et des ressources, tout e
 4. **Réalisme avec une version fictive étiquetée** (`Realism::Fictional`), comme les minerais.
 5. **Un astre = un profil** (`StarProfile` / `PlanetProfile`) lisible par le scanner, `/profil`, le dex, `/aller <type>`.
 6. **LOD** : étoile lointaine = point ; l'effet détaillé n'existe que dans le système chargé (règle d'économie).
-7. Toute nouvelle couche = test d'empreinte (voir `ROADMAP-technique.md` TECH-2) et `PROTOCOL` incrémenté si le
+7. Toute nouvelle couche = test d'empreinte (voir `roadmaps/a-faire/ROADMAP-technique.md` TECH-2) et `PROTOCOL` incrémenté si le
    réseau en dépend.
 8. Pas de modèle « événement mondial » qui change le terrain sans passer par les **deltas** (règle 7).
 
@@ -100,12 +100,12 @@ avec la génération actuelle). Objectif : plus de `#![allow(dead_code)]` global
 
 ## 7. Prompts
 
-**AST-0** : « Lis `CLAUDE.md` et `ROADMAP-astres.md` §3 AST-0. Inventorie `src/astre/`, renomme
+**AST-0** : « Lis `CLAUDE.md` et `roadmaps/a-faire/ROADMAP-astres.md` §3 AST-0. Inventorie `src/astre/`, renomme
 `Remnant_stellaire`, ajoute les commandes `/aller etoile <type>` pour chaque objet, décide réutiliser / convertir /
 supprimer par module, retire `allow(dead_code)` sur ce qui reste. PR avec le tableau des décisions. »
 
 **AST-1** : « Ajoute les objets compacts (étoile à neutrons, pulsar, magnétar) comme types d'étoile rares : profils,
 tirage hors des 50 premiers systèmes, faisceaux, rayonnement, scanner, `/stats`, dex. Capture de chaque type. »
 
-**AST-2 à AST-10** : « Lis `ROADMAP-astres.md` §3 AST-n, implémente, teste (rareté, déterminisme, capture),
+**AST-2 à AST-10** : « Lis `roadmaps/a-faire/ROADMAP-astres.md` §3 AST-n, implémente, teste (rareté, déterminisme, capture),
 `PROTOCOL` si nécessaire, PR non fusionnée. »

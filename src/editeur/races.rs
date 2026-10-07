@@ -1,4 +1,4 @@
-//! Races de personnage (E5, §3.2 de `ROADMAP-0.12-editeur.md`) : une famille par fichier JSON de
+//! Races de personnage (E5, §3.2 de `roadmaps/fait/ROADMAP-0.12-editeur.md`) : une famille par fichier JSON de
 //! `assets/editeur/races/` (règle 4 : ajouter une race = ajouter un fichier).
 //!
 //! Une race = un **rig** posé sur la grille 16 × 32 × 32 (personnage tourné vers +z) : des os

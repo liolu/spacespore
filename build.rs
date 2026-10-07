@@ -1,5 +1,5 @@
 //! Intègre au jeu les données de l'éditeur (`assets/editeur/{blocs,anims,races}/*.json`) : ajouter
-//! un bloc, une animation ou une race = ajouter un fichier (règle 4 de `ROADMAP-0.12-editeur.md`).
+//! un bloc, une animation ou une race = ajouter un fichier (règle 4 de `roadmaps/fait/ROADMAP-0.12-editeur.md`).
 //! Les zips des versions ne contiennent pas de dossier `assets`, d'où l'intégration à la compilation.
 
 use std::io::Write;

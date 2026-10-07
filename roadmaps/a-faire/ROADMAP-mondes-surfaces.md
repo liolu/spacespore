@@ -1,6 +1,6 @@
 # Feuille de route — L. Mondes et surfaces
 
-Source : bloc **L** de `RAPPORT-ameliorations.md` (idées 156 à 170) + idées 111 à 118 (feu, eau, érosion, neige,
+Source : bloc **L** de `roadmaps/a-faire/RAPPORT-ameliorations.md` (idées 156 à 170) + idées 111 à 118 (feu, eau, érosion, neige,
 effondrements, débris, radiations, température).
 Les phases s'appellent **MON-n**.
 
@@ -8,7 +8,7 @@ Objectif : des **surfaces qui racontent leur monde** : chaque matière, chaque l
 et un comportement propres, qui **changent avec l'horloge** (dunes, glaciers, marées) sans stocker de données
 supplémentaires.
 
-Cette feuille de route **complète** `ROADMAP-0.14.md` : D1 (rivières, lacs, cascades, banquise), D2 (géologie
+Cette feuille de route **complète** `roadmaps/a-faire/ROADMAP-0.14.md` : D1 (rivières, lacs, cascades, banquise), D2 (géologie
 active), D3 / D4 (végétation, faune), X (mondes exceptionnels) y sont déjà. Ici : ce qui n'y est pas, ou en
 profondeur (matières et liquides exotiques, optique du ciel, dynamique lente du sol, neige et traces).
 
@@ -112,12 +112,12 @@ comme les minerais de la phase 8.
 
 ## 7. Prompts
 
-**MON-1** : « Lis `CLAUDE.md`, `TESTS-JEU.md` et `ROADMAP-mondes-surfaces.md` §3 MON-1 et §4.1. Ajoute `LiquidLook`
+**MON-1** : « Lis `CLAUDE.md`, `TESTS-JEU.md` et `roadmaps/a-faire/ROADMAP-mondes-surfaces.md` §3 MON-1 et §4.1. Ajoute `LiquidLook`
 au shader d'eau, les lacs d'hydrocarbures, la lave en surface et la plaine de sel. Capture sur un monde adapté
 (jour vérifié) pour chaque liquide. »
 
 **MON-2** : « §3 MON-2 et §4.2 : dunes f(horloge, vent) partagées terrain / mesher, sables mouvants, mers de
 poussière, reconstruction de tuile à chaque voxel de phase. Banc de tuiles avant / après. »
 
-**MON-3 à MON-13** : « Lis `ROADMAP-mondes-surfaces.md` §3 MON-n, implémente, teste, capture, mesure, PR non
+**MON-3 à MON-13** : « Lis `roadmaps/a-faire/ROADMAP-mondes-surfaces.md` §3 MON-n, implémente, teste, capture, mesure, PR non
 fusionnée. »

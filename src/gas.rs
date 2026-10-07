@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────
-//  Géantes gazeuses et neptuniennes (phase 2 de `ROADMAP-0.10.md`)
+//  Géantes gazeuses et neptuniennes (phase 2 de `roadmaps/fait/ROADMAP-0.10.md`)
 //
 //  Pas de sol : on peut y entrer en vol (navigation basse altitude), mais la pression abîme la
 //  coque du vaisseau tant qu'il y reste, d'autant plus vite qu'il descend profond et que la

@@ -1,4 +1,4 @@
-//! Comètes d'un système (C2 de `ROADMAP-0.11.md`).
+//! Comètes d'un système (C2 de `roadmaps/fait/ROADMAP-0.11.md`).
 //!
 //! Noyaux de glace sale sur des orbites très excentriques : la famille de Jupiter (aphélie près
 //! d'une géante, quelques centaines d'heures de jeu par tour) et les comètes à longue période

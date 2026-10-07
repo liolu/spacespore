@@ -212,15 +212,15 @@ Aucune bloquante ; choix par défaut, à changer si tu veux :
 | # | Sujet | Choix par défaut |
 |---|---|---|
 | Q1 | Touche de capture d'écran | **F9** (F12 = profilage, Impr. écran = Windows) |
-| Q2 | Pollution (idée 💡) | **Pas ici** : trop grosse, notée dans `A-FAIRE-PLUS-TARD.md` (avec les aliens et les constructions) |
-| Q3 | Foreuse « trou noir » (idée à préciser) | **Pas ici** : reste dans `IDEES-constructions.md` jusqu'à ce que tu la décrives |
+| Q2 | Pollution (idée 💡) | **Pas ici** : trop grosse, notée dans `roadmaps/a-faire/A-FAIRE-PLUS-TARD.md` (avec les aliens et les constructions) |
+| Q3 | Foreuse « trou noir » (idée à préciser) | **Pas ici** : reste dans `roadmaps/a-faire/IDEES-constructions.md` jusqu'à ce que tu la décrives |
 | Q4 | Captures de référence | Restent sur le Bureau (`doctravail`, ~35 Mo, trop lourd pour le dépôt) ; les positions sont dans `TESTS-JEU.md` |
 
 ---
 
 ## 6. Prompts (à coller dans une nouvelle session, un par phase)
 
-Contexte commun : « Lis `ROADMAP-0.13.4-correctifs.md` (règles §1, causes §2), `CLAUDE.md`, `TESTS-JEU.md` et
+Contexte commun : « Lis `roadmaps/a-faire/ROADMAP-0.13.4-correctifs.md` (règles §1, causes §2), `CLAUDE.md`, `TESTS-JEU.md` et
 `C:\Users\thomr\Desktop\Nouveau dossier\doctravail\LISTE.md` ; regarde les captures du bug dans
 `doctravail\01-bugs\actuels-v0.13\`. `git pull origin main` avant de coder. Branche
 `claude/correctifs-0-13-4-<phase>`. Reproduis d'abord, écris la cause dans la PR, puis corrige ; capture avant /

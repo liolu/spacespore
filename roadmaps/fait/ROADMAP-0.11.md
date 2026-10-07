@@ -57,7 +57,7 @@ Chaque phase se termine par un build instable jouable. Chaque phase a son **prom
 
 ## Règles d'architecture
 
-Les **règles 1 à 8 de `ROADMAP-0.10.md`** restent valables (génome compact, sous-graines par couche,
+Les **règles 1 à 8 de `roadmaps/fait/ROADMAP-0.10.md`** restent valables (génome compact, sous-graines par couche,
 couches dérivées, unités réelles, réaliste/spéculatif/fictif, empreinte multijoueur, valeurs vivantes,
 origine flottante). La 0.11 en ajoute cinq :
 
@@ -157,7 +157,7 @@ Colle **un prompt à la fois**. Je fais une PR par phase, sans la fusionner : tu
 « push main ».
 
 > **Contexte commun** (à mettre en tête de chaque prompt) :
-> « Lis `ROADMAP-0.11.md`, `ROADMAP-0.10.md` et `CLAUDE.md`. On travaille sur la 0.11, en respectant les
+> « Lis `roadmaps/fait/ROADMAP-0.11.md`, `roadmaps/fait/ROADMAP-0.10.md` et `CLAUDE.md`. On travaille sur la 0.11, en respectant les
 > règles d'architecture 1 à 13. Fais `git pull origin main` avant de coder. Montre-moi en jeu (captures)
 > ce qui change, mesure FPS et mémoire avant / après, ajoute des tests, ouvre une PR non fusionnée. Ne
 > change pas les tailles ni les décisions de la feuille de route sans me demander. »
@@ -253,5 +253,5 @@ matin, vent qui pousse le vaisseau. Pluies exotiques selon l'atmosphère (métha
 Test : deux machines, même heure → même météo. »
 
 ### D1 à D6 — Eau vivante, géologie active, faune, végétation, son, points d'intérêt
-« [contexte commun] Phase D<n> (voir le tableau du bloc D de `ROADMAP-0.11.md`). Fais exactement le
+« [contexte commun] Phase D<n> (voir le tableau du bloc D de `roadmaps/fait/ROADMAP-0.11.md`). Fais exactement le
 contenu de la ligne D<n>. Captures de chaque élément. »

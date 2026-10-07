@@ -9,8 +9,8 @@ cassée, monde creux… Chacun est **rare**, se **voit**, et a **une règle qui 
 
 | Source | Ce qui est repris |
 |---|---|
-| `A-FAIRE-PLUS-TARD.md` (bloc D de la 0.11) | D1 eau vivante, D2 géologie active, D3 faune visible, D4 végétation vivante, D5 son, D6 points d'intérêt (retirés de la 0.13) |
-| `prompt0.14.md` (conversation ChatGPT) | Banque d'idées de planètes rares et d'événements, **adaptée** au moteur et au réalisme du jeu (§5, §6) |
+| `roadmaps/a-faire/A-FAIRE-PLUS-TARD.md` (bloc D de la 0.11) | D1 eau vivante, D2 géologie active, D3 faune visible, D4 végétation vivante, D5 son, D6 points d'intérêt (retirés de la 0.13) |
+| `roadmaps/a-faire/prompt0.14.md` (conversation ChatGPT) | Banque d'idées de planètes rares et d'événements, **adaptée** au moteur et au réalisme du jeu (§5, §6) |
 
 **L'ancienne 0.14 (minage et destruction) devient la 0.15.**
 
@@ -43,7 +43,7 @@ non fusionnée : tu testes, puis tu dis « push main ». Chaque phase a son **pr
 | Q5 | **Son** | **Oui**, `bevy_audio` (intégré à Bevy) ; une autre caisse seulement si un effet manque, à justifier dans la PR. |
 | Q6 | **Temps local** (près d'un trou noir, vallée au temps accéléré) | **D'accord** : seuls l'affichage et la croissance locale (plantes, ruines) changent ; l'horloge du monde reste unique. |
 | Q7 | **Part des planètes actives** | **Très rare** : il faut de la **chance** pour voir un événement. Point de départ : **1 planète solide sur 1 000** (0,1 %), une partie seulement pour les plus destructeurs ; réglé par le test de fréquence (§6.1). |
-| Q8 | **Musique** | Pas en 0.14 : D5 = sons du monde seulement. **La musique est pour plus tard** (notée dans `A-FAIRE-PLUS-TARD.md`). |
+| Q8 | **Musique** | Pas en 0.14 : D5 = sons du monde seulement. **La musique est pour plus tard** (notée dans `roadmaps/a-faire/A-FAIRE-PLUS-TARD.md`). |
 
 ---
 
@@ -261,7 +261,7 @@ Aucune pour l'instant : Q1 à Q8 sont tranchées (§1.2).
 
 ## 10. Prompts (à coller dans une nouvelle session, un par phase)
 
-Contexte commun : « Lis `ROADMAP-0.14.md`, `prompt0.14.md`, `ROADMAP-0.13.md` et `CLAUDE.md` (règles 1 à
+Contexte commun : « Lis `roadmaps/a-faire/ROADMAP-0.14.md`, `roadmaps/a-faire/prompt0.14.md`, `roadmaps/a-faire/ROADMAP-0.13.md` et `CLAUDE.md` (règles 1 à
 28, décisions Q1 à Q8 du §1.2). `git pull origin main` avant de coder. Branche `claude/roadmap-0-14-<phase>`.
 Build release, tests, mesures avant / après et captures. PR non fusionnée (je dirai « push main »).
 Aucune concession sur la qualité ; ne change ni les tailles ni les décisions sans me demander. »

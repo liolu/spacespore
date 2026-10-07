@@ -3,19 +3,19 @@
 Objectif : des planètes **beaucoup plus grandes en voxels**, un **vrai relief** (montagnes, falaises,
 vallées), une **vraie eau**, un ciel et un espace spectaculaires, puis les aliens et la terraformation.
 La faune, la végétation vivante, les rivières, la géologie active, le son et les points d'intérêt
-(bloc D de la 0.11) sont dans la **0.14** (`ROADMAP-0.14.md`). **Aucune concession sur la qualité** : la performance s'obtient par la mesure,
+(bloc D de la 0.11) sont dans la **0.14** (`roadmaps/a-faire/ROADMAP-0.14.md`). **Aucune concession sur la qualité** : la performance s'obtient par la mesure,
 le LOD et le travail en arrière-plan, jamais en retirant du détail.
 
 Cette feuille de route rassemble :
 
 | Source | Ce qui est repris |
 |---|---|
-| `RAPPORT-generation-terrain.md` | Terrain plat, eau opaque : relief en voxels, vraie eau, couleurs, horizon, **planètes plus grandes** (décision du 04/10) |
+| `roadmaps/fait/RAPPORT-generation-terrain.md` | Terrain plat, eau opaque : relief en voxels, vraie eau, couleurs, horizon, **planètes plus grandes** (décision du 04/10) |
 | `IDEES-prochaine-version.md` (supprimé, tout est ici) | R1 détail du terrain, R2 brouillard, V1 skybox, V2 trous noirs, V3 voyage entre galaxies, V4 vue de la galaxie inclinée, A1 aliens, A2 terraformation |
-| `A-FAIRE-PLUS-TARD.md` (bloc D de la 0.11) | **Déplacé en 0.14** (`ROADMAP-0.14.md`, 04/10/2026) |
+| `roadmaps/a-faire/A-FAIRE-PLUS-TARD.md` (bloc D de la 0.11) | **Déplacé en 0.14** (`roadmaps/a-faire/ROADMAP-0.14.md`, 04/10/2026) |
 
 Point de départ : **v0.12.0** (éditeur de modèles + correctifs C1 à C8). Les outils de mesure et de
-réglage (panneau, benchmark) restent dans la **0.20** (`ROADMAP-0.20-debug-opti.md`) : la 0.13 mesure
+réglage (panneau, benchmark) restent dans la **0.20** (`roadmaps/a-faire/ROADMAP-0.20-debug-opti.md`) : la 0.13 mesure
 avec ce qui existe (bancs `bench_*`, FPS, captures).
 
 Chaque phase = une branche `claude/roadmap-0-13-<phase>`, une PR non fusionnée : tu testes, puis tu dis
@@ -73,7 +73,7 @@ Elles devront passer en **voxels** (ou en fraction du rayon) au changement d'éc
 
 Relief plat et en paliers, eau opaque sans fond marin (`terrain.rs:520`), brouillard seulement à
 grande distance (`gas.rs:155`), pas de skybox, trous noirs en cubes, pas de faune ni de végétation
-vivante, pas de son. Détails dans `RAPPORT-generation-terrain.md`.
+vivante, pas de son. Détails dans `roadmaps/fait/RAPPORT-generation-terrain.md`.
 
 ---
 
@@ -251,7 +251,7 @@ relief et de l'eau finis.
 
 ## 8. Prompts (à coller dans une nouvelle session, un par phase)
 
-Contexte commun : « Lis `ROADMAP-0.13.md`, `RAPPORT-generation-terrain.md` et `CLAUDE.md` (règles 1 à
+Contexte commun : « Lis `roadmaps/a-faire/ROADMAP-0.13.md`, `roadmaps/fait/RAPPORT-generation-terrain.md` et `CLAUDE.md` (règles 1 à
 19). `git pull origin main` avant de coder. Branche `claude/roadmap-0-13-<phase>`. Build release,
 tests, mesures avant / après (règle 18) et captures. PR non fusionnée (je dirai « push main »). Aucune
 concession sur la qualité ; ne change ni les tailles de l'espace ni les décisions sans me demander. »

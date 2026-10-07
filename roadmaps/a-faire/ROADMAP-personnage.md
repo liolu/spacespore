@@ -1,6 +1,6 @@
 # Feuille de route — M. Personnage (avec versions chibi)
 
-Source : bloc **M** de `RAPPORT-ameliorations.md` (idées 171 à 184) + idées 6, 87, 89, 118 et **la demande du
+Source : bloc **M** de `roadmaps/a-faire/RAPPORT-ameliorations.md` (idées 171 à 184) + idées 6, 87, 89, 118 et **la demande du
 05/10/2026 : ajouter des versions chibi des personnages**.
 Les phases s'appellent **PER-n**.
 
@@ -127,7 +127,7 @@ nouveaux paquets lourds. `PROTOCOL` incrémenté une fois à PER-3.
 
 ## 7. Prompts
 
-**PER-1** : « Lis `CLAUDE.md` (sections 0.12 E4, E5, E7) et `ROADMAP-personnage.md` §3 PER-1 et §4.1. Ajoute
+**PER-1** : « Lis `CLAUDE.md` (sections 0.12 E4, E5, E7) et `roadmaps/a-faire/ROADMAP-personnage.md` §3 PER-1 et §4.1. Ajoute
 `Model::style`, `RaceDef::chibi` (boîtes alternatives) pour les 23 familles, la grille chibi, et les tests
 `every_race_has_a_chibi` / `chibi_keeps_every_bone`. Rien en jeu encore. »
 
@@ -137,5 +137,5 @@ nouveaux paquets lourds. `PROTOCOL` incrémenté une fois à PER-3.
 **PER-3** : « §3 PER-3 : `character_style`, `ModelKey` chibi, `Fit::Character` avec hauteur visuelle, caméra,
 cockpit, `Looks::style` réseau (PROTOCOL), `/style`. Capture à pied, en cockpit et avec un faux joueur chibi. »
 
-**PER-4 à PER-12** : « Lis `ROADMAP-personnage.md` §3 PER-n, implémente (versions normal et chibi), teste,
+**PER-4 à PER-12** : « Lis `roadmaps/a-faire/ROADMAP-personnage.md` §3 PER-n, implémente (versions normal et chibi), teste,
 capture, PR non fusionnée. »

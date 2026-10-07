@@ -117,7 +117,7 @@ Des espaces de vie gigantesques sans entourer une étoile.
 - **Orbital de la Culture** [fiction, Iain M. Banks] — anneau de ~3 millions de km de diamètre en orbite
   autour d'une étoile, jour et nuit par sa propre rotation. **En jeu** : entre le tore et l'anneau-monde.
 - **Globus Cassus** [théorique] — la Terre transformée en coquille creuse géante. **En jeu** : planète creuse
-  (déjà dans la banque d'idées de `prompt0.14.md`) : surface extérieure + monde intérieur.
+  (déjà dans la banque d'idées de `roadmaps/a-faire/prompt0.14.md`) : surface extérieure + monde intérieur.
 - **Astéroïde creusé en rotation** [théorique] — habitat taillé dans un astéroïde (Kalpana One, astéroïde de
   Rama). **En jeu** : sur les gros astéroïdes de `asteroids.rs` où l'on se pose ; entrée par un puits, ville
   intérieure.

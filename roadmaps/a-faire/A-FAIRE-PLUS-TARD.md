@@ -1,9 +1,9 @@
 # À faire plus tard
 
-> **04/10/2026 : tout le bloc D est repris dans `ROADMAP-0.14.md`** (D1 à D6, mêmes noms). Ce fichier reste pour l'historique.
+> **04/10/2026 : tout le bloc D est repris dans `roadmaps/a-faire/ROADMAP-0.14.md`** (D1 à D6, mêmes noms). Ce fichier reste pour l'historique.
 
 
-Ce qui reste du bloc D de la 0.11 (`ROADMAP-0.11.md`), mis de côté le 03/10/2026 après la release
+Ce qui reste du bloc D de la 0.11 (`roadmaps/fait/ROADMAP-0.11.md`), mis de côté le 03/10/2026 après la release
 v0.11.2 (blocs A, B et C terminés). On y reviendra après la 0.12 (éditeur).
 
 Ordre : **D1 → D2 → D3 → D4 → D5 → D6**.
@@ -28,7 +28,7 @@ Ordre : **D1 → D2 → D3 → D4 → D5 → D6**.
 
 ## Prompts (à coller dans une nouvelle session)
 
-Contexte commun : « Lis `ROADMAP-0.11.md`, `ROADMAP-0.10.md`, `A-FAIRE-PLUS-TARD.md` et `CLAUDE.md`. Règles 1 à 13.
+Contexte commun : « Lis `roadmaps/fait/ROADMAP-0.11.md`, `roadmaps/fait/ROADMAP-0.10.md`, `roadmaps/a-faire/A-FAIRE-PLUS-TARD.md` et `CLAUDE.md`. Règles 1 à 13.
 `git pull origin main` avant de coder. Tests. PR non fusionnée (je dirai « push main »). Ne change ni les tailles
 ni les décisions sans me demander. »
 

@@ -1,4 +1,4 @@
-//! Modèles des joueurs sur le réseau (E7, règle 7 de `ROADMAP-0.12-editeur.md`).
+//! Modèles des joueurs sur le réseau (E7, règle 7 de `roadmaps/fait/ROADMAP-0.12-editeur.md`).
 //!
 //! - Chaque état de joueur porte son `Looks` : ses modèles (`ModelKey` : un modèle par défaut se
 //!   désigne par son nom, un fichier par son **empreinte**), l'état de son vaisseau, son marcheur

@@ -1,4 +1,4 @@
-//! Amarrage dans les hangars des porte-vaisseaux (E7, §5.1 de `ROADMAP-0.12-editeur.md`).
+//! Amarrage dans les hangars des porte-vaisseaux (E7, §5.1 de `roadmaps/fait/ROADMAP-0.12-editeur.md`).
 //!
 //! Dans l'espace, près du vaisseau d'un autre joueur dont le modèle a un hangar libre à notre
 //! taille (Q8 : croiseur = chasseurs ; capital = chasseurs, corvettes, cargos jusqu'à la frégate),
