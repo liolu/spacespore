@@ -30,11 +30,41 @@ use crate::surface::{Surface, SurfaceControl};
 use crate::ui::TargetKind;
 use crate::world_clock::{LocalWeather, WorldClock};
 
+/// Tests : `/meteo clair` supprime nuages, pluie, brouillard, poussière et orages (le vent reste).
+#[derive(Resource, Default)]
+pub struct WeatherForce {
+    pub clear: bool,
+}
+
+/// `/meteo [clair | auto]`.
+#[derive(Event)]
+pub struct WeatherCommand(pub String);
+
+fn weather_commands(time: Res<Time>, mut events: EventReader<WeatherCommand>, mut force: ResMut<WeatherForce>, mut net: ResMut<crate::net::Net>) {
+    let now = time.elapsed_secs_f64();
+    for WeatherCommand(arg) in events.read() {
+        match arg.trim().to_lowercase().as_str() {
+            "clair" | "clear" => {
+                force.clear = true;
+                net.notify("Meteo forcee : ciel clair (pas de nuages, de pluie ni de brouillard). /meteo auto pour revenir.", now);
+            }
+            "auto" | "" => {
+                force.clear = false;
+                net.notify("Meteo : celle du monde (graine et horloge).", now);
+            }
+            _ => net.notify("/meteo [clair | auto]", now),
+        }
+    }
+}
+
 pub struct WeatherPlugin;
 
 impl Plugin for WeatherPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<WeatherNow>()
+            .init_resource::<WeatherForce>()
+            .add_event::<WeatherCommand>()
+            .add_systems(Update, weather_commands)
             .init_resource::<CloudTasks>()
             .add_systems(Update, (update_weather_now, push_ship).chain().before(SurfaceControl))
             .add_systems(Update, (rebuild_clouds, weather_fx).after(SurfaceControl));
@@ -389,6 +419,7 @@ fn update_weather_now(
     settings: Res<GameSettings>,
     surface: Res<Surface>,
     local: Res<LocalWeather>,
+    force: Res<WeatherForce>,
     mut now: ResMut<WeatherNow>,
 ) {
     let (Some(kind), Some(p)) = (surface.body(), surface.local_point()) else {
@@ -424,6 +455,7 @@ fn update_weather_now(
         let t = ((a - 0.05) / 0.3).clamp(0.0, 1.0);
         t * t * (3.0 - 2.0 * t)
     };
+    let gate = if force.clear { 0.0 } else { gate };
     let s = Sample { cloud: s.cloud * gate, precip: s.precip * gate, storm: s.storm * gate, dust: s.dust * gate, fog: s.fog * gate, east: s.east * gate, north: s.north * gate, gust: s.gust * gate, ..s };
     now.sample = if under { Sample { east: s.east, north: s.north, ..Default::default() } } else { s };
     now.text = describe(&now.sample);

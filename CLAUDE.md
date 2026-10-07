@@ -453,6 +453,14 @@ chose ; ne jamais relancer 2 fois le meme test sans rien changer.
   `sound.rs` = premier son du jeu, synthetise en WAV en memoire (feature bevy `wav`), boucles pilotees par la vitesse et la
   densite (`air_gain` : silence dans le vide), bang, tonnerre retarde, `/volume` (`GameSettings::sound_volume`). Tests :
   `/essai mer`, `/nuage`, `SPACESPORE_TEST_FLY=reentry` (voir `TESTS-JEU.md`), `cargo test --release approche sound`.
+- 0.13 bloc C (`roadmaps/a-faire/ROADMAP-0.13.md`) : C1 brouillard = `fog.rs` : un `FogVolume` (banc plat aligne sur la
+  verticale du lieu, pose sur le sol sous le joueur, texture de densite 3D, largeur = portee des ombres du soleil) + `VolumetricFog`
+  sur la camera + `VolumetricLight` sur les `SurfaceSun` et les phares (les ombres sont forcees quand le banc existe : sans
+  ombres le brouillard n'est pas eclaire et assombrit tout) ; densite = `fog_density(matin, temperature, matiere, vallee,
+  humide)` ; `/brouillard`, `SPACESPORE_TEST_FOG` ; brouillard de grotte = `DistanceFog`. C2 skybox = `skybox.rs` : `render_cube`
+  (pur, testable : tirages de `galaxy_shape::Shape` + etoiles reelles + galaxies voisines, 6 x 1 024^2, threads) lance en tache
+  de fond par `watch_system` quand le systeme le plus proche change, `SkyMaterial` + `sky_dome.wgsl` (sphere sans profondeur,
+  `z = 0`) qui dessine aussi `ClearColor` (le jour efface les etoiles). Tests : `/meteo clair`, `bench_sky`.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

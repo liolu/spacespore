@@ -189,6 +189,16 @@ Commandes de test ajoutées : `/vol`, `/mer`, `/nuage`, `/essai mer`, `/jour`, `
 | **C1. Brouillard** | (R2) **Brouillard au ras du sol**, plus épais dans les vallées (T1) et au-dessus de l'eau, qui monte avec l'altitude ; **bancs de brouillard** de la météo (matin, mers froides, marécages) en volumes (`FogVolume`, `VolumetricFog` de Bevy 0.15) ; **rayons de soleil** dans le brouillard ; couleur selon le soleil ; phares et lampe éclairent le brouillard ; brouillard léger dans les grottes ; brume de l'horizon en voxels (règle 14). | L |
 | **C2. Skybox** | (V1) **Skybox générée** depuis la vraie galaxie vue du système courant (étoiles avec leur couleur et leur éclat, bande de la galaxie, nébuleuses, autres galaxies), cubemap haute résolution rendue en arrière-plan, refaite au changement de système ; étoiles proches restent de vrais objets cliquables ; au sol : visible la nuit, effacée par le ciel de jour, voilée par les nuages. | M |
 
+**État du bloc C : fait** (`fog.rs`, `skybox.rs`, `sky_dome.wgsl`).
+
+| Phase | Ce qui est fait | Limites connues |
+|---|---|---|
+| C1 | Bancs de brouillard volumétriques (`FogVolume` + `VolumetricFog`) posés sur le sol sous le joueur, densité = météo (`Sample::fog`, matin) + mers froides + marais + vallées (`fog_density`), hauteur qui monte avec la densité (18 à 150 voxels), texture de densité 3D (pleine au sol, qui s'efface vers le haut et les bords), faisceaux du soleil et des phares (`VolumetricLight`, ombres forcées dans le brouillard), couleur selon le ciel et le jour, brume de l'horizon teintée par le soleil bas (`gas.rs`), brouillard léger sous terre (`cave_fog`), option `/brouillard oui\|non` | Le banc ne dépasse pas la portée des ombres du soleil (400 voxels de large, 1 800 avec « Ombres du relief ») : au-delà c'est la brume de l'horizon ; le brouillard reste un banc plat qui suit le sol (pas de brouillard dans une grotte autre que le voile léger) ; pas de banc d'eau libre sur les lacs hors du lieu du joueur |
+| C2 | Cubemap 1 024 x 6 calculée en arrière-plan (0,6 à 0,8 s) depuis le système le plus proche : étoiles réelles (couleur, éclat), bande de la galaxie tirée de sa vraie forme (`galaxy_shape::Shape`), poussière, nébuleuses, 48 galaxies voisines en ellipses ; refaite au changement de système ; dôme `SkyMaterial` en arrière-plan (profondeur 0), qui dessine aussi la couleur du ciel : le jour efface les étoiles, nuages et brouillard les voilent, sous l'eau et sous terre elles disparaissent, aux zooms lointains elles s'effacent (la vraie galaxie est affichée) | Pas de scintillement ; les 40 étoiles les plus proches ne sont pas dans la cubemap (ce sont de vrais objets) ; la bande est celle d'un tirage de 1,6 x 512² points, pas de la vraie liste d'étoiles |
+
+Commandes de test : `/brouillard [oui\|non\|auto\|0-100]`, `/meteo [clair\|auto]`, `SPACESPORE_TEST_FOG=<0..1>`,
+`SPACESPORE_TEST_LOOKUP=1` (avec `SPACESPORE_TEST_COCKPIT=1` pour regarder le ciel).
+
 ### Bloc V — Espace spectaculaire (V2, V3, V4 des idées)
 
 | Phase | Contenu | Taille |

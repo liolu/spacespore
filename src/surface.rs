@@ -1732,6 +1732,10 @@ fn surface_control(
                 if k.just_pressed(VIEW_KEY) {
                     surface.fcockpit = !surface.fcockpit;
                 }
+                // Tests : `SPACESPORE_TEST_LOOKUP=1` regarde vers le haut (le ciel)
+                if std::env::var_os("SPACESPORE_TEST_LOOKUP").is_some() {
+                    surface.fpitch = -1.25;
+                }
                 // Tests : `SPACESPORE_TEST_COCKPIT=1` garde la vue cockpit
                 if std::env::var_os("SPACESPORE_TEST_COCKPIT").is_some() {
                     surface.fcockpit = true;
@@ -2058,6 +2062,7 @@ fn update_suns(
     settings: Res<GameSettings>,
     stars: Query<(&Transform, &StarId), (With<StarRoot>, Without<SurfaceSun>)>,
     dim: Res<crate::sky::SunDim>,
+    fog: Res<crate::fog::FogState>,
     mut suns: Query<(Entity, &SurfaceSun, &mut DirectionalLight, &mut Transform)>,
     mut cascades: Local<f32>,
 ) {
@@ -2081,7 +2086,7 @@ fn update_suns(
             Some(&(dir, w, lux)) if w > 0.02 => {
                 // La lumière va de l'étoile vers l'astre
                 *tf = Transform::default().looking_to(-dir, if dir.y.abs() > 0.99 { Vec3::X } else { Vec3::Y });
-                (lux * k, settings.shadows)
+                (lux * k, settings.shadows || fog.density > 0.03)
             }
             _ => (0.0, false),
         };
@@ -2282,7 +2287,7 @@ fn surface_light(
 // ─────────────────────────────────────────────────────────────────────────
 
 #[derive(Component)]
-struct Lamp {
+pub(crate) struct Lamp {
     /// Phares du vaisseau (sinon, lampe du marcheur).
     headlight: bool,
 }
