@@ -10,7 +10,7 @@ Objectif : **reprendre le contrôle** du LOD et de la lumière (les deux plus gr
 
 Ensuite seulement, on **optimise** le LOD et la lumière à partir des chiffres.
 
-Source : conversation avec ChatGPT (`prompt0.20.md`), qui ne connaissait pas le projet. Cette feuille
+Source : conversation avec ChatGPT (`roadmaps/a-faire/prompt0.20.md`), qui ne connaissait pas le projet. Cette feuille
 de route garde ses bonnes idées et les **adapte au code réel** (Bevy 0.15, origine flottante,
 ~12 500 systèmes, tuiles de terrain asynchrones).
 
@@ -315,11 +315,11 @@ Ordre : T1 → T2 → T3 → T4 → T5 → T6 → (T7 et T8 dans l'ordre que don
 
 ## 11. Prompts (à coller dans une nouvelle session, une par phase)
 
-Chaque prompt suppose : « Lis `ROADMAP-0.20-debug-opti.md` et `CLAUDE.md`. Crée la branche
+Chaque prompt suppose : « Lis `roadmaps/a-faire/ROADMAP-0.20-debug-opti.md` et `CLAUDE.md`. Crée la branche
 `claude/roadmap-0-20-tX` depuis `main`. Build release. Ouvre une PR non fusionnée avec mesures et
 captures. »
 
-- **T1** — « Phase T1 de `ROADMAP-0.20-debug-opti.md` : crée `src/tuning.rs` avec la ressource `Tuning`
+- **T1** — « Phase T1 de `roadmaps/a-faire/ROADMAP-0.20-debug-opti.md` : crée `src/tuning.rs` avec la ressource `Tuning`
   rangée par groupes (règle 1). Remplace toutes les constantes listées au §2 (`lod.rs`, `terrain.rs`,
   `surface.rs`, `planet.rs`, `decor.rs`, `gas.rs`, `graphics.rs`, `astre/mod.rs`) par des lectures de
   `Tuning`, avec les valeurs actuelles par défaut. JSON dans `saves/vX.Y.Z/tuning/`. Aucun changement

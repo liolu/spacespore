@@ -1,4 +1,4 @@
-//! Ceintures d'astéroïdes d'un système (C1 de `ROADMAP-0.11.md`).
+//! Ceintures d'astéroïdes d'un système (C1 de `roadmaps/fait/ROADMAP-0.11.md`).
 //!
 //! Comme le Soleil : une ceinture rocheuse là où une géante a empêché une planète de se former
 //! (juste avant la première géante, au-delà de la ligne des glaces), et une ceinture glacée externe

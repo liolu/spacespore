@@ -3,19 +3,19 @@
 Objectif : des planètes **beaucoup plus grandes en voxels**, un **vrai relief** (montagnes, falaises,
 vallées), une **vraie eau**, un ciel et un espace spectaculaires, puis les aliens et la terraformation.
 La faune, la végétation vivante, les rivières, la géologie active, le son et les points d'intérêt
-(bloc D de la 0.11) sont dans la **0.14** (`ROADMAP-0.14.md`). **Aucune concession sur la qualité** : la performance s'obtient par la mesure,
+(bloc D de la 0.11) sont dans la **0.14** (`roadmaps/a-faire/ROADMAP-0.14.md`). **Aucune concession sur la qualité** : la performance s'obtient par la mesure,
 le LOD et le travail en arrière-plan, jamais en retirant du détail.
 
 Cette feuille de route rassemble :
 
 | Source | Ce qui est repris |
 |---|---|
-| `RAPPORT-generation-terrain.md` | Terrain plat, eau opaque : relief en voxels, vraie eau, couleurs, horizon, **planètes plus grandes** (décision du 04/10) |
+| `roadmaps/fait/RAPPORT-generation-terrain.md` | Terrain plat, eau opaque : relief en voxels, vraie eau, couleurs, horizon, **planètes plus grandes** (décision du 04/10) |
 | `IDEES-prochaine-version.md` (supprimé, tout est ici) | R1 détail du terrain, R2 brouillard, V1 skybox, V2 trous noirs, V3 voyage entre galaxies, V4 vue de la galaxie inclinée, A1 aliens, A2 terraformation |
-| `A-FAIRE-PLUS-TARD.md` (bloc D de la 0.11) | **Déplacé en 0.14** (`ROADMAP-0.14.md`, 04/10/2026) |
+| `roadmaps/a-faire/A-FAIRE-PLUS-TARD.md` (bloc D de la 0.11) | **Déplacé en 0.14** (`roadmaps/a-faire/ROADMAP-0.14.md`, 04/10/2026) |
 
 Point de départ : **v0.12.0** (éditeur de modèles + correctifs C1 à C8). Les outils de mesure et de
-réglage (panneau, benchmark) restent dans la **0.20** (`ROADMAP-0.20-debug-opti.md`) : la 0.13 mesure
+réglage (panneau, benchmark) restent dans la **0.20** (`roadmaps/a-faire/ROADMAP-0.20-debug-opti.md`) : la 0.13 mesure
 avec ce qui existe (bancs `bench_*`, FPS, captures).
 
 Chaque phase = une branche `claude/roadmap-0-13-<phase>`, une PR non fusionnée : tu testes, puis tu dis
@@ -73,7 +73,7 @@ Elles devront passer en **voxels** (ou en fraction du rayon) au changement d'éc
 
 Relief plat et en paliers, eau opaque sans fond marin (`terrain.rs:520`), brouillard seulement à
 grande distance (`gas.rs:155`), pas de skybox, trous noirs en cubes, pas de faune ni de végétation
-vivante, pas de son. Détails dans `RAPPORT-generation-terrain.md`.
+vivante, pas de son. Détails dans `roadmaps/fait/RAPPORT-generation-terrain.md`.
 
 ---
 
@@ -140,6 +140,48 @@ grande**.
 | **O1. Vraie eau** | La hauteur du **fond** est gardée sous la mer (`terrain.rs:520`) : fond marin, fosses, plages qui descendent. **Surface d'eau à part** : maillage par tuile au niveau de la mer (marées comprises), matériau **transparent** (`AlphaMode::Blend` ou passe dédiée), couleur et opacité selon la **profondeur** (fond visible près du bord), reflet selon l'angle (**Fresnel**), reflet du ciel et du soleil, réfraction légère. Même chose pour méthane et ammoniac (leurs couleurs) ; lave opaque et lumineuse. De l'espace : mer sombre avec le reflet de l'étoile. `PROTOCOL` +1. | L |
 | **O2. Vagues, rivage, sous l'eau** | **Vagues** selon le vent de `weather.rs` (normales animées + déplacement des sommets près du joueur), **écume** au rivage et sur les crêtes, **sous l'eau** : brouillard coloré, lumière atténuée avec la profondeur, **caustiques** au fond, rayons de lumière, **nage** (marcheur), le vaisseau peut plonger ; bulles. | L |
 
+### Bloc P — Approche planétaire : entrer, sortir, se poser
+
+Aujourd'hui (`surface.rs`) : depuis la vue espace, **V** lance une descente scriptée (`begin_descent`) vers le
+point visé, de n'importe quelle distance ; zoomer sous `flight_zoom` (1000) fait **basculer d'un coup** en vol
+bas (caméra replacée, terrain créé), dézoomer au-delà fait l'inverse (`surface.abort()`). Dans la vue espace, le
+vaisseau reste garé au-dessus de l'astre : on ne peut pas tourner autour de la planète en pilotant. Rien ne
+marque l'entrée dans l'atmosphère.
+
+But : **un seul vol continu** de l'orbite au sol et retour, sans coupure ni téléportation ; on tourne autour
+de la planète en pilotant ; on ne se pose que **près du sol** ; l'entrée dans l'atmosphère se voit et se sent.
+
+| Phase | Contenu | Taille |
+|---|---|---|
+| **P1. Vol orbital** | Dans la vue espace près d'un astre, **ZQSD pilote le vaisseau autour de la planète** (vitesse proportionnelle à l'altitude, Espace / Ctrl = monter / descendre, Maj = plus vite), la caméra suit derrière lui ; trajectoire et point au sol sous le vaisseau affichés (`IndicatorGizmos`) ; altitude, vitesse et vitesse verticale au HUD. **V ne marche que près du sol** (sous 200 voxels, Q9) : plus haut, message « Trop haut pour atterrir : descendez (Ctrl) ». **Plus de descente automatique** depuis l'orbite (Q7) : on descend en pilotant, V sert seulement à se poser. Le vaisseau garé dans l'espace reste possible (aucune touche = il garde son orbite). | L |
+| **P2. Transition sans coupure** | Plus de bascule à `flight_zoom` : altitude, vitesse, caméra et repère changent **en continu** de l'orbite au vol bas (une seule loi de vol, distance de caméra lissée, repère fixe de l'astre gardé du haut jusqu'au sol, `f64` là où il faut, règle 19). Maillage lointain → tuiles en fondu (T4), tuiles demandées **devant la trajectoire** avant d'y arriver (E3), ciel qui passe du noir à la couleur de l'atmosphère avec l'altitude (`daylight`, `atmosphere_depth`), brume et horizon qui se courbent progressivement. Même chose à la montée. Critère : de l'orbite au sol et retour sans saut d'image, sans pic > 33 ms, sans trou de terrain. | XL |
+| **P3. Rentrée atmosphérique** | Sur un astre **avec air** : sous l'altitude de l'atmosphère, **flammes de plasma sous le vaisseau** (côté qui avance), lueur orange → blanche selon vitesse × densité de l'air (pression de `BodyParams`), traînée lumineuse derrière, secousses de caméra, coque qui rougeoit (matériau émissif des blocs), freinage par l'air (la vitesse maxi baisse avec la densité). **Tout selon la vitesse** (Q11) : lent = rien, rapide = flammes. **Pas de dégâts** (Q8). Couleur des flammes selon l'atmosphère (azote = orange, CO2 = rose, méthane = vert-bleu…). Sans air : **pas de flammes**, rétrofusées qui freinent. Géantes gazeuses : rentrée plus violente, puis la pression de `gas.rs`. Vu par les autres joueurs (réseau : état « rentrée » dans `Looks`). | L |
+| **P4. Traverser les nuages** | Les nuages de `weather.rs` (cubes) **s'écartent autour du vaisseau** : les cubes proches s'effacent / sont repoussés, un **sillage** reste ouvert quelques secondes puis se referme ; à l'intérieur d'un nuage : brouillard blanc ou gris (C1), gouttes ou givre sur le cockpit (vue intérieure), turbulences, éclairs dans un nuage d'orage ; au-dessus : mer de nuages éclairée par le soleil, ombre du vaisseau sur les nuages. | L |
+| **P5. Se poser et décoller** | Approche finale : **ombre du vaisseau** sur le sol qui grandit, train d'atterrissage (blocs de l'éditeur E6), **poussière / neige / sable / eau soulevés** par la poussée selon la matière du sol, flammes des tuyères orientées vers le bas ; pente maxi (Q10) et zone d'atterrissage proposée (point plat le plus proche) ; poser doux (vitesse verticale limitée près du sol). Décollage : même poussière, montée progressive, rentrée inverse (flammes plus faibles à la montée). | M |
+| **P6. Vitesse et air** | Selon la **vitesse dans l'air** (Q11, vitesse du son d'après la température et les gaz de l'astre) : **bang supersonique** au passage du mur du son (onde visible, secousse, entendu par les joueurs proches), **cône de condensation** autour du vaisseau près de Mach 1 dans un air humide, **traînées de condensation** en haute altitude (visibles du sol, s'effacent avec le vent). **Aérofreinage** : passer dans la haute atmosphère ralentit et fait baisser l'orbite, plusieurs passages pour se poser sans fusées. **Bouclier thermique en option** (Q8, désactivé par défaut) : avec l'option, trop vite trop bas = surchauffe (jauge au HUD) puis dégâts. | M |
+| **P7. Aide à l'approche** | **Indicateurs** : couloir de descente dessiné, point d'impact prévu au sol, temps avant le sol, alerte « trop vite » avant la rentrée et avant le sol, altitude au-dessus du relief (pas seulement du niveau de la mer). **Points d'atterrissage** au scanner : plateaux, plages, clairières plats sous 25° (Q10), classés par distance, cliquables comme cible ; plus tard spatioports, bases, villages aliens (L5). | M |
+| **P8. Météo, lumière, cockpit** | **Météo qui gêne** l'approche : vent de travers (C3), turbulences d'orage, **givre** en altitude (vitre et ailes qui blanchissent), pluie et grêle sur le cockpit, **foudre** qui frappe le vaisseau dans un orage (éclair + secousse ; dégâts seulement avec l'option de P6). **Phares automatiques** de nuit et dans les nuages, feux de position clignotants vus de loin, reflet du vaisseau sur la mer (O1). **Vue cockpit** (1re personne) pendant la rentrée : vitre qui rougeoit, plasma devant, instruments qui tremblent. **Liseré bleu de l'atmosphère** vu de l'espace (couleur du ciel de l'astre) qui s'épaissit en descendant, aurores traversées près des pôles. | L |
+| **P9. Son et autres joueurs** | **Son** (premier système de son du jeu, la musique reste pour plus tard) : sifflement de l'air qui monte avec la vitesse, grondement de la rentrée, bang, tonnerre, moteurs, **silence dans le vide** ; volume selon la densité de l'air. **Autres joueurs** : leur rentrée vue de loin comme une **étoile filante** (traînée lumineuse dans le ciel, de jour et de nuit), leur bang entendu avec le retard de la distance ; réseau : état « rentrée » et vitesse dans `Looks`. | L |
+
+**État du bloc P : fait en v0.13.4** (`approche.rs`, `approche_fx.rs`, `approche_ui.rs`, `sound.rs`, shaders
+`cloud_clear.wgsl` et `rim.wgsl`).
+
+| Phase | Ce qui est fait | Limites connues |
+|---|---|---|
+| P1 | Vol orbital : ZQSD pilote depuis la vue espace (`FLIGHT_ENTER_RADII` 8 rayons), vitesse ∝ altitude (au plus 0,35 rayon / s), HUD altitude / vitesse / vertical / Mach, trajectoire + point au sol + point d'impact (gizmos), V seulement sous 200 voxels (Q9), plus de descente automatique (Q7) | Pas de vraie mécanique orbitale : sans touche, le vaisseau s'arrête (il garde sa position, pas sa vitesse) |
+| P2 | Une seule loi du sol à l'orbite : ceiling 4 rayons, vaisseau qui grossit avec l'altitude (jamais moins de 1/30 de l'altitude), caméra qui recule et se penche vers la planète (`cam_blend`), ciel et brume selon `air`, maillage lointain lisse au-dessus de 0,30 rayon (hystérésis 0,20) | Bascule tuiles / maillage lointain instantanée (pas de fondu) ; tuiles pas encore demandées « devant la trajectoire » ; le maillage lointain garde ses terrasses (bug B1 de `ROADMAP-0.13.4-correctifs.md`). Mesure (`SPACESPORE_PERF`, montée puis rentrée puis pose, 27 s) : médiane 179 images/s, 1 % bas 54, aucune image > 33 ms, pire 29,5 ms |
+| P3 | Plasma selon chaleur = f(densité x Mach^3) (`approche::heat`), couleur selon l'air (`BodyParams::plasma`), traînée, lueur (lumière ponctuelle), secousses, freinage de l'air (`DRAG_Q0`), géantes x1,6, rétrofusées dans le vide, flammes moitié moins fortes à la montée, état « rentrée » dans `Looks` (PROTOCOL 35) | Pas de matériau émissif sur les blocs de la coque (la lumière rougeoie à la place) |
+| P4 | Nuages (`CloudMaterial`) tramés autour du vaisseau et de son sillage de 6 s ; brouillard gris / blanc dans la dalle, phares, turbulences, éclairs (secousse + message, sans dégâts), givre, gouttes sur la vitre (cockpit), ombre du vaisseau sur la mer de nuages | Les nuages sont des dalles : le brouillard n'est dedans que dans la dalle |
+| P5 | Ombre projetée selon le soleil, train d'atterrissage (état « atterrissage » du modèle sous 240 voxels et 160 voxels/s), poussière / neige / sable / eau selon la matière (`dust_color`), pente maxi 25 deg (Q10) avec point plat proposé (cercle vert) et V pour s'y poser, poser et décoller avec les mêmes effets | Les flammes de tuyères restent celles du modèle |
+| P6 | Bang (anneau + secousse + son), cône de condensation près de Mach 1, traînées en haute altitude (air humide), aérofreinage (la traînée freine), bouclier thermique en option (`/bouclier`, jauge SURCHAUFFE, dégâts `HeatDamage`) | Pas de succession de passages d'aérofreinage : la mécanique orbitale n'existe pas |
+| P7 | Couloir de descente (portes vertes / rouges), point d'impact prévu, temps avant le sol, alertes « trop vite » (rentrée, sol), altitude au-dessus du relief, points d'atterrissage plats au scanner (plage, plateau, clairière, neige, plaine ; touche L = suivant, cercle vert) | Spatioports, bases, villages : avec L5 |
+| P8 | Vue cockpit (F5 en vol : vitre rougeoyante, givre, gouttes, secousses x2,5), phares dans les nuages, feux de position et strobe, liseré bleu de l'atmosphère (`RimMaterial`), foudre, givre | Reflet du vaisseau sur la mer et aurores traversées non faits ; les instruments du HUD ne tremblent pas |
+| P9 | Premier son du jeu, synthétisé (aucun fichier) : vent (hauteur et volume selon la vitesse), grondement de rentrée, moteurs, bang, tonnerre retardé par la distance, silence dans le vide ; `/volume` ; autres joueurs : leur rentrée est une étoile filante, leur bang arrive avec le retard de la distance | Pas de musique (plus tard) ; pas de son spatialisé (volume seulement) |
+
+Commandes de test ajoutées : `/vol`, `/mer`, `/nuage`, `/essai mer`, `/jour`, `/nuit`, `/heure <h>`, `/volume`,
+`/bouclier` ; variables `SPACESPORE_TEST_FLY=up|reentry[:s]|slow|climb`, `SPACESPORE_TEST_FLYKEY`,
+`SPACESPORE_TEST_COCKPIT` (voir `TESTS-JEU.md`).
+
 ### Bloc C — Ciel et atmosphère (R2, V1 des idées)
 
 | Phase | Contenu | Taille |
@@ -174,6 +216,9 @@ v0.12.0 (éditeur + correctifs)
    T1 → T2 → T3 → T4           le relief à la nouvelle échelle
    │
    O1 → O2                     l'eau sur ce relief
+   │
+   P1 → P2 → P3 → P4 → P5      entrer, sortir, se poser (P4 utilise C1 si fait avant)
+   P6 → P7 → P8 → P9           vitesse et air, aide à l'approche, météo et cockpit, son
    │                           ── release 0.13.0 « Mondes » ──
    C1 → C2                     brouillard, skybox
    V1 → V2 → V3                trous noirs (utilise C2), voyage, vue inclinée
@@ -200,6 +245,8 @@ relief et de l'eau finis.
 | **Réseau** : génération modifiée 3 fois (E2, T1, O1) | `PROTOCOL` +1 à chaque fois |
 | **Temps de trajet** au sol (planète 16 fois plus grande) | Vol bas plus rapide, vol suborbital (E2) |
 | **Taille de la 0.13** | Trois releases (§5) ; chaque phase jouable seule |
+| **Transition continue** (P2) : tuiles et maillage lointain chargés en même temps à mi-altitude, précision du repère | Fondu de T4, priorité devant la trajectoire (E3), mesures en descente rapide, `f64` (règle 19) |
+| **Nuages qui s'écartent** (P4) : couche reconstruite en arrière-plan (`rebuild_clouds`) | Écartement dans le shader / par masque autour du vaisseau, pas de reconstruction |
 
 ---
 
@@ -213,12 +260,17 @@ relief et de l'eau finis.
 | Q4 | Durée du voyage entre galaxies ? | 10 s, passable avec Échap. |
 | Q5 | Aliens : combat ? amicaux ? commerce ? | Pas de combat au début ; attitude tirée de la graine (amicale, méfiante, hostile = refuse le contact) ; commerce oui. |
 | Q6 | Terraformation : le joueur, les aliens, ou les deux ? En combien de temps ? | Les deux ; plusieurs heures de jeu pour un changement net, plusieurs jours pour une planète entière. |
+| Q7 | V depuis l'orbite : supprimer la descente automatique ou la garder en pilote automatique ? | **Décidé** : V sert seulement à se poser, **pas de pilote automatique**. |
+| Q8 | Rentrée : **dégâts** si l'on arrive trop vite (bouclier thermique) ? | **Décidé** : pas de dégâts ; bouclier thermique en **option** (désactivée par défaut). |
+| Q9 | À quelle hauteur peut-on atterrir (V) ? | **Décidé** : sous **200 voxels** au-dessus du sol. |
+| Q10 | Pente maxi pour se poser ? | **Décidé** : **25°** ; au-delà, message et proposition du point plat le plus proche. |
+| Q11 | Quelles idées d'amélioration garder ? | **Décidé** : toutes (P6 à P9), les effets **selon la vitesse**. |
 
 ---
 
 ## 8. Prompts (à coller dans une nouvelle session, un par phase)
 
-Contexte commun : « Lis `ROADMAP-0.13.md`, `RAPPORT-generation-terrain.md` et `CLAUDE.md` (règles 1 à
+Contexte commun : « Lis `roadmaps/a-faire/ROADMAP-0.13.md`, `roadmaps/fait/RAPPORT-generation-terrain.md` et `CLAUDE.md` (règles 1 à
 19). `git pull origin main` avant de coder. Branche `claude/roadmap-0-13-<phase>`. Build release,
 tests, mesures avant / après (règle 18) et captures. PR non fusionnée (je dirai « push main »). Aucune
 concession sur la qualité ; ne change ni les tailles de l'espace ni les décisions sans me demander. »
@@ -243,6 +295,23 @@ concession sur la qualité ; ne change ni les tailles de l'espace ni les décisi
   profondeur, Fresnel, reflets, autres liquides ; vue de l'espace ; PROTOCOL +1. »
 - **O2** — « [contexte commun] Phase O2 : vagues selon le vent, écume, sous l'eau (brouillard,
   caustiques, rayons), nage, plongée du vaisseau. »
+- **P1** — « [contexte commun] Phase P1 : vol orbital autour de l'astre dans la vue espace (ZQSD, altitude,
+  HUD), V seulement sous 200 voxels (Q9), plus de descente automatique (Q7). »
+- **P2** — « [contexte commun] Phase P2 : transition continue orbite ↔ vol bas sans bascule ni saut (caméra,
+  repère, tuiles devant la trajectoire, ciel) ; mesures en descente rapide. »
+- **P3** — « [contexte commun] Phase P3 : rentrée atmosphérique (flammes de plasma selon vitesse et densité,
+  couleur selon les gaz, coque qui rougeoit, freinage, rien sans air) ; vue par les autres joueurs. »
+- **P4** — « [contexte commun] Phase P4 : traverser les nuages (ils s'écartent, sillage, brouillard dedans,
+  turbulences, éclairs, mer de nuages au-dessus). »
+- **P5** — « [contexte commun] Phase P5 : se poser et décoller (ombre, train, poussière selon le sol, pente
+  maxi Q10, zone plate proposée). »
+- **P6** — « [contexte commun] Phase P6 : bang supersonique, cône de condensation et traînées selon la vitesse
+  dans l'air, aérofreinage, bouclier thermique en option (Q8). »
+- **P7** — « [contexte commun] Phase P7 : indicateurs d'approche, points d'atterrissage au scanner (Q10). »
+- **P8** — « [contexte commun] Phase P8 : météo qui gêne (vent, givre, foudre), phares automatiques, vue cockpit
+  pendant la rentrée, liseré bleu de l'atmosphère. »
+- **P9** — « [contexte commun] Phase P9 : premier système de son (air, rentrée, bang, silence dans le vide) et
+  rentrée des autres joueurs vue comme une étoile filante. »
 - **C1** — « [contexte commun] Phase C1 : brouillard au sol, bancs volumétriques de la météo, rayons de
   soleil, couleurs, phares, grottes. »
 - **C2** — « [contexte commun] Phase C2 : skybox générée depuis la galaxie réelle, refaite au changement

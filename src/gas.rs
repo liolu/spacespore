@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────
-//  Géantes gazeuses et neptuniennes (phase 2 de `ROADMAP-0.10.md`)
+//  Géantes gazeuses et neptuniennes (phase 2 de `roadmaps/fait/ROADMAP-0.10.md`)
 //
 //  Pas de sol : on peut y entrer en vol (navigation basse altitude), mais la pression abîme la
 //  coque du vaisseau tant qu'il y reste, d'autant plus vite qu'il descend profond et que la
@@ -159,7 +159,10 @@ pub(crate) fn gas_atmosphere(
                 let dust = weather.sample.dust;
                 let c = Color::srgb(c.to_srgba().red + (0.55 - c.to_srgba().red) * dust * 0.7, c.to_srgba().green + (0.42 - c.to_srgba().green) * dust * 0.7, c.to_srgba().blue + (0.28 - c.to_srgba().blue) * dust * 0.7);
                 // La nuit, la brume ne cache plus les lunes, les planètes ni les étoiles
-                let c = c.with_alpha(surface.haze_opacity());
+                // Dans l'espace (peu d'air au-dessus de la caméra) la brume s'efface (0.13 P2)
+                let air = surface.air();
+                let visibility = visibility / air.max(0.02).powi(2);
+                let c = c.with_alpha(surface.haze_opacity() * air.sqrt());
                 commands.entity(cam).insert(DistanceFog { color: c, falloff: FogFalloff::from_visibility(visibility), ..default() });
             }
             None if has_fog => {

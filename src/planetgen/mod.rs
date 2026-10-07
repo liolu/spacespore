@@ -1,4 +1,4 @@
-//! Génération des étoiles et des planètes (feuille de route `ROADMAP-0.10.md`).
+//! Génération des étoiles et des planètes (feuille de route `roadmaps/fait/ROADMAP-0.10.md`).
 //!
 //! Chaîne visée : étoile → orbite → physique → atmosphère → climat → eau → géologie → relief →
 //! biomes → vie, déterministe, cohérente et légère en mémoire. Phase 0 (fondations) :

@@ -1,4 +1,4 @@
-//! Éditeur de modèles voxel (0.12, `ROADMAP-0.12-editeur.md`) : personnages, vaisseaux, objets.
+//! Éditeur de modèles voxel (0.12, `roadmaps/fait/ROADMAP-0.12-editeur.md`) : personnages, vaisseaux, objets.
 //!
 //! - E0 : l'état du jeu `AppState` (Jeu / Editeur : en éditeur, le jeu ne lit plus le clavier ni la
 //!   souris), ouverture à la **création du personnage** (premier lancement), depuis le menu et par

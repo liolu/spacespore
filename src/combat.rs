@@ -42,7 +42,7 @@ impl Plugin for CombatPlugin {
             .add_systems(Startup, setup_combat_hud)
             .add_systems(
                 Update,
-                (reset_on_new_session, fire, receive_hits, gas_pressure, asteroid_hits, repair, announce, draw_beams, update_combat_hud)
+                (reset_on_new_session, fire, receive_hits, gas_pressure, asteroid_hits, heat_hits, repair, announce, draw_beams, update_combat_hud)
                     .chain()
                     .after(crate::surface::SurfaceControl),
             )
@@ -287,6 +287,31 @@ fn asteroid_hits(
             net.notify(&format!("Vaisseau detruit : choc contre un asteroide a {:.0} u/s !", hit.speed), now);
         } else {
             net.notify(&format!("Choc contre un asteroide ({:.0} u/s) : coque -{}.", hit.speed, hit.damage), now);
+        }
+    }
+}
+
+/// Surchauffe de la rentrée (0.13 P6, bouclier thermique en option) : dégâts de coque ; à 0 PV, le
+/// vaisseau est détruit et ramené en orbite.
+fn heat_hits(
+    time: Res<Time>,
+    mut hits: EventReader<crate::approche_ui::HeatDamage>,
+    mut state: ResMut<CombatState>,
+    mut net: ResMut<Net>,
+    mut surface: ResMut<crate::surface::Surface>,
+) {
+    for hit in hits.read() {
+        if net.local.hp == 0 || hit.0 == 0 {
+            continue;
+        }
+        let now = time.elapsed_secs_f64();
+        state.last_damage = now;
+        state.regen = 0.0;
+        net.local.hp = net.local.hp.saturating_sub(hit.0);
+        if net.local.hp == 0 {
+            state.dead_until = Some(now + RESPAWN_SECS);
+            surface.eject();
+            net.notify("Vaisseau detruit : la coque a fondu a la rentree (trop vite, trop bas) !", now);
         }
     }
 }

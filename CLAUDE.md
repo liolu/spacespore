@@ -29,6 +29,8 @@ chose ; ne jamais relancer 2 fois le meme test sans rien changer.
 
 ## Structure
 
+- Feuilles de route et rapports : `roadmaps/fait/` (terminés) et `roadmaps/a-faire/` (en cours ou à venir),
+  sommaire dans `roadmaps/README.md`. Une feuille de route terminée passe de `a-faire/` à `fait/`.
 - Cargo workspace : root = jeu, `tools/` = common/installer/updater/launcher
 - Origine flottante (`src/origin.rs`, `settings::origin/to_local/to_abs`) : les positions des entites sont des f32
   relatives a une origine absolue en f64 qui suit le vaisseau (recentrage au-dela de 100 000). Ne jamais garder une
@@ -88,7 +90,7 @@ chose ; ne jamais relancer 2 fois le meme test sans rien changer.
   droit, molette), `V` = atterrir (sortir du vaisseau) puis marcher, `V` = redecoller. Le dessous du vaisseau reste
   parallele a la surface. `src/terrain.rs` = terrain voxel (champ de hauteur, quadtree de tuiles),
   `src/surface.rs` = vol, atterrissage, marche, lumiere. Saves : `saves/vX.Y.Z/` (settings, world, info).
-- Generation 0.10 (`ROADMAP-0.10.md`) : module `src/planetgen/`. Les planetes et lunes ne sont plus stockees :
+- Generation 0.10 (`roadmaps/fait/ROADMAP-0.10.md`) : module `src/planetgen/`. Les planetes et lunes ne sont plus stockees :
   `sys.planets()` les recalcule depuis le genome du systeme (cache libere loin du vaisseau), `planets_mut()`
   pour l'editeur, `planets_uncached()` pour parcourir tous les systemes. Profils `StarProfile`/`PlanetProfile`,
   sous-graines par couche (`seeds.rs`, numeros figes), conversions dans `units.rs` uniquement, valeurs
@@ -101,7 +103,7 @@ chose ; ne jamais relancer 2 fois le meme test sans rien changer.
   comptes et pourcentages de tous les astres d'une galaxie (`stats.rs`, calcul en arriere-plan, panneau F3,
   fichier `saves/vX.Y.Z/stats/`). Option « Afficher zones » (menu Options) : zones chaude / habitable / froide du
   systeme charge (`zones.rs`, limites interpolees entre les vraies planetes).
-- 0.11 (`ROADMAP-0.11.md`) : A1 = horloge du monde `world_clock.rs` (`WorldClock`, secondes de jeu f64, `clock` de
+- 0.11 (`roadmaps/fait/ROADMAP-0.11.md`) : A1 = horloge du monde `world_clock.rs` (`WorldClock`, secondes de jeu f64, `clock` de
   `world.json` ecrit toutes les 30 s, donnee par l'hote : `net::follow_host_clock`, PROTOCOL 16). Orbites
   (`kepler::position(t: f64)`) et rotation = f(horloge). 1 h de la planete = 1 min de jeu (jour <= 3 h), saisons
   1 h en moyenne (`season_secs`, `SEASON_REF_DAYS`). `Spin` : rotation autour de l'axe incline (l'axe penche vers
@@ -207,7 +209,7 @@ chose ; ne jamais relancer 2 fois le meme test sans rien changer.
   autour de la camera (`particle_positions`), vent qui pousse le vaisseau en vol bas (`Surface::drift`), scanner.
   Banc : `cargo test --release bench_cloud_layer -- --ignored --nocapture`.
   Particules : `NoFrustumCulling` (sommets reecrits a chaque image) ; `SPACESPORE_TEST_PRECIP=<0..1>` force la pluie.
-- 0.12 (`ROADMAP-0.12-editeur.md`) : editeur de modeles voxel, module `src/editeur/`. E0 = fondations : etat
+- 0.12 (`roadmaps/fait/ROADMAP-0.12-editeur.md`) : editeur de modeles voxel, module `src/editeur/`. E0 = fondations : etat
   `AppState` (Jeu / Editeur, `editeur::in_game` coupe le clavier et la souris du jeu), ouvert au premier lancement
   (`GameSettings::first_launch`, creation du personnage), par le bouton du menu (`EditorMenuButton`) et `/editeur`.
   Format `.ssvox` (`format.rs`) : archive zip (meta.json + voxels.bin + zones.bin), palette 255 couleurs +
@@ -317,7 +319,7 @@ chose ; ne jamais relancer 2 fois le meme test sans rien changer.
   0,12 a 0,24 de la largeur, Kuiper plate). `StarOrbit::period` = vraie periode (paire serree 1 a 200 j =
   24 min a 80 h de jeu, compagnon lointain en siecles) ; paire serree a un quart de la premiere orbite permise.
   PROTOCOL 30.
-- 0.11.4 correctifs (`ROADMAP-0.11.4-correctifs.md`, une PR par phase C1..C8). C1 editeur : outil Ajouter =
+- 0.11.4 correctifs (`roadmaps/fait/ROADMAP-0.12-correctifs.md`, une PR par phase C1..C8). C1 editeur : outil Ajouter =
   un clic un bloc, le trait reste sur le plan du premier bloc (`Editor::add_plane`, `view::plane_cell`) ;
   panneaux qui defilent jusqu'au bout du contenu des que la souris est dedans, barre `ScrollThumb` tirable ;
   `view::UiHover` (panneaux + boutons) ; lumiere d'atelier qui suit la camera + contre-jour (`follow_light`,
@@ -364,7 +366,7 @@ chose ; ne jamais relancer 2 fois le meme test sans rien changer.
   (`galaxy_jump_range`, sphere dessinee face a la camera en vue d'ensemble par `draw_travel_range`). Toutes les
   etoiles visibles a portee ont leur cercle (pas les cachees par l'eclaircissement) ; cercles de taille fixe dans
   l'espace (celui d'un trou noir galactique = son disque), 6 px pour un point.
-- 0.13 (`ROADMAP-0.13.md`) : E1 = etude d'echelle (`RAPPORT-echelle-E1.md`) : `terrain::set_voxel_scale(k)` /
+- 0.13 (`roadmaps/a-faire/ROADMAP-0.13.md`) : E1 = etude d'echelle (`roadmaps/fait/RAPPORT-echelle-E1.md`) : `terrain::set_voxel_scale(k)` /
   `layout_scaled`, `/echelle k`, `SPACESPORE_SCALE=k` ; banc `cargo test --release bench_scale -- --ignored
   --nocapture --test-threads=1` ; mesures en jeu `SPACESPORE_PERF=<fichier>` (+ `_FROM` / `_TO` en s :
   images/s medianes, 1 % bas, > 33 ms), `SPACESPORE_TEST_WALK=1` (marche tout droit). Choix : k = 16.
@@ -431,6 +433,26 @@ chose ; ne jamais relancer 2 fois le meme test sans rien changer.
   `SurfaceControl`, poussiere, message. Chat : `/geologie [geyser|fumerolle|cryovolcan|lave|seisme]` (evente
   actif le plus proche ; seisme = force, tests). Tests : `SPACESPORE_TEST_CMD2` (+ `_SECS`, 30 s) = seconde
   commande apres l'atterrissage. PROTOCOL inchange (rien de nouveau dans le monde partage).
+- 0.13 bloc P (v0.13.4, `roadmaps/a-faire/ROADMAP-0.13.md`) = approche planetaire, un seul vol continu de l'orbite au sol :
+  `surface.rs::Flying` (ceiling `ORBIT_CEILING` 4 rayons, vitesse ∝ altitude plafonnee a `ORBIT_SPEED_FRAC` du rayon / s,
+  freinage de l'air `approche::DRAG_Q0`, vaisseau qui grossit avec l'altitude (`stretch`, jamais moins de 1/30 de
+  l'altitude), camera `cam_dist` qui recule et se penche, entree par ZQSD depuis la vue espace a moins de
+  `FLIGHT_ENTER_RADII` rayons, sortie en reculant la molette, `cam_blend` pour le fondu) ; V seulement sous
+  `LAND_ALT_VOXELS` (200, Q9) et sur une pente <= `LAND_MAX_SLOPE` (25, Q10, `slope_deg` / `find_flat`) ; plus de descente
+  automatique. Maillage lointain lisse au-dessus de 0,30 rayon d'altitude de la camera (`TileStore::far_mode`,
+  `FAR_ABOVE` / `FAR_BELOW`). `approche.rs` = physique commune (`FlightInfo` rempli par `surface.rs::flight_info`,
+  `air_density`, `sound_speed` (1 voxel ~ 1 m : 340 voxels/s), `heat` = densite x Mach^3 : lent = rien, rapide = flammes,
+  Q11) ; `BodyParams::plasma` = couleur des flammes selon l'air. `approche_fx.rs` = effets : plasma / traine / cone de
+  condensation / retrofusees / feux de position (enfants du `Ship`, `ShipFx`), ombre / poussiere / traines /
+  onde du bang (enfants de la racine de l'astre, `BodyFx`), nuages qui s'ecartent (`CloudMaterial` = materiau standard +
+  `cloud_clear.wgsl`, conversion des dalles de `planet.rs` par `convert_clouds`, sillage de 6 s), brouillard dans la
+  dalle (`cloud_state`, `cloud_fog`), liseré de l'atmosphere (`RimMaterial`, `rim.wgsl`, coque a `relief + 0,35 x
+  atmosphere_depth`), secousses, autres joueurs (`remote_fx`, `Looks::heat` / `mach`, PROTOCOL 35). `approche_ui.rs` =
+  indicateurs (gizmos : trajectoire, point d'impact, portes du couloir, points plats), alertes, points d'atterrissage
+  (scanner, touche L), bouclier thermique en option (`GameSettings::heat_shield`, `HeatDamage`), vitre du cockpit (F5).
+  `sound.rs` = premier son du jeu, synthetise en WAV en memoire (feature bevy `wav`), boucles pilotees par la vitesse et la
+  densite (`air_gain` : silence dans le vide), bang, tonnerre retarde, `/volume` (`GameSettings::sound_volume`). Tests :
+  `/essai mer`, `/nuage`, `SPACESPORE_TEST_FLY=reentry` (voir `TESTS-JEU.md`), `cargo test --release approche sound`.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

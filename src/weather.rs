@@ -1,4 +1,4 @@
-//! Météo (C5 de `ROADMAP-0.11.md`).
+//! Météo (C5 de `roadmaps/fait/ROADMAP-0.11.md`).
 //!
 //! Tout est une fonction de (graine de l'astre, horloge du monde, lieu) (règle 9) : deux machines
 //! à la même heure voient la même météo, rien ne passe par le réseau.

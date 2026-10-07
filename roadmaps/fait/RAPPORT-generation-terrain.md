@@ -103,7 +103,7 @@ Même cas pour le méthane, l'ammoniac (opaques normaux) et la lave (opaque, ce 
 | Point | Constat | |
 |---|---|---|
 | Couleurs du sol | Variation de ±10 % seulement (`terrain.rs:525`, bruit à l'échelle 12) : grandes plaques uniformes | ✅ |
-| Rivières et lacs | Inexistants (prévus en D1, `A-FAIRE-PLUS-TARD.md`) | ✅ |
+| Rivières et lacs | Inexistants (prévus en D1, `roadmaps/a-faire/A-FAIRE-PLUS-TARD.md`) | ✅ |
 | Plages | Grève seulement à marée basse ; pas de pente de plage douce | ✅ |
 | Sous l'eau | Le marcheur détecte l'eau (`surface.rs:357`) mais il n'y a pas de volume d'eau où plonger | 🔍 |
 | Lunes | `terrain_height` = 3,5 à 5,5 % du rayon (`system.rs:298`), encore plus petites en voxels : encore plus plates | ✅ |

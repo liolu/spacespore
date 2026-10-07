@@ -1,4 +1,4 @@
-//! Anneaux planétaires (C2 de `ROADMAP-0.11.md`).
+//! Anneaux planétaires (C2 de `roadmaps/fait/ROADMAP-0.11.md`).
 //!
 //! - Profil radial (`Ring::profile`) : bandes, divisions vides, bords adoucis ; glace claire ou
 //!   roche sombre selon `Ring::ice`.

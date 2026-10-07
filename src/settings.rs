@@ -222,7 +222,7 @@ pub struct PlanetConfig {
     #[serde(default)] pub ascending_node: f32,
     #[serde(default)] pub arg_periapsis:  f32,
     #[serde(default)] pub mean_anomaly_0: f32,
-    // ── Physique réelle (phase 2 de `ROADMAP-0.10.md`, voir `planetgen::system`) ──
+    // ── Physique réelle (phase 2 de `roadmaps/fait/ROADMAP-0.10.md`, voir `planetgen::system`) ──
     /// Rocheuse, mini-Neptune, géante de glace ou gazeuse (sans sol).
     #[serde(default)] pub kind:           PlanetKind,
     /// Géante chaude (Jupiter chaud, tout près de son étoile).
@@ -322,7 +322,7 @@ pub struct StarConfig {
     #[serde(default = "default_flare_speed")]         pub flare_speed:    f32,
     #[serde(default = "default_flare_size")]          pub flare_size:     f32,
     #[serde(default = "default_flare_distance")]      pub flare_distance: f32,
-    /// Type de l'étoile (phase 1 de `ROADMAP-0.10.md`) ; sa physique complète se recalcule depuis
+    /// Type de l'étoile (phase 1 de `roadmaps/fait/ROADMAP-0.10.md`) ; sa physique complète se recalcule depuis
     /// la graine du système (`planetgen::star::StarPhysics`).
     #[serde(default)]                                 pub class:          StarClass,
     /// Température de surface (K) ; 0 = inconnue (déduite de la couleur).
@@ -489,7 +489,7 @@ pub fn to_abs(local: Vec3) -> DVec3 {
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Un système stellaire. Ses planètes et ses lunes ne sont pas stockées (règle 1 de
-/// `ROADMAP-0.10.md`) : `planets()` les recalcule depuis le génome à la première demande et les
+/// `roadmaps/fait/ROADMAP-0.10.md`) : `planets()` les recalcule depuis le génome à la première demande et les
 /// garde en cache tant que le système est proche du vaisseau (`planetgen::cache`).
 #[derive(Clone, Debug)]
 pub struct StarSystemConfig {
@@ -1082,10 +1082,16 @@ fn default_msaa()        -> u32  { 4 }
 fn default_lod_quality() -> f32  { 1.0 }
 fn default_terrain_detail() -> u8 { 3 }
 fn default_render_scale() -> f32 { 1.0 }
+fn default_sound_volume() -> f32 { 0.6 }
 
 #[derive(Resource, Serialize, Deserialize, Clone, Debug)]
 pub struct GameSettings {
     #[serde(default)] pub save_version: u32,
+
+    /// Bouclier thermique (0.13 P6, option, désactivée par défaut) : trop vite trop bas = surchauffe, puis dégâts.
+    #[serde(default)] pub heat_shield: bool,
+    /// Volume du son (0.13 P9), 0 à 1.
+    #[serde(default = "default_sound_volume")] pub sound_volume: f32,
 
     pub mouse_sensitivity:      f32,
     pub scroll_speed:           f32,
@@ -1186,6 +1192,8 @@ impl Default for GameSettings {
     fn default() -> Self {
         Self {
             save_version: SAVE_VERSION,
+            sound_volume: 0.6,
+            heat_shield: false,
             mouse_sensitivity: 0.5, scroll_speed: 10.0,
             keyboard_speed: 2.0, invert_y: true,
             show_light_indicator: false, show_orbits: false, show_zones: false, show_systems: false,

@@ -1,4 +1,4 @@
-//! Les modèles de l'éditeur dans le jeu (E7, `ROADMAP-0.12-editeur.md`).
+//! Les modèles de l'éditeur dans le jeu (E7, `roadmaps/fait/ROADMAP-0.12-editeur.md`).
 //!
 //! - Un modèle se désigne par une `ModelKey` : un modèle par défaut (`perso:humanoide`,
 //!   `vaisseau:chasseur`, fabriqués par le code, voir `editeur::defaults`) ou l'**empreinte** d'un

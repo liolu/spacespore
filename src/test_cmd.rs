@@ -217,7 +217,7 @@ pub fn planet_matches(p: &PlanetConfig, kind: &str) -> Option<bool> {
         "minuscule" | "petite" | "terrestre" | "super-terre" => size == kind.replace("super-terre", "super-Terre"),
         "ocean" => p.hydrology.ocean_fraction > 0.85 && liquid_water(p),
         // Mer d'eau liquide, air, et une planète qui tourne (il y fait jour à un moment)
-        "mer" => liquid_water(p) && p.hydrology.ocean_fraction > 0.05 && p.atmosphere && !p.tidally_locked && !p.gaseous(),
+        "mer" => liquid_water(p) && p.hydrology.ocean_fraction > 0.05 && p.atmosphere && !p.tidally_locked && !p.gaseous() && p.air.pressure_bar > 0.5,
         "glace" => p.hydrology.hydro.liquid == Liquid::Water && p.hydrology.water_state == WaterState::Ice,
         "lave" => p.hydrology.hydro.liquid == Liquid::Lava,
         "methane" => p.hydrology.hydro.liquid == Liquid::Methane,

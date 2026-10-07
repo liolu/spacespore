@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────
-//  Scanner de l'astre ciblé (phase 9 de `ROADMAP-0.10.md`)
+//  Scanner de l'astre ciblé (phase 9 de `roadmaps/fait/ROADMAP-0.10.md`)
 //
-//  Panneau à droite de l'écran, en sections fixes (C5 de `ROADMAP-0.11.4-correctifs.md`) :
+//  Panneau à droite de l'écran, en sections fixes (C5 de `roadmaps/fait/ROADMAP-0.12-correctifs.md`) :
 //  « Ici et maintenant » (heure, températures, météo, mis à jour une fois par seconde), puis
 //  identité, physique, rotation et orbite, atmosphère, eau, vie, ressources. Libellés et valeurs
 //  en colonnes : rien ne change de place. Touche I : l'afficher ou le masquer. Il lit le profil de
@@ -348,7 +348,7 @@ fn sections_text(title: &str, sections: &[Section]) -> String {
 
 /// Lignes « Ici et maintenant » (heure, saison, températures, météo, lunes, grotte), arrondies et
 /// à largeur fixe.
-fn live_rows(weather: &crate::world_clock::LocalWeather, now: Option<&str>, phases: Option<&str>, cave: Option<&str>) -> Vec<(String, String)> {
+fn live_rows(weather: &crate::world_clock::LocalWeather, now: Option<&str>, phases: Option<&str>, cave: Option<&str>, landing: Option<&str>) -> Vec<(String, String)> {
     let mut s = Section::new("");
     if weather.body.is_some() {
         let h = hour_text(weather.hour);
@@ -358,7 +358,7 @@ fn live_rows(weather: &crate::world_clock::LocalWeather, now: Option<&str>, phas
         s.row("Aujourd'hui", format!("{:>4.0} a {:>4.0} C", weather.day.0, weather.day.1));
         s.row("Cette annee", format!("{:>4.0} a {:>4.0} C", weather.year.0, weather.year.1));
     }
-    for t in [now, phases, cave].into_iter().flatten() {
+    for t in [now, phases, cave, landing].into_iter().flatten() {
         s.lines(t);
     }
     s.rows
@@ -405,7 +405,7 @@ fn update_scanner(
     cache: Res<ProfileCache>,
     target: Res<CameraTarget>,
     weather: Res<crate::world_clock::LocalWeather>,
-    (cave, phases, weather_now): (Res<crate::surface::NearestCave>, Res<crate::sky::MoonPhases>, Res<crate::weather::WeatherNow>),
+    (cave, phases, weather_now, approach): (Res<crate::surface::NearestCave>, Res<crate::sky::MoonPhases>, Res<crate::weather::WeatherNow>, Res<crate::approche_ui::Approach>),
     (field, mut last, dex, dex_ui): (Res<crate::asteroids::AsteroidField>, ResMut<crate::dex::LastScan>, Res<crate::dex::Dex>, Res<crate::dex::DexUi>),
     star_q: Query<&StarId, With<StarRoot>>,
     mut scanner: ResMut<Scanner>,
@@ -494,7 +494,8 @@ fn update_scanner(
         let phase_text = (phases.target == Some(target.0) && !phases.text.is_empty()).then_some(phases.text.as_str());
         let cave_text = (here && !cave.text.is_empty()).then_some(cave.text.as_str());
         let empty = crate::world_clock::LocalWeather::default();
-        let rows = live_rows(if here { &weather } else { &empty }, now_text, phase_text, cave_text);
+        let landing_text = (here && !approach.landing_text.is_empty()).then_some(approach.landing_text.as_str());
+        let rows = live_rows(if here { &weather } else { &empty }, now_text, phase_text, cave_text, landing_text);
         // Mêmes libellés : seules les valeurs changent (pas de reconstruction)
         let same = rows.len() == scanner.live.len() && rows.iter().zip(&scanner.live).all(|(a, b)| a.0 == b.0);
         if !same {
@@ -576,10 +577,10 @@ mod tests {
     #[test]
     fn live_rows_keep_their_labels() {
         let mut w = crate::world_clock::LocalWeather { body: Some(crate::ui::TargetKind::Planet(0)), hour: 9.5, temp: 12.3, ..Default::default() };
-        let a = live_rows(&w, Some("Ciel : clair"), None, None);
+        let a = live_rows(&w, Some("Ciel : clair"), None, None, None);
         w.hour = 10.25;
         w.temp = -3.0;
-        let b = live_rows(&w, Some("Ciel : pluie"), None, None);
+        let b = live_rows(&w, Some("Ciel : pluie"), None, None, None);
         assert_eq!(a.iter().map(|x| &x.0).collect::<Vec<_>>(), b.iter().map(|x| &x.0).collect::<Vec<_>>());
         assert_eq!(a[0].1.len(), b[0].1.len(), "{} / {}", a[0].1, b[0].1);
         assert_eq!(a[2].1.len(), b[2].1.len());
