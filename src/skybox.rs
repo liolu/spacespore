@@ -463,6 +463,8 @@ pub struct SkyState {
     /// Durée du dernier calcul (s), pour les tests.
     pub took: f32,
     started: Option<std::time::Instant>,
+    /// Point de vue du dernier ciel et sa galaxie : un voisin proche donne le meme ciel, on ne recalcule pas.
+    viewer: Option<(Vec3, usize)>,
 }
 
 #[derive(Component)]
@@ -501,7 +503,8 @@ fn follow_camera(cam_q: Query<&Transform, (With<Camera3d>, Without<SkyDome>)>, m
 /// Système le plus proche de la caméra (parmi ceux qui existent) : quand il change, le ciel est refait.
 fn watch_system(time: Res<Time>, settings: Res<GameSettings>, cam_q: Query<&Transform, With<Camera3d>>, mut state: ResMut<SkyState>) {
     let now = time.elapsed_secs_f64();
-    if state.task.is_some() || now - state.last_start < 5.0 {
+    // Le premier ciel part tout de suite ; les suivants, au plus un toutes les 5 s
+    if state.task.is_some() || (state.ready && now - state.last_start < 5.0) {
         return;
     }
     let Ok(cam) = cam_q.get_single() else { return };
@@ -520,6 +523,13 @@ fn watch_system(time: Res<Time>, settings: Res<GameSettings>, cam_q: Query<&Tran
     let Some(sys) = settings.systems.get(si) else { return };
     let viewer = sys.abs_center();
     let gid = sys.galaxy_id as usize;
+    if let Some((prev, pg)) = state.viewer {
+        if pg == gid && (viewer - prev).length() < 1.5e9 {
+            state.system = Some(si);
+            return;
+        }
+    }
+    state.viewer = Some((viewer, gid));
     let galaxy = settings.galaxies.get(gid).cloned();
     // Les autres galaxies : les 48 qui paraissent les plus grandes (10 000 au total, la plupart ne sont que des points)
     let mut others: Vec<(f32, GalaxyConfig)> = settings

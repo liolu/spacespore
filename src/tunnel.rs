@@ -10,8 +10,7 @@
 //!   avancer / reculer, Q / D = changer de voie, Échap = sortir. Pas de gravité ni de combat dedans.
 //! - Sauvé dans `tunnels.json`. Pas encore partagé en multijoueur (chaque joueur a les siens).
 //!
-//! Chat : `/tunnel creuser <1|2|3|c> [voies]`, `/tunnel liste`, `/tunnel entrer [n]`, `/tunnel sortir`,
-//! `/tunnel reboucher <n>`.
+//! Chat : `/tunnel creuser <1|2|3|c> [voies]`, `/tunnel liste`, `/tunnel entrer [n]`, `/tunnel sortir`.
 
 use bevy::math::DVec3;
 use bevy::prelude::*;
@@ -70,6 +69,9 @@ impl Tunnel {
 #[derive(Resource, Default, Serialize, Deserialize)]
 pub struct Tunnels {
     pub list: Vec<Tunnel>,
+    /// Les 4 foreuses et 300 cellules d'energie ont ete donnees (une seule fois, pour essayer sans marchand).
+    #[serde(default)]
+    kit: bool,
     #[serde(skip)]
     dig: Option<Tunnel>,
     #[serde(skip)]
@@ -123,8 +125,24 @@ impl Plugin for TunnelPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(Tunnels::load())
             .add_event::<TunnelCommand>()
+            .add_systems(Startup, give_kit)
             .add_systems(Update, (run_tunnel_commands, run_dig, run_ride, sync_controls, draw_mouths).chain());
     }
+}
+
+/// Au premier lancement avec les tunnels : une de chaque foreuse et 300 cellules d'energie.
+fn give_kit(mut tunnels: ResMut<Tunnels>, mut eco: ResMut<Economy>) {
+    if tunnels.kit {
+        return;
+    }
+    tunnels.kit = true;
+    for t in 0..4 {
+        if eco.count(good_of(t)) == 0 {
+            eco.give(good_of(t), 1);
+        }
+    }
+    eco.give(FUEL, 300);
+    tunnels.save();
 }
 
 /// Foreuse (indice 0..3) pour le mot donné.
@@ -153,7 +171,7 @@ fn local_of(abs: DVec3) -> Vec3 {
 
 /// Coût en énergie (cellules de carburant) d'un tunnel de `length_u` : 1 par unité de distance.
 pub fn energy_cost(length_u: f64) -> u32 {
-    length_u.ceil().max(1.0) as u32
+    (length_u - 1e-3).ceil().max(1.0) as u32
 }
 
 /// Prix du péage (crédits) pour `s` unités du monde parcourues sur la voie 3.
@@ -204,6 +222,11 @@ fn run_tunnel_commands(
                 let hover = crate::hover_height(&target, &settings);
                 let a = abs_of(ship.translation);
                 let b = abs_of(ctrl.last_target_pos + Vec3::Y * hover);
+                // Test : `SPACESPORE_TEST_TUNNEL=<u>` creuse droit devant, sans cible
+                let b = match std::env::var("SPACESPORE_TEST_TUNNEL").ok().and_then(|v| v.parse::<f64>().ok()) {
+                    Some(u) => a + (ship.rotation * Vec3::NEG_Z).as_dvec3() * u * UNIT,
+                    None => b,
+                };
                 let length_u = (b - a).length() / UNIT;
                 if length_u < 0.5 {
                     net.notify("La destination est trop proche pour un tunnel (0,5 u au moins).", now);
@@ -271,20 +294,10 @@ fn run_tunnel_commands(
             "sortir" | "exit" => {
                 cine.leave = true;
             }
-            "reboucher" | "supprimer" => {
-                match words.get(1).and_then(|w| w.parse::<usize>().ok()) {
-                    Some(n) if n >= 1 && n <= tunnels.list.len() && tunnels.ride.is_none() => {
-                        tunnels.list.remove(n - 1);
-                        tunnels.save();
-                        net.notify(&format!("Tunnel {n} rebouche."), now);
-                    }
-                    _ => net.notify("/tunnel reboucher <n> (numero de /tunnel liste, hors tunnel).", now),
-                }
-            }
             _ => {
                 let owned: Vec<String> = (0..4).filter(|&t| eco.count(good_of(t)) > 0).map(|t| format!("{} ({:.0} u)", GOODS[good_of(t)].0, DRILL_RANGE[t])).collect();
                 let text = format!(
-                    "/tunnel creuser <1|2|3|c> [voies] | liste | entrer [n] | sortir | reboucher <n>. 1 cellule de carburant = 1 u. Foreuses : {}.",
+                    "/tunnel creuser <1|2|3|c> [voies] | liste | entrer [n] | sortir. 1 cellule de carburant = 1 u. Foreuses : {}.",
                     if owned.is_empty() { "aucune (a acheter chez un marchand)".to_string() } else { owned.join(", ") }
                 );
                 net.notify(&text, now);

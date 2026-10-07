@@ -5,7 +5,7 @@
 #import bevy_pbr::{
     mesh_functions,
     forward_io::Vertex,
-    view_transformations::position_world_to_clip,
+    mesh_view_bindings::view,
 }
 
 struct Sky {
@@ -27,9 +27,10 @@ struct VOut {
 @vertex
 fn vertex(v: Vertex) -> VOut {
     var out: VOut;
-    let world_from_local = mesh_functions::get_world_from_local(v.instance_index);
-    let world = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(v.position, 1.0));
-    let clip = position_world_to_clip(world.xyz);
+    // Sans passer par la position du monde : loin de l'origine (1e8) un f32 n'a plus la precision pour
+    // une sphere de 50, et le ciel tremblait. On ne garde que la rotation de la camera.
+    let view_pos = (view.view_from_world * vec4<f32>(v.position, 0.0)).xyz;
+    let clip = view.clip_from_view * vec4<f32>(view_pos, 1.0);
     // Tout au fond : la profondeur inversée vaut 0 au plan lointain
     out.position = vec4<f32>(clip.xy, 0.0, clip.w);
     // La sphère est centrée sur la caméra et ne tourne pas : sa position locale est la direction du monde

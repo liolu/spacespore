@@ -97,7 +97,7 @@ fn find_galaxy(arg: &str, settings: &GameSettings, current: usize) -> Result<usi
 
 /// Commandes : (nom, arguments, description). Ordre d'affichage des propositions.
 pub const COMMAND_HELP: [(&str, &str, &str); 31] = [
-    ("/tunnel", "[creuser <1|2|3|c> [voies] | liste | entrer [n] | sortir | reboucher <n>]", "tunnels du sub-espace : 1 cellule de carburant = 1 u, foreuses I 100 u, II 500 u, III 5000 u, c clandestine 250 u"),
+    ("/tunnel", "[creuser <1|2|3|c> [voies] | liste | entrer [n] | sortir]", "tunnels du sub-espace : 1 cellule de carburant = 1 u, foreuses I 100 u, II 500 u, III 5000 u, c clandestine 250 u"),
     ("/aide", "[commande]", "la liste des commandes, ou l'aide d'une commande"),
     ("/aller", "etoile|planete|lune <type> | suivant", "tests : aller a un type d'etoile, de planete ou de lune"),
     ("/stats", "[n | tout]", "statistiques de tous les astres d'une galaxie (F3 : masquer)"),
