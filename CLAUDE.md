@@ -39,6 +39,16 @@ de tag `v*` a la main ; si la version existe deja, la CI augmente le dernier chi
 - Apres une release stable, le bot commit `docs/version.json` sur main : `git pull` avant de continuer.
 - Tout deploiement est une version numerotee : pas d'upload de zip ni de binaire « a part ».
 
+## Dependances : toujours la derniere version
+
+- **Bevy** : le jeu est encore sur **0.15** ; la derniere version est **0.20** (verifie le 09/10/2026). Migration
+  une version a la fois, chaque passage = version du jeu + 0.0.1 : bloc M de
+  `roadmaps/a-faire/ROADMAP-0.17-debug-opti.md` (§8.1). Ne pas ajouter de code qui depend d'une API retiree dans les
+  versions suivantes quand on peut l'eviter.
+- **Avant d'ajouter ou de mettre a jour une dependance** : `cargo search <crate>` pour connaitre sa derniere
+  version, et prendre celle-la. Si on ne peut pas (compatibilite avec Bevy, casse du monde), le dire et le noter.
+- Ne jamais supposer la derniere version de memoire : toujours verifier.
+
 ## Build
 
 - Toujours en release : `cargo build --release` (`run.bat` lance `target\release\spacespore.exe`).
