@@ -17,7 +17,6 @@ use bevy::render::primitives::Aabb;
 use bevy::render::render_resource::{AsBindGroup, Extent3d, RenderPipelineDescriptor, ShaderRef, ShaderType, SpecializedMeshPipelineError, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension};
 use bevy::render::view::NoFrustumCulling;
 use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task};
-use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
 
 use crate::galaxy_shape::Rng;
 use crate::settings::{GalaxyConfig, GameSettings};
@@ -238,9 +237,6 @@ pub fn render_cube(input: &SkyInput) -> Vec<u8> {
     // ── Pixels : bande, poussière, nébuleuses, autres galaxies ──
     let mut out = Faces::new(size);
     let seed = input.seed;
-    let lanes: Fbm<Perlin> = Fbm::new(seed).set_octaves(4);
-    let gas: Fbm<Perlin> = Fbm::new(seed.wrapping_add(11)).set_octaves(5);
-    let hue: Fbm<Perlin> = Fbm::new(seed.wrapping_add(23)).set_octaves(2);
     // Autres galaxies : direction, taille angulaire, axes de l'ellipse, couleur
     struct Far {
         dir: Vec3,
@@ -274,43 +270,15 @@ pub fn render_cube(input: &SkyInput) -> Vec<u8> {
     let rows = size;
     std::thread::scope(|sc| {
         let chunks: Vec<(usize, &mut [[f32; 3]])> = out.px.chunks_mut(size * size).enumerate().collect();
-        let (lanes, gas, hue, soft, band, fars) = (&lanes, &gas, &hue, &soft, &band, &fars);
+        let fars = &fars;
         for (face, buf) in chunks {
             sc.spawn(move || {
                 for y in 0..rows {
                     for x in 0..size {
                         let (a, b) = ((x as f32 + 0.5) / size as f32 * 2.0 - 1.0, (y as f32 + 0.5) / size as f32 * 2.0 - 1.0);
                         let dir = face_dir(face, a, b).normalize();
-                        // La bande : fond diffus (flou) + détail des étoiles (non flou), échantillonnés à demi-résolution
-                        let (hx, hy) = (((a + 1.0) * 0.5 * half as f32 - 0.5).clamp(0.0, half as f32 - 1.001), ((b + 1.0) * 0.5 * half as f32 - 0.5).clamp(0.0, half as f32 - 1.001));
-                        let (ix, iy) = (hx as usize, hy as usize);
-                        let (fx, fy) = (hx - ix as f32, hy - iy as f32);
-                        let lerp = |m: &Faces| -> [f32; 3] {
-                            let (p00, p10, p01, p11) = (m.at(face, ix, iy), m.at(face, ix + 1, iy), m.at(face, ix, iy + 1), m.at(face, ix + 1, iy + 1));
-                            let mut r = [0.0; 3];
-                            for c in 0..3 {
-                                r[c] = (p00[c] * (1.0 - fx) + p10[c] * fx) * (1.0 - fy) + (p01[c] * (1.0 - fx) + p11[c] * fx) * fy;
-                            }
-                            r
-                        };
-                        let (diffuse, detail) = (lerp(soft), lerp(band));
-                        let (d3, e3) = ([dir.x as f64 * 2.4, dir.y as f64 * 2.4, dir.z as f64 * 2.4], [dir.x as f64 * 6.0 + 9.0, dir.y as f64 * 6.0, dir.z as f64 * 6.0]);
-                        // Poussière : des lanes sombres dans la bande
-                        let l = smoothstep(0.25, 0.7, (lanes.get(d3) as f32) * 0.5 + 0.5);
-                        let dust = 0.4 + 0.6 * l;
-                        let dl = (diffuse[0] + diffuse[1] + diffuse[2]) / 3.0;
-                        let glow = (dl / p97).min(3.0);
-                        // Nébuleuses : du gaz coloré là où la bande est dense
-                        let g = ((gas.get(e3) as f32) * 0.5 + 0.5 - 0.48).max(0.0) * 2.8;
-                        let h = (hue.get([dir.x as f64 * 1.3, dir.y as f64 * 1.3, dir.z as f64 * 1.3]) as f32) * 0.5 + 0.5;
-                        let neb_color = [0.9 - 0.5 * h, 0.35 + 0.2 * (1.0 - (2.0 * h - 1.0).abs()), 0.45 + 0.5 * h];
-                        let neb = (glow * 0.9).min(1.4) * g * g;
-                        let mut c = [0.0f32; 3];
-                        for k in 0..3 {
-                            c[k] = (diffuse[k] * 0.9 + (detail[k] - diffuse[k]).max(0.0) * 0.6) * dust * gain + neb_color[k] * neb * 0.16;
-                            // Fond du ciel : un très léger voile partout
-                            c[k] += 0.002 * (1.0 + 0.5 * glow.min(1.0));
-                        }
+                        // Pas de bande de galaxie dessinee (la ligne blanche est retiree) : seulement un tres leger voile
+                        let mut c = [0.002f32; 3];
                         // Autres galaxies
                         for f in fars {
                             let cosv = dir.dot(f.dir);
@@ -447,7 +415,7 @@ impl Plugin for SkyboxPlugin {
         app.add_plugins(MaterialPlugin::<SkyMaterial>::default())
             .init_resource::<SkyState>()
             .add_systems(Startup, spawn_dome)
-            .add_systems(Update, (watch_system, finish_sky, sky_params).chain())
+            .add_systems(Update, (first_sky, watch_system, finish_sky, sky_params).chain())
             .add_systems(PostUpdate, follow_camera.before(TransformSystem::TransformPropagate));
     }
 }
@@ -463,6 +431,8 @@ pub struct SkyState {
     /// Durée du dernier calcul (s), pour les tests.
     pub took: f32,
     started: Option<std::time::Instant>,
+    /// Point de vue du dernier ciel et sa galaxie : un voisin proche donne le meme ciel, on ne recalcule pas.
+    viewer: Option<(Vec3, usize)>,
 }
 
 #[derive(Component)]
@@ -498,10 +468,84 @@ fn follow_camera(cam_q: Query<&Transform, (With<Camera3d>, Without<SkyDome>)>, m
     tf.translation = cam.translation;
 }
 
+/// Le tout premier ciel est calcule avant la premiere image (le jeu s'ouvre avec ses etoiles, pas sur du noir).
+fn first_sky(
+    mut done: Local<bool>,
+    settings: Res<GameSettings>,
+    cam_q: Query<&Transform, With<Camera3d>>,
+    ship_q: Query<&Transform, (With<crate::ship::Ship>, Without<Camera3d>)>,
+    mut state: ResMut<SkyState>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<SkyMaterial>>,
+    dome: Query<&MeshMaterial3d<SkyMaterial>, With<SkyDome>>,
+) {
+    if *done || !settings.show_skybox {
+        return;
+    }
+    *done = true;
+    let here = ship_q.get_single().map(|t| t.translation).or_else(|_| cam_q.get_single().map(|t| t.translation)).unwrap_or(Vec3::ZERO);
+    let Some((si, input)) = sky_input(&settings, here) else { return };
+    let started = std::time::Instant::now();
+    let bytes = render_cube(&input);
+    state.viewer = Some((input.viewer, settings.systems.get(si).map_or(0, |s| s.galaxy_id as usize)));
+    state.system = Some(si);
+    state.ready = true;
+    state.took = started.elapsed().as_secs_f32();
+    let handle = images.add(cube_image(bytes, SKY_SIZE));
+    state.image = handle.clone();
+    info!("Ciel : premier ciel pret en {:.1} s (systeme {si})", state.took);
+    if let Ok(m) = dome.get_single() {
+        if let Some(mat) = materials.get_mut(&m.0) {
+            mat.cube = handle;
+        }
+    }
+}
+
+/// Système le plus proche de `here` (monde) et ce qu'il faut pour calculer son ciel.
+fn sky_input(settings: &GameSettings, here: Vec3) -> Option<(usize, SkyInput)> {
+    let mut best: Option<(usize, f32)> = None;
+    for (i, s) in settings.systems.iter() {
+        let d = (s.center() - here).length_squared();
+        if best.is_none_or(|(_, b)| d < b) {
+            best = Some((i, d));
+        }
+    }
+    let (si, _) = best?;
+    let sys = settings.systems.get(si)?;
+    let viewer = sys.abs_center();
+    let gid = sys.galaxy_id as usize;
+    let galaxy = settings.galaxies.get(gid).cloned();
+    let mut others: Vec<(f32, GalaxyConfig)> = settings
+        .galaxies
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != gid)
+        .map(|(_, g)| (g.radius / (g.abs_center - viewer).length().max(1.0), g.clone()))
+        .collect();
+    others.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let others: Vec<GalaxyConfig> = others.into_iter().take(48).map(|(_, g)| g).collect();
+    let mut stars: Vec<(f32, Vec3, [f32; 3], f32)> = settings
+        .systems
+        .iter()
+        .filter(|(i, _)| *i != si)
+        .filter_map(|(_, s)| {
+            let st = s.stars.first()?;
+            Some(((s.abs_center() - viewer).length_squared(), s.abs_center(), [st.light_color_r, st.light_color_g, st.light_color_b], st.lumens()))
+        })
+        .collect();
+    stars.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let stars: Vec<(Vec3, [f32; 3], f32)> = stars.into_iter().skip(40).map(|(_, p, c, l)| (p, c, l)).collect();
+    Some((si, SkyInput { viewer, galaxy, others, stars, seed: (si as u32).wrapping_mul(2246822519) ^ settings.world_seed as u32, size: SKY_SIZE }))
+}
+
 /// Système le plus proche de la caméra (parmi ceux qui existent) : quand il change, le ciel est refait.
 fn watch_system(time: Res<Time>, settings: Res<GameSettings>, cam_q: Query<&Transform, With<Camera3d>>, mut state: ResMut<SkyState>) {
     let now = time.elapsed_secs_f64();
-    if state.task.is_some() || now - state.last_start < 5.0 {
+    if !settings.show_skybox {
+        return;
+    }
+    // Le premier ciel part tout de suite ; les suivants, au plus un toutes les 5 s
+    if state.task.is_some() || (state.ready && now - state.last_start < 5.0) {
         return;
     }
     let Ok(cam) = cam_q.get_single() else { return };
@@ -520,6 +564,13 @@ fn watch_system(time: Res<Time>, settings: Res<GameSettings>, cam_q: Query<&Tran
     let Some(sys) = settings.systems.get(si) else { return };
     let viewer = sys.abs_center();
     let gid = sys.galaxy_id as usize;
+    if let Some((prev, pg)) = state.viewer {
+        if pg == gid && (viewer - prev).length() < 1.5e9 {
+            state.system = Some(si);
+            return;
+        }
+    }
+    state.viewer = Some((viewer, gid));
     let galaxy = settings.galaxies.get(gid).cloned();
     // Les autres galaxies : les 48 qui paraissent les plus grandes (10 000 au total, la plupart ne sont que des points)
     let mut others: Vec<(f32, GalaxyConfig)> = settings
@@ -569,13 +620,14 @@ fn finish_sky(mut state: ResMut<SkyState>, mut images: ResMut<Assets<Image>>, mu
 }
 
 /// Couleur du ciel, étoiles visibles : effacées par le ciel de jour, voilées par les nuages, éteintes
-/// sous l'eau et sous terre, absentes quand la galaxie se voit en vrai (zooms lointains).
+/// sous l'eau et sous terre ; coupées par l'option « Fond d'etoiles ».
 #[allow(clippy::too_many_arguments)]
 fn sky_params(
     clear: Res<ClearColor>,
     surface: Res<crate::surface::Surface>,
     weather: Res<crate::weather::WeatherNow>,
     under: Res<crate::water::Underwater>,
+    settings: Res<GameSettings>,
     zoom: Res<ZoomLevel>,
     ctrl_q: Query<&CameraController>,
     mut materials: ResMut<Assets<SkyMaterial>>,
@@ -593,13 +645,11 @@ fn sky_params(
     if under.active() || surface.underground() > 0.4 {
         vis = 0.0;
     }
-    // Les zooms lointains montrent la vraie galaxie : plus de fond
-    vis *= match *zoom {
-        ZoomLevel::Planet | ZoomLevel::System => 1.0,
-        ZoomLevel::Sector => 0.6,
-        _ => 0.0,
-    };
-    let _ = ctrl_q;
+    // Le fond reste à tous les zooms (il ne s'efface plus au dézoom) ; l'option le coupe
+    if !settings.show_skybox {
+        vis = 0.0;
+    }
+    let _ = (ctrl_q, zoom);
     mat.params.sky = Vec4::new(sky.red, sky.green, sky.blue, 1.0);
     mat.params.stars = Vec4::new(vis, 1.0, 0.0, 0.0);
 }
@@ -653,10 +703,6 @@ mod tests {
         let max = lum.iter().cloned().fold(0.0, f32::max);
         assert!(mean > 3.0 && mean < 160.0, "ciel ni noir ni blanc : {mean}");
         assert!(max > 200.0, "des etoiles brillantes : {max}");
-        // La bande : le ciel n'est pas uniforme (les pixels les plus clairs sont bien plus clairs que la moyenne)
-        let mut sorted = lum.clone();
-        sorted.sort_by(|x, y| x.total_cmp(y));
-        assert!(sorted[sorted.len() * 95 / 100] > 2.0 * sorted[sorted.len() / 4].max(1.0), "bande visible");
     }
 
     #[test]
@@ -666,7 +712,8 @@ mod tests {
         other.viewer += Vec3::new(0.0, 0.0, other.galaxy.as_ref().unwrap().radius * 0.3);
         let b = render_cube(&other);
         let diff = a.iter().zip(&b).filter(|(x, y)| x != y).count();
-        assert!(diff > a.len() / 10, "le ciel change avec le lieu : {diff}");
+        // Plus de bande de galaxie : seules les etoiles reelles et les galaxies lointaines changent avec le lieu
+        assert!(diff > 0, "le ciel change avec le lieu : {diff}");
     }
 
     /// Mesure (règle 18) : `cargo test --release bench_sky -- --ignored --nocapture`.

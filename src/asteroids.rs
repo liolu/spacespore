@@ -1179,6 +1179,22 @@ pub struct Live {
     knock: Vec3,
     knock_vel: Vec3,
     meshed: bool,
+    /// Maillage propre (gros astéroïdes, comètes) et sa finesse : refait plus fin de près (LOD).
+    mesh_child: Option<Entity>,
+    detail: usize,
+}
+
+/// Finesse voulue du maillage d'un gros astéroïde ou d'une comète à `dist` de la caméra : de loin ~4 unités par
+/// quad (10 à 40 par face), de près 96 puis 160 par face (avant : toujours la version de loin).
+fn wanted_detail(radius: f32, dist: f32) -> usize {
+    let base = ((radius / 4.0) as usize).clamp(10, 40);
+    if dist < radius * 3.0 {
+        base.max(160)
+    } else if dist < radius * 10.0 {
+        base.max(96)
+    } else {
+        base
+    }
 }
 
 /// Les astéroïdes affichés autour de la caméra, et les petits corps des systèmes chargés.
@@ -1186,7 +1202,7 @@ pub struct Live {
 pub struct AsteroidField {
     live: HashMap<AsteroidKey, Live>,
     sources: HashMap<usize, Sources>,
-    tasks: HashMap<AsteroidKey, Task<Mesh>>,
+    tasks: HashMap<AsteroidKey, Task<(usize, Mesh)>>,
     bands: HashMap<(usize, u8), (Entity, Handle<StandardMaterial>, Belt)>,
     last_refresh: f64,
 }
@@ -1356,9 +1372,12 @@ fn stream_asteroids(
     let done: Vec<AsteroidKey> = field.tasks.keys().copied().collect();
     for key in done {
         let Some(task) = field.tasks.get_mut(&key) else { continue };
-        let Some(mesh) = block_on(future::poll_once(task)) else { continue };
+        let Some((n, mesh)) = block_on(future::poll_once(task)) else { continue };
         field.tasks.remove(&key);
         if let Some(live) = field.live.get_mut(&key) {
+            if let Some(old) = live.mesh_child.take() {
+                commands.entity(old).try_despawn_recursive();
+            }
             let child = commands
                 .spawn((
                     Mesh3d(meshes.add(mesh)),
@@ -1370,6 +1389,8 @@ fn stream_asteroids(
                 .id();
             commands.entity(live.entity).add_child(child);
             live.meshed = true;
+            live.mesh_child = Some(child);
+            live.detail = n;
         }
     }
 
@@ -1456,14 +1477,15 @@ fn stream_asteroids(
             }
             None => false,
         };
-        field.live.insert(a.key, Live { entity, ast: a, pose, vel: Vec3::ZERO, prev: None, knock: Vec3::ZERO, knock_vel: Vec3::ZERO, meshed });
+        field.live.insert(a.key, Live { entity, ast: a, pose, vel: Vec3::ZERO, prev: None, knock: Vec3::ZERO, knock_vel: Vec3::ZERO, meshed, mesh_child: None, detail: 0 });
     }
 
     // Maillages des gros (hors du fil principal), les plus proches d'abord
     let mut todo: Vec<(f32, AsteroidKey, AsteroidShape)> = field
         .live
         .values()
-        .filter(|l| !l.meshed && !field.tasks.contains_key(&l.ast.key))
+        .filter(|l| l.ast.variant.is_none() && !field.tasks.contains_key(&l.ast.key))
+        .filter(|l| !l.meshed || wanted_detail(l.ast.shape.radius, l.pose.translation.distance(cam.translation)) > l.detail)
         .map(|l| (l.pose.translation.distance(cam.translation), l.ast.key, l.ast.shape))
         .collect();
     todo.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -1472,9 +1494,10 @@ fn stream_asteroids(
         if field.tasks.len() >= MAX_MESH_TASKS {
             break;
         }
-        // Finesse selon la taille : ~4 unités par côté de quad, 10 à 40 par face
-        let n = ((shape.radius / 4.0) as usize).clamp(10, 40);
-        field.tasks.insert(key, pool.spawn(async move { build_mesh(&shape, n) }));
+        // Finesse selon la taille et la distance (`wanted_detail`)
+        let dist = field.live.get(&key).map_or(f32::MAX, |l| l.pose.translation.distance(cam.translation));
+        let n = wanted_detail(shape.radius, dist);
+        field.tasks.insert(key, pool.spawn(async move { (n, build_mesh(&shape, n)) }));
     }
 }
 
@@ -1485,9 +1508,10 @@ fn stream_asteroids(
 /// Grains de la bande d'une ceinture.
 const BAND_GRAINS: usize = 4_500;
 /// La bande s'efface en approchant de la ceinture (les vrais astéroïdes prennent le relais).
-const BAND_FADE_NEAR: f32 = 500_000.0;
-const BAND_FADE_FAR: f32 = 2_500_000.0;
-const BAND_BRIGHTNESS: f32 = 0.9;
+/// (avant : effacée sous 500 000, alors que les gros astéroïdes n'apparaissent qu'à 320 000 : de près, plus rien.)
+const BAND_FADE_NEAR: f32 = 40_000.0;
+const BAND_FADE_FAR: f32 = 400_000.0;
+const BAND_BRIGHTNESS: f32 = 1.2;
 
 #[derive(Component)]
 struct BeltBand;

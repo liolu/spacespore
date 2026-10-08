@@ -460,6 +460,17 @@ use crate::planetgen::hydrology::Hydrology;
 use crate::planetgen::system::PlanetKind;
 use crate::planetgen::live::WorldDeltas;
 
+static CREATIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Mode créatif (option) : immortel, ressources et crédits illimités. Recopié de `GameSettings::creative` à chaque image.
+pub fn creative() -> bool {
+    CREATIVE.load(Ordering::Relaxed)
+}
+
+pub fn set_creative(on: bool) {
+    CREATIVE.store(on, Ordering::Relaxed);
+}
+
 static ORIGIN: [AtomicU64; 3] = [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)];
 
 /// Origine du repère monde, en coordonnées absolues.
@@ -503,6 +514,8 @@ pub struct StarSystemConfig {
     genome: Option<SystemGenome>,
     /// Planètes recalculées (cache), ou planètes explicites si `genome` est `None`.
     planets: OnceLock<Vec<PlanetConfig>>,
+    /// Zone d'influence de l'étoile (monde) : moitié de la distance à l'étoile voisine ; 0 = sans limite (`set_influence`).
+    pub influence: f32,
 }
 
 impl Default for StarSystemConfig {
@@ -515,6 +528,7 @@ impl Default for StarSystemConfig {
             asteroid_belts: Vec::new(),
             genome: None,
             planets: OnceLock::from(default_planets()),
+            influence: 0.0,
         }
     }
 }
@@ -529,7 +543,7 @@ impl StarSystemConfig {
         let mut stars = Vec::with_capacity(1 + st.companions.len());
         stars.push(primary);
         stars.extend(st.companions.iter().map(|c| StarConfig { orbit: Some(c.orbit), ..StarConfig::from_physics(&c.physics, g) }));
-        Self { name, position, galaxy_id, stars, asteroid_belts: Vec::new(), genome: Some(genome), planets: OnceLock::new() }
+        Self { name, position, galaxy_id, stars, asteroid_belts: Vec::new(), genome: Some(genome), planets: OnceLock::new(), influence: 0.0 }
     }
 
     fn generate_planets(&self) -> Vec<PlanetConfig> {
@@ -542,7 +556,12 @@ impl StarSystemConfig {
     /// Étoiles du système (C3) : double, triple, et ce qu'elles imposent aux orbites.
     pub fn stellar(&self) -> Option<crate::planetgen::multiple::Stellar> {
         let (physics, star) = (self.star_physics()?, self.stars.first()?);
-        Some(crate::planetgen::multiple::generate(self.genome?.seed as u64, &physics, star.scale() as f64, star.radius as f64))
+        let mut st = crate::planetgen::multiple::generate(self.genome?.seed as u64, &physics, star.scale() as f64, star.radius as f64);
+        // Zone d'influence : rien du système au-delà (planètes, ceintures, comètes)
+        if self.influence > 0.0 {
+            st.outer_limit = st.outer_limit.min(self.influence as f64);
+        }
+        Some(st)
     }
 
     /// La lumière que reçoivent les planètes : l'étoile principale, avec la luminosité des étoiles
@@ -1017,6 +1036,9 @@ impl SystemMaker {
             }
             ranges.push(start..systems.len());
         }
+        for r in &ranges {
+            set_influence(systems[r.clone()].iter_mut());
+        }
         (systems, ranges)
     }
 
@@ -1026,7 +1048,7 @@ impl SystemMaker {
         let shape = gal.shape();
         let total = gal.arm_stars + gal.scatter_stars;
         let on_structure = (total as f32 * shape.structure_share) as usize;
-        (0..total)
+        let mut list: Vec<Option<StarSystemConfig>> = (0..total)
             .map(|i| {
                 let s = i as u32 + gal.seed;
                 let mut rng = crate::galaxy_shape::Rng::new(s);
@@ -1047,7 +1069,45 @@ impl SystemMaker {
                     self.genome(s, sb),
                 ))
             })
-            .collect()
+            .collect();
+        set_influence(list.iter_mut().flatten());
+        list
+    }
+}
+
+/// Zone d'influence d'une étoile (0.13.6) : `INFLUENCE_SHARE` de la distance à l'étoile d'un autre système la plus
+/// proche. Les planètes, ceintures et comètes d'un système restent dedans (`Stellar::outer_limit`) : aucune étoile
+/// d'un autre système ne se trouve parmi ses orbites. Au-delà de `INFLUENCE_SEARCH`, pas de limite.
+pub const INFLUENCE_SEARCH: f32 = 400_000_000.0;
+pub const INFLUENCE_SHARE: f32 = 0.8;
+
+/// Calcule `influence` de chaque système (dans une même galaxie).
+pub fn set_influence<'a>(systems: impl Iterator<Item = &'a mut StarSystemConfig>) {
+    use std::collections::HashMap;
+    let mut list: Vec<&'a mut StarSystemConfig> = systems.collect();
+    let r = INFLUENCE_SEARCH;
+    let cell = |p: Vec3| ((p.x / r).floor() as i64, (p.y / r).floor() as i64, (p.z / r).floor() as i64);
+    let pos: Vec<Vec3> = list.iter().map(|s| s.abs_center()).collect();
+    let mut grid: HashMap<(i64, i64, i64), Vec<usize>> = HashMap::new();
+    for (i, p) in pos.iter().enumerate() {
+        grid.entry(cell(*p)).or_default().push(i);
+    }
+    for (i, sys) in list.iter_mut().enumerate() {
+        let p = pos[i];
+        let c = cell(p);
+        let mut best = f32::INFINITY;
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    for &j in grid.get(&(c.0 + dx, c.1 + dy, c.2 + dz)).into_iter().flatten() {
+                        if j != i {
+                            best = best.min(pos[j].distance(p));
+                        }
+                    }
+                }
+            }
+        }
+        sys.influence = if best < r { best * INFLUENCE_SHARE } else { 0.0 };
     }
 }
 
@@ -1121,6 +1181,10 @@ pub struct GameSettings {
     #[serde(default = "default_terrain_detail")] pub terrain_detail: u8,
     /// Le relief projette des ombres jusqu'à 4 000 voxels (montagnes lointaines ; ~30 % d'images/s).
     #[serde(default)] pub relief_shadows: bool,
+    /// Fond d'étoiles calculé (skybox, 0.13 C2) ; décoché = fond noir, rien n'est calculé.
+    #[serde(default = "default_true")] pub show_skybox: bool,
+    /// Mode créatif : immortel, ressources et crédits illimités.
+    #[serde(default)] pub creative: bool,
 
     #[serde(default)] pub world_seed: u64,
 
@@ -1205,7 +1269,7 @@ impl Default for GameSettings {
             show_light_indicator: false, show_orbits: false, show_zones: false, show_systems: false,
             planet_chunk_divisions: 6,
             vsync: true, fps_limit: 0, msaa_samples: 4, shadows: true,
-            lod_quality: 1.0, show_clouds: true, show_flares: true, render_scale: 1.0, terrain_detail: 3, relief_shadows: false,
+            lod_quality: 1.0, show_clouds: true, show_flares: true, render_scale: 1.0, terrain_detail: 3, relief_shadows: false, show_skybox: true, creative: false,
             world_seed: DEFAULT_WORLD_SEED,
             player_name: default_player_name(),
             aura_color: default_aura_color(),
@@ -1593,6 +1657,21 @@ mod tests {
         }
         // Jamais collées : au moins 1,5 fois la somme des rayons entre deux centres
         assert!(worst >= 1.5, "deux galaxies trop proches : {worst}");
+    }
+
+    #[test]
+    fn planets_stay_inside_the_influence_zone_of_their_star() {
+        let galaxies = default_galaxies(DEFAULT_WORLD_SEED);
+        let systems = crate::systems::Systems::new(&galaxies, DEFAULT_WORLD_SEED, 3);
+        let mut checked = 0;
+        for sys in systems.dense().iter().filter(|s| s.galaxy_id == 1).take(300) {
+            assert!(sys.influence > 0.0, "{} : zone d'influence", sys.name);
+            for p in sys.planets().iter().skip(1).filter(|p| !p.rogue) {
+                assert!(p.orbit_distance <= sys.influence * 1.01, "{} : planete a {} hors de la zone {}", sys.name, p.orbit_distance, sys.influence);
+                checked += 1;
+            }
+        }
+        assert!(checked > 50, "{checked}");
     }
 
     #[test]

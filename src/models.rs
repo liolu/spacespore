@@ -361,7 +361,7 @@ fn build_rigs(mut commands: Commands, mut models: ResMut<GameModels>, mut rigs: 
         let Some(l) = models.get(&rig.key.clone()) else { continue };
         for c in children.into_iter().flatten() {
             if parts.contains(*c) {
-                commands.entity(*c).despawn_recursive();
+                if let Some(ec) = commands.get_entity(*c) { ec.despawn_recursive(); }
             }
         }
         *tf = fit_transform(&l, rig.fit);
@@ -542,7 +542,7 @@ fn sync_remote_walkers(
     for (e, w, mut tf, children) in &mut walkers {
         let place = net.peers.get(&w.0).and_then(|p| p.look.walk.as_ref().map(|s| (p, s))).and_then(|(p, s)| Some((p, s, frame(s.body()?)?)));
         let Some((peer, state, f)) = place else {
-            commands.entity(e).despawn_recursive();
+            if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); }
             continue;
         };
         shown.insert(w.0);

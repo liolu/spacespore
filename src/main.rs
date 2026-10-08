@@ -52,6 +52,10 @@ mod approche_ui;
 mod sound;
 mod fog;
 mod skybox;
+mod cinematic;
+mod tunnel;
+mod smoke;
+mod photo;
 mod wormhole;
 mod world_clock;
 mod zones;
@@ -194,11 +198,27 @@ fn main() {
     // Un raccourci qui ouvre le jeu directement contourne les mises à jour : on le redirige vers le launcher
     std::thread::spawn(spacespore_common::repair_shortcuts);
     let log_path = settings::data_dir().join("crash.log");
+    let session = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
     std::panic::set_hook({
         let log_path = log_path.clone();
         Box::new(move |info| {
             let msg = format!("{}\n{:?}\n", info, std::backtrace::Backtrace::capture());
             let _ = std::fs::write(&log_path, &msg);
+            // Chaque session garde ses crashs dans `crashes/` (les 30 derniers fichiers) ; `crash.log` = le dernier
+            let dir = settings::data_dir().join("crashes");
+            if std::fs::create_dir_all(&dir).is_ok() {
+                let file = dir.join(format!("crash-{session}.log"));
+                let previous = std::fs::read_to_string(&file).unwrap_or_default();
+                let _ = std::fs::write(&file, format!("{previous}{msg}\n"));
+                if let Ok(rd) = std::fs::read_dir(&dir) {
+                    let mut all: Vec<_> = rd.filter_map(|e| e.ok()).map(|e| e.path()).collect();
+                    all.sort();
+                    let excess = all.len().saturating_sub(30);
+                    for old in all.into_iter().take(excess) {
+                        let _ = std::fs::remove_file(old);
+                    }
+                }
+            }
             eprintln!("{msg}");
         })
     });
@@ -242,6 +262,10 @@ fn main() {
         .add_plugins(sound::SoundPlugin)
         .add_plugins(fog::FogPlugin)
         .add_plugins(skybox::SkyboxPlugin)
+        .add_plugins(cinematic::CinematicPlugin)
+        .add_plugins(tunnel::TunnelPlugin)
+        .add_plugins(smoke::SmokePlugin)
+        .add_plugins(photo::PhotoPlugin)
         .add_plugins(scanner::ScannerPlugin)
         .add_plugins(geoactive::GeoActivePlugin)
         .add_plugins(dex::DexPlugin)
@@ -976,11 +1000,12 @@ fn draw_body_markers(
 /// Couleur du cercle d'un astre cliquable, par type.
 fn marker_color(kind: &TargetKind) -> Color {
     match kind {
-        TargetKind::Planet(_) => Color::srgb(0.4, 0.8, 1.0),
-        TargetKind::Moon(..) => Color::srgb(0.75, 0.75, 0.8),
-        TargetKind::Star(_) => Color::srgb(1.0, 0.75, 0.45),
-        TargetKind::Asteroid(_) => Color::srgb(0.75, 0.6, 0.45),
-        TargetKind::Comet(_) => Color::srgb(0.5, 0.9, 1.0),
+        TargetKind::Planet(_) | TargetKind::GasPlanet(_) => Color::srgb(1.0, 0.6, 0.15),
+        TargetKind::Moon(..) => Color::srgb(1.0, 1.0, 1.0),
+        TargetKind::Star(_) => Color::srgb(1.0, 0.92, 0.4),
+        TargetKind::Asteroid(k) if k.belt == asteroids::COMET_SOURCE => Color::srgb(0.25, 0.5, 1.0),
+        TargetKind::Asteroid(_) => Color::srgb(1.0, 0.55, 0.55),
+        TargetKind::Comet(_) => Color::srgb(0.25, 0.5, 1.0),
         TargetKind::WormholeMouth(_) => Color::srgb(0.75, 0.45, 1.0),
         TargetKind::GalacticCore | TargetKind::DistantGalaxyCore(_) => Color::srgb(1.0, 0.95, 0.85),
         TargetKind::BlackHole(_) | TargetKind::Pulsar(_) | TargetKind::Magnetar(_) | TargetKind::NeutronStar(_) => Color::srgb(0.9, 0.5, 1.0),
@@ -1354,12 +1379,21 @@ fn camera_controller(
     // Un astre introuvable (pas encore chargé) résout à l'origine : on garde alors la dernière position.
     // Mais le trou noir de la galaxie principale peut être lui-même à l'origine : c'est une vraie position.
     let is_origin_core = matches!(camera_target.0, TargetKind::GalacticCore);
+    let previous_target = ctrl.last_target_pos;
     let target_pos = if raw_target == Vec3::ZERO && !is_origin_core && ctrl.last_target_pos.length_squared() > 100.0 {
         ctrl.last_target_pos
     } else {
         ctrl.last_target_pos = raw_target;
         raw_target
     };
+    // Le vaisseau suit son astre en mouvement (comète rapide, planète) : il est emporté du même pas avant de
+    // corriger sa position. Sans ça il courait après la cible avec un retard qui variait à chaque image (tremblement).
+    let carry = target_pos - previous_target;
+    if !camera_target.is_changed() && previous_target != Vec3::ZERO && carry.length() < 5.0e6 && !travel.active() {
+        if let Ok((mut ship_tf, _, _)) = ship_q.get_single_mut() {
+            ship_tf.translation += carry;
+        }
+    }
 
     if menu_open {
         mouse_motion.clear();

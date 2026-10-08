@@ -751,7 +751,7 @@ fn reload_gas_planets(
         let Ok((entity, root)) = roots.get(ev.0) else { continue };
         let idx = root.idx;
         let Some(cfg) = res.planets.get(idx) else { continue };
-        commands.entity(entity).despawn_recursive();
+        if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
         build_gas_planet(&mut commands, cfg, idx, &mut meshes, &mut materials);
     }
 }
@@ -938,7 +938,7 @@ fn regenerate_gas_planets(
     if !fired { return; }
 
     for entity in &root_q {
-        commands.entity(entity).despawn_recursive();
+        if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
     }
 
     for (idx, cfg) in res.planets.iter().enumerate() {

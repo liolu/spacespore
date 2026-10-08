@@ -31,6 +31,8 @@ Les touches du jeu sont coupees quand on tape dans un champ de texte (chat, guil
 | H | S'amarrer au hangar d'un autre joueur (porte-vaisseaux) |
 | I | Scanner : panneau de l'astre cible |
 | K | Dex des decouvertes |
+| F9 / F10 / F11 | mode photo (interface masquee, qualite max) / filtre suivant / prendre la photo (PNG sans perte dans `photos/`) |
+| Z / S, Q / D, Echap | dans un tunnel du sub-espace : avancer / reculer, changer de voie, sortir (`/tunnel`) ; Echap passe aussi le creusement et le saut entre galaxies |
 | E | Parler a la faction visee (dialogue PNJ, commerce, colis) |
 | L | Afficher / masquer les liens entre galaxies |
 | C | Revendiquer / abandonner une etoile (5 max), ou assieger celle d'un autre |

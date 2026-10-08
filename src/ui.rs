@@ -403,6 +403,8 @@ enum GfxFlag {
     ReliefShadows,
     Clouds,
     Flares,
+    Skybox,
+    Creative,
 }
 
 impl GfxFlag {
@@ -413,6 +415,8 @@ impl GfxFlag {
             Self::ReliefShadows => s.relief_shadows,
             Self::Clouds => s.show_clouds,
             Self::Flares => s.show_flares,
+            Self::Skybox => s.show_skybox,
+            Self::Creative => s.creative,
         }
     }
 
@@ -423,6 +427,8 @@ impl GfxFlag {
             Self::ReliefShadows => s.relief_shadows = !s.relief_shadows,
             Self::Clouds => s.show_clouds = !s.show_clouds,
             Self::Flares => s.show_flares = !s.show_flares,
+            Self::Skybox => s.show_skybox = !s.show_skybox,
+            Self::Creative => s.creative = !s.creative,
         }
     }
 }
@@ -1000,6 +1006,8 @@ fn setup_game_ui(mut commands: Commands, settings: Res<GameSettings>) {
         spawn_gfx_choice(&mut commands, &settings, "Detail du sol", GfxChoice::TerrainDetail),
         spawn_gfx_toggle(&mut commands, &settings, "Nuages", GfxFlag::Clouds),
         spawn_gfx_toggle(&mut commands, &settings, "Eruptions solaires", GfxFlag::Flares),
+        spawn_gfx_toggle(&mut commands, &settings, "Fond d'etoiles (skybox)", GfxFlag::Skybox),
+        spawn_gfx_toggle(&mut commands, &settings, "Mode creatif (immortel, illimite)", GfxFlag::Creative),
     ];
     commands.entity(gfx_content).add_children(&gfx_rows);
 
@@ -1898,7 +1906,7 @@ fn rebuild_astres_ui(
         return;
     }
     for entity in &ui_root_q {
-        commands.entity(entity).despawn_recursive();
+        if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
     }
     let Ok(cam) = camera_q.get_single() else { return };
     spawn_astres_ui_root(&mut commands, &settings, &res, cam, tab.active, selected.0);
@@ -1918,7 +1926,7 @@ fn rebuild_center_buttons(
         return;
     }
     for entity in &bar_q {
-        commands.entity(entity).despawn_recursive();
+        if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
     }
     spawn_center_buttons(&mut commands, &settings);
 }
@@ -3477,7 +3485,7 @@ fn update_radar(
 
     // remove dots for bodies that no longer exist
     for (_, dot_e) in existing {
-        commands.entity(dot_e).despawn_recursive();
+        if let Some(ec) = commands.get_entity(dot_e) { ec.despawn_recursive(); }
     }
 
     // update info text

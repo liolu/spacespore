@@ -585,26 +585,21 @@ impl CubeFace {
 }
 
 fn star_color_group(r: f32, g: f32, b: f32) -> usize {
-    const PALETTES: [[f32; 3]; 5] = [
-        [1.0, 0.5, 0.3],
-        [1.0, 0.7, 0.4],
-        [1.0, 0.92, 0.65],
-        [0.8, 0.85, 1.0],
-        [0.6, 0.7, 1.0],
-    ];
     let mut best = 0;
     let mut best_d = f32::MAX;
-    for (i, p) in PALETTES.iter().enumerate() {
+    for (i, p) in star_palette().iter().enumerate() {
         let d = (r - p[0]) * (r - p[0]) + (g - p[1]) * (g - p[1]) + (b - p[2]) * (b - p[2]);
         if d < best_d { best_d = d; best = i; }
     }
     best
 }
 
-const ATLAS_COLS: u32 = 5;
+const ATLAS_COLS: u32 = 13;
 const ATLAS_CELL: u32 = 32;
 
-const PALETTE: [[f32; 3]; 5] = [
+/// Couleurs des étoiles lointaines : 5 repères (rouge -> bleu) et 2 nuances entre chaque, pour que le point
+/// lointain ait la couleur de l'étoile chargée (avant : 5 couleurs, les étoiles changeaient de teinte au LOD).
+const STAR_ANCHORS: [[f32; 3]; 5] = [
     [1.0, 0.5, 0.3],
     [1.0, 0.7, 0.4],
     [1.0, 0.92, 0.65],
@@ -612,13 +607,23 @@ const PALETTE: [[f32; 3]; 5] = [
     [0.6, 0.7, 1.0],
 ];
 
+fn star_palette() -> [[f32; 3]; ATLAS_COLS as usize] {
+    let mut out = [[0.0; 3]; ATLAS_COLS as usize];
+    for (i, c) in out.iter_mut().enumerate() {
+        let (k, f) = (i / 3, (i % 3) as f32 / 3.0);
+        let (a, b) = (STAR_ANCHORS[k], STAR_ANCHORS[(k + 1).min(4)]);
+        *c = [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+    }
+    out
+}
+
 fn create_star_atlas(images: &mut Assets<Image>) -> Handle<Image> {
     let w = ATLAS_CELL * ATLAS_COLS;
     let h = ATLAS_CELL;
     let center = ATLAS_CELL as f32 / 2.0;
     let mut data = vec![0u8; (w * h * 4) as usize];
 
-    for (gi, col) in PALETTE.iter().enumerate() {
+    for (gi, col) in star_palette().iter().enumerate() {
         let ox = gi as u32 * ATLAS_CELL;
         for y in 0..ATLAS_CELL {
             for x in 0..ATLAS_CELL {
@@ -687,7 +692,7 @@ fn generate_all(
     commands.insert_resource(StarBrightnessMaterials { steps: star_brightness_steps.clone() });
     let atlas_mat = star_brightness_steps.last().unwrap().clone();
 
-    let quad_meshes: Vec<Handle<Mesh>> = (0..5)
+    let quad_meshes: Vec<Handle<Mesh>> = (0..ATLAS_COLS as usize)
         .map(|i| make_atlas_quad(&mut meshes, i))
         .collect();
 
@@ -707,7 +712,7 @@ fn generate_all(
 
     // Un point par galaxie, affiché de très loin
     for (gid, g) in settings.galaxies.iter().enumerate() {
-        let group = if gid == 0 { 1 } else { (crate::settings::pseudo_rand(gid as u32 * 31 + 7) * 5.0) as usize % 5 };
+        let group = 3 * if gid == 0 { 1 } else { (crate::settings::pseudo_rand(gid as u32 * 31 + 7) * 5.0) as usize % 5 };
         commands.spawn((
             Mesh3d(quad_meshes[group].clone()),
             MeshMaterial3d(atlas_mat.clone()),
@@ -1617,7 +1622,8 @@ fn spawn_system_bodies(
             unlit: true,
             ..default()
         });
-        let star_color_low: [f32; 4] = [r * 0.85, g * 0.4, b * 0.15, 1.0];
+        // Granulation douce de la même teinte : la couleur moyenne reste celle de l'étoile (LOD lointain identique)
+        let star_color_low: [f32; 4] = [r * 0.78, g * 0.7, b * 0.62, 1.0];
         let star_color_high: [f32; 4] = [r, g, b, 1.0];
         let pos = center + if let Some(o) = star_cfg.orbit {
             o.position(0.0).as_vec3()
@@ -2073,19 +2079,19 @@ fn regenerate_all(
 
     let cam_pos = camera_q.single().translation;
     for entity in &planet_q {
-        commands.entity(entity).despawn_recursive();
+        if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
     }
     for entity in &star_q {
-        commands.entity(entity).despawn_recursive();
+        if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
     }
     for entity in &moon_q {
-        commands.entity(entity).despawn_recursive();
+        if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
     }
     for entity in &flare_q {
-        commands.entity(entity).despawn_recursive();
+        if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
     }
     for entity in &cloud_q {
-        commands.entity(entity).despawn_recursive();
+        if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
     }
     // Seul le système chargé est régénéré (les autres ne sont pas instanciés)
     for &si in &spawned.0 {
@@ -2278,7 +2284,7 @@ fn reload_stars(
             unlit: true,
             ..default()
         });
-        let star_color_low: [f32; 4] = [r * 0.85, g * 0.4, b * 0.15, 1.0];
+        let star_color_low: [f32; 4] = [r * 0.78, g * 0.7, b * 0.62, 1.0];
         let star_color_high: [f32; 4] = [r, g, b, 1.0];
         let star_lod = LodLevel::Lod0;
 

@@ -554,7 +554,7 @@ fn reload_nebula_stream(
 ) {
     for ev in events.read() {
         let Ok(entity) = roots.get(ev.0) else { continue };
-        commands.entity(entity).despawn_recursive();
+        if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
         if nebula_res.enabled {
             build_nebula(&mut commands, &nebula_res.config, &mut meshes, &mut materials);
         }
@@ -574,7 +574,7 @@ fn regenerate_nebula(
     if !fired { return; }
 
     for entity in &root_q {
-        commands.entity(entity).despawn_recursive();
+        if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
     }
 
     if nebula_res.enabled {

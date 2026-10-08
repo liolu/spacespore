@@ -608,7 +608,7 @@ fn rebuild_dex(mut commands: Commands, mut ui: ResMut<DexUi>, dex: Res<Dex>, roo
     }
     ui.dirty = false;
     for e in &roots {
-        commands.entity(e).despawn_recursive();
+        if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); }
     }
     if !ui.open {
         return;

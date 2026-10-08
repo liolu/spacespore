@@ -461,6 +461,23 @@ fn update_scanner(
                 if !sys.rows.is_empty() {
                     sections.push(sys);
                 }
+                // Étoile double ou triple : son orbite (0.13.6)
+                if let Some(crate::planetgen::live::BodyId::Star { system, index }) = id {
+                    if let Some(s) = settings.systems.get(system as usize) {
+                        if let Some(o) = s.stars.get(index as usize).and_then(|st| st.orbit) {
+                            let mut orb = Section::new("ORBITE");
+                            let around = if index == 0 { "le centre de masse, avec son compagnon serre".to_string() } else if s.stars.first().is_some_and(|p| p.orbit.is_some()) && index == 1 { "le centre de masse, avec l'etoile A".to_string() } else { "la paire du centre (compagnon lointain)".to_string() };
+                            orb.row("Autour de", around);
+                            orb.row("Distance", format!("{:.2} M  (au plus {:.2} M)", o.a * o.factor.abs() / 1.0e6, o.reach() / 1.0e6));
+                            orb.row("Excentricite", format!("{:.2}", o.e));
+                            orb.row("Inclinaison", format!("{:.0} deg", o.i.to_degrees()));
+                            if o.period > 0.0 {
+                                orb.row("Periode", crate::world_clock::duration_text(o.period as f64));
+                            }
+                            sections.push(orb);
+                        }
+                    }
+                }
             }
             // Au dex (seulement une vraie cible : un astre trouvé)
             if let (Some(k), Some(b), false) = (key.clone(), id, sections.is_empty()) {

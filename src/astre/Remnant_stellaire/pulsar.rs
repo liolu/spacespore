@@ -1088,7 +1088,7 @@ fn reload_pulsars(
         let Ok((entity, root)) = roots.get(ev.0) else { continue };
         let idx = root.idx;
         let Some(cfg) = res.pulsars.get(idx) else { continue };
-        commands.entity(entity).despawn_recursive();
+        if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
         build_pulsar(&mut commands, cfg, idx, &mut meshes, &mut materials);
     }
 }
@@ -1107,7 +1107,7 @@ fn regenerate_pulsars(
     if !fired { return; }
 
     for entity in &root_q {
-        commands.entity(entity).despawn_recursive();
+        if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
     }
 
     spin.periods.clear();

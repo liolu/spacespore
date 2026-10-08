@@ -566,10 +566,10 @@ fn reload_comets(
         let Some(cfg) = res.comets.get(idx) else { continue };
         for (jet_e, jv) in &jets {
             if jv.comet_idx == idx {
-                commands.entity(jet_e).despawn_recursive();
+                if let Some(ec) = commands.get_entity(jet_e) { ec.despawn_recursive(); }
             }
         }
-        commands.entity(entity).despawn_recursive();
+        if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
         build_comet(&mut commands, cfg, idx, &mut meshes, &mut materials);
     }
 }
@@ -850,8 +850,8 @@ fn regenerate_comets(
     for _ in events.read() { fired = true; }
     if !fired { return; }
 
-    for entity in &root_q  { commands.entity(entity).despawn_recursive(); }
-    for entity in &jet_q   { commands.entity(entity).despawn_recursive(); }
+    for entity in &root_q  { if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); } }
+    for entity in &jet_q   { if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); } }
 
     for (idx, cfg) in comet_res.comets.iter().enumerate() {
         build_comet(&mut commands, cfg, idx, &mut meshes, &mut materials);
