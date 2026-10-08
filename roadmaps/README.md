@@ -1,6 +1,6 @@
 # Feuilles de route
 
-Les documents de suivi du projet, rangés en deux dossiers. Restent à la racine : `CLAUDE.md` (instructions),
+Les documents de suivi du projet, rangés en deux dossiers. Restent à la racine : `CLAUDE.md` (instructions courtes), `ARCHITECTURE.md` (détail technique par système),
 `TESTS-JEU.md` (règles de test) et `TOUCHES.md` (touches du jeu).
 
 ## `fait/` — terminé
@@ -34,4 +34,4 @@ Les documents de suivi du projet, rangés en deux dossiers. Restent à la racine
 | `IDEES-constructions.md` | Banque d'idées de constructions | idées |
 
 Quand une feuille de route est terminée et publiée, la passer de `a-faire/` à `fait/` (avec `git mv`) et mettre à
-jour ce tableau et les chemins dans `CLAUDE.md`.
+jour ce tableau et les chemins dans `ARCHITECTURE.md`.
