@@ -185,8 +185,14 @@ pub fn make_agent(timeout_secs: u64) -> ureq::Agent {
 /// Télécharge les infos de la dernière version d'un canal.
 pub fn fetch_channel(channel: Channel, timeout_secs: u64) -> Result<VersionInfo, String> {
     let url = channel.url().ok_or("aucun canal de mise a jour")?;
+    // Sans cache : GitHub Pages et le CDN des releases gardaient l'ancien fichier jusqu'à ~10 min
+    // (le launcher ne voyait la nouvelle version que bien après sa publication)
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let url = format!("{url}?t={now}");
     let body = make_agent(timeout_secs)
-        .get(url)
+        .get(&url)
+        .header("Cache-Control", "no-cache")
+        .header("Pragma", "no-cache")
         .call()
         .map_err(|e| e.to_string())?
         .body_mut()
@@ -221,6 +227,7 @@ pub fn fetch_releases(timeout_secs: u64) -> Result<Vec<VersionInfo>, String> {
     let url = format!("https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases?per_page=50");
     let body = make_agent(timeout_secs)
         .get(&url)
+        .header("Cache-Control", "no-cache")
         .header("User-Agent", "spacespore-launcher")
         .header("Accept", "application/vnd.github+json")
         .call()
