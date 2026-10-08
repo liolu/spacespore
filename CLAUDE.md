@@ -492,6 +492,14 @@ chose ; ne jamais relancer 2 fois le meme test sans rien changer.
   « Temps de jeu » (`game_clock_text`) pour tous les astres, periode des etoiles doubles en vraie valeur + jeu.
   Skybox fixe : calculee une seule fois, toujours vue depuis le systeme 0 (`first_sky`), plus de recalcul quand
   on change de systeme ou de galaxie (plus de `watch_system`) : le fond est le meme partout.
+- 0.13 V1 = trous noirs (`black_hole_fx.rs` + `black_hole.wgsl`, d'apres le modele `trou_noir` de Kerr) : chaque
+  `GalacticCore` / `DistantGalaxyCore` recoit une sphere de lentille (`LENS_RADIUS` = 70 rayons de Schwarzschild,
+  1 unite = `core_radius / 2,6`) dont le shader suit les geodesiques de Kerr (RK4, sortie interpolee sur le bord) :
+  ombre sans horizon dessine, fond VRAI devie (texture de transmission de Bevy = image deja rendue, sinon skybox
+  fixe), disque d'accretion (Doppler, decalage gravitationnel), jets, etoile aspiree en spirale (2 galaxies sur 3).
+  Profondeur ecrite = celle du centre (derriere : cache et vu devie ; devant : reste devant). Plus d'ancienne
+  sphere + anneaux. Stationnement a `CORE_HOVER_RADII` (9) rayons, hors du disque. Test : `SPACESPORE_TEST_ZOOM=
+  <s>:<distance>[:<lacet>:<tangage>]` avec `/tp 0`. L'animation de saut ne part plus pour un saut dans la meme galaxie.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

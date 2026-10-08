@@ -499,6 +499,19 @@ fn quit_after(time: Res<Time>, mut exit: EventWriter<AppExit>) {
     }
 }
 
+/// Galaxie qui contient le point absolu `p` : la plus proche, en rayons de galaxie.
+fn galaxy_at(settings: &crate::settings::GameSettings, p: DVec3) -> usize {
+    settings
+        .galaxies
+        .iter()
+        .enumerate()
+        .min_by(|a, b| {
+            let d = |g: &crate::settings::GalaxyConfig| (g.abs_center.as_dvec3() - p).length() / g.radius.max(1.0) as f64;
+            d(a.1).total_cmp(&d(b.1))
+        })
+        .map_or(0, |(i, _)| i)
+}
+
 /// Un saut du vaisseau d'une galaxie à l'autre lance l'animation (aussi pour `/tp` et `/galaxie`).
 fn watch_jumps(
     mut cine: ResMut<Cinematic>,
@@ -518,7 +531,8 @@ fn watch_jumps(
     }
     if let Some(prev) = prev {
         let jump = (abs - prev).length();
-        if jump > GALAXY_JUMP_MIN {
+        // Seulement d'une galaxie à une autre (un grand saut dans la même galaxie, `/tp 0`, n'en est pas un)
+        if jump > GALAXY_JUMP_MIN && galaxy_at(&settings, prev) != galaxy_at(&settings, abs) {
             let h = |v: DVec3| ((v.x * 12.9898 + v.y * 78.233 + v.z * 37.719).sin() * 43758.5453).rem_euclid(1.0) as f32;
             cine.start(CineKind::Galaxy, GALAXY_SECS);
             cine.hues = (h(prev), h(abs));

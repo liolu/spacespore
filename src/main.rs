@@ -53,6 +53,7 @@ mod sound;
 mod fog;
 mod skybox;
 mod cinematic;
+mod black_hole_fx;
 mod tunnel;
 mod smoke;
 mod photo;
@@ -262,6 +263,7 @@ fn main() {
         .add_plugins(sound::SoundPlugin)
         .add_plugins(fog::FogPlugin)
         .add_plugins(skybox::SkyboxPlugin)
+        .add_plugins(black_hole_fx::BlackHoleFxPlugin)
         .add_plugins(cinematic::CinematicPlugin)
         .add_plugins(tunnel::TunnelPlugin)
         .add_plugins(smoke::SmokePlugin)
@@ -368,13 +370,32 @@ fn main() {
                 profiling_snapshot,
                 astre_lod_cull,
                 process_pending_reloads,
-                promote_star_target,
+                (promote_star_target, test_zoom),
             )
                 // Pendant l'éditeur (0.12), le jeu ne lit plus le clavier ni la souris
                 .run_if(editeur::in_game),
         )
 
         .run();
+}
+
+/// Tests : `SPACESPORE_TEST_ZOOM=<s>:<distance>[:<lacet>:<tangage>]` place la caméra à cette distance
+/// (et cet angle, en radians) à partir de `<s>` secondes (captures de près d'un astre, d'un trou noir).
+fn test_zoom(time: Res<Time>, mut cam_q: Query<&mut CameraController>) {
+    let Ok(v) = std::env::var("SPACESPORE_TEST_ZOOM") else { return };
+    let f: Vec<f32> = v.split(':').filter_map(|x| x.trim().parse().ok()).collect();
+    let (Some(&at), Some(&dist)) = (f.first(), f.get(1)) else { return };
+    if time.elapsed_secs() < at {
+        return;
+    }
+    for mut c in &mut cam_q {
+        c.distance = dist;
+        c.zoom_goal = None;
+        if let (Some(&yaw), Some(&pitch)) = (f.get(2), f.get(3)) {
+            c.yaw = yaw;
+            c.pitch = pitch;
+        }
+    }
 }
 
 fn close_game_when_primary_window_closes(
@@ -728,7 +749,7 @@ fn clickables(
     let overview = matches!(*zoom, ZoomLevel::Cosmos | ZoomLevel::DeepSpace);
     let galaxy = |center: Vec3, galaxy_id: usize| -> (f32, f32) {
         // Le cercle entoure le trou noir et son disque (taille fixe dans l'espace)
-        let r = settings.galaxies.get(galaxy_id).map_or(0.0, |g| g.core_radius * 4.0);
+        let r = settings.galaxies.get(galaxy_id).map_or(0.0, |g| g.core_radius * 6.0);
         (galaxy_click_tolerance(camera, camera_transform, viewport, settings, overview, center, galaxy_id), screen_radius(camera, camera_transform, viewport, center, r))
     };
     for gt in &queries.core_q {
@@ -847,7 +868,7 @@ fn select_world_target(
                 return;
             }
             let at_core = settings.galaxies.get(current_gal as usize).zip(ship_q.get_single().ok()).is_some_and(|(g, ship)| {
-                ship.translation().distance(g.center()) <= g.core_radius * 4.0
+                ship.translation().distance(g.center()) <= g.core_radius * CORE_HOVER_RADII * 1.3
             });
             if !at_core {
                 net.notify("Rejoignez le trou noir de votre galaxie pour sauter vers une autre galaxie.", now);
@@ -1095,6 +1116,9 @@ const MAX_TRAVEL_RANGE: f32 = 2_500_000_000.0;
 /// Zoom (distance de la caméra) sous lequel les étoiles lointaines ont leur cercle et se choisissent
 /// d'un clic, à tous les niveaux (zoom 1 compris) : 2 500 M.
 const STAR_ZOOM_MAX: f32 = 2_500_000_000.0;
+/// Distance de stationnement autour d'un trou noir central, en rayons du trou noir : hors du disque
+/// d'accrétion (~5,4 rayons) mais dans la lentille (`black_hole_fx`), d'où l'on voit tout le spectacle.
+pub(crate) const CORE_HOVER_RADII: f32 = 9.0;
 /// Zoom maximal de la caméra.
 const MAX_ZOOM: f32 = 400_000_000.0 * settings::GALAXY_SCALE;
 
@@ -1216,7 +1240,7 @@ fn hover_height_for(target: &CameraTarget, settings: &GameSettings, star_r: Opti
         _ => None,
     };
     if let Some(r) = core_radius {
-        return r * 1.8;
+        return r * CORE_HOVER_RADII;
     }
     // Planète ou lune : au-dessus de sa surface (elles sont immenses)
     if let Some(params) = surface::body_params(settings, &target.0) {

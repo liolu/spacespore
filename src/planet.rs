@@ -102,7 +102,7 @@ impl Plugin for PlanetPlugin {
             .add_systems(Startup, (build_spatial_index, generate_all).chain())
             .add_systems(
                 Update,
-                (orbit_planets, orbit_stars, orbit_moons.after(orbit_planets), update_flare_voxels, rotate_clouds.after(orbit_planets), shimmer_auroras, regenerate_all, update_lod, update_star_visibility, update_far_star_scale, update_arm_capsule_lod, stream_system_bodies, reload_stars, reload_planets, reload_moons, cleanup_hidden_toplevel, rotate_accretion_disk, dim_accretion_disk),
+                (orbit_planets, orbit_stars, orbit_moons.after(orbit_planets), update_flare_voxels, rotate_clouds.after(orbit_planets), shimmer_auroras, regenerate_all, update_lod, update_star_visibility, update_far_star_scale, update_arm_capsule_lod, stream_system_bodies, reload_stars, reload_planets, reload_moons, cleanup_hidden_toplevel),
             )
             .add_event::<FarGalaxyLoaded>()
             .init_resource::<GalaxyVisuals>()
@@ -349,7 +349,7 @@ pub(crate) fn update_galaxy_points(
     settings: Res<GameSettings>,
     mats: Option<Res<StarBrightnessMaterials>>,
     mut points: Query<(&GalaxyPoint, &mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>)>,
-    mut cores: Query<(Option<&DistantGalaxyCore>, Has<GalacticCore>, &mut Visibility), (Without<GalaxyPoint>, Or<(With<DistantGalaxyCore>, With<GalacticCore>, With<AccretionDisk>)>)>,
+    mut cores: Query<(Option<&DistantGalaxyCore>, Has<GalacticCore>, &mut Visibility), (Without<GalaxyPoint>, Or<(With<DistantGalaxyCore>, With<GalacticCore>)>)>,
     time: Res<Time>,
     epoch: Res<crate::origin::OriginEpoch>,
     mut last: Local<(Vec3, f64, u32)>,
@@ -427,13 +427,6 @@ pub struct SystemIdx(pub usize);
 
 #[derive(Component)]
 pub struct GalacticCore;
-
-/// Un anneau du disque d'accrétion du trou noir central, enfant du trou noir (C8) ; son éclat de
-/// départ, atténué comme les bras de la galaxie près d'un astre et au sol de jour (`GalaxyDim`).
-#[derive(Component)]
-pub struct AccretionDisk {
-    pub glow: LinearRgba,
-}
 
 #[derive(Component)]
 pub struct DistantGalaxyCore {
@@ -799,67 +792,16 @@ pub struct FarGalaxyLoaded(pub u32);
 pub struct GalaxyVisualAssets {
     capsule_mesh: Handle<Mesh>,
     capsule_mat: Handle<StandardMaterial>,
-    core_mesh: Handle<Mesh>,
-    core_mat: Handle<StandardMaterial>,
-    /// Disque d'accrétion d'un trou noir de rayon 1 (mis à l'échelle).
-    disk_mesh: Handle<Mesh>,
-    disk_mat: Handle<StandardMaterial>,
 }
 
 impl GalaxyVisualAssets {
-    fn new(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>, capsule_mesh: Handle<Mesh>, capsule_mat: Handle<StandardMaterial>) -> Self {
-        let tau = std::f32::consts::TAU;
-        let ring_seg = 64_u32;
-        let (inner, outer) = (1.3, 3.5);
-        let mut positions: Vec<[f32; 3]> = Vec::new();
-        let mut normals: Vec<[f32; 3]> = Vec::new();
-        let mut colors: Vec<[f32; 4]> = Vec::new();
-        let mut indices: Vec<u32> = Vec::new();
-        for i in 0..=ring_seg {
-            let angle = i as f32 / ring_seg as f32 * tau;
-            let (cos, sin) = (angle.cos(), angle.sin());
-            positions.push([cos * inner, 0.0, sin * inner]);
-            normals.push([0.0, 1.0, 0.0]);
-            colors.push([1.0, 0.6, 0.15, 0.9]);
-            positions.push([cos * outer, 0.0, sin * outer]);
-            normals.push([0.0, 1.0, 0.0]);
-            colors.push([0.6, 0.1, 0.4, 0.2]);
-            if i < ring_seg {
-                let base = i * 2;
-                indices.extend_from_slice(&[base, base + 1, base + 2, base + 1, base + 3, base + 2]);
-            }
-        }
-        let mut disk = Mesh::new(bevy::render::mesh::PrimitiveTopology::TriangleList, bevy::render::render_asset::RenderAssetUsages::default());
-        disk.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-        disk.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-        disk.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
-        disk.insert_indices(bevy::render::mesh::Indices::U32(indices));
-        Self {
-            capsule_mesh,
-            capsule_mat,
-            core_mesh: meshes.add(Sphere::new(1.0).mesh().ico(3).unwrap()),
-            core_mat: materials.add(StandardMaterial {
-                base_color: Color::srgb(0.01, 0.0, 0.02),
-                emissive: LinearRgba::new(0.0, 0.0, 0.0, 1.0),
-                unlit: true,
-                ..default()
-            }),
-            disk_mesh: meshes.add(disk),
-            disk_mat: materials.add(StandardMaterial {
-                base_color: Color::WHITE,
-                emissive: LinearRgba::new(3.0, 1.2, 0.4, 1.0),
-                unlit: true,
-                alpha_mode: AlphaMode::Add,
-                double_sided: true,
-                cull_mode: None,
-                ..default()
-            }),
-        }
+    fn new(_meshes: &mut Assets<Mesh>, _materials: &mut Assets<StandardMaterial>, capsule_mesh: Handle<Mesh>, capsule_mat: Handle<StandardMaterial>) -> Self {
+        Self { capsule_mesh, capsule_mat }
     }
 }
 
 /// Crée les bras (capsules) d'une galaxie et, pour une galaxie autre que la nôtre, son trou noir
-/// et son disque d'accrétion (notre trou noir central est à part : `spawn_galactic_core`).
+/// (notre trou noir central est à part : `spawn_galactic_core` ; rendu : `black_hole_fx.rs`).
 fn spawn_galaxy_visuals(commands: &mut Commands, assets: &GalaxyVisualAssets, gid: u32, gal: &GalaxyConfig) {
     // Chaque galaxie extérieure décale sa palette : elles n'ont pas toutes les mêmes couleurs
     let color = if gid == 0 { 0 } else { (crate::settings::pseudo_rand(gid * 31 + 7) * ARM_COLORS as f32) as usize % ARM_COLORS };
@@ -867,19 +809,10 @@ fn spawn_galaxy_visuals(commands: &mut Commands, assets: &GalaxyVisualAssets, gi
     if gid == 0 {
         return;
     }
-    let center = gal.center();
+    // Le trou noir : son rendu (lentille, disque, jets) est donné par `black_hole_fx.rs`
     commands.spawn((
-        Mesh3d(assets.core_mesh.clone()),
-        MeshMaterial3d(assets.core_mat.clone()),
-        Transform::from_translation(center).with_scale(Vec3::splat(gal.core_radius)),
-        NotShadowCaster,
-        DistantGalaxyCore { galaxy_id: gid },
-        GalaxyVisual { galaxy_id: gid },
-    ));
-    commands.spawn((
-        Mesh3d(assets.disk_mesh.clone()),
-        MeshMaterial3d(assets.disk_mat.clone()),
-        Transform::from_translation(center).with_rotation(gal.tilt * Quat::from_rotation_x(0.25)).with_scale(Vec3::splat(gal.core_radius)),
+        Transform::from_translation(gal.center()),
+        Visibility::Inherited,
         NotShadowCaster,
         DistantGalaxyCore { galaxy_id: gid },
         GalaxyVisual { galaxy_id: gid },
@@ -960,110 +893,15 @@ pub(crate) fn index_far_galaxies(
     }
 }
 
-/// Le trou noir central et son disque, au vrai centre de la galaxie (`center`, repère monde) : le
-/// disque est son enfant, il le suit quand l'origine flottante se recentre (avant, créés au point
-/// zéro du monde, c'est-à-dire là où l'on était au lancement, puis décalés l'un de l'autre).
+/// Le trou noir central, au vrai centre de la galaxie (`center`, repère monde). Son rendu (horizon,
+/// lentille, disque d'accrétion, jets) est fait par `black_hole_fx.rs`, qui lui donne sa sphère de lentille.
 fn spawn_galactic_core(
     commands: &mut Commands,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    materials: &mut ResMut<Assets<StandardMaterial>>,
+    _meshes: &mut ResMut<Assets<Mesh>>,
+    _materials: &mut ResMut<Assets<StandardMaterial>>,
     center: Vec3,
 ) {
-    let core_radius = 30_000.0_f32 * crate::settings::GALAXY_SIZE_SCALE; // trou noir central : 10 fois plus grand
-
-    let core_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.01, 0.0, 0.02),
-        emissive: LinearRgba::new(0.0, 0.0, 0.0, 1.0),
-        unlit: true,
-        ..default()
-    });
-    let core = commands
-        .spawn((
-            Mesh3d(meshes.add(Sphere::new(core_radius).mesh().ico(4).unwrap())),
-            MeshMaterial3d(core_mat),
-            Transform::from_translation(center),
-            NotShadowCaster,
-            GalacticCore,
-        ))
-        .id();
-
-    let ring_segments = 128_u32;
-    let ring_layers = 3_u32;
-    let inner_r = core_radius * 1.3;
-    let outer_r = core_radius * 4.0;
-
-    for layer in 0..ring_layers {
-        let t = layer as f32 / ring_layers as f32;
-        let r_in = inner_r + (outer_r - inner_r) * t;
-        let r_out = inner_r + (outer_r - inner_r) * (t + 1.0 / ring_layers as f32);
-        let thickness = (r_out - r_in) * 0.15;
-
-        let mut positions: Vec<[f32; 3]> = Vec::new();
-        let mut normals: Vec<[f32; 3]> = Vec::new();
-        let mut colors: Vec<[f32; 4]> = Vec::new();
-        let mut indices: Vec<u32> = Vec::new();
-
-        for i in 0..=ring_segments {
-            let angle = i as f32 / ring_segments as f32 * std::f32::consts::TAU;
-            let cos = angle.cos();
-            let sin = angle.sin();
-
-            let brightness = 1.0 - t * 0.6;
-            let inner_color = [1.0 * brightness, 0.6 * brightness, 0.15 * brightness, 0.9];
-            let outer_color = [0.6 * brightness, 0.1 * brightness, 0.4 * brightness, 0.3];
-
-            positions.push([cos * r_in, 0.0, sin * r_in]);
-            normals.push([0.0, 1.0, 0.0]);
-            colors.push(inner_color);
-
-            positions.push([cos * r_out, 0.0, sin * r_out]);
-            normals.push([0.0, 1.0, 0.0]);
-            colors.push(outer_color);
-
-            if i < ring_segments {
-                let base = i * 2;
-                indices.push(base);
-                indices.push(base + 1);
-                indices.push(base + 2);
-                indices.push(base + 1);
-                indices.push(base + 3);
-                indices.push(base + 2);
-            }
-        }
-
-        let mut mesh = Mesh::new(
-            bevy::render::mesh::PrimitiveTopology::TriangleList,
-            bevy::render::render_asset::RenderAssetUsages::default(),
-        );
-        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
-        mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
-
-        let glow = LinearRgba::new(4.0 * (1.0 - t), 1.5 * (1.0 - t), 0.5, 1.0);
-        let disk_mat = materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            emissive: glow,
-            unlit: true,
-            alpha_mode: AlphaMode::Add,
-            double_sided: true,
-            cull_mode: None,
-            ..default()
-        });
-
-        let tilt = Quat::from_rotation_x(0.25) * Quat::from_rotation_z(0.1);
-        let y_off = thickness * (layer as f32 - 1.0) * 0.3;
-        let disk = commands
-            .spawn((
-                Mesh3d(meshes.add(mesh)),
-                MeshMaterial3d(disk_mat),
-                Transform::from_translation(Vec3::new(0.0, y_off, 0.0)).with_rotation(tilt),
-                NotShadowCaster,
-                AccretionDisk { glow },
-            ))
-            .id();
-        commands.entity(core).add_child(disk);
-    }
+    commands.spawn((Transform::from_translation(center), Visibility::Inherited, NotShadowCaster, GalacticCore));
 }
 
 fn spawn_arm_capsules(
@@ -2551,28 +2389,6 @@ fn update_arm_capsule_lod(
             let target = &lod_mats.capsule_steps[ci][step];
             if mat.0 != *target { mat.0 = target.clone(); }
         }
-    }
-}
-
-/// Le disque du trou noir s'atténue comme les bras de la galaxie : près d'un astre, et au sol de
-/// jour (la brume du ciel le cache) ; la nuit, il revient (C8).
-fn dim_accretion_disk(dim: Res<crate::surface::GalaxyDim>, disks: Query<(&AccretionDisk, &MeshMaterial3d<StandardMaterial>)>, mut materials: ResMut<Assets<StandardMaterial>>) {
-    if !dim.is_changed() {
-        return;
-    }
-    for (disk, mat) in &disks {
-        if let Some(m) = materials.get_mut(&mat.0) {
-            m.emissive = disk.glow * dim.0;
-        }
-    }
-}
-
-fn rotate_accretion_disk(
-    time: Res<Time>,
-    mut disk_q: Query<&mut Transform, With<AccretionDisk>>,
-) {
-    for mut tf in &mut disk_q {
-        tf.rotate_y(time.delta_secs() * 0.08);
     }
 }
 
