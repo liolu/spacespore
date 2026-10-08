@@ -62,6 +62,7 @@ test reutilisable vaut mieux qu'un essai de plus.
 | `SPACESPORE_TEST_CINE=dig\|ride\|galaxie[:t]` | lance la sequence plein ecran a 3 s, a l'instant `t` (la capture a `<s>` s montre `t + s - 3`) : ne depend pas du monde (le shader recouvre le jeu) |
 | `SPACESPORE_QUIT_SECS=<s>` | ferme le jeu a `<s>` s sans capture (verifier seulement le journal : erreurs de shader, `NOTIFY`) |
 | `SPACESPORE_TEST_TUNNEL=<u>` | `/tunnel creuser` creuse droit devant sur `<u>` unites, sans cible |
+| `SPACESPORE_TEST_PHOTO=<s>` | entre en mode photo a `<s>` s (tout est cache sauf les astres) |
 | `NOTIFY` dans le log | tous les messages systeme (actif si `SPACESPORE_TEST_CMD` est defini) |
 
 ## Commandes du chat pour les tests

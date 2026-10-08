@@ -326,7 +326,7 @@ fn draw_approach(mut gizmos: Gizmos, surface: Res<Surface>, ap: Res<Approach>) {
 // ─────────────────────────────────────────────────────────────────────────
 
 #[derive(Component)]
-struct Glass;
+pub(crate) struct Glass;
 
 #[derive(Component)]
 struct GlassTint;

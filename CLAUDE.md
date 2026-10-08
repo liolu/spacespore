@@ -475,7 +475,8 @@ chose ; ne jamais relancer 2 fois le meme test sans rien changer.
   visible a tous les zooms, option « Fond d'etoiles » (`show_skybox`). Zone d'influence des etoiles :
   `StarSystemConfig::influence` = 0,8 x distance a l'etoile voisine (`set_influence`, dans `dense` / `lazy`), limite
   `Stellar::outer_limit` (planetes, ceintures, cometes) ; PROTOCOL 36. Mode creatif (option, `settings::creative()` :
-  pas de degats, soute et achats illimites). Mode photo `photo.rs` (F9 / F10 filtres `ColorGrading` / F11 PNG).
+  pas de degats, soute et achats illimites). Mode photo `photo.rs` (F9 / F10 filtres `ColorGrading` / F11 PNG) : seuls les astres restent (`hide_for_photo` cache
+  a chaque image interface, gizmos, vaisseau, joueurs, fumee, effets ; `SPACESPORE_TEST_PHOTO=<s>`).
   Fumee en cubes derriere le vaisseau (`smoke.rs`). Crashs gardes par session dans `crashes/` (30 derniers).
   Couleurs des cercles : lune blanc, planete orange, comete bleu, ceinture rouge clair. Etoiles lointaines : 13
   couleurs (`star_palette`), granulation de la meme teinte. Asteroides / cometes remailles plus fins de pres

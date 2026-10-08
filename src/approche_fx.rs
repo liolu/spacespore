@@ -467,7 +467,7 @@ fn ship_fx(
 // ─────────────────────────────────────────────────────────────────────────
 
 #[derive(Component)]
-struct BodyFx;
+pub(crate) struct BodyFx;
 
 /// Racine de l'astre où l'on vole (planète ou lune).
 fn root_of(kind: TargetKind, planets: &Query<(Entity, &PlanetId), With<PlanetRoot>>, moons: &Query<(Entity, &MoonId), With<MoonRoot>>) -> Option<Entity> {
@@ -1041,7 +1041,7 @@ fn rim_fx(
 // ─────────────────────────────────────────────────────────────────────────
 
 #[derive(Component)]
-struct RemoteFx(FxKind);
+pub(crate) struct RemoteFx(FxKind);
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn remote_fx(
