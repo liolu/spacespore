@@ -16,7 +16,7 @@ use bevy::prelude::*;
 use bevy::render::primitives::Aabb;
 use bevy::render::render_resource::{AsBindGroup, Extent3d, RenderPipelineDescriptor, ShaderRef, ShaderType, SpecializedMeshPipelineError, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension};
 use bevy::render::view::NoFrustumCulling;
-use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task};
+use bevy::tasks::{block_on, futures_lite::future, Task};
 
 use crate::galaxy_shape::Rng;
 use crate::settings::{GalaxyConfig, GameSettings};
@@ -415,7 +415,7 @@ impl Plugin for SkyboxPlugin {
         app.add_plugins(MaterialPlugin::<SkyMaterial>::default())
             .init_resource::<SkyState>()
             .add_systems(Startup, spawn_dome)
-            .add_systems(Update, (first_sky, watch_system, finish_sky, sky_params).chain())
+            .add_systems(Update, (first_sky, finish_sky, sky_params).chain())
             .add_systems(PostUpdate, follow_camera.before(TransformSystem::TransformPropagate));
     }
 }
@@ -483,7 +483,10 @@ fn first_sky(
         return;
     }
     *done = true;
-    let here = ship_q.get_single().map(|t| t.translation).or_else(|_| cam_q.get_single().map(|t| t.translation)).unwrap_or(Vec3::ZERO);
+    // Ciel fixe, le même partout : toujours vu depuis le premier système du monde (il ne bouge plus ni
+    // ne change de forme quand on change de système ou de galaxie)
+    let _ = (&ship_q, &cam_q);
+    let here = settings.systems.get(0).map_or(Vec3::ZERO, |s| s.center());
     let Some((si, input)) = sky_input(&settings, here) else { return };
     let started = std::time::Instant::now();
     let bytes = render_cube(&input);
@@ -536,69 +539,6 @@ fn sky_input(settings: &GameSettings, here: Vec3) -> Option<(usize, SkyInput)> {
     stars.sort_by(|a, b| a.0.total_cmp(&b.0));
     let stars: Vec<(Vec3, [f32; 3], f32)> = stars.into_iter().skip(40).map(|(_, p, c, l)| (p, c, l)).collect();
     Some((si, SkyInput { viewer, galaxy, others, stars, seed: (si as u32).wrapping_mul(2246822519) ^ settings.world_seed as u32, size: SKY_SIZE }))
-}
-
-/// Système le plus proche de la caméra (parmi ceux qui existent) : quand il change, le ciel est refait.
-fn watch_system(time: Res<Time>, settings: Res<GameSettings>, cam_q: Query<&Transform, With<Camera3d>>, mut state: ResMut<SkyState>) {
-    let now = time.elapsed_secs_f64();
-    if !settings.show_skybox {
-        return;
-    }
-    // Le premier ciel part tout de suite ; les suivants, au plus un toutes les 5 s
-    if state.task.is_some() || (state.ready && now - state.last_start < 5.0) {
-        return;
-    }
-    let Ok(cam) = cam_q.get_single() else { return };
-    let here = cam.translation;
-    let mut best: Option<(usize, f32)> = None;
-    for (i, s) in settings.systems.iter() {
-        let d = (s.center() - here).length_squared();
-        if best.is_none_or(|(_, b)| d < b) {
-            best = Some((i, d));
-        }
-    }
-    let Some((si, _)) = best else { return };
-    if state.system == Some(si) {
-        return;
-    }
-    let Some(sys) = settings.systems.get(si) else { return };
-    let viewer = sys.abs_center();
-    let gid = sys.galaxy_id as usize;
-    if let Some((prev, pg)) = state.viewer {
-        if pg == gid && (viewer - prev).length() < 1.5e9 {
-            state.system = Some(si);
-            return;
-        }
-    }
-    state.viewer = Some((viewer, gid));
-    let galaxy = settings.galaxies.get(gid).cloned();
-    // Les autres galaxies : les 48 qui paraissent les plus grandes (10 000 au total, la plupart ne sont que des points)
-    let mut others: Vec<(f32, GalaxyConfig)> = settings
-        .galaxies
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| *i != gid)
-        .map(|(_, g)| (g.radius / (g.abs_center - viewer).length().max(1.0), g.clone()))
-        .collect();
-    others.sort_by(|a, b| b.0.total_cmp(&a.0));
-    let others: Vec<GalaxyConfig> = others.into_iter().take(48).map(|(_, g)| g).collect();
-    // Les étoiles voisines (une cinquantaine) sont de vrais objets : seules les autres sont dessinées
-    let mut stars: Vec<(f32, Vec3, [f32; 3], f32)> = settings
-        .systems
-        .iter()
-        .filter(|(i, _)| *i != si)
-        .filter_map(|(_, s)| {
-            let st = s.stars.first()?;
-            Some(((s.abs_center() - viewer).length_squared(), s.abs_center(), [st.light_color_r, st.light_color_g, st.light_color_b], st.lumens()))
-        })
-        .collect();
-    stars.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let stars: Vec<(Vec3, [f32; 3], f32)> = stars.into_iter().skip(40).map(|(_, p, c, l)| (p, c, l)).collect();
-    let input = SkyInput { viewer, galaxy, others, stars, seed: (si as u32).wrapping_mul(2246822519) ^ settings.world_seed as u32, size: SKY_SIZE };
-    info!("Ciel : calcul depuis le systeme {si} ({} etoiles, {} autres galaxies)", input.stars.len(), input.others.len());
-    state.last_start = now;
-    state.started = Some(std::time::Instant::now());
-    state.task = Some((si, AsyncComputeTaskPool::get().spawn(async move { render_cube(&input) })));
 }
 
 fn finish_sky(mut state: ResMut<SkyState>, mut images: ResMut<Assets<Image>>, mut materials: ResMut<Assets<SkyMaterial>>, dome: Query<&MeshMaterial3d<SkyMaterial>, With<SkyDome>>) {

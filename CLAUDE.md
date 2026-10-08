@@ -490,6 +490,8 @@ chose ; ne jamais relancer 2 fois le meme test sans rien changer.
   l'ecran (`wanted_detail`). Trainees sur une grille de temps fixe (`trail`) et vitesse des asteroides calculee
   sur l'orbite (plus de tremblement). Poussiere et trainees de condensation en cubes (`approche_fx.rs`). Scanner :
   « Temps de jeu » (`game_clock_text`) pour tous les astres, periode des etoiles doubles en vraie valeur + jeu.
+  Skybox fixe : calculee une seule fois, toujours vue depuis le systeme 0 (`first_sky`), plus de recalcul quand
+  on change de systeme ou de galaxie (plus de `watch_system`) : le fond est le meme partout.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 
