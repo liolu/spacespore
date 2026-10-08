@@ -1,10 +1,10 @@
 {
-  "version": "0.13.5",
-  "version_code": 1305,
-  "release_date": "2026-10-07",
-  "download_url": "https://github.com/liolu/spacespore/releases/download/v0.13.5/spacespore-v0.13.5-windows.zip",
-  "download_url_linux": "https://github.com/liolu/spacespore/releases/download/v0.13.5/spacespore-v0.13.5-linux.zip",
-  "download_url_macos": "https://github.com/liolu/spacespore/releases/download/v0.13.5/spacespore-v0.13.5-macos.zip",
-  "release_notes": "Version 0.13.5 : correctifs du bloc P, brouillard (C1), skybox (C2)",
+  "version": "0.13.6",
+  "version_code": 1306,
+  "release_date": "2026-10-08",
+  "download_url": "https://github.com/liolu/spacespore/releases/download/v0.13.6/spacespore-v0.13.6-windows.zip",
+  "download_url_linux": "https://github.com/liolu/spacespore/releases/download/v0.13.6/spacespore-v0.13.6-linux.zip",
+  "download_url_macos": "https://github.com/liolu/spacespore/releases/download/v0.13.6/spacespore-v0.13.6-macos.zip",
+  "release_notes": "Version 0.13.6 : cinematiques sur le vrai ciel, skybox a tous les zooms + option, zone d'influence des etoiles, mode creatif, mode photo, fumee en cubes, crashs par session, couleurs des cercles, LOD etoiles / cometes / ceintures, Tab pour /tunnel",
   "min_updater_version": 1
 }
