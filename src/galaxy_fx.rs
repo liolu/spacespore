@@ -404,7 +404,7 @@ struct CloudsShown(std::collections::HashSet<u32>);
 const CLOUD_REACH: f32 = CLOUD_FADE_END * 1.1;
 
 #[derive(Component)]
-struct GalaxyCloud {
+pub struct GalaxyCloud {
     galaxy_id: u32,
     size: f32,
     color: usize,

@@ -22,6 +22,7 @@ struct Cine {
     fx2: vec4<f32>,
     // tunnel : x voie (-1..1), y vitesse (0..1), z position (distance), w sens (+1 avant, -1 arrière)
     // galaxies : x, y = teintes de départ et d'arrivée, z = graine, w = durée
+    // foreuse : x = rayon du quadrillage autour d'elle
     extra: vec4<f32>,
     // Repère du fond : directions locales -> directions du monde (lecture du vrai ciel)
     bx: vec4<f32>,
@@ -36,6 +37,12 @@ struct Cine {
 @group(1) @binding(2) var sky_samp: sampler;
 
 const PI: f32 = 3.14159265;
+
+// pow sans NaN : sur certains GPU, pow(0, y) vaut NaN (la vise de la foreuse devenait un mur infini devant
+// sa pointe, une grande nappe crème sur l'écran)
+fn spow(x: f32, y: f32) -> f32 {
+    return pow(max(x, 1e-6), y);
+}
 
 fn fmod(x: f32, y: f32) -> f32 {
     return x - y * floor(x / y);
@@ -93,7 +100,7 @@ fn sdBox(p: vec3<f32>, b: vec3<f32>) -> f32 {
 fn bitSDF(q: vec3<f32>, time: f32) -> f32 {
     let h = 6.0;
     let zc = clamp(q.z, 0.0, h);
-    let r = 0.82 * pow(1.0 - zc / h, 0.85);
+    let r = 0.82 * spow(1.0 - zc / h, 0.85);
     let ang = atan2(q.y, q.x);
     let spin = time * cine.drill.w * 3.0;
     let flute = 0.5 + 0.5 * cos(3.0 * ang - 4.6 * q.z + spin);
@@ -147,7 +154,7 @@ fn starfield(dir: vec3<f32>) -> vec3<f32> {
         let h = hash13(ip + f32(layer) * 17.0);
         let th = select(0.9965, 0.9975, layer == 1);
         if (h > th) {
-            let b = pow((h - th) / (1.0 - th), 0.8);
+            let b = spow((h - th) / (1.0 - th), 0.8);
             let tint = vec3<f32>(hash13(ip + 1.7), hash13(ip + 3.3), hash13(ip + 5.9));
             col += b * (0.55 + 0.6 * tint) * select(1.0, 0.6, layer == 1);
         }
@@ -212,12 +219,17 @@ fn grid2d(ro: vec3<f32>, rd: vec3<f32>) -> vec3<f32> {
     let g = abs(fract(sw.xz / spacing + 0.5) - 0.5) * spacing;
     let w = 0.06 + 0.0025 * t;
     let line = 1.0 - smoothstep(0.0, w, min(g.x, g.y));
-    let extent = 1.0 - smoothstep(60.0, 95.0, max(abs(sw.x - cine.drill.x), abs(sw.z - cine.drill.z)));
-    let fade = exp(-t * 0.004);
+    // Le quadrillage s'étend depuis la foreuse (rayon `extra.x`), un front lumineux en tête
+    let rr = length(sw.xz - cine.drill.xz);
+    let reach = cine.extra.x;
+    let extent = 1.0 - smoothstep(reach * 0.85, reach, rr);
+    let fu = (rr - reach * 0.92) / max(reach * 0.05, 1.0);
+    let front = exp(-fu * fu) * 0.8;
+    let fade = exp(-t * 0.0025);
     // Les lignes principales (tous les 5) sont plus vives
     let gm = abs(fract(sw.xz / (spacing * 5.0) + 0.5) - 0.5) * spacing * 5.0;
     let major = 1.0 - smoothstep(0.0, w * 1.6, min(gm.x, gm.y));
-    return vec3<f32>(0.25, 0.6, 1.0) * (line * 0.7 + major * 0.9) * extent * fade * amount * 1.5;
+    return vec3<f32>(0.25, 0.6, 1.0) * ((line * 0.7 + major * 0.9) * extent + front * (line + 0.15)) * fade * amount * 1.5;
 }
 
 // Grille 3D : un treillis dans un volume autour de la foreuse, éclairé en passant près de ses lignes.
@@ -287,8 +299,8 @@ fn tube_glow(ro: vec3<f32>, rd: vec3<f32>) -> vec3<f32> {
             continue;
         }
         let ang = atan2(p.y, p.x);
-        let ribbon = pow(0.5 + 0.5 * cos(ang * 12.0), 14.0);
-        let rings = pow(0.5 + 0.5 * sin(p.z * 1.4 - cine.res.z * 3.0), 10.0);
+        let ribbon = spow(0.5 + 0.5 * cos(ang * 12.0), 14.0);
+        let rings = spow(0.5 + 0.5 * sin(p.z * 1.4 - cine.res.z * 3.0), 10.0);
         let head = exp(-(z_end - p.z) * 0.35);
         col += vec3<f32>(0.18, 0.45, 0.95) * (0.18 + ribbon * 0.9 + rings * 0.6 + head * 1.6) * select(0.5, 1.0, k == 0);
     }
@@ -303,7 +315,7 @@ fn shade_drill(p: vec3<f32>, n: vec3<f32>, rd: vec3<f32>) -> vec3<f32> {
     let light_dir = normalize(vec3<f32>(0.4, 0.7, -0.5));
     let diff = max(dot(n, light_dir), 0.0);
     var col = base * (0.14 + diff * 0.75);
-    let fres = pow(1.0 - max(dot(n, -rd), 0.0), 3.0);
+    let fres = spow(1.0 - max(dot(n, -rd), 0.0), 3.0);
     col += vec3<f32>(0.4, 0.6, 0.9) * fres * 0.45;
     // Lumières bleues sur les anneaux
     var ring_glow = 0.0;
@@ -321,9 +333,9 @@ fn shade_drill(p: vec3<f32>, n: vec3<f32>, rd: vec3<f32>) -> vec3<f32> {
     if (lp.z > 3.7) {
         let tip = clamp((lp.z - 3.7) / 6.0, 0.0, 1.0);
         let ang = atan2(lp.y, lp.x);
-        let edge = pow(0.5 + 0.5 * cos(3.0 * ang - 4.6 * lp.z + cine.res.z * cine.drill.w * 3.0), 6.0);
+        let edge = spow(0.5 + 0.5 * cos(3.0 * ang - 4.6 * lp.z + cine.res.z * cine.drill.w * 3.0), 6.0);
         col = mix(col, vec3<f32>(0.62, 0.66, 0.74) * (0.25 + diff * 0.9), 0.7);
-        col += vec3<f32>(1.0, 0.55, 0.2) * pow(tip, 3.0) * cine.fx.x * (0.6 + 0.8 * edge);
+        col += vec3<f32>(1.0, 0.55, 0.2) * spow(tip, 3.0) * cine.fx.x * (0.6 + 0.8 * edge);
         col += vec3<f32>(0.5, 0.8, 1.0) * edge * 0.18 * cine.fx.x;
     }
     col += vec3<f32>(0.2, 0.5, 0.9) * cine.fx.x * 0.08;
@@ -378,7 +390,7 @@ fn render_drill(ro: vec3<f32>, rd0: vec3<f32>) -> vec4<f32> {
         let to = cine.drill.xyz - ro;
         let dist = length(to);
         let al = max(dot(rd, to / dist), 0.0);
-        glow += vec3<f32>(0.1, 0.25, 0.7) * pow(al, 60.0) * cine.fx.w * 1.2;
+        glow += vec3<f32>(0.1, 0.25, 0.7) * spow(al, 60.0) * cine.fx.w * 1.2;
     }
     // Les lueurs s'ajoutent au fond : leur couverture suit leur éclat
     col += glow;
@@ -411,8 +423,8 @@ fn render_tunnel(ro_in: vec3<f32>, rd: vec3<f32>) -> vec3<f32> {
     let zz = s + p.z * dir;
     let ang = atan2(p.y, p.x);
     // Anneaux de structure tous les 6 u, rubans lumineux, hexagones
-    let ring = pow(0.5 + 0.5 * cos(zz * (2.0 * PI / 6.0)), 18.0);
-    let ribbon = pow(0.5 + 0.5 * cos(ang * 8.0), 22.0);
+    let ring = spow(0.5 + 0.5 * cos(zz * (2.0 * PI / 6.0)), 18.0);
+    let ribbon = spow(0.5 + 0.5 * cos(ang * 8.0), 22.0);
     let hexa = hash12(floor(vec2<f32>(ang * 6.0, zz * 0.5)));
     var col = vec3<f32>(0.02, 0.05, 0.12) * (0.6 + 0.6 * hexa);
     col += vec3<f32>(0.1, 0.35, 0.9) * ring * 1.4;
@@ -438,7 +450,7 @@ fn render_tunnel(ro_in: vec3<f32>, rd: vec3<f32>) -> vec3<f32> {
     col *= 0.25 + 0.75 * depth;
     // Lointain : la lumière au bout du tunnel
     let center = max(rd.z * dir * dir, 0.0);
-    col += vec3<f32>(0.85, 0.92, 1.0) * pow(center, 60.0) * 2.4;
+    col += vec3<f32>(0.85, 0.92, 1.0) * spow(center, 60.0) * 2.4;
     // Traits de vitesse : des étoiles qui filent le long des parois
     var streak = 0.0;
     for (var i = 0; i < 30; i++) {
@@ -449,7 +461,7 @@ fn render_tunnel(ro_in: vec3<f32>, rd: vec3<f32>) -> vec3<f32> {
         let sp = vec3<f32>(cos(a0) * r0, sin(a0) * r0, zt) - ro;
         let d = length(sp);
         let al = max(dot(rd, sp / d), 0.0);
-        streak += pow(al, 400.0 + 800.0 * (1.0 - speed)) * 12.0 * speed / (1.0 + d * 0.04);
+        streak += spow(al, 400.0 + 800.0 * (1.0 - speed)) * 12.0 * speed / (1.0 + d * 0.04);
     }
     col += vec3<f32>(0.7, 0.85, 1.0) * streak;
     // Distorsion périodique
@@ -468,7 +480,7 @@ fn render_tunnel(ro_in: vec3<f32>, rd: vec3<f32>) -> vec3<f32> {
 fn render_jump(ndc: vec2<f32>, aspect: f32) -> vec4<f32> {
     let u = clamp(cine.res.z / max(cine.extra.w, 0.01), 0.0, 1.0);
     // Vitesse ressentie : nulle au départ et à l'arrivée, au plus fort au milieu
-    let v = pow(sin(PI * u), 2.0);
+    let v = spow(sin(PI * u), 2.0);
     let th = max(cine.flags.y, 0.05);
     let p = vec2<f32>(ndc.x * aspect, ndc.y) * th;
     let r = length(p) / th;

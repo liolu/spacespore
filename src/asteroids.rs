@@ -1675,7 +1675,7 @@ fn update_bands(
 // ─────────────────────────────────────────────────────────────────────────
 
 #[derive(Component)]
-struct CometPart;
+pub struct CometPart;
 
 /// Chevelure et queues d'une comète affichée.
 struct Tails {

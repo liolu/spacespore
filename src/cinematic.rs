@@ -6,8 +6,8 @@
 //!   comme un trou noir, zoom sur la foreuse (vise à l'avant), elle avance et le tunnel se forme derrière.
 //! - `Ride` : l'intérieur d'un tunnel (cylindre, voies, traits de vitesse), piloté par `tunnel.rs`.
 //! - `Galaxy` : le saut entre deux galaxies (~6 s) : la caméra du jeu traverse vraiment l'espace de la
-//!   galaxie de départ à celle d'arrivée (`steer_camera`), les vraies étoiles du ciel de départ s'étirent
-//!   par-dessus. Se déclenche toute seule quand le vaisseau change de galaxie (`watch_jumps`).
+//!   galaxie de départ à celle d'arrivée (`steer_camera`), sans rien dessiné par-dessus. Se déclenche
+//!   toute seule quand le vaisseau change de galaxie (`watch_jumps`).
 //!
 //! Foreuse et saut : la séquence est transparente là où il n'y a que le fond, et la caméra du jeu regarde
 //! dans le même sens : le fond est le vrai rendu du jeu à cet endroit (étoiles, galaxies, astres proches).
@@ -189,21 +189,23 @@ fn mix(a: f32, b: f32, x: f32) -> f32 {
     a + (b - a) * x
 }
 
-/// Paramètres du creusement à l'instant `t` : le scénario de l'utilisateur, étape par étape.
+/// Paramètres du creusement à l'instant `t`, dans l'ordre : la foreuse seule, de près (0-4 s) ; on recule
+/// en plongeant et le quadrillage s'étend depuis elle jusqu'à couvrir tout l'écran (4-11 s) ; grille 3D
+/// (9-13 s) ; l'espace tourne comme un trou noir (15-21 s) ; zoom sur la foreuse (22-27 s) ; elle avance
+/// et le tunnel se forme (27-34 s).
 pub fn dig_params(t: f32, res: Vec2) -> CineParams {
     // Foreuse : immobile jusqu'à 27 s, puis elle accélère vers +z (le nez, avec la vise)
     let s = (t - 27.0).max(0.0);
     let z = 1.2 * s * s;
     let drill = Vec3::new(0.0, 0.0, z);
-    // Distance de la caméra : très grand dézoom, puis on se rapproche étape par étape
-    let mut d = mix(40.0, 700.0, ss(0.0, 6.0, t));
-    d = mix(d, 420.0, ss(6.0, 15.0, t));
-    d = mix(d, 160.0, ss(15.0, 22.0, t));
+    // Distance de la caméra : de près, puis on recule pour voir le quadrillage, puis on revient
+    let mut d = mix(26.0, 150.0, ss(4.0, 11.0, t));
+    d = mix(d, 120.0, ss(15.0, 22.0, t));
     d = mix(d, 16.0, ss(22.0, 27.0, t));
     d = mix(d, 24.0, ss(27.0, 34.0, t));
-    // Hauteur et azimut : vue plongeante pour les grilles, puis presque de côté
-    let mut el = mix(1.2, 1.0, ss(0.0, 6.0, t));
-    el = mix(el, 0.55, ss(10.0, 18.0, t));
+    // Hauteur : de côté (la foreuse), vue plongeante (le plan quadrillé remplit l'écran), puis presque de côté
+    let mut el = mix(0.3, 1.2, ss(4.0, 9.0, t));
+    el = mix(el, 0.55, ss(13.0, 18.0, t));
     el = mix(el, 0.22, ss(22.0, 27.0, t));
     el = mix(el, 0.14, ss(27.0, 34.0, t));
     let az = 0.5 + 0.02 * t + 0.6 * ss(15.0, 22.0, t) + 0.5 * ss(22.0, 27.0, t);
@@ -211,7 +213,9 @@ pub fn dig_params(t: f32, res: Vec2) -> CineParams {
     let look = drill + Vec3::new(0.0, 0.0, 2.0 * ss(22.0, 27.0, t));
     let spin = mix(0.5, 3.0, ss(10.0, 22.0, t)) + 4.0 * ss(25.0, 30.0, t);
     let glow = 0.3 + 0.7 * ss(12.0, 22.0, t) + 0.6 * ss(25.0, 30.0, t);
-    let grid2 = ss(4.5, 8.0, t) * (1.0 - 0.65 * ss(15.0, 22.0, t));
+    let grid2 = ss(4.0, 5.0, t) * (1.0 - 0.65 * ss(15.0, 22.0, t));
+    // Rayon du quadrillage autour de la foreuse : il grandit jusqu'à dépasser l'écran
+    let reveal = 2.0 + 3000.0 * ss(4.0, 11.0, t).powi(2);
     let grid3 = ss(9.5, 13.0, t) * (1.0 - 0.4 * ss(24.0, 28.0, t));
     let swirl = ss(15.0, 21.0, t) * (1.0 - 0.4 * ss(28.0, 34.0, t));
     let lens = 0.9 * ss(15.0, 21.0, t) * (1.0 - ss(24.0, 28.0, t));
@@ -224,7 +228,7 @@ pub fn dig_params(t: f32, res: Vec2) -> CineParams {
         drill: drill.extend(spin),
         fx: Vec4::new(glow, grid2, grid3, swirl),
         fx2: Vec4::new(lens, fade.clamp(0.0, 1.0), z, flash),
-        extra: Vec4::ZERO,
+        extra: Vec4::new(reveal, 0.0, 0.0, 0.0),
         ..default()
     }
 }
@@ -296,7 +300,8 @@ fn update_overlay(
             mat.sky = h.clone();
         }
     }
-    *vis = Visibility::Visible;
+    // Saut entre galaxies : aucune image par-dessus, seulement le vrai trajet de la caméra (`steer_camera`)
+    *vis = if kind == CineKind::Galaxy { Visibility::Hidden } else { Visibility::Visible };
     *tvis = Visibility::Visible;
     let hint = match kind {
         CineKind::Dig => "Creusement du tunnel   -   Echap : passer".to_string(),
@@ -368,11 +373,38 @@ fn hide_during(
     cine: Res<Cinematic>,
     mut ship_q: Query<&mut Visibility, With<Ship>>,
     mut ui_q: Query<(Entity, &mut Visibility), (With<Node>, Without<Parent>, Without<CineNode>, Without<CineText>, Without<Ship>)>,
+    mut body_q: Query<
+        (Entity, &mut Visibility),
+        (
+            Or<(With<crate::planet::PlanetRoot>, With<crate::planet::MoonRoot>, With<crate::planet::StarRoot>, With<crate::asteroids::AsteroidBody>, With<crate::asteroids::CometPart>, With<crate::galaxy_fx::GalaxyCloud>)>,
+            Without<Node>,
+            Without<Ship>,
+        ),
+    >,
     mut gizmos: ResMut<GizmoConfigStore>,
     mut hidden: Local<Vec<std::any::TypeId>>,
     mut hidden_ui: Local<Vec<(Entity, Visibility)>>,
+    mut hidden_bodies: Local<bevy::utils::HashMap<Entity, Visibility>>,
 ) {
     let driving = matches!(cine.kind, Some(CineKind::Dig | CineKind::Galaxy));
+    // Foreuse : seul le ciel d'ici (étoiles, galaxies) ; la planète, l'étoile ou la lune toutes proches, et
+    // les nuages de la galaxie vus de tout près (une grande nappe crème), couvraient la moitié de l'écran
+    if cine.kind == Some(CineKind::Dig) {
+        for (e, mut vis) in &mut body_q {
+            if *vis != Visibility::Hidden {
+                hidden_bodies.entry(e).or_insert(*vis);
+                *vis = Visibility::Hidden;
+            }
+        }
+    } else {
+        for (e, before) in hidden_bodies.drain() {
+            if let Ok((_, mut vis)) = body_q.get_mut(e) {
+                if *vis == Visibility::Hidden {
+                    *vis = before;
+                }
+            }
+        }
+    }
     if driving {
         for (e, mut vis) in &mut ui_q {
             if *vis != Visibility::Hidden {
@@ -508,9 +540,13 @@ mod tests {
         let at = |t: f32| dig_params(t, res);
         // Très grand dézoom d'abord
         let d = |p: &CineParams| (p.cam - p.look).truncate().length();
-        assert!(d(&at(6.0)) > 10.0 * d(&at(0.0)));
+        // La foreuse d'abord, seule et de près : pas encore de quadrillage
+        assert!(at(2.0).fx.y < 0.01 && d(&at(2.0)) < 30.0);
+        // Puis on recule et le quadrillage s'étend jusqu'à couvrir tout l'écran
+        assert!(d(&at(11.0)) > 4.0 * d(&at(2.0)));
+        assert!(at(7.0).fx.y > 0.5 && at(7.0).extra.x < at(11.0).extra.x && at(11.0).extra.x > 2000.0);
         // 2D avant 3D, puis le tourbillon, puis le zoom, puis l'avance
-        assert!(at(7.0).fx.y > 0.5 && at(7.0).fx.z < 0.01);
+        assert!(at(7.0).fx.z < 0.01);
         assert!(at(12.0).fx.z > 0.5 && at(12.0).fx.w < 0.01);
         assert!(at(21.0).fx.w > 0.99);
         assert!(d(&at(27.0)) < 20.0);
@@ -519,3 +555,4 @@ mod tests {
         assert!(at(0.0).fx2.y > 0.99 && at(34.0).fx2.y > 0.99);
     }
 }
+

@@ -575,17 +575,11 @@ pub struct Clickable {
 /// Portée d'un saut entre galaxies, en tailles de galaxie (diamètres) depuis le centre.
 const GALAXY_JUMP_SIZES: f32 = 5.0;
 
-/// Portée d'un saut entre galaxies depuis la galaxie `gid` : 5 fois sa taille (diamètre), depuis
-/// son centre (« galaxie galaxie galaxie galaxie galaxie »).
-pub(crate) fn galaxy_jump_range(settings: &GameSettings, gid: usize) -> f32 {
-    settings.galaxies.get(gid).map_or(0.0, |g| GALAXY_JUMP_SIZES * 2.0 * g.radius)
-}
-
-/// Saut possible entre les galaxies `from` et `to` : la portée est celle de la plus grande des
-/// deux, pour que le retour soit toujours possible (d'une petite galaxie, on revient vers la
-/// grande qui nous y avait envoyés).
-pub(crate) fn galaxy_reach(settings: &GameSettings, from: usize, to: usize) -> f32 {
-    galaxy_jump_range(settings, from).max(galaxy_jump_range(settings, to))
+/// Portée d'un saut entre galaxies, la même depuis toutes les galaxies : 5 tailles (diamètres) de la
+/// galaxie principale, depuis le centre. Fixe : un saut possible à l'aller l'est aussi au retour
+/// (avant : 5 fois la taille de la galaxie de départ, une petite galaxie ne permettait pas de revenir).
+pub(crate) fn galaxy_jump_range(_settings: &GameSettings, _gid: usize) -> f32 {
+    GALAXY_JUMP_SIZES * 2.0 * settings::GALAXY_RADIUS
 }
 
 /// Rayon d'un astre à l'écran (pixels).
@@ -617,7 +611,7 @@ fn clickables(
     // Portée : le vaisseau ne va pas plus loin que le cercle blanc d'un coup ; d'une galaxie, on ne
     // saute que vers ses voisines les plus proches
     let gal_center = settings.galaxies.get(current_gal as usize).map(|g| g.center());
-    let reach = |to: u32| galaxy_reach(settings, current_gal as usize, to as usize);
+    let reach = |_to: u32| galaxy_jump_range(settings, current_gal as usize);
     let too_far = |kind: &TargetKind, position: Vec3| -> bool {
         match *kind {
             TargetKind::GalacticCore => current_gal != 0 && gal_center.is_some_and(|c| c.distance(position) > reach(0)),
@@ -633,7 +627,9 @@ fn clickables(
             TargetKind::Planet(id) => id / 1000,
             TargetKind::Moon(p, _) => p / 1000,
             TargetKind::Asteroid(k) => k.sys as usize,
-            TargetKind::Star(id) => star_parts(id, loaded_star(id)).0,
+            // Étoile lointaine : toujours permise sous `STAR_ZOOM_MAX` (on va d'étoile en étoile à tous les zooms)
+            TargetKind::Star(id) if !loaded_star(id) => return false,
+            TargetKind::Star(id) => star_parts(id, true).0,
             TargetKind::WormholeMouth(si) => si,
             TargetKind::GalacticCore | TargetKind::DistantGalaxyCore(_) => return true,
             _ => return false,
@@ -759,6 +755,10 @@ fn clickables(
     let cam_row = ((cam_pos.z + half) / cell) as i32;
     let grid_radius = (ctrl_dist / cell).ceil() as i32 + 2;
     for (gt, fs, vis) in &queries.far_star_q {
+        // Cercles et clic sur les étoiles lointaines seulement quand la caméra est à moins de 2 500 M
+        if ctrl_dist >= STAR_ZOOM_MAX {
+            break;
+        }
         // Une étoile cachée (éclaircie de loin, ou celle du système chargé) ne se choisit pas
         if *vis == Visibility::Hidden {
             continue;
@@ -857,7 +857,7 @@ fn select_world_target(
         if zoom.can_navigate_to(&selected) {
             // Portée (même règle que les cercles, `clickables`)
             if too_far && ZoomLevel::is_core(&selected) {
-                net.notify(&format!("Trop loin : on ne saute pas a plus de {GALAXY_JUMP_SIZES:.0} tailles de galaxie de son centre (cercle blanc). Sautez de galaxie en galaxie."), time.elapsed_secs_f64());
+                net.notify(&format!("Trop loin : on ne saute pas a plus de {GALAXY_JUMP_SIZES:.0} tailles de la galaxie principale du centre (cercle blanc). Sautez de galaxie en galaxie."), time.elapsed_secs_f64());
             } else if too_far {
                 net.notify(&format!("Trop loin : votre vaisseau ne peut pas se deplacer a plus de {:.0} d'un coup (cercle blanc). Passez par un trou de ver ou avancez etape par etape.", MAX_TRAVEL_RANGE), time.elapsed_secs_f64());
             } else {
@@ -1092,6 +1092,9 @@ const GALAXY_JUMP_MIN_ZOOM: f32 = 10_000_000.0 * settings::GALAXY_SCALE;
 /// Un déplacement va d'une étoile à sa voisine (≈ 15 millions) : quelques fois l'écart entre étoiles.
 /// 2 500 M : les étoiles à cette distance du vaisseau ont toutes leur cercle.
 const MAX_TRAVEL_RANGE: f32 = 2_500_000_000.0;
+/// Zoom (distance de la caméra) sous lequel les étoiles lointaines ont leur cercle et se choisissent
+/// d'un clic, à tous les niveaux (zoom 1 compris) : 2 500 M.
+const STAR_ZOOM_MAX: f32 = 2_500_000_000.0;
 /// Zoom maximal de la caméra.
 const MAX_ZOOM: f32 = 400_000_000.0 * settings::GALAXY_SCALE;
 
@@ -2972,20 +2975,9 @@ mod range_tests {
     #[test]
     fn galaxy_jumps_reach_five_galaxy_sizes() {
         let settings = GameSettings::default();
+        // Portée fixe : la même depuis toutes les galaxies (le retour est toujours possible)
         for gid in [0usize, 1, 5, 20] {
-            let g = &settings.galaxies[gid];
-            assert_eq!(galaxy_jump_range(&settings, gid), 5.0 * 2.0 * g.radius);
-        }
-    }
-    /// Un saut possible à l'aller l'est aussi au retour (d'une petite galaxie vers la grande).
-    #[test]
-    fn galaxy_jumps_can_always_come_back() {
-        let settings = GameSettings::default();
-        for a in 0..21usize {
-            for b in 0..21usize {
-                assert_eq!(galaxy_reach(&settings, a, b), galaxy_reach(&settings, b, a));
-                assert!(galaxy_reach(&settings, a, b) >= galaxy_jump_range(&settings, a));
-            }
+            assert_eq!(galaxy_jump_range(&settings, gid), 5.0 * 2.0 * settings::GALAXY_RADIUS);
         }
     }
 }
