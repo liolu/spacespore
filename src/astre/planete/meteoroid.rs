@@ -880,7 +880,7 @@ fn reload_meteoroids(
         let Ok((entity, root)) = roots.get(ev.0) else { continue };
         let idx = root.idx;
         let Some(cfg) = res.meteoroids.get(idx) else { continue };
-        commands.entity(entity).despawn_recursive();
+        if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
         build_meteoroid(&mut commands, cfg, idx, &mut meshes, &mut materials);
     }
 }
@@ -1031,7 +1031,7 @@ fn detect_fragmentation(
         }
 
         // Despawn le météoroïde
-        commands.entity(root_e).despawn_recursive();
+        if let Some(ec) = commands.get_entity(root_e) { ec.despawn_recursive(); }
     }
 }
 
@@ -1170,7 +1170,7 @@ fn animate_fragments(
         frag.lifetime += dt;
 
         if frag.lifetime >= frag.max_lifetime {
-            commands.entity(entity).despawn_recursive();
+            if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
             continue;
         }
 
@@ -1206,13 +1206,13 @@ fn animate_explosion(
         ev.elapsed += dt;
 
         if ev.elapsed >= ev.duration {
-            commands.entity(entity).despawn_recursive();
+            if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
             continue;
         }
 
         let radius = ev.speed * ev.elapsed;
         if radius > ev.max_radius {
-            commands.entity(entity).despawn_recursive();
+            if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
             continue;
         }
 
@@ -1248,9 +1248,9 @@ fn regenerate_meteoroids(
     for _ in events.read() { fired = true; }
     if !fired { return; }
 
-    for e in &root_q  { commands.entity(e).despawn_recursive(); }
-    for e in &frag_q  { commands.entity(e).despawn_recursive(); }
-    for e in &exp_q   { commands.entity(e).despawn_recursive(); }
+    for e in &root_q  { if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); } }
+    for e in &frag_q  { if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); } }
+    for e in &exp_q   { if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); } }
 
     for (idx, cfg) in res.meteoroids.iter().enumerate() {
         build_meteoroid(&mut commands, cfg, idx, &mut meshes, &mut materials);

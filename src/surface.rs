@@ -2913,7 +2913,7 @@ fn update_tiles(
         if let Some(old) = store.body {
             let root = find_root(&old, &planets, &moons, &asteroids).map(|(e, _)| e);
             for (_, entry) in store.built.drain() {
-                commands.entity(entry.entity).despawn_recursive();
+                if let Some(ec) = commands.get_entity(entry.entity) { ec.despawn_recursive(); }
             }
             store.tasks.clear();
             store.fading.clear();
@@ -2995,7 +2995,7 @@ fn update_tiles(
             if far_now {
                 // Les tuiles libèrent la carte graphique (maillages) : elles reviennent à la descente
                 for (_, entry) in store.built.drain() {
-                    commands.entity(entry.entity).despawn_recursive();
+                    if let Some(ec) = commands.get_entity(entry.entity) { ec.despawn_recursive(); }
                 }
                 store.tasks.clear();
                 store.fading.clear();
@@ -3074,7 +3074,7 @@ fn update_tiles(
                 *v = shown;
             }
             if let Some(old) = store.built.insert(key, TileEntry { entity, last_needed: now, generation: built_gen }) {
-                commands.entity(old.entity).despawn_recursive();
+                if let Some(ec) = commands.get_entity(old.entity) { ec.despawn_recursive(); }
             }
         }
     }
@@ -3228,7 +3228,7 @@ fn update_tiles(
             .collect();
         for key in stale {
             if let Some(entry) = store.built.remove(&key) {
-                commands.entity(entry.entity).despawn_recursive();
+                if let Some(ec) = commands.get_entity(entry.entity) { ec.despawn_recursive(); }
             }
         }
     }

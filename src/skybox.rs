@@ -479,7 +479,7 @@ fn first_sky(
     mut materials: ResMut<Assets<SkyMaterial>>,
     dome: Query<&MeshMaterial3d<SkyMaterial>, With<SkyDome>>,
 ) {
-    if *done {
+    if *done || !settings.show_skybox {
         return;
     }
     *done = true;
@@ -541,6 +541,9 @@ fn sky_input(settings: &GameSettings, here: Vec3) -> Option<(usize, SkyInput)> {
 /// Système le plus proche de la caméra (parmi ceux qui existent) : quand il change, le ciel est refait.
 fn watch_system(time: Res<Time>, settings: Res<GameSettings>, cam_q: Query<&Transform, With<Camera3d>>, mut state: ResMut<SkyState>) {
     let now = time.elapsed_secs_f64();
+    if !settings.show_skybox {
+        return;
+    }
     // Le premier ciel part tout de suite ; les suivants, au plus un toutes les 5 s
     if state.task.is_some() || (state.ready && now - state.last_start < 5.0) {
         return;
@@ -617,13 +620,14 @@ fn finish_sky(mut state: ResMut<SkyState>, mut images: ResMut<Assets<Image>>, mu
 }
 
 /// Couleur du ciel, étoiles visibles : effacées par le ciel de jour, voilées par les nuages, éteintes
-/// sous l'eau et sous terre, absentes quand la galaxie se voit en vrai (zooms lointains).
+/// sous l'eau et sous terre ; coupées par l'option « Fond d'etoiles ».
 #[allow(clippy::too_many_arguments)]
 fn sky_params(
     clear: Res<ClearColor>,
     surface: Res<crate::surface::Surface>,
     weather: Res<crate::weather::WeatherNow>,
     under: Res<crate::water::Underwater>,
+    settings: Res<GameSettings>,
     zoom: Res<ZoomLevel>,
     ctrl_q: Query<&CameraController>,
     mut materials: ResMut<Assets<SkyMaterial>>,
@@ -641,13 +645,11 @@ fn sky_params(
     if under.active() || surface.underground() > 0.4 {
         vis = 0.0;
     }
-    // Les zooms lointains montrent la vraie galaxie : plus de fond
-    vis *= match *zoom {
-        ZoomLevel::Planet | ZoomLevel::System => 1.0,
-        ZoomLevel::Sector => 0.6,
-        _ => 0.0,
-    };
-    let _ = ctrl_q;
+    // Le fond reste à tous les zooms (il ne s'efface plus au dézoom) ; l'option le coupe
+    if !settings.show_skybox {
+        vis = 0.0;
+    }
+    let _ = (ctrl_q, zoom);
     mat.params.sky = Vec4::new(sky.red, sky.green, sky.blue, 1.0);
     mat.params.stars = Vec4::new(vis, 1.0, 0.0, 0.0);
 }

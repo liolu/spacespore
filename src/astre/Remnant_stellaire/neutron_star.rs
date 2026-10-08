@@ -1268,7 +1268,7 @@ fn reload_neutron_stars(
         let Ok((entity, root)) = roots.get(ev.0) else { continue };
         let idx = root.idx;
         let Some(cfg) = res.stars.get(idx) else { continue };
-        commands.entity(entity).despawn_recursive();
+        if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
         build_neutron_star(&mut commands, cfg, idx, &mut meshes, &mut materials);
     }
 }
@@ -1287,7 +1287,7 @@ fn regenerate_neutron_stars(
     if !fired { return; }
 
     for entity in &root_q {
-        commands.entity(entity).despawn_recursive();
+        if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
     }
 
     state.temperatures.clear();

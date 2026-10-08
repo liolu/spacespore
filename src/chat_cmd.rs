@@ -149,8 +149,27 @@ fn arguments(command: &str, previous: &[&str], galaxy_kinds: &[String], galaxies
         ("/temps" | "/speed", 0) => ["1", "10", "60", "600", "3600"].map(String::from).to_vec(),
         ("/tp" | "/galaxie", _) => ["liste", "maison"].map(String::from).into_iter().chain(galaxy_kinds.iter().cloned()).chain(numbers()).collect(),
         ("/aide" | "/help", 0) => COMMAND_HELP.iter().map(|(n, _, _)| n.trim_start_matches('/').to_string()).collect(),
+        ("/tunnel", 0) => ["creuser", "liste", "entrer", "sortir"].map(String::from).to_vec(),
+        ("/tunnel", 1) if previous[0] == "creuser" => ["1", "2", "3", "c"].map(String::from).to_vec(),
+        ("/tunnel", 2) if previous[0] == "creuser" => ["1", "2", "3"].map(String::from).to_vec(),
+        ("/tunnel", _) => Vec::new(),
+        // Les autres : les choix écrits dans l'aide (« [clair | auto] », « <oui | non> »), pour le premier mot
+        (_, 0) => help_choices(command),
         _ => Vec::new(),
     }
+}
+
+/// Choix du premier argument lus dans `COMMAND_HELP` : « [geyser | fumerolle] » -> geyser, fumerolle (pas les « <n> »).
+fn help_choices(command: &str) -> Vec<String> {
+    let Some((_, args, _)) = COMMAND_HELP.iter().find(|(n, _, _)| *n == command) else { return Vec::new() };
+    let first = args.split(['[', ']', '<', '>']).map(str::trim).find(|s| !s.is_empty()).unwrap_or("");
+    first
+        .split('|')
+        .map(|w| w.trim())
+        .filter(|w| !w.is_empty() && !w.contains(' ') && !w.starts_with(|c: char| c.is_ascii_digit()) && w.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '%'))
+        .filter(|w| !matches!(*w, "n" | "k" | "code" | "message" | "facteur"))
+        .map(String::from)
+        .collect()
 }
 
 /// Lignes complètes proposées pour la ligne en cours de saisie (Tab).
@@ -533,6 +552,10 @@ mod tests {
         assert_eq!(suggestions("/tp spi", &kinds, 21), vec!["/tp spirale barree"]);
         assert!(suggestions("/stats ", &kinds, 21).contains(&"/stats tout".to_string()));
         assert!(suggestions("bonjour", &kinds, 21).is_empty());
+        assert_eq!(suggestions("/tunnel cr", &kinds, 21), vec!["/tunnel creuser"]);
+        assert!(suggestions("/tunnel creuser ", &kinds, 21).contains(&"/tunnel creuser c".to_string()));
+        assert_eq!(suggestions("/meteo c", &kinds, 21), vec!["/meteo clair"]);
+        assert!(suggestions("/volume ", &kinds, 21).is_empty());
         assert!(usage("/stats 3").unwrap().starts_with("/stats [n | tout]"));
         assert!(usage("/go").unwrap().starts_with("/aller"));
         assert_eq!(closest_command("/stat"), Some("/stats"));

@@ -515,7 +515,7 @@ fn body_fx(
     if root != state.root || !f.active {
         if state.root.is_some() {
             for e in &fx_ents {
-                commands.entity(e).despawn_recursive();
+                if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); }
             }
             state.dust.clear();
             state.trail.clear();
@@ -737,7 +737,7 @@ fn body_fx(
         ring.age += dt;
         let u = ring.age / 1.6;
         if u >= 1.0 {
-            commands.entity(ring.entity).despawn_recursive();
+            if let Some(ec) = commands.get_entity(ring.entity) { ec.despawn_recursive(); }
             state.ring = None;
         } else {
             if let Ok(mut tf) = tfs.get_mut(ring.entity) {
@@ -985,7 +985,7 @@ fn rim_fx(
     };
     if state.rim.map(|(_, k)| k) != wanted {
         if let Some((e, _)) = state.rim.take() {
-            commands.entity(e).despawn_recursive();
+            if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); }
         }
         if let (Some(k @ TargetKind::Planet(id)), Some(p)) = (wanted, wanted.and_then(|k| if let TargetKind::Planet(id) = k { settings.systems.get(id / 1000).and_then(|s| s.planets().get(id % 1000)) } else { None })) {
             if let Some((root, _, _)) = planets.iter().find(|(_, pid, _)| pid.0 == id) {
@@ -1003,7 +1003,13 @@ fn rim_fx(
         }
     }
     let Some((e, TargetKind::Planet(id))) = state.rim else { return };
-    let Ok((mat, mut tf, mut vis)) = ents.get_mut(e) else { return };
+    let Ok((mat, mut tf, mut vis)) = ents.get_mut(e) else {
+        // Le liseré est parti avec sa planète (déchargée) : on le refera
+        if commands.get_entity(e).is_none() {
+            state.rim = None;
+        }
+        return;
+    };
     let (Some((_, _, root_tf)), Ok(cam)) = (planets.iter().find(|(_, p, _)| p.0 == id), cam_q.get_single()) else { return };
     let shell = tf.scale.x;
     let dist = cam.translation.distance(root_tf.translation);

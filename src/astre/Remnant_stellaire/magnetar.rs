@@ -934,7 +934,7 @@ fn reload_magnetars(
         let Ok((entity, root)) = roots.get(ev.0) else { continue };
         let idx = root.idx;
         let Some(cfg) = res.magnetars.get(idx) else { continue };
-        commands.entity(entity).despawn_recursive();
+        if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
         build_magnetar(&mut commands, cfg, idx, &mut meshes, &mut materials);
     }
 }
@@ -952,7 +952,7 @@ fn regenerate_magnetars(
     if !fired { return; }
 
     for entity in &root_q {
-        commands.entity(entity).despawn_recursive();
+        if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
     }
     for (idx, cfg) in res.magnetars.iter().enumerate() {
         build_magnetar(&mut commands, cfg, idx, &mut meshes, &mut materials);

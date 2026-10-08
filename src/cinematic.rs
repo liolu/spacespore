@@ -24,8 +24,10 @@ pub const CINE_SHADER: Handle<Shader> = Handle::weak_from_u128(0x0c1e_a71c_d00d_
 
 /// Durée de la séquence de creusement (s).
 pub const DIG_SECS: f32 = 34.0;
-/// Durée du saut entre galaxies (s).
-pub const GALAXY_SECS: f32 = 10.0;
+/// Durée du saut entre galaxies (s) : la séquence plein écran ; l'arrivée (zoom sur la vraie galaxie) se joue ensuite dans le jeu.
+pub const GALAXY_SECS: f32 = 4.8;
+/// Instant du flash : la caméra recule loin de la galaxie d'arrivée puis s'en approche (`zoom_goal`).
+const GALAXY_FLASH: f32 = 2.9;
 /// Un saut du vaisseau plus long que ça (en un instant) est un changement de galaxie : 5 fois la portée d'un déplacement.
 const GALAXY_JUMP_MIN: f64 = 5.0 * 750_000.0 * GALAXY_SCALE as f64;
 
@@ -36,9 +38,9 @@ impl Plugin for CinematicPlugin {
         load_internal_asset!(app, CINE_SHADER, "cinematic.wgsl", Shader::from_wgsl);
         app.add_plugins(UiMaterialPlugin::<CineMaterial>::default())
             .init_resource::<Cinematic>()
-            .add_systems(Startup, spawn_overlay)
+            .add_systems(PostStartup, spawn_overlay)
             .add_systems(Update, (watch_jumps, update_overlay).chain())
-            .add_systems(Update, test_start)
+            .add_systems(Update, (test_start, quit_after))
             .add_systems(Last, skip_with_escape);
     }
 }
@@ -52,12 +54,22 @@ pub struct CineParams {
     pub fx: Vec4,
     pub fx2: Vec4,
     pub extra: Vec4,
+    /// Repère du fond : directions locales de la séquence -> directions du monde (pour lire le vrai ciel).
+    pub bx: Vec4,
+    pub by: Vec4,
+    pub bz: Vec4,
+    /// x : 1 si le vrai ciel (skybox) est disponible.
+    pub flags: Vec4,
 }
 
-#[derive(Asset, TypePath, AsBindGroup, Clone, Debug, Default)]
+#[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
 pub struct CineMaterial {
     #[uniform(0)]
     pub p: CineParams,
+    /// Le vrai ciel calculé (`skybox.rs`) : fond du creusement, étoiles étirées du saut entre galaxies.
+    #[texture(1, dimension = "cube")]
+    #[sampler(2)]
+    pub sky: Handle<Image>,
 }
 
 impl UiMaterial for CineMaterial {
@@ -103,6 +115,11 @@ pub struct Cinematic {
     pub caption: String,
     /// Échap pressé pendant un `Ride` : `tunnel.rs` en sort.
     pub leave: bool,
+    /// Direction du monde du tunnel creusé (`Dig`) ou du saut (`Galaxy`) : le fond est le vrai ciel vu dans ce sens.
+    pub axis: Vec3,
+    /// Ciel utilisé (celui du lieu de départ, gardé pendant toute la séquence).
+    pub sky: Option<Handle<Image>>,
+    arrival_done: bool,
 }
 
 impl Cinematic {
@@ -115,13 +132,21 @@ impl Cinematic {
         self.t = 0.0;
         self.dur = dur;
         self.leave = false;
+        self.arrival_done = false;
         self.caption.clear();
+    }
+
+    /// Le fond de la séquence = le vrai ciel d'ici (s'il est calculé et que l'option est active), vu dans le sens `axis`.
+    pub fn use_sky(&mut self, state: &crate::skybox::SkyState, settings: &crate::settings::GameSettings, axis: Vec3) {
+        self.axis = axis.normalize_or(Vec3::Z);
+        self.sky = (state.ready && settings.show_skybox).then(|| state.image.clone());
     }
 
     pub fn stop(&mut self) {
         self.kind = None;
         self.t = 0.0;
         self.leave = false;
+        self.sky = None;
     }
 }
 
@@ -131,10 +156,10 @@ struct CineNode;
 #[derive(Component)]
 struct CineText;
 
-fn spawn_overlay(mut commands: Commands, mut mats: ResMut<Assets<CineMaterial>>) {
+fn spawn_overlay(mut commands: Commands, mut mats: ResMut<Assets<CineMaterial>>, sky: Res<crate::skybox::SkyState>) {
     commands.spawn((
         Node { position_type: PositionType::Absolute, left: Val::Px(0.0), top: Val::Px(0.0), width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
-        MaterialNode(mats.add(CineMaterial::default())),
+        MaterialNode(mats.add(CineMaterial { p: CineParams::default(), sky: sky.image.clone() })),
         GlobalZIndex(900),
         Visibility::Hidden,
         CineNode,
@@ -195,6 +220,7 @@ pub fn dig_params(t: f32, res: Vec2) -> CineParams {
         fx: Vec4::new(glow, grid2, grid3, swirl),
         fx2: Vec4::new(lens, fade.clamp(0.0, 1.0), z, flash),
         extra: Vec4::ZERO,
+        ..default()
     }
 }
 
@@ -207,6 +233,7 @@ pub fn ride_params(r: &RideView, t: f32, res: Vec2) -> CineParams {
         fx: Vec4::ZERO,
         fx2: Vec4::new(0.0, 0.0, 0.0, r.flash),
         extra: Vec4::new(r.lane, r.speed, r.s, r.dir),
+        ..default()
     }
 }
 
@@ -226,6 +253,7 @@ fn update_overlay(
     mut node_q: Query<(&MaterialNode<CineMaterial>, &mut Visibility), With<CineNode>>,
     mut text_q: Query<(&mut Text, &mut Visibility), (With<CineText>, Without<CineNode>)>,
     window: Query<&Window, With<PrimaryWindow>>,
+    mut cam_q: Query<&mut crate::CameraController>,
 ) {
     let Ok((node, mut vis)) = node_q.get_single_mut() else { return };
     let Ok((mut text, mut tvis)) = text_q.get_single_mut() else { return };
@@ -242,12 +270,34 @@ fn update_overlay(
         return;
     }
     let res = window.get_single().map_or(Vec2::new(1280.0, 720.0), |w| Vec2::new(w.physical_width() as f32, w.physical_height() as f32));
+    // Saut entre galaxies : au flash, la caméra recule loin de la vraie galaxie d'arrivée et s'en rapproche
+    if kind == CineKind::Galaxy && cine.t >= GALAXY_FLASH && !cine.arrival_done {
+        cine.arrival_done = true;
+        if let Ok(mut ctrl) = cam_q.get_single_mut() {
+            let goal = ctrl.zoom_goal.unwrap_or(ctrl.distance);
+            ctrl.distance = (goal * 25.0).min(380_000_000.0 * GALAXY_SCALE);
+            ctrl.zoom_goal = Some(goal);
+        }
+    }
     let Some(mat) = mats.get_mut(&node.0) else { return };
-    mat.p = match kind {
+    let mut p = match kind {
         CineKind::Dig => dig_params(cine.t, res),
         CineKind::Ride => ride_params(&cine.ride, cine.t, res),
         CineKind::Galaxy => galaxy_params(&cine, res),
     };
+    let z = cine.axis.normalize_or(Vec3::Z);
+    let x = Vec3::Y.cross(z).normalize_or(Vec3::X);
+    let y = z.cross(x);
+    p.bx = x.extend(0.0);
+    p.by = y.extend(0.0);
+    p.bz = z.extend(0.0);
+    p.flags = Vec4::new(if cine.sky.is_some() { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0);
+    mat.p = p;
+    if let Some(h) = &cine.sky {
+        if mat.sky != *h {
+            mat.sky = h.clone();
+        }
+    }
     *vis = Visibility::Visible;
     *tvis = Visibility::Visible;
     let hint = match kind {
@@ -279,7 +329,7 @@ fn skip_with_escape(keys: Res<ButtonInput<KeyCode>>, mut cine: ResMut<Cinematic>
 }
 
 /// Test : `SPACESPORE_TEST_CINE=dig|ride|galaxie[:t]` lance la séquence après 3 s, à l'instant `t` (captures).
-fn test_start(time: Res<Time>, mut cine: ResMut<Cinematic>, mut done: Local<bool>) {
+fn test_start(time: Res<Time>, mut cine: ResMut<Cinematic>, mut done: Local<bool>, sky: Res<crate::skybox::SkyState>, settings: Res<crate::settings::GameSettings>) {
     if *done || time.elapsed_secs() < 3.0 {
         return;
     }
@@ -299,12 +349,24 @@ fn test_start(time: Res<Time>, mut cine: ResMut<Cinematic>, mut done: Local<bool
             cine.seed = 0.3;
         }
     }
+    cine.use_sky(&sky, &settings, Vec3::new(0.3, 0.1, -1.0));
     cine.t = t0;
+}
+
+/// Test sans capture : `SPACESPORE_QUIT_SECS=<s>` ferme le jeu à `<s>` s (on ne lit que le journal).
+fn quit_after(time: Res<Time>, mut exit: EventWriter<AppExit>) {
+    if let Some(s) = std::env::var("SPACESPORE_QUIT_SECS").ok().and_then(|v| v.parse::<f32>().ok()) {
+        if time.elapsed_secs() > s {
+            exit.send(AppExit::Success);
+        }
+    }
 }
 
 /// Un saut du vaisseau d'une galaxie à l'autre lance l'animation (aussi pour `/tp` et `/galaxie`).
 fn watch_jumps(
     mut cine: ResMut<Cinematic>,
+    sky: Res<crate::skybox::SkyState>,
+    settings: Res<crate::settings::GameSettings>,
     ship_q: Query<&Transform, With<Ship>>,
     mut last: Local<Option<DVec3>>,
     mut frames: Local<u32>,
@@ -324,6 +386,8 @@ fn watch_jumps(
             cine.start(CineKind::Galaxy, GALAXY_SECS);
             cine.hues = (h(prev), h(abs));
             cine.seed = h(prev + abs);
+            // Le ciel encore affiché est celui du départ : ses vraies étoiles s'étirent vers la destination
+            cine.use_sky(&sky, &settings, (abs - prev).as_vec3());
         }
     }
 }

@@ -685,16 +685,16 @@ fn reload_supernovae(
         let Ok((entity, root)) = roots.get(ev.0) else { continue };
         let idx = root.idx;
         let Some(cfg) = res.supernovae.get(idx) else { continue };
-        for (e, v) in &flash_q { if v.idx == idx { commands.entity(e).despawn_recursive(); } }
-        for (e, v) in &fireball_q { if v.idx == idx { commands.entity(e).despawn_recursive(); } }
-        for (e, v) in &jet_q { if v.idx == idx { commands.entity(e).despawn_recursive(); } }
-        for (e, v) in &blast_q { if v.idx == idx { commands.entity(e).despawn_recursive(); } }
-        for (e, v) in &echo_q { if v.idx == idx { commands.entity(e).despawn_recursive(); } }
-        for (e, v) in &ion_q { if v.idx == idx { commands.entity(e).despawn_recursive(); } }
-        for (e, v) in &snr_q { if v.idx == idx { commands.entity(e).despawn_recursive(); } }
-        for (e, v) in &fil_q { if v.idx == idx { commands.entity(e).despawn_recursive(); } }
-        for (e, v) in &core_q { if v.idx == idx { commands.entity(e).despawn_recursive(); } }
-        commands.entity(entity).despawn_recursive();
+        for (e, v) in &flash_q { if v.idx == idx { if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); } } }
+        for (e, v) in &fireball_q { if v.idx == idx { if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); } } }
+        for (e, v) in &jet_q { if v.idx == idx { if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); } } }
+        for (e, v) in &blast_q { if v.idx == idx { if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); } } }
+        for (e, v) in &echo_q { if v.idx == idx { if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); } } }
+        for (e, v) in &ion_q { if v.idx == idx { if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); } } }
+        for (e, v) in &snr_q { if v.idx == idx { if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); } } }
+        for (e, v) in &fil_q { if v.idx == idx { if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); } } }
+        for (e, v) in &core_q { if v.idx == idx { if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); } } }
+        if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
         build_supernova(&mut commands, cfg, idx, &mut meshes, &mut materials);
     }
 }
@@ -706,7 +706,7 @@ fn regenerate_supernovae(
     mut meshes:ResMut<Assets<Mesh>>, mut materials:ResMut<Assets<StandardMaterial>>,
 ) {
     let mut fired=false; for _ in events.read() { fired=true; } if !fired { return; }
-    for e in &root_q { commands.entity(e).despawn_recursive(); }
+    for e in &root_q { if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); } }
     state.phases.clear();
     for (idx,cfg) in res.supernovae.iter().enumerate() {
         state.phases.push(if cfg.start_exploding{SupernovaPhase::FlashPeak{elapsed:0.0}}else{SupernovaPhase::Progenitor});

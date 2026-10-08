@@ -600,7 +600,7 @@ fn update_spaghettification(
                     hole_idx: affected.hole_idx,
                     world_pos: tf.translation,
                 });
-                commands.entity(entity).despawn_recursive();
+                if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
             }
 
             GravityPhase::Tearing => {
@@ -667,7 +667,7 @@ fn absorb_horizon_voxels(
                     hole_idx: hole_root.idx,
                     world_pos: voxel_gt.translation(),
                 });
-                commands.entity(entity).despawn_recursive();
+                if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
             }
         }
     }
@@ -808,7 +808,7 @@ fn reload_black_holes(
         let Ok((entity, root)) = roots.get(ev.0) else { continue };
         let idx = root.idx;
         let Some(cfg) = res.holes.get(idx) else { continue };
-        commands.entity(entity).despawn_recursive();
+        if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
         build_black_hole(&mut commands, cfg, idx, &mut meshes, &mut materials);
     }
 }
@@ -826,7 +826,7 @@ fn regenerate_black_holes(
     if !fired { return; }
 
     for entity in &root_q {
-        commands.entity(entity).despawn_recursive();
+        if let Some(ec) = commands.get_entity(entity) { ec.despawn_recursive(); }
     }
 
     for (idx, cfg) in res.holes.iter().enumerate() {

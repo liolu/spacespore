@@ -172,7 +172,13 @@ fn update_suit(
     let now = time.elapsed_secs_f64();
     let dt = time.delta_secs().min(0.1);
     let env = environment(&settings, &surface, &weather);
-    let fainted = suit.step(env.as_ref(), dt);
+    let mut fainted = suit.step(env.as_ref(), dt);
+    // Mode créatif : immortel
+    if crate::settings::creative() {
+        suit.oxygen = 1.0;
+        suit.health = 100.0;
+        fainted = false;
+    }
     // Alertes : à chaque changement
     let alerts = env.as_ref().map(|e| {
         let mut a = e.rates().alerts;

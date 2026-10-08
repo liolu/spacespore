@@ -191,6 +191,7 @@ fn run_tunnel_commands(
     settings: Res<GameSettings>,
     ship_q: Query<&Transform, With<Ship>>,
     cam_q: Query<&CameraController>,
+    sky: Res<crate::skybox::SkyState>,
 ) {
     let now = time.elapsed_secs_f64();
     for TunnelCommand(arg) in events.read() {
@@ -247,6 +248,8 @@ fn run_tunnel_commands(
                 tunnels.dig_started = false;
                 cine.dig_len = length_u as f32;
                 cine.start(CineKind::Dig, DIG_SECS);
+                // Le fond = le vrai ciel d'ici, la foreuse creuse vers la destination
+                cine.use_sky(&sky, &settings, (b - a).as_vec3());
                 tunnels.dig_started = true;
                 let kind = if secret { "clandestin" } else { "normal" };
                 net.notify(&format!("Creusement : {length_u:.0} u, {lanes} voie(s), tunnel {kind}, {cells} cellules d'energie."), now);
@@ -372,7 +375,7 @@ fn run_ride(
     let step = ride.vel * speed * dt;
     ride.p += step;
     // Péage : la voie 3 se paie à la distance parcourue (dans les deux sens)
-    if tunnel.lanes == 3 && ride.lane == 2 {
+    if tunnel.lanes == 3 && ride.lane == 2 && !crate::settings::creative() {
         ride.toll_due += toll_for(step.abs());
         let whole = ride.toll_due.floor();
         if whole >= 1.0 {

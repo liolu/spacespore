@@ -469,6 +469,18 @@ chose ; ne jamais relancer 2 fois le meme test sans rien changer.
   de carburant par u, tunnels absolus f64 dans `tunnels.json` (1 a 3 voies 5 / 15 / 40 u/s, 3e a peage 3 cr/u, clandestin = 1 voie,
   ouvertures cachees), `WormholeTravel::external` bloque les commandes pendant creusement et vol. Chat `/tunnel`. Pas de partage
   multijoueur. Test : `SPACESPORE_TEST_CINE`.
+- 0.13.6 : cinematiques sur le vrai ciel (`CineMaterial::sky` = cubemap de `skybox.rs`, `Cinematic::use_sky` + repere
+  `bx/by/bz` : le creusement voit le ciel d'ici dans l'axe du tunnel ; le saut entre galaxies etire les vraies etoiles
+  du depart puis, au flash (`GALAXY_FLASH`), la camera recule et s'approche de la vraie galaxie d'arrivee). Skybox
+  visible a tous les zooms, option « Fond d'etoiles » (`show_skybox`). Zone d'influence des etoiles :
+  `StarSystemConfig::influence` = 0,8 x distance a l'etoile voisine (`set_influence`, dans `dense` / `lazy`), limite
+  `Stellar::outer_limit` (planetes, ceintures, cometes) ; PROTOCOL 36. Mode creatif (option, `settings::creative()` :
+  pas de degats, soute et achats illimites). Mode photo `photo.rs` (F9 / F10 filtres `ColorGrading` / F11 PNG).
+  Fumee en cubes derriere le vaisseau (`smoke.rs`). Crashs gardes par session dans `crashes/` (30 derniers).
+  Couleurs des cercles : lune blanc, planete orange, comete bleu, ceinture rouge clair. Etoiles lointaines : 13
+  couleurs (`star_palette`), granulation de la meme teinte. Asteroides / cometes remailles plus fins de pres
+  (`wanted_detail`). Le vaisseau est emporte par sa cible qui bouge (plus de tremblement). Tab complete `/tunnel` et
+  les choix ecrits dans l'aide (`help_choices`). Test sans capture : `SPACESPORE_QUIT_SECS`.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

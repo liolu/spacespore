@@ -138,7 +138,8 @@ mod tests {
             }
             assert_eq!(sys.comets(), comets, "reproductible");
         }
-        assert!(n > 600 && short > 50 && short < n / 2, "{n} cometes, {short} courtes");
+        // (0.13.6 : moins de comètes à longue période, celles qui sortaient de la zone d'influence de l'étoile)
+        assert!(n > 450 && short > 50 && short < n / 2, "{n} cometes, {short} courtes");
     }
 
     #[test]

@@ -23,9 +23,17 @@ struct Cine {
     // tunnel : x voie (-1..1), y vitesse (0..1), z position (distance), w sens (+1 avant, -1 arrière)
     // galaxies : x, y = teintes de départ et d'arrivée, z = graine, w = durée
     extra: vec4<f32>,
+    // Repère du fond : directions locales -> directions du monde (lecture du vrai ciel)
+    bx: vec4<f32>,
+    by: vec4<f32>,
+    bz: vec4<f32>,
+    // x : 1 si le vrai ciel est disponible
+    flags: vec4<f32>,
 };
 
 @group(1) @binding(0) var<uniform> cine: Cine;
+@group(1) @binding(1) var sky_tex: texture_cube<f32>;
+@group(1) @binding(2) var sky_samp: sampler;
 
 const PI: f32 = 3.14159265;
 
@@ -147,6 +155,15 @@ fn starfield(dir: vec3<f32>) -> vec3<f32> {
     let n = sin(dir.x * 1.7) * cos(dir.y * 2.3 + dir.z * 1.1);
     col += 0.004 * vec3<f32>(0.4, 0.55, 0.85) * (0.5 + 0.5 * n);
     return col;
+}
+
+// Le vrai ciel (skybox du jeu) dans la direction locale `d` ; sans lui, le fond procédural.
+fn real_sky(d: vec3<f32>) -> vec3<f32> {
+    if (cine.flags.x < 0.5) {
+        return starfield(d);
+    }
+    let w = cine.bx.xyz * d.x + cine.by.xyz * d.y + cine.bz.xyz * d.z;
+    return textureSampleLevel(sky_tex, sky_samp, w, 0.0).rgb;
 }
 
 // ─────────────────────────── Espace tordu autour de la foreuse ───────────────────────────
@@ -345,7 +362,7 @@ fn render_drill(ro: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
         let s = sin(-amt);
         bg_dir = rd * c + cross(axis, rd) * s + axis * dot(axis, rd) * (1.0 - c);
     }
-    var col = starfield(bg_dir) * (1.0 - 0.93 * cine.fx.w);
+    var col = real_sky(bg_dir) * (1.0 - 0.5 * cine.fx.w);
     let tcap = select(tmax, t, hit);
     col += grid3d(ro, rd, tcap);
     col += grid2d(ro, rd);
@@ -433,97 +450,36 @@ fn render_tunnel(ro_in: vec3<f32>, rd: vec3<f32>) -> vec3<f32> {
 }
 
 // ─────────────────────────── Voyage entre galaxies ───────────────────────────
+// Rien d'inventé : les vraies étoiles du ciel de départ, vues vers la destination, s'étirent en traits de plus
+// en plus longs (on fonce), bleuissent puis rougissent ; flash blanc ; le voile s'efface et l'on voit le jeu,
+// où la caméra s'approche de la vraie galaxie d'arrivée (`cinematic.rs`, `GALAXY_FLASH`).
 
-fn hue(h: f32) -> vec3<f32> {
-    let k = vec3<f32>(5.0, 3.0, 1.0) + vec3<f32>(h * 6.0);
-    return clamp(abs(vec3<f32>(fmod(k.x, 6.0), fmod(k.y, 6.0), fmod(k.z, 6.0)) - 3.0) - 1.0, vec3<f32>(0.0), vec3<f32>(1.0));
-}
-
-// Une galaxie spirale vue de dessus : bras logarithmiques, noyau, poussière, étoiles.
-fn galaxy_img(uv: vec2<f32>, seed: f32, tint: f32, spin: f32, tilt: f32) -> vec3<f32> {
-    var p = rot2(spin) * uv;
-    p.y = p.y / tilt;
-    let r = length(p);
-    let a = atan2(p.y, p.x);
-    let arms = 2.0 + floor(seed * 3.0);
-    let wind = 2.0 + seed * 2.0;
-    let arm = pow(0.5 + 0.5 * cos(arms * (a - wind * log(r + 0.04))), 2.4 + seed * 2.0);
-    let disc = exp(-r * 2.6) * (0.35 + 1.5 * arm * smoothstep(0.02, 0.2, r));
-    let core = exp(-r * r * 160.0) * 2.4 + exp(-r * 14.0) * 0.5;
-    let dust = 0.7 + 0.3 * vnoise(p * 14.0 + seed * 11.0);
-    let n = vnoise(p * 70.0 + seed * 3.0);
-    let stars = smoothstep(0.86, 1.0, n) * (0.35 + 1.0 * arm) * exp(-r * 2.0);
-    let c_arm = mix(vec3<f32>(0.55, 0.7, 1.0), hue(tint), 0.5);
-    let c_core = vec3<f32>(1.0, 0.85, 0.6);
-    var col = c_arm * disc * dust + c_core * core + vec3<f32>(1.0) * stars * 1.4;
-    col *= 1.0 - smoothstep(0.82, 1.0, r);
-    return col;
-}
-
-fn render_galaxy(uv: vec2<f32>, aspect: f32) -> vec4<f32> {
+fn render_jump(ndc: vec2<f32>, aspect: f32) -> vec4<f32> {
     let t = cine.res.z;
-    let dur = max(cine.extra.w, 1.0);
-    let k = t / dur * 10.0;
-    var p = vec2<f32>(uv.x * aspect, uv.y);
+    let p = vec2<f32>(ndc.x * aspect, ndc.y);
     let r = length(p);
-    let ang = atan2(p.y, p.x);
-    var col = vec3<f32>(0.0);
-    let seed = cine.extra.z;
-
-    // 0 - 3 s : chute dans la galaxie de départ (zoom exponentiel vers son cœur)
-    let fall = smoothstep(0.0, 3.2, k);
-    let tunnel_in = smoothstep(2.6, 4.2, k);
-    let tunnel = tunnel_in * (1.0 - smoothstep(6.4, 7.0, k));
-    if (k < 4.4) {
-        let zoom = 1.0 / (1.0 + 60.0 * fall * fall * fall);
-        let spin = 0.3 * k + 2.5 * fall * fall;
-        let g = galaxy_img(p * zoom * 1.1, seed, cine.extra.x, spin, 0.62 + 0.38 * fall);
-        // étoiles de fond
-        let bg = starfield(normalize(vec3<f32>(p * 0.8, 1.0))) * (1.0 - 0.8 * fall);
-        col = (g + bg) * (1.0 - tunnel_in);
+    let rush = smoothstep(0.0, 2.7, t);
+    // Le champ de vue se resserre (on avance) et chaque pixel prend une traînée vers le centre
+    let fov = mix(0.75, 0.05, rush * rush);
+    let stretch = 0.02 + 1.6 * rush * rush;
+    var acc = vec3<f32>(0.0);
+    let n = 28;
+    for (var i = 0; i < n; i++) {
+        let f = f32(i) / f32(n - 1);
+        let s = fov * (1.0 + stretch * f);
+        acc += real_sky(normalize(vec3<f32>(p * s, 1.0)));
     }
-    // 2.6 - 7 s : tunnel hyperspatial, étoiles étirées, bleu -> blanc -> rouge
-    if (tunnel > 0.001) {
-        let heat = smoothstep(3.0, 6.6, k);
-        let hcol = mix(vec3<f32>(0.35, 0.6, 1.0), mix(vec3<f32>(1.0, 0.95, 0.9), vec3<f32>(1.0, 0.35, 0.2), smoothstep(0.5, 1.0, heat)), smoothstep(0.0, 0.5, heat));
-        var acc = vec3<f32>(0.0);
-        for (var layer = 0; layer < 3; layer++) {
-            let fl = f32(layer);
-            let nrad = 18.0 + 10.0 * fl;
-            let sector = floor(ang / (2.0 * PI) * nrad * 6.0);
-            let h = hash12(vec2<f32>(sector, fl * 13.0 + seed * 7.0));
-            // distance radiale qui s'éloigne du centre : z = 1/r est la profondeur
-            let flow = fmod(1.0 / (r + 0.02) * 0.05 - k * (0.5 + heat * 2.2) * 0.5 + h * 9.0, 1.0);
-            let streak = smoothstep(0.0, 0.04, flow) * (1.0 - smoothstep(0.04, 0.6 + 0.3 * heat, flow));
-            let on = step(0.55, h);
-            acc += hcol * streak * on * (0.5 + fl * 0.3) * (0.15 + 0.8 * r) * 0.45;
-        }
-        // anneau-portail au centre qui se resserre
-        let ring_r = mix(0.9, 0.12, smoothstep(3.4, 6.8, k));
-        let ring = exp(-pow((r - ring_r) * 14.0, 2.0)) * 0.9;
-        let core = exp(-r * r * mix(2.0, 60.0, smoothstep(4.0, 6.8, k))) * (0.2 + 0.7 * heat);
-        // aberration chromatique : le rouge part plus loin que le bleu
-        acc += vec3<f32>(1.0, 0.5, 0.3) * ring * 0.5 * heat + hcol * ring + vec3<f32>(1.0) * core * 0.6;
-        col += acc * tunnel;
-    }
-    // 6.6 - 7.4 s : l'iris se ferme, flash blanc
-    let iris = smoothstep(6.5, 7.2, k);
-    if (iris > 0.0) {
-        let rad = mix(1.4, 0.0, iris * iris);
-        col *= 1.0 - smoothstep(rad, rad + 0.05, r);
-    }
-    let flash = exp(-pow((k - 7.2) * 3.2, 2.0)) * 2.4;
-    col += vec3<f32>(1.0, 0.97, 0.92) * flash;
-    // 7.2 - 10 s : la galaxie d'arrivée éclot (petit point qui grandit, rotation lente)
-    if (k > 7.0) {
-        let bloom = smoothstep(7.1, 9.3, k);
-        let scale = mix(14.0, 1.0, 1.0 - pow(1.0 - bloom, 3.0));
-        let g = galaxy_img(p * scale * 1.1, seed + 0.37, cine.extra.y, 0.9 + 0.2 * k, 0.78);
-        let bg = starfield(normalize(vec3<f32>(p * 0.8 + vec2<f32>(0.3, 0.2), 1.0)));
-        col += (g + bg) * smoothstep(7.0, 7.7, k);
-    }
-    let alpha = 1.0 - smoothstep(9.4, 10.0, k);
-    return vec4<f32>(col, alpha);
+    acc = acc / f32(n) * (1.0 + 5.0 * stretch);
+    let heat = smoothstep(1.3, 2.8, t);
+    let tint = mix(vec3<f32>(0.7, 0.9, 1.4), vec3<f32>(1.4, 0.75, 0.5), heat);
+    var col = acc * mix(vec3<f32>(1.0), tint, rush);
+    // Le point de fuite s'allume
+    col += vec3<f32>(0.6, 0.8, 1.0) * exp(-r * r * mix(60.0, 3.0, rush)) * rush * 1.4;
+    // Flash, puis le blanc s'efface et le jeu réapparaît
+    let white = smoothstep(2.5, 2.9, t);
+    col = mix(col, vec3<f32>(1.0, 0.97, 0.92) * 1.6, white);
+    let reveal = smoothstep(2.95, 4.7, t);
+    return vec4<f32>(col, 1.0 - reveal);
 }
 
 // ─────────────────────────── Fragment ───────────────────────────
@@ -536,7 +492,7 @@ fn fragment(in: UiVertexOutput) -> @location(0) vec4<f32> {
     var col = vec3<f32>(0.0);
     var alpha = 1.0;
     if (mode == 2) {
-        let r = render_galaxy(ndc, aspect);
+        let r = render_jump(ndc, aspect);
         col = r.rgb;
         alpha = r.a;
     } else {

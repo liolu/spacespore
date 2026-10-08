@@ -223,7 +223,7 @@ fn apply_render_scale(
         if state.image.take().is_some() {
             cam.target = RenderTarget::Window(WindowRef::Primary);
             for e in [state.blit_camera.take(), state.blit_node.take()].into_iter().flatten() {
-                commands.entity(e).despawn_recursive();
+                if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); }
             }
         }
         if viewport.0 != 1.0 {

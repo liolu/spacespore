@@ -592,8 +592,9 @@ mod tests {
         let v: Vec<f64> = systems.dense().iter().take(3000).flat_map(|s| s.planets_uncached().iter().filter(|p| !p.rogue).map(|p| season_secs(p.period_days)).collect::<Vec<_>>()).collect();
         let mean = v.iter().sum::<f64>() / v.len() as f64;
         println!("saison moyenne : {mean:.0} s");
-        // (recalée en C3 : les planètes des étoiles doubles serrées ont des années plus longues)
-        assert!((3000.0..4200.0).contains(&mean), "{mean}");
+        // (recalée en C3 : les planètes des étoiles doubles serrées ont des années plus longues ; en 0.13.6 la zone
+        // d'influence des étoiles retire des planètes lointaines aux années longues : ~49 min)
+        assert!((2800.0..4200.0).contains(&mean), "{mean}");
         assert!(v.iter().all(|s| (MIN_SEASON_SECS..=MAX_SEASON_SECS).contains(s)));
     }
 

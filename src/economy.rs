@@ -317,6 +317,9 @@ impl Economy {
     }
 
     pub fn count(&self, good: GoodId) -> u32 {
+        if crate::settings::creative() {
+            return 999_999;
+        }
         self.inventory.get(&good).copied().unwrap_or(0)
     }
 
@@ -336,6 +339,11 @@ impl Economy {
         let cost = self.buy_price(faction, good, haggle) * qty as i64;
         if qty == 0 {
             return Err("Quantite nulle.");
+        }
+        if crate::settings::creative() {
+            *self.inventory.entry(good).or_insert(0) += qty;
+            self.dirty = true;
+            return Ok(0);
         }
         if cost > self.credits {
             return Err("Credits insuffisants.");
@@ -358,6 +366,9 @@ impl Economy {
 
     /// Retire `qty` unités de la soute (le test de quantité est à la charge de l'appelant).
     pub fn take(&mut self, good: GoodId, qty: u32) {
+        if crate::settings::creative() {
+            return;
+        }
         if let Some(n) = self.inventory.get_mut(&good) {
             *n = n.saturating_sub(qty);
             if *n == 0 {
@@ -425,7 +436,9 @@ pub struct EconomyPlugin;
 
 impl Plugin for EconomyPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(Economy::load()).add_systems(Update, (track_missions, save_economy).chain());
+        app.insert_resource(Economy::load())
+            .add_systems(First, |s: Res<crate::settings::GameSettings>| crate::settings::set_creative(s.creative))
+            .add_systems(Update, (track_missions, save_economy).chain());
     }
 }
 

@@ -358,7 +358,7 @@ fn update_meteors(
     while i < meteors.flashes.len() {
         if now >= meteors.flashes[i].1 {
             let (e, _) = meteors.flashes.swap_remove(i);
-            commands.entity(e).despawn_recursive();
+            if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); }
         } else {
             i += 1;
         }
@@ -368,11 +368,11 @@ fn update_meteors(
         let u = ((now - f.start) / f.dur) as f32;
         let frame = frame_of(f.body, &planets, &moons);
         let (Some(frame), true) = (frame, surface.body() == Some(f.body)) else {
-            commands.entity(f.entity).despawn_recursive();
+            if let Some(ec) = commands.get_entity(f.entity) { ec.despawn_recursive(); }
             continue;
         };
         if u >= 1.0 {
-            commands.entity(f.entity).despawn_recursive();
+            if let Some(ec) = commands.get_entity(f.entity) { ec.despawn_recursive(); }
             if let Some((dir, radius)) = f.crater {
                 land_impact(&mut commands, &mut settings, &mut surface, &mut meteors, &mut net, &mut changed, &frame, f.body, dir, radius, now);
             }

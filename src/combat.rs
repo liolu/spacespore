@@ -221,7 +221,7 @@ fn receive_hits(
         }
         let who = display_name(&peer.tag, &peer.name);
         let damage = (shots.min(MAX_SHOTS_PER_UPDATE) as u8).saturating_mul(SHOT_DAMAGE);
-        net.local.hp = net.local.hp.saturating_sub(damage);
+        if !crate::settings::creative() { net.local.hp = net.local.hp.saturating_sub(damage); }
         state.last_damage = now;
         state.regen = 0.0;
         if net.local.hp == 0 {
@@ -254,7 +254,7 @@ fn gas_pressure(
     let lost = state.gas_damage.floor();
     if lost >= 1.0 {
         state.gas_damage -= lost;
-        net.local.hp = net.local.hp.saturating_sub(lost.min(255.0) as u8);
+        if !crate::settings::creative() { net.local.hp = net.local.hp.saturating_sub(lost.min(255.0) as u8); }
     }
     if net.local.hp == 0 {
         state.gas_damage = 0.0;
@@ -280,7 +280,7 @@ fn asteroid_hits(
         let now = time.elapsed_secs_f64();
         state.last_damage = now;
         state.regen = 0.0;
-        net.local.hp = net.local.hp.saturating_sub(hit.damage);
+        if !crate::settings::creative() { net.local.hp = net.local.hp.saturating_sub(hit.damage); }
         if net.local.hp == 0 {
             state.dead_until = Some(now + RESPAWN_SECS);
             surface.eject();
@@ -307,7 +307,7 @@ fn heat_hits(
         let now = time.elapsed_secs_f64();
         state.last_damage = now;
         state.regen = 0.0;
-        net.local.hp = net.local.hp.saturating_sub(hit.0);
+        if !crate::settings::creative() { net.local.hp = net.local.hp.saturating_sub(hit.0); }
         if net.local.hp == 0 {
             state.dead_until = Some(now + RESPAWN_SECS);
             surface.eject();

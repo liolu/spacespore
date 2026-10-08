@@ -52,7 +52,7 @@ pub const MAX_NAME_LEN: usize = 16;
 pub const MAX_TAG_LEN: usize = 5;
 /// Étoiles revendiquées au plus par joueur.
 pub const MAX_CLAIMS: usize = 5;
-const PROTOCOL: u32 = 35;
+const PROTOCOL: u32 = 36;
 /// Modifications de voxels gardées en attente au plus (protection contre un flot).
 const VOXEL_EDITS_MAX: usize = 512;
 pub const MAX_CHAT_LEN: usize = 120;
@@ -2090,12 +2090,12 @@ fn sync_remote_ships(
     // Disparus
     for (e, rs, _, _) in &ships {
         if !net.peers.contains_key(&rs.id) {
-            commands.entity(e).despawn_recursive();
+            if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); }
         }
     }
     for (e, label) in &labels {
         if !net.peers.contains_key(&label.0) {
-            commands.entity(e).despawn_recursive();
+            if let Some(ec) = commands.get_entity(e) { ec.despawn_recursive(); }
         }
     }
 
