@@ -481,6 +481,15 @@ chose ; ne jamais relancer 2 fois le meme test sans rien changer.
   couleurs (`star_palette`), granulation de la meme teinte. Asteroides / cometes remailles plus fins de pres
   (`wanted_detail`). Le vaisseau est emporte par sa cible qui bouge (plus de tremblement). Tab complete `/tunnel` et
   les choix ecrits dans l'aide (`help_choices`). Test sans capture : `SPACESPORE_QUIT_SECS`.
+- Correctifs 0.13.6 : saut entre galaxies a la portee de la plus grande des deux (`galaxy_reach` : le retour est
+  toujours possible) ; deplacement et cercles des etoiles jusqu'a 2 500 M (`MAX_TRAVEL_RANGE`). Foreuse et saut entre
+  galaxies sur le vrai rendu du jeu : la sequence est transparente sur le fond (rendu premultiplie dans
+  `cinematic.wgsl`), `cinematic::steer_camera` (appele a la fin de `camera_controller`) oriente la camera du jeu comme
+  la sequence (foreuse) ou lui fait vraiment traverser l'espace d'une galaxie a l'autre (saut, `galaxy_path`) ;
+  interface, gizmos et vaisseau caches (`hide_during`). Finesse des asteroides / cometes d'apres leur taille a
+  l'ecran (`wanted_detail`). Trainees sur une grille de temps fixe (`trail`) et vitesse des asteroides calculee
+  sur l'orbite (plus de tremblement). Poussiere et trainees de condensation en cubes (`approche_fx.rs`). Scanner :
+  « Temps de jeu » (`game_clock_text`) pour tous les astres, periode des etoiles doubles en vraie valeur + jeu.
 - Plateforme : Windows, PowerShell, clavier AZERTY
 - GitHub CLI (`gh`) installe et authentifie comme `liolu`
 

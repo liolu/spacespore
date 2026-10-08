@@ -5,10 +5,12 @@
 //!   grille 2D sur toute la zone, grille 3D, la zone proche tourne vers la droite en tordant l'espace
 //!   comme un trou noir, zoom sur la foreuse (vise à l'avant), elle avance et le tunnel se forme derrière.
 //! - `Ride` : l'intérieur d'un tunnel (cylindre, voies, traits de vitesse), piloté par `tunnel.rs`.
-//! - `Galaxy` : le saut entre deux galaxies (~10 s) : chute dans la galaxie de départ, tunnel d'étoiles
-//!   étirées qui chauffe du bleu au rouge, iris et flash, la galaxie d'arrivée éclot. Se déclenche toute
-//!   seule quand le vaisseau change de galaxie (`watch_jumps`).
+//! - `Galaxy` : le saut entre deux galaxies (~6 s) : la caméra du jeu traverse vraiment l'espace de la
+//!   galaxie de départ à celle d'arrivée (`steer_camera`), les vraies étoiles du ciel de départ s'étirent
+//!   par-dessus. Se déclenche toute seule quand le vaisseau change de galaxie (`watch_jumps`).
 //!
+//! Foreuse et saut : la séquence est transparente là où il n'y a que le fond, et la caméra du jeu regarde
+//! dans le même sens : le fond est le vrai rendu du jeu à cet endroit (étoiles, galaxies, astres proches).
 //! Échap passe la séquence (ou sort du tunnel) ; le jeu continue de tourner dessous.
 
 use bevy::asset::load_internal_asset;
@@ -18,16 +20,15 @@ use bevy::render::render_resource::{AsBindGroup, ShaderRef, ShaderType};
 use bevy::window::PrimaryWindow;
 
 use crate::settings::{origin, GALAXY_SCALE};
+use bevy::gizmos::config::GizmoConfigStore;
 use crate::ship::Ship;
 
 pub const CINE_SHADER: Handle<Shader> = Handle::weak_from_u128(0x0c1e_a71c_d00d_f00d_1357_9bdf_2468_ace0);
 
 /// Durée de la séquence de creusement (s).
 pub const DIG_SECS: f32 = 34.0;
-/// Durée du saut entre galaxies (s) : la séquence plein écran ; l'arrivée (zoom sur la vraie galaxie) se joue ensuite dans le jeu.
-pub const GALAXY_SECS: f32 = 4.8;
-/// Instant du flash : la caméra recule loin de la galaxie d'arrivée puis s'en approche (`zoom_goal`).
-const GALAXY_FLASH: f32 = 2.9;
+/// Durée du saut entre galaxies (s) : la caméra va de la galaxie de départ à celle d'arrivée.
+pub const GALAXY_SECS: f32 = 6.0;
 /// Un saut du vaisseau plus long que ça (en un instant) est un changement de galaxie : 5 fois la portée d'un déplacement.
 const GALAXY_JUMP_MIN: f64 = 5.0 * 750_000.0 * GALAXY_SCALE as f64;
 
@@ -41,6 +42,7 @@ impl Plugin for CinematicPlugin {
             .add_systems(PostStartup, spawn_overlay)
             .add_systems(Update, (watch_jumps, update_overlay).chain())
             .add_systems(Update, (test_start, quit_after))
+            .add_systems(PostUpdate, hide_during.before(bevy::transform::TransformSystem::TransformPropagate))
             .add_systems(Last, skip_with_escape);
     }
 }
@@ -58,7 +60,7 @@ pub struct CineParams {
     pub bx: Vec4,
     pub by: Vec4,
     pub bz: Vec4,
-    /// x : 1 si le vrai ciel (skybox) est disponible.
+    /// x : 1 si le vrai ciel (skybox) est disponible ; y : tangente du demi-champ vertical de la caméra du jeu.
     pub flags: Vec4,
 }
 
@@ -119,7 +121,10 @@ pub struct Cinematic {
     pub axis: Vec3,
     /// Ciel utilisé (celui du lieu de départ, gardé pendant toute la séquence).
     pub sky: Option<Handle<Image>>,
-    arrival_done: bool,
+    /// Saut entre galaxies : position absolue du vaisseau au départ (la caméra fait le trajet jusqu'à
+    /// sa place d'arrivée) et l'écart caméra - vaisseau gardé au départ.
+    pub from: DVec3,
+    cam_offset: Option<Vec3>,
 }
 
 impl Cinematic {
@@ -132,7 +137,7 @@ impl Cinematic {
         self.t = 0.0;
         self.dur = dur;
         self.leave = false;
-        self.arrival_done = false;
+        self.cam_offset = None;
         self.caption.clear();
     }
 
@@ -253,7 +258,7 @@ fn update_overlay(
     mut node_q: Query<(&MaterialNode<CineMaterial>, &mut Visibility), With<CineNode>>,
     mut text_q: Query<(&mut Text, &mut Visibility), (With<CineText>, Without<CineNode>)>,
     window: Query<&Window, With<PrimaryWindow>>,
-    mut cam_q: Query<&mut crate::CameraController>,
+    cam_q: Query<&Projection, With<Camera3d>>,
 ) {
     let Ok((node, mut vis)) = node_q.get_single_mut() else { return };
     let Ok((mut text, mut tvis)) = text_q.get_single_mut() else { return };
@@ -270,28 +275,21 @@ fn update_overlay(
         return;
     }
     let res = window.get_single().map_or(Vec2::new(1280.0, 720.0), |w| Vec2::new(w.physical_width() as f32, w.physical_height() as f32));
-    // Saut entre galaxies : au flash, la caméra recule loin de la vraie galaxie d'arrivée et s'en rapproche
-    if kind == CineKind::Galaxy && cine.t >= GALAXY_FLASH && !cine.arrival_done {
-        cine.arrival_done = true;
-        if let Ok(mut ctrl) = cam_q.get_single_mut() {
-            let goal = ctrl.zoom_goal.unwrap_or(ctrl.distance);
-            ctrl.distance = (goal * 25.0).min(380_000_000.0 * GALAXY_SCALE);
-            ctrl.zoom_goal = Some(goal);
-        }
-    }
+    let fov = match cam_q.get_single() {
+        Ok(Projection::Perspective(p)) => p.fov,
+        _ => std::f32::consts::FRAC_PI_4,
+    };
     let Some(mat) = mats.get_mut(&node.0) else { return };
     let mut p = match kind {
         CineKind::Dig => dig_params(cine.t, res),
         CineKind::Ride => ride_params(&cine.ride, cine.t, res),
         CineKind::Galaxy => galaxy_params(&cine, res),
     };
-    let z = cine.axis.normalize_or(Vec3::Z);
-    let x = Vec3::Y.cross(z).normalize_or(Vec3::X);
-    let y = z.cross(x);
+    let (x, y, z) = basis(cine.axis);
     p.bx = x.extend(0.0);
     p.by = y.extend(0.0);
     p.bz = z.extend(0.0);
-    p.flags = Vec4::new(if cine.sky.is_some() { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0);
+    p.flags = Vec4::new(if cine.sky.is_some() { 1.0 } else { 0.0 }, (fov * 0.5).tan(), 0.0, 0.0);
     mat.p = p;
     if let Some(h) = &cine.sky {
         if mat.sky != *h {
@@ -307,6 +305,111 @@ fn update_overlay(
     };
     if text.0 != hint {
         text.0 = hint;
+    }
+}
+
+/// Repère de la séquence : x, y, z locaux -> directions du monde (z = l'axe du tunnel ou du saut).
+fn basis(axis: Vec3) -> (Vec3, Vec3, Vec3) {
+    let z = axis.normalize_or(Vec3::Z);
+    let x = Vec3::Y.cross(z).normalize_or(Vec3::X);
+    (x, z.cross(x), z)
+}
+
+/// Rotation de la caméra du jeu qui regarde de `cam` vers `look` (repère local de la séquence), comme le shader.
+fn local_look(cam: Vec3, look: Vec3, b: (Vec3, Vec3, Vec3)) -> Quat {
+    let f = (look - cam).normalize_or(Vec3::Z);
+    let world_up = if f.y.abs() > 0.95 { Vec3::Z } else { Vec3::Y };
+    let right = f.cross(world_up).normalize_or(Vec3::X);
+    let up = right.cross(f);
+    let w = |v: Vec3| b.0 * v.x + b.1 * v.y + b.2 * v.z;
+    Transform::IDENTITY.looking_to(w(f), w(up)).rotation
+}
+
+/// Progression du trajet de la caméra entre les deux galaxies (0 au départ, 1 à l'arrivée) : elle part
+/// doucement, file au milieu, freine à l'arrivée.
+pub fn galaxy_path(u: f32) -> f32 {
+    let u = u.clamp(0.0, 1.0);
+    u * u * u * (u * (u * 6.0 - 15.0) + 10.0)
+}
+
+/// Pendant la foreuse et le saut, la caméra du jeu suit la séquence : le fond transparent de la séquence
+/// montre le vrai rendu du jeu dans la bonne direction. Appelé à la fin de `camera_controller` (qui vient
+/// de placer la caméra d'arrivée, celle qu'on rejoint en fin de saut) : tout le jeu (étoiles chargées,
+/// éclaircissement, ciel) voit la caméra là où elle est vraiment.
+pub fn steer_camera(cine: &mut Cinematic, cam: &mut Transform, ship: Vec3) {
+    match cine.kind {
+        Some(CineKind::Dig) => {
+            // Seule la direction compte : le fond est à l'infini
+            let p = dig_params(cine.t, Vec2::ONE);
+            cam.rotation = local_look(p.cam.truncate(), p.look.truncate(), basis(cine.axis));
+        }
+        Some(CineKind::Galaxy) => {
+            // Caméra d'arrivée et écart caméra - vaisseau gardé au départ
+            let arrive = cam.translation.as_dvec3() + origin();
+            let offset = *cine.cam_offset.get_or_insert(cam.translation - ship);
+            let start = cine.from + offset.as_dvec3();
+            let u = (cine.t / cine.dur.max(0.01)).clamp(0.0, 1.0);
+            let pos = start + (arrive - start) * galaxy_path(u) as f64;
+            // Le nez vers la destination pendant le trajet, la vue normale au départ et à l'arrivée
+            let travel = Transform::IDENTITY.looking_to((arrive - start).as_vec3().normalize_or(Vec3::NEG_Z), Vec3::Y).rotation;
+            let turn = ss(0.0, 0.2, u) * (1.0 - ss(0.8, 1.0, u));
+            cam.rotation = cam.rotation.slerp(travel, turn);
+            cam.translation = (pos - origin()).as_vec3();
+            cine.axis = (arrive - start).as_vec3();
+        }
+        _ => {}
+    }
+}
+
+/// Pendant la foreuse et le saut : ni vaisseau (la foreuse dessinée le remplace), ni orbites, cercles ou
+/// portées, ni interface du jeu (HUD, scanner) par-dessus le vrai fond.
+#[allow(clippy::type_complexity)]
+fn hide_during(
+    cine: Res<Cinematic>,
+    mut ship_q: Query<&mut Visibility, With<Ship>>,
+    mut ui_q: Query<(Entity, &mut Visibility), (With<Node>, Without<Parent>, Without<CineNode>, Without<CineText>, Without<Ship>)>,
+    mut gizmos: ResMut<GizmoConfigStore>,
+    mut hidden: Local<Vec<std::any::TypeId>>,
+    mut hidden_ui: Local<Vec<(Entity, Visibility)>>,
+) {
+    let driving = matches!(cine.kind, Some(CineKind::Dig | CineKind::Galaxy));
+    if driving {
+        for (e, mut vis) in &mut ui_q {
+            if *vis != Visibility::Hidden {
+                if !hidden_ui.iter().any(|(h, _)| *h == e) {
+                    hidden_ui.push((e, *vis));
+                }
+                *vis = Visibility::Hidden;
+            }
+        }
+    } else {
+        for (e, before) in hidden_ui.drain(..) {
+            if let Ok((_, mut vis)) = ui_q.get_mut(e) {
+                if *vis == Visibility::Hidden {
+                    *vis = before;
+                }
+            }
+        }
+    }
+    if driving && hidden.is_empty() {
+        for (id, cfg, _) in gizmos.iter_mut() {
+            if cfg.enabled {
+                cfg.enabled = false;
+                hidden.push(*id);
+            }
+        }
+    } else if !driving && !hidden.is_empty() {
+        for (id, cfg, _) in gizmos.iter_mut() {
+            if hidden.contains(id) {
+                cfg.enabled = true;
+            }
+        }
+        hidden.clear();
+    }
+    if cine.kind == Some(CineKind::Dig) {
+        for mut vis in &mut ship_q {
+            *vis = Visibility::Hidden;
+        }
     }
 }
 
@@ -347,6 +450,8 @@ fn test_start(time: Res<Time>, mut cine: ResMut<Cinematic>, mut done: Local<bool
             cine.start(CineKind::Galaxy, GALAXY_SECS);
             cine.hues = (0.6, 0.05);
             cine.seed = 0.3;
+            // Test : un saut fictif depuis quatre portées de saut en arrière
+            cine.from = origin() + DVec3::new(0.0, 0.0, GALAXY_JUMP_MIN * 4.0);
         }
     }
     cine.use_sky(&sky, &settings, Vec3::new(0.3, 0.1, -1.0));
@@ -386,6 +491,7 @@ fn watch_jumps(
             cine.start(CineKind::Galaxy, GALAXY_SECS);
             cine.hues = (h(prev), h(abs));
             cine.seed = h(prev + abs);
+            cine.from = prev;
             // Le ciel encore affiché est celui du départ : ses vraies étoiles s'étirent vers la destination
             cine.use_sky(&sky, &settings, (abs - prev).as_vec3());
         }

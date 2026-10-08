@@ -581,6 +581,13 @@ pub(crate) fn galaxy_jump_range(settings: &GameSettings, gid: usize) -> f32 {
     settings.galaxies.get(gid).map_or(0.0, |g| GALAXY_JUMP_SIZES * 2.0 * g.radius)
 }
 
+/// Saut possible entre les galaxies `from` et `to` : la portée est celle de la plus grande des
+/// deux, pour que le retour soit toujours possible (d'une petite galaxie, on revient vers la
+/// grande qui nous y avait envoyés).
+pub(crate) fn galaxy_reach(settings: &GameSettings, from: usize, to: usize) -> f32 {
+    galaxy_jump_range(settings, from).max(galaxy_jump_range(settings, to))
+}
+
 /// Rayon d'un astre à l'écran (pixels).
 fn screen_radius(camera: &Camera, camera_transform: &GlobalTransform, viewport: &graphics::ViewportScale, center: Vec3, radius: f32) -> f32 {
     let edge = center + camera_transform.right() * radius;
@@ -610,11 +617,11 @@ fn clickables(
     // Portée : le vaisseau ne va pas plus loin que le cercle blanc d'un coup ; d'une galaxie, on ne
     // saute que vers ses voisines les plus proches
     let gal_center = settings.galaxies.get(current_gal as usize).map(|g| g.center());
-    let gal_range = galaxy_jump_range(settings, current_gal as usize);
+    let reach = |to: u32| galaxy_reach(settings, current_gal as usize, to as usize);
     let too_far = |kind: &TargetKind, position: Vec3| -> bool {
         match *kind {
-            TargetKind::GalacticCore => current_gal != 0 && gal_center.is_some_and(|c| c.distance(position) > gal_range),
-            TargetKind::DistantGalaxyCore(g) => g != current_gal && gal_center.is_some_and(|c| c.distance(position) > gal_range),
+            TargetKind::GalacticCore => current_gal != 0 && gal_center.is_some_and(|c| c.distance(position) > reach(0)),
+            TargetKind::DistantGalaxyCore(g) => g != current_gal && gal_center.is_some_and(|c| c.distance(position) > reach(g)),
             _ => ship.is_some_and(|s| s.distance(position) > MAX_TRAVEL_RANGE),
         }
     };
@@ -1083,7 +1090,8 @@ const GALAXY_JUMP_MIN_ZOOM: f32 = 10_000_000.0 * settings::GALAXY_SCALE;
 /// Portée fixe d'un déplacement du vaisseau (le cercle blanc). Au-delà, il faut avancer par
 /// étapes, passer par un trou de ver, ou sauter entre galaxies via leur trou noir.
 /// Un déplacement va d'une étoile à sa voisine (≈ 15 millions) : quelques fois l'écart entre étoiles.
-const MAX_TRAVEL_RANGE: f32 = 750_000.0 * settings::GALAXY_SCALE;
+/// 2 500 M : les étoiles à cette distance du vaisseau ont toutes leur cercle.
+const MAX_TRAVEL_RANGE: f32 = 2_500_000_000.0;
 /// Zoom maximal de la caméra.
 const MAX_ZOOM: f32 = 400_000_000.0 * settings::GALAXY_SCALE;
 
@@ -1312,7 +1320,7 @@ fn camera_controller(
 
     net_panel: Res<NetPanel>,
     net: Res<Net>,
-    travel: Res<wormhole::WormholeTravel>,
+    (travel, mut cine): (Res<wormhole::WormholeTravel>, ResMut<cinematic::Cinematic>),
 ) {
     // Saisie de texte en cours (panneau multijoueur) : clavier réservé au champ
     let menu_open = menu_state.open || net_panel.focus.is_some();
@@ -1411,6 +1419,7 @@ fn camera_controller(
                 *ship_vis = Visibility::Hidden;
                 cam_tf.translation = target_pos + cam_rotation * Vec3::new(0.0, 0.0, ctrl.distance);
                 cam_tf.look_at(target_pos, Vec3::Y);
+                cinematic::steer_camera(&mut cine, &mut cam_tf, ship_tf.translation);
                 return;
             }
             *ship_vis = Visibility::Inherited;
@@ -1423,6 +1432,7 @@ fn camera_controller(
 
         cam_tf.translation = sp + cam_rotation * Vec3::new(0.0, 0.0, ctrl.distance);
         cam_tf.look_at(sp, Vec3::Y);
+        cinematic::steer_camera(&mut cine, &mut cam_tf, sp);
         return;
     }
 
@@ -1501,6 +1511,7 @@ fn camera_controller(
             *ship_vis = Visibility::Hidden;
             cam_tf.translation = target_pos + cam_rotation * Vec3::new(0.0, 0.0, ctrl.distance);
             cam_tf.look_at(target_pos, Vec3::Y);
+            cinematic::steer_camera(&mut cine, &mut cam_tf, ship_tf.translation);
             return;
         }
         *ship_vis = Visibility::Inherited;
@@ -1519,6 +1530,7 @@ fn camera_controller(
         cam_tf.translation = surface::keep_outside(cam_tf.translation, target_pos, &params);
     }
     cam_tf.look_at(ship_pos, Vec3::Y);
+    cinematic::steer_camera(&mut cine, &mut cam_tf, ship_pos);
 }
 
 
@@ -2963,6 +2975,17 @@ mod range_tests {
         for gid in [0usize, 1, 5, 20] {
             let g = &settings.galaxies[gid];
             assert_eq!(galaxy_jump_range(&settings, gid), 5.0 * 2.0 * g.radius);
+        }
+    }
+    /// Un saut possible à l'aller l'est aussi au retour (d'une petite galaxie vers la grande).
+    #[test]
+    fn galaxy_jumps_can_always_come_back() {
+        let settings = GameSettings::default();
+        for a in 0..21usize {
+            for b in 0..21usize {
+                assert_eq!(galaxy_reach(&settings, a, b), galaxy_reach(&settings, b, a));
+                assert!(galaxy_reach(&settings, a, b) >= galaxy_jump_range(&settings, a));
+            }
         }
     }
 }

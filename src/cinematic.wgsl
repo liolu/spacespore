@@ -27,7 +27,7 @@ struct Cine {
     bx: vec4<f32>,
     by: vec4<f32>,
     bz: vec4<f32>,
-    // x : 1 si le vrai ciel est disponible
+    // x : 1 si le vrai ciel est disponible ; y : tangente du demi-champ vertical de la caméra du jeu
     flags: vec4<f32>,
 };
 
@@ -330,7 +330,9 @@ fn shade_drill(p: vec3<f32>, n: vec3<f32>, rd: vec3<f32>) -> vec3<f32> {
     return col;
 }
 
-fn render_drill(ro: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
+// Rendu prémultiplié (rgb déjà multiplié par a) : là où il n'y a que le fond, a = 0 et l'on voit le vrai rendu
+// du jeu (la caméra du jeu regarde dans le même sens, `cinematic::steer_camera`).
+fn render_drill(ro: vec3<f32>, rd0: vec3<f32>) -> vec4<f32> {
     let rd = rd0;
     var t = 0.0;
     var hit = false;
@@ -349,9 +351,10 @@ fn render_drill(ro: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
             break;
         }
     }
-    // Fond : étoiles, qui tournent avec l'espace autour de la foreuse
-    var bg_dir = rd;
-    if (cine.fx.w > 0.001) {
+    // Fond : le vrai rendu du jeu (transparent) ; près de la foreuse, le vrai ciel tourne avec l'espace
+    var col = vec3<f32>(0.0);
+    var a = 0.0;
+    if (cine.fx.w > 0.001 && cine.flags.x > 0.5) {
         let to = normalize(cine.drill.xyz - ro);
         let along = dot(rd, to);
         let perp = rd - to * along;
@@ -360,25 +363,32 @@ fn render_drill(ro: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
         let axis = to;
         let c = cos(-amt);
         let s = sin(-amt);
-        bg_dir = rd * c + cross(axis, rd) * s + axis * dot(axis, rd) * (1.0 - c);
+        let bg_dir = rd * c + cross(axis, rd) * s + axis * dot(axis, rd) * (1.0 - c);
+        a = clamp(amt * 2.0, 0.0, 1.0);
+        col = real_sky(bg_dir) * a;
     }
-    var col = real_sky(bg_dir) * (1.0 - 0.5 * cine.fx.w);
+    // L'espace qui tourne s'assombrit
+    let dim = 0.5 * cine.fx.w;
+    col *= 1.0 - dim;
+    a = 1.0 - (1.0 - a) * (1.0 - dim);
     let tcap = select(tmax, t, hit);
-    col += grid3d(ro, rd, tcap);
-    col += grid2d(ro, rd);
-    col += tube_glow(ro, rd);
-    if (hit) {
-        let n = drill_normal(hit_pos - cine.drill.xyz, cine.res.z);
-        col = shade_drill(hit_pos, n, rd);
-    }
+    var glow = grid3d(ro, rd, tcap) + grid2d(ro, rd) + tube_glow(ro, rd);
     // Halo bleu du trou noir artificiel quand l'espace tourne
     if (cine.fx.w > 0.001) {
         let to = cine.drill.xyz - ro;
         let dist = length(to);
-        let a = max(dot(rd, to / dist), 0.0);
-        col += vec3<f32>(0.1, 0.25, 0.7) * pow(a, 60.0) * cine.fx.w * 1.2;
+        let al = max(dot(rd, to / dist), 0.0);
+        glow += vec3<f32>(0.1, 0.25, 0.7) * pow(al, 60.0) * cine.fx.w * 1.2;
     }
-    return col;
+    // Les lueurs s'ajoutent au fond : leur couverture suit leur éclat
+    col += glow;
+    a = max(a, clamp(max(glow.r, max(glow.g, glow.b)) * 1.5, 0.0, 1.0));
+    if (hit) {
+        let n = drill_normal(hit_pos - cine.drill.xyz, cine.res.z);
+        col = shade_drill(hit_pos, n, rd);
+        a = 1.0;
+    }
+    return vec4<f32>(col, a);
 }
 
 // ─────────────────────────── Tunnel (intérieur) ───────────────────────────
@@ -450,36 +460,36 @@ fn render_tunnel(ro_in: vec3<f32>, rd: vec3<f32>) -> vec3<f32> {
 }
 
 // ─────────────────────────── Voyage entre galaxies ───────────────────────────
-// Rien d'inventé : les vraies étoiles du ciel de départ, vues vers la destination, s'étirent en traits de plus
-// en plus longs (on fonce), bleuissent puis rougissent ; flash blanc ; le voile s'efface et l'on voit le jeu,
-// où la caméra s'approche de la vraie galaxie d'arrivée (`cinematic.rs`, `GALAXY_FLASH`).
+// Rien d'inventé : la caméra du jeu traverse vraiment l'espace entre les deux galaxies (`cinematic::steer_camera`),
+// le fond est le vrai rendu. Par-dessus, translucides, les vraies étoiles du ciel de départ vues vers la destination
+// s'étirent en traits (plus longs quand on file au milieu du trajet), bleuissent puis rougissent.
+// Rendu prémultiplié : transparent au départ et à l'arrivée.
 
 fn render_jump(ndc: vec2<f32>, aspect: f32) -> vec4<f32> {
-    let t = cine.res.z;
-    let p = vec2<f32>(ndc.x * aspect, ndc.y);
-    let r = length(p);
-    let rush = smoothstep(0.0, 2.7, t);
-    // Le champ de vue se resserre (on avance) et chaque pixel prend une traînée vers le centre
-    let fov = mix(0.75, 0.05, rush * rush);
-    let stretch = 0.02 + 1.6 * rush * rush;
+    let u = clamp(cine.res.z / max(cine.extra.w, 0.01), 0.0, 1.0);
+    // Vitesse ressentie : nulle au départ et à l'arrivée, au plus fort au milieu
+    let v = pow(sin(PI * u), 2.0);
+    let th = max(cine.flags.y, 0.05);
+    let p = vec2<f32>(ndc.x * aspect, ndc.y) * th;
+    let r = length(p) / th;
+    let stretch = 0.02 + 1.4 * v;
     var acc = vec3<f32>(0.0);
-    let n = 28;
-    for (var i = 0; i < n; i++) {
-        let f = f32(i) / f32(n - 1);
-        let s = fov * (1.0 + stretch * f);
-        acc += real_sky(normalize(vec3<f32>(p * s, 1.0)));
+    if (cine.flags.x > 0.5) {
+        let n = 24;
+        for (var i = 0; i < n; i++) {
+            let f = f32(i) / f32(n - 1);
+            acc += real_sky(normalize(vec3<f32>(p * (1.0 + stretch * f), 1.0)));
+        }
+        acc = acc / f32(24) * (1.0 + 4.0 * stretch);
     }
-    acc = acc / f32(n) * (1.0 + 5.0 * stretch);
-    let heat = smoothstep(1.3, 2.8, t);
+    let heat = smoothstep(0.3, 0.7, u);
     let tint = mix(vec3<f32>(0.7, 0.9, 1.4), vec3<f32>(1.4, 0.75, 0.5), heat);
-    var col = acc * mix(vec3<f32>(1.0), tint, rush);
-    // Le point de fuite s'allume
-    col += vec3<f32>(0.6, 0.8, 1.0) * exp(-r * r * mix(60.0, 3.0, rush)) * rush * 1.4;
-    // Flash, puis le blanc s'efface et le jeu réapparaît
-    let white = smoothstep(2.5, 2.9, t);
-    col = mix(col, vec3<f32>(1.0, 0.97, 0.92) * 1.6, white);
-    let reveal = smoothstep(2.95, 4.7, t);
-    return vec4<f32>(col, 1.0 - reveal);
+    var col = acc * tint * v;
+    // Le point de fuite s'allume au plus vite
+    col += vec3<f32>(0.6, 0.8, 1.0) * exp(-r * r * mix(40.0, 4.0, v)) * v * 0.8;
+    // Voile léger au plus vite (les traits dominent), le vrai rendu reste visible dessous
+    let a = clamp(0.45 * v + max(col.r, max(col.g, col.b)) * 0.5, 0.0, 1.0);
+    return vec4<f32>(col, a);
 }
 
 // ─────────────────────────── Fragment ───────────────────────────
@@ -490,6 +500,7 @@ fn fragment(in: UiVertexOutput) -> @location(0) vec4<f32> {
     let ndc = vec2<f32>(in.uv.x * 2.0 - 1.0, 1.0 - in.uv.y * 2.0);
     let mode = i32(cine.res.w + 0.5);
     var col = vec3<f32>(0.0);
+    // Couverture : 1 = la séquence cache le jeu ; rgb est prémultiplié par elle (foreuse, saut)
     var alpha = 1.0;
     if (mode == 2) {
         let r = render_jump(ndc, aspect);
@@ -503,18 +514,28 @@ fn fragment(in: UiVertexOutput) -> @location(0) vec4<f32> {
         }
         let right_v = normalize(cross(forward, world_up));
         let up_v = cross(right_v, forward);
-        let fov = 0.9;
+        // Même champ que la caméra du jeu : le fond transparent de la foreuse est son vrai rendu
+        let fov = select(0.9, cine.flags.y, cine.flags.y > 0.01);
         let rd = normalize(forward + right_v * ndc.x * aspect * fov + up_v * ndc.y * fov);
         if (mode == 1) {
             // Tunnel : la caméra regarde toujours dans l'axe (+z) ; en marche arrière, vers l'arrière
             let look = vec3<f32>(ndc.x * aspect * fov, ndc.y * fov, 1.0);
             col = render_tunnel(cine.cam.xyz, normalize(look));
         } else {
-            col = render_drill(cine.cam.xyz, rd);
+            let r = render_drill(cine.cam.xyz, rd);
+            col = r.rgb;
+            alpha = r.a;
         }
     }
-    col *= (1.0 - cine.fx2.y);
-    col += vec3<f32>(1.0) * cine.fx2.w * 0.0;
+    if (mode == 1) {
+        col *= alpha;
+    }
+    // Fondu au noir (début et fin du creusement) : un voile noir par-dessus tout
+    let fade = cine.fx2.y;
+    col *= 1.0 - fade;
+    alpha = 1.0 - (1.0 - alpha) * (1.0 - fade);
+    // Couleur droite pour le mélange de l'interface
+    col = col / max(alpha, 1e-4);
     // Tons : ACES et gamma (la sortie de l'interface est en sRGB)
     col = (col * (2.51 * col + 0.03)) / (col * (2.43 * col + 0.59) + 0.14);
     col = max(col, vec3<f32>(0.0));

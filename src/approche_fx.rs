@@ -235,6 +235,8 @@ struct FxMeshes {
     low: Handle<Mesh>,
     ring: Handle<Mesh>,
     disc: Handle<Mesh>,
+    /// Fumée et poussière en cubes (comme la fumée du vaisseau, `smoke.rs`), pas en boules.
+    cube: Handle<Mesh>,
 }
 
 impl FxState {
@@ -258,6 +260,7 @@ fn fx_meshes(state: &mut FxState, meshes: &mut Assets<Mesh>) -> FxMeshes {
             low: meshes.add(Sphere::new(1.0).mesh().ico(1).unwrap()),
             ring: meshes.add(Torus::new(0.93, 1.0).mesh().build()),
             disc: meshes.add(Circle::new(1.0).mesh().build()),
+            cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         })
         .clone()
 }
@@ -649,7 +652,7 @@ fn body_fx(
         };
         if state.dust.len() < 90 {
             let e = commands
-                .spawn((Mesh3d(m.low.clone()), MeshMaterial3d(materials.add(StandardMaterial { base_color: Color::srgba(col[0], col[1], col[2], p.alpha), unlit: false, alpha_mode: AlphaMode::Blend, perceptual_roughness: 1.0, ..default() })), Transform::from_translation(p.pos).with_scale(Vec3::splat(p.size0)), Visibility::Inherited, NotShadowCaster, NotShadowReceiver, BodyFx))
+                .spawn((Mesh3d(m.cube.clone()), MeshMaterial3d(materials.add(StandardMaterial { base_color: Color::srgba(col[0], col[1], col[2], p.alpha), unlit: false, alpha_mode: AlphaMode::Blend, perceptual_roughness: 1.0, ..default() })), Transform::from_translation(p.pos).with_scale(Vec3::splat(p.size0)).with_rotation(Quat::from_euler(EulerRot::XYZ, a, a * 1.7, a * 2.3)), Visibility::Inherited, NotShadowCaster, NotShadowReceiver, BodyFx))
                 .id();
             commands.entity(root).add_child(e);
             state.dust.push(Particle { entity: e, ..p });
@@ -709,7 +712,7 @@ fn body_fx(
         let p = Particle { entity: Entity::PLACEHOLDER, pos: f.pos, vel: Vec3::ZERO, age: 0.0, life: 24.0, size0: len * 0.3, size1: len * 1.8, color: [1.0, 1.0, 1.0], alpha: 0.5, live: true };
         if state.trail.len() < 140 {
             let e = commands
-                .spawn((Mesh3d(m.low.clone()), MeshMaterial3d(materials.add(StandardMaterial { base_color: Color::srgba(1.0, 1.0, 1.0, 0.5), unlit: true, alpha_mode: AlphaMode::Blend, ..default() })), Transform::from_translation(p.pos).with_scale(Vec3::splat(p.size0)), Visibility::Inherited, NotShadowCaster, NotShadowReceiver, BodyFx))
+                .spawn((Mesh3d(m.cube.clone()), MeshMaterial3d(materials.add(StandardMaterial { base_color: Color::srgba(1.0, 1.0, 1.0, 0.5), unlit: true, alpha_mode: AlphaMode::Blend, ..default() })), Transform::from_translation(p.pos).with_scale(Vec3::splat(p.size0)), Visibility::Inherited, NotShadowCaster, NotShadowReceiver, BodyFx))
                 .id();
             commands.entity(root).add_child(e);
             state.trail.push(Particle { entity: e, ..p });

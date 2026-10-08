@@ -1174,7 +1174,6 @@ pub struct Live {
     pub ast: Asteroid,
     pub pose: Transform,
     pub vel: Vec3,
-    prev: Option<(Vec3, u32)>,
     /// Caillou poussé par le vaisseau (effet local, il dérive puis revient quand on repasse).
     knock: Vec3,
     knock_vel: Vec3,
@@ -1184,17 +1183,18 @@ pub struct Live {
     detail: usize,
 }
 
-/// Finesse voulue du maillage d'un gros astéroïde ou d'une comète à `dist` de la caméra : de loin ~4 unités par
-/// quad (10 à 40 par face), de près 96 puis 160 par face (avant : toujours la version de loin).
+/// Finesse voulue du maillage d'un gros astéroïde ou d'une comète à `dist` de la caméra : d'après sa taille à
+/// l'écran (~2 pixels par quad), par paliers pour ne pas remailler sans cesse ; jamais moins que ~4 unités par
+/// quad (10 à 40 par face). Avant : par rayons de distance, et une comète (2 à 25 de rayon) vue du point de
+/// stationnement (150 au-dessus) restait toujours à la version de loin.
 fn wanted_detail(radius: f32, dist: f32) -> usize {
+    const STEPS: [usize; 6] = [16, 32, 64, 96, 160, 200];
     let base = ((radius / 4.0) as usize).clamp(10, 40);
-    if dist < radius * 3.0 {
-        base.max(160)
-    } else if dist < radius * 10.0 {
-        base.max(96)
-    } else {
-        base
-    }
+    // Rayon à l'écran (pixels, écran de ~1 000 de haut et 45 deg de champ)
+    let px = radius / dist.max(radius * 0.5) * 1_200.0;
+    let want = px / 2.0;
+    let step = STEPS.iter().copied().find(|&n| n as f32 >= want).unwrap_or(200);
+    base.max(step)
 }
 
 /// Les astéroïdes affichés autour de la caméra, et les petits corps des systèmes chargés.
@@ -1303,7 +1303,6 @@ fn place_asteroids(
     time: Res<Time>,
     clock: Res<WorldClock>,
     settings: Res<GameSettings>,
-    epoch: Res<crate::origin::OriginEpoch>,
     mut field: ResMut<AsteroidField>,
     mut q: Query<&mut Transform, With<AsteroidBody>>,
 ) {
@@ -1321,12 +1320,11 @@ fn place_asteroids(
                 live.knock_vel = Vec3::ZERO;
             }
         }
-        let pos = world_of(center, live.ast.rel_position(t)) + live.knock;
-        live.vel = match live.prev {
-            Some((p, e)) if e == epoch.0 => (pos - p) / dt,
-            _ => live.vel,
-        };
-        live.prev = Some((pos, epoch.0));
+        let rel = live.ast.rel_position(t);
+        let pos = world_of(center, rel) + live.knock;
+        // Vitesse calculée sur l'orbite (une seconde de jeu) : mesurée d'une image à l'autre, elle suivait
+        // les à-coups des images et la queue de poussière des comètes tremblait
+        live.vel = (rel - live.ast.rel_position(t - 1.0)).as_vec3() + live.knock_vel;
         live.pose = Transform { translation: pos, rotation: live.ast.rotation(t), scale: Vec3::ONE };
         if let Ok(mut tf) = q.get_mut(live.entity) {
             *tf = live.pose;
@@ -1477,7 +1475,7 @@ fn stream_asteroids(
             }
             None => false,
         };
-        field.live.insert(a.key, Live { entity, ast: a, pose, vel: Vec3::ZERO, prev: None, knock: Vec3::ZERO, knock_vel: Vec3::ZERO, meshed, mesh_child: None, detail: 0 });
+        field.live.insert(a.key, Live { entity, ast: a, pose, vel: Vec3::ZERO, knock: Vec3::ZERO, knock_vel: Vec3::ZERO, meshed, mesh_child: None, detail: 0 });
     }
 
     // Maillages des gros (hors du fil principal), les plus proches d'abord
@@ -1819,16 +1817,23 @@ fn update_comet_tails(
 //  Traînées : où vont les comètes, les planètes et les gros astéroïdes
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Points d'une traînée : le chemin parcouru pendant les `span` dernières secondes, du présent au
-/// passé, de plus en plus transparent.
-fn trail(n: usize, span: f64, rgb: [f32; 3], alpha: f32, at: impl Fn(f64) -> Vec3) -> Vec<(Vec3, Color)> {
-    (0..=n)
-        .map(|k| {
-            let f = k as f64 / n as f64;
-            let a = alpha * (1.0 - f as f32).powf(1.5);
-            (at(span * f), Color::srgba(rgb[0], rgb[1], rgb[2], a))
-        })
-        .collect()
+/// Points d'une traînée : le chemin parcouru pendant les `span` dernières secondes avant `t`, du présent
+/// au passé, de plus en plus transparent. Les points sont pris sur une grille de temps fixe (pas en
+/// puissance de 2) : d'une image à l'autre ils restent sur place. Avant, ils étaient pris à partir de
+/// l'instant présent et glissaient le long de l'orbite : la traînée tremblait.
+fn trail(n: usize, span: f64, rgb: [f32; 3], alpha: f32, t: f64, at: impl Fn(f64) -> Vec3) -> Vec<(Vec3, Color)> {
+    let step = 2f64.powf((span / n.max(1) as f64).max(1e-6).log2().floor());
+    let color = |age: f64| Color::srgba(rgb[0], rgb[1], rgb[2], alpha * (1.0 - (age / span).clamp(0.0, 1.0) as f32).powf(1.5));
+    let mut out = vec![(at(t), color(0.0))];
+    let mut ti = (t / step).floor() * step;
+    if ti >= t {
+        ti -= step;
+    }
+    while t - ti < span + step && out.len() <= 2 * n + 1 {
+        out.push((at(ti), color(t - ti)));
+        ti -= step;
+    }
+    out
 }
 
 /// Derrière chaque comète (5 % de son orbite), planète (4 % de la sienne) et gros astéroïde proche
@@ -1845,7 +1850,7 @@ fn draw_trails(clock: Res<WorldClock>, settings: Res<GameSettings>, field: Res<A
         let Some(center) = sys_center(&settings, live.ast.key.sys as usize) else { continue };
         if let Some(c) = live.ast.comet() {
             let span = Elements::of_comet(c).period() * 0.05;
-            g.linestrip_gradient(trail(48, span, [0.55, 0.78, 1.0], 0.6, |dt| world_of(center, live.ast.rel_position(t - dt))));
+            g.linestrip_gradient(trail(48, span, [0.55, 0.78, 1.0], 0.6, t, |ti| world_of(center, live.ast.rel_position(ti))));
             continue;
         }
         if live.ast.key.level != LANDABLE_LEVEL {
@@ -1857,13 +1862,13 @@ fn draw_trails(clock: Res<WorldClock>, settings: Res<GameSettings>, field: Res<A
             continue;
         }
         let span = (r * 30.0 / speed) as f64;
-        g.linestrip_gradient(trail(16, span, [0.8, 0.78, 0.72], 0.35, |dt| world_of(center, live.ast.rel_position(t - dt))));
+        g.linestrip_gradient(trail(16, span, [0.8, 0.78, 0.72], 0.35, t, |ti| world_of(center, live.ast.rel_position(ti))));
     }
     for &si in field.sources.keys() {
         let (Some(sys), Some(center)) = (settings.systems.get(si), sys_center(&settings, si)) else { continue };
         for p in sys.planets().iter().filter(|p| !p.rogue) {
             let el = Elements::of_planet(p);
-            g.linestrip_gradient(trail(40, el.period() * 0.04, [0.85, 0.9, 1.0], 0.3, |dt| world_of(center, el.position(t - dt, 0.0))));
+            g.linestrip_gradient(trail(40, el.period() * 0.04, [0.85, 0.9, 1.0], 0.3, t, |ti| world_of(center, el.position(ti, 0.0))));
         }
     }
 }
@@ -2109,6 +2114,24 @@ fn go_belt(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Les points d'une traînée restent sur place d'une image à l'autre (sauf le premier, l'astre).
+    #[test]
+    fn trail_points_do_not_slide() {
+        let at = |t: f64| Vec3::new(t.cos() as f32, 0.0, t.sin() as f32) * 1000.0;
+        let a = trail(16, 3.0, [1.0; 3], 1.0, 100.0, at);
+        let b = trail(16, 3.0, [1.0; 3], 1.0, 100.0 + 1.0 / 60.0, at);
+        let shared = a.iter().skip(1).filter(|p| b.iter().any(|q| q.0 == p.0)).count();
+        assert!(shared + 2 >= a.len() - 1, "{shared} / {}", a.len());
+    }
+
+    /// Une comète vue du point de stationnement (~150 au-dessus) a un maillage plus fin que de loin.
+    #[test]
+    fn comet_mesh_is_finer_up_close() {
+        let far = wanted_detail(10.0, 100_000.0);
+        let near = wanted_detail(10.0, 170.0);
+        assert!(near > far && near >= 32, "{far} {near}");
+    }
     use crate::planetgen::belts::BeltKind;
 
     fn belt() -> Belt {
