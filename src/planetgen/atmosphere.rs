@@ -396,6 +396,7 @@ pub fn generate(input: &AirInput, rng: &mut LayerRng) -> (Air, Climate) {
         diurnal: diurnal_amplitude(t_surface as f32, p, input.rotation_h as f32),
         tilt: input.axial_tilt as f32,
         season: Default::default(),
+        eye: false,
     };
     let wind_ms = if pressure < 0.001 {
         0.0

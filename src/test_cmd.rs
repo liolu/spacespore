@@ -152,7 +152,7 @@ struct GoState {
 pub const STAR_TYPES: &str = "o, b, a, f, g, k, m, blanche, brune, sous-geante, geante, double, triple";
 pub const PLANET_TYPES: &str = "mer, rocheuse, mini-neptune, neptune, gazeuse, jupiter-chaud, minuscule, petite, terrestre, \
 super-terre, ocean, glace, lave, methane, ammoniac, venus, titan, mars, oxygene, sans-air, vie, plantes, complexe, \
-anneaux, aurores, errante, plaques, volcans, crateres, habitable, rare, legendaire";
+anneaux, aurores, errante, plaques, volcans, crateres, habitable, rare, legendaire, anomalie, oeil, crepuscule, jour-sans-fin, ocean-profond, ocean-peu-profond, pluie, aurores-geantes, anneaux-bas, cristal, metal, fongique, vertical, devaste, cubique";
 pub const MOON_TYPES: &str = "volcanique, ocean-cache, air, glacee, lave, vie, rare";
 
 pub fn help() -> String {
@@ -239,6 +239,9 @@ pub fn planet_matches(p: &PlanetConfig, kind: &str) -> Option<bool> {
         "habitable" => p.habitability.score > 0.3,
         "rare" => rolled_trait(&p.traits, 0.015),
         "legendaire" => rolled_trait(&p.traits, 0.001),
+        "anomalie" => p.archetype.is_some_and(|a| a.kind().tier > 0),
+        // Mondes exceptionnels (0.14) : par leur mot (`archetypes::CATALOG`)
+        k if crate::planetgen::archetypes::CATALOG.iter().any(|c| c.key == k) => p.archetype.is_some_and(|a| a.kind().key == k),
         _ => return None,
     })
 }

@@ -347,7 +347,7 @@ pub fn body_spin(settings: &GameSettings, kind: &crate::TargetKind) -> Option<(S
 /// Températures (°C) au point `dir` du repère fixe de l'astre, à l'altitude relative `alt` :
 /// maintenant, min / max du jour, min / max de l'année.
 pub fn temperatures(spin: &Spin, climate: &Climate, t: f64, hour: f32, dir: Vec3, alt: f32) -> (f32, (f32, f32), (f32, f32)) {
-    let lat = dir.y.clamp(-1.0, 1.0).asin();
+    let lat = climate.lat_of(dir);
     let today = climate.at(spin.season(t, climate.mean_c));
     let at = |c: &Climate, h: f32| c.temperature(lat, alt, Some(Moment { hour: h }));
     let now = at(&today, hour / 24.0);

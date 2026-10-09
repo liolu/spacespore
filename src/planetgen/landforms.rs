@@ -210,3 +210,43 @@ mod tests {
         assert_eq!(land_mask(0.5, 0.4), 1.0);
     }
 }
+
+/// Mondes exceptionnels (0.14 X6) : direction où lire le relief. Un monde cubique lit tout son relief au centre
+/// d'une case de la grille de la sphère-cube (arête `cubic_step` voxels) : des colonnes à flancs droits. Le même
+/// code pour le sol proche et le maillage lointain (règle 16).
+pub fn sculpt_dir(dir: bevy::math::Vec3, relief: &super::geology::Relief, radius: f32, voxel: f32) -> bevy::math::Vec3 {
+    if relief.cubic_step <= 0.0 {
+        return dir;
+    }
+    let cells = (radius * std::f32::consts::FRAC_PI_2 / (relief.cubic_step * voxel)).max(4.0);
+    let a = dir.abs();
+    let m = a.x.max(a.y).max(a.z).max(1e-6);
+    let c = dir / m;
+    let snap = |v: f32| ((v * 0.5 + 0.5) * cells).floor().min(cells - 1.0) / cells * 2.0 - 1.0 + 1.0 / cells;
+    let q = if a.x >= a.y && a.x >= a.z {
+        bevy::math::Vec3::new(c.x.signum(), snap(c.y), snap(c.z))
+    } else if a.y >= a.z {
+        bevy::math::Vec3::new(snap(c.x), c.y.signum(), snap(c.z))
+    } else {
+        bevy::math::Vec3::new(snap(c.x), snap(c.y), c.z.signum())
+    };
+    q.normalize()
+}
+
+/// Mondes exceptionnels (0.14 X6) : hauteur au-dessus du rayon (unités) remise en étages (monde vertical : paliers
+/// avec une paroi au bout) ou en marches franches (monde cubique). Même code partout (règle 16).
+pub fn sculpt_height(rel: f32, relief: &super::geology::Relief, voxel: f32) -> f32 {
+    if relief.cubic_step > 0.0 {
+        let s = relief.cubic_step * voxel;
+        return (rel / s).round() * s;
+    }
+    if relief.tier_step > 0.0 {
+        let s = relief.tier_step * voxel;
+        let x = rel / s;
+        let (i, f) = (x.floor(), x - x.floor());
+        // Palier presque plat, puis paroi raide sur le dernier dixième
+        let wall = ((f - 0.9) / 0.1).clamp(0.0, 1.0);
+        return (i + 0.08 * f + wall * wall * (3.0 - 2.0 * wall) * 0.92) * s;
+    }
+    rel
+}

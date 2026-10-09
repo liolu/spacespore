@@ -64,11 +64,15 @@ pub struct Climate {
     /// moyenne de l'année.
     #[serde(skip)]
     pub season: Season,
+    /// Œil (0.14 X1, monde verrouillé) : la température suit l'angle au point sous l'étoile (+X du repère de
+    /// l'astre), plus la latitude. Face jour brûlée, face nuit gelée, bande du crépuscule entre les deux.
+    #[serde(default)]
+    pub eye: bool,
 }
 
 impl Default for Climate {
     fn default() -> Self {
-        Self { mean_c: 15.0, span: 50.0, lapse: 50.0, diurnal: 10.0, tilt: 23.0, season: Season::default() }
+        Self { mean_c: 15.0, span: 50.0, lapse: 50.0, diurnal: 10.0, tilt: 23.0, season: Season::default(), eye: false }
     }
 }
 
@@ -85,6 +89,21 @@ impl Climate {
         Self { mean_c, lapse: if atmosphere { 50.0 } else { 0.0 }, ..Default::default() }
     }
 
+    /// « Latitude » climatique de la direction `dir` (repère de l'astre) : la vraie latitude, ou pour un œil
+    /// la moitié de l'angle au point sous l'étoile (0 sous l'étoile, 45° au crépuscule, 90° à l'opposé).
+    pub fn lat_of(&self, dir: Vec3) -> f32 {
+        if self.eye {
+            dir.normalize_or(Vec3::Y).x.clamp(-1.0, 1.0).acos() * 0.5
+        } else {
+            dir.normalize_or(Vec3::Y).y.clamp(-1.0, 1.0).asin()
+        }
+    }
+
+    /// Sinus de `lat_of` (pour les fonctions qui prennent le sinus de la latitude).
+    pub fn sin_lat(&self, dir: Vec3) -> f32 {
+        if self.eye { self.lat_of(dir).sin() } else { dir.normalize_or(Vec3::Y).y }
+    }
+
     /// Le même climat à une saison donnée.
     pub fn at(mut self, season: Season) -> Self {
         self.season = season;
@@ -99,7 +118,8 @@ impl Climate {
     pub fn temperature(&self, lat: f32, alt: f32, moment: Option<Moment>) -> f32 {
         let tau = std::f32::consts::TAU;
         // La zone la plus chaude suit l'étoile (déclinaison) ; le maximum du jour vient après midi
-        let lat = lat - self.season.decl;
+        // (un œil n'a pas de saison qui déplace la zone chaude : elle reste sous l'étoile)
+        let lat = if self.eye { lat } else { lat - self.season.decl };
         let daily = moment.map_or(0.0, |m| self.diurnal * (tau * (m.hour - DAY_PEAK)).cos());
         let s = lat.sin();
         self.mean_c + self.span * (1.0 / 3.0 - s * s) - self.lapse * alt.clamp(0.0, 1.0) + self.season.offset + daily
@@ -120,7 +140,7 @@ impl Climate {
         if !(3.5 / 24.0..9.5 / 24.0).contains(&hour) {
             return false;
         }
-        let lat = dir.y.clamp(-1.0, 1.0).asin();
+        let lat = self.lat_of(dir);
         let coldest = self.temperature(lat, alt, Some(Moment { hour: DAY_PEAK - 0.5 }));
         let now = self.temperature(lat, alt, Some(Moment { hour }));
         coldest < 0.0 && now < 4.0 && self.temperature(lat, alt, None) > FREEZE_C

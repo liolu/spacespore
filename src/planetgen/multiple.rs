@@ -111,7 +111,7 @@ pub struct Stellar {
 
 impl Stellar {
     pub fn limits(&self) -> super::system::OrbitLimits {
-        super::system::OrbitLimits { min_au: self.min_au, max_au: self.max_au, exclusion: self.exclusion, outer: self.outer_limit }
+        super::system::OrbitLimits { min_au: self.min_au, max_au: self.max_au, exclusion: self.exclusion, outer: self.outer_limit, calm: false }
     }
 }
 

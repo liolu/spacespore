@@ -96,6 +96,9 @@ pub fn report(title: &str, systems: &[StarSystemConfig]) -> String {
     let (mut kinds, mut sizes, mut liquids, mut life, mut tecto, mut hab, mut temps, mut traits) =
         (Tally::default(), Tally::default(), Tally::default(), Tally::default(), Tally::default(), Tally::default(), Tally::default(), Tally::default());
     let (mut moon_flags, mut planet_flags) = (Tally::default(), Tally::default());
+    // Mondes exceptionnels (0.14 bloc X)
+    let mut anomalies = Tally::default();
+    anomalies.order = crate::planetgen::archetypes::CATALOG.iter().map(|k| k.key.to_string()).collect();
     // Ressources (phase 8) : astres (planètes et lunes) ayant un gisement de chaque minerai
     let mut ores = Tally::default();
     ores.order = crate::planetgen::resources::Ore::ALL.iter().map(|o| o.name().to_string()).collect();
@@ -137,6 +140,9 @@ pub fn report(title: &str, systems: &[StarSystemConfig]) -> String {
                 if on {
                     planet_flags.add(flag);
                 }
+            }
+            if let Some(a) = p.archetype {
+                anomalies.add(a.kind().key);
             }
             for t in &p.traits {
                 if t.rarity < 0.9 {
@@ -214,6 +220,7 @@ pub fn report(title: &str, systems: &[StarSystemConfig]) -> String {
         kinds.line("PLANETES", planets),
         planet_flags.line("Particularites", planets),
         traits.line("Traits tires", planets),
+        anomalies.line("Mondes exceptionnels", planets),
         String::new(),
         format!("PLANETES ROCHEUSES ({rocky})"),
         sizes.line("Tailles", rocky),

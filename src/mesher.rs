@@ -300,9 +300,13 @@ pub fn build_chunk_mesh(
     let layers: usize = 12;
     // Relief en voxels (0.13 T1) : le même que le sol proche (règle 16), sans les bosses
     let wet = atmosphere && hydro.liquid == crate::planetgen::hydrology::Liquid::Water;
-    let forms = crate::planetgen::landforms::Landforms::new(seed, radius, crate::terrain::layout_for(radius).voxel, &relief, !atmosphere, wet);
-    let r_min = radius - sl * th - 2.0 - forms.max_height();
-    let r_max = radius + (1.0 - sl) * th + 2.0 + forms.max_height();
+    let voxel = crate::terrain::layout_for(radius).voxel;
+    let relief_params = relief;
+    let forms = crate::planetgen::landforms::Landforms::new(seed, radius, voxel, &relief, !atmosphere, wet);
+    // (étages et cubes des mondes exceptionnels : une marche de plus au plus)
+    let step = (relief_params.tier_step.max(relief_params.cubic_step)) * voxel;
+    let r_min = radius - sl * th - 2.0 - forms.max_height() - step;
+    let r_max = radius + (1.0 - sl) * th + 2.0 + forms.max_height() + step;
 
     let mut fbm: Fbm<Perlin> = Fbm::new(seed);
     fbm.octaves = 6;
@@ -335,7 +339,9 @@ pub fn build_chunk_mesh(
             ]) as f32
                 * 0.10;
 
-            let s = dir * noise_scale;
+            // Monde cubique (0.14 X6) : même lecture du relief que le sol proche (règle 16)
+            let sdir = crate::planetgen::landforms::sculpt_dir(dir.normalize(), &relief_params, radius, voxel);
+            let s = sdir * noise_scale;
             let continent = fbm.get([s.x as f64, s.y as f64, s.z as f64]) as f32;
             let ds = detail_scale as f64;
             let det =
@@ -343,15 +349,15 @@ pub fn build_chunk_mesh(
                     * 0.15;
 
             let base = ((continent + det + 1.0) * 0.5).clamp(0.0, 1.0);
-            let sample = relief.sample(dir.normalize(), base);
+            let sample = relief.sample(sdir, base);
             let height_val = (base + sample.h).clamp(0.0, 1.2);
             let land = crate::planetgen::landforms::land_mask(height_val, sl);
-            terrain_heights[ix][iy] = radius + (height_val - sl) * th + forms.offset(dir.normalize(), land, sample.mountain, false);
+            terrain_heights[ix][iy] = radius + crate::planetgen::landforms::sculpt_height((height_val - sl) * th + forms.offset(sdir, land, sample.mountain, false), &relief_params, voxel);
 
             // Même climat que le terrain voxel (`planetgen::climate`) : la vue de l'espace et le sol concordent
             let rh = height_val - sl;
             surface_types[ix][iy] = biomes.material(&climate, &hydro, false, atmosphere, rh, dir.normalize());
-            seas[ix][iy] = sea_material(&climate, &hydro, false, dir.normalize().y);
+            seas[ix][iy] = sea_material(&climate, &hydro, false, climate.sin_lat(dir));
         }
     }
 

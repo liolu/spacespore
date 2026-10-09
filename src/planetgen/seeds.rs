@@ -24,10 +24,12 @@ pub enum Layer {
     Traits = 13,
     /// Ceintures d'astéroïdes du système (C1 de la 0.11).
     Belts = 14,
+    /// Mondes exceptionnels (0.14 bloc X, `archetypes.rs`).
+    Archetype = 15,
 }
 
 impl Layer {
-    pub const ALL: [Layer; 14] = [
+    pub const ALL: [Layer; 15] = [
         Layer::Star,
         Layer::Orbit,
         Layer::Physics,
@@ -42,6 +44,7 @@ impl Layer {
         Layer::Gameplay,
         Layer::Traits,
         Layer::Belts,
+        Layer::Archetype,
     ];
 
     pub fn name(self) -> &'static str {
@@ -60,6 +63,7 @@ impl Layer {
             Layer::Gameplay => "gameplay",
             Layer::Traits => "traits",
             Layer::Belts => "ceintures",
+            Layer::Archetype => "archetype",
         }
     }
 }

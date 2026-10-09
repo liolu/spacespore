@@ -483,6 +483,23 @@ fn update_scanner(
                     }
                 }
             }
+            // Monde exceptionnel (0.14 bloc X) : section « ANOMALIE » en tête (et donc dans le dex)
+            if let (Some(crate::planetgen::live::BodyId::Planet { system, index }), false) = (id, sections.is_empty()) {
+                if let Some(a) = settings.systems.get(system as usize).and_then(|s| s.planets().get(index as usize).and_then(|p| p.archetype)) {
+                    let k = a.kind();
+                    let rarity = ["naturel", "peu commun", "rare", "legendaire"][k.tier];
+                    let realism = match k.realism {
+                        crate::planetgen::profile::Realism::Realistic => "realiste",
+                        crate::planetgen::profile::Realism::Speculative => "speculatif",
+                        crate::planetgen::profile::Realism::Fictional => "fictif",
+                    };
+                    let mut s = Section::new("ANOMALIE");
+                    s.row("Monde", k.name);
+                    s.row("Rarete", format!("{rarity}, {realism}"));
+                    s.row("Ce qui change", k.what);
+                    sections.insert(0, s);
+                }
+            }
             // Au dex (seulement une vraie cible : un astre trouvé)
             if let (Some(k), Some(b), false) = (key.clone(), id, sections.is_empty()) {
                 let category = match b {

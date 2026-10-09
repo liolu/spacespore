@@ -175,6 +175,17 @@ inversé** (X5, aurores ; N3), **arches** (déjà réelles). Aucun ne reste une 
 
 ### 5.2 Les phases du bloc X
 
+**État (v0.14.2)** : **X0 fait** (`planetgen/archetypes.rs`, `Layer::Archetype` = 15, zone calme `CALM_SYSTEMS` = 50,
+scanner « ANOMALIE », dex, `/aller planete <mot>` et `anomalie`, `/stats`, cercle magenta qui pulse, test de
+fréquence : ~1,2 % des planètes de la galaxie principale). Premières sortes réelles : X1 œil (climat selon l'angle
+au point sous l'étoile, `Climate::eye`), crépuscule étroit, jour sans fin ; X2 océan profond, peu profond,
+monde-pluie ; X4 anneaux bas ; X5 aurores géantes ; X6 cristal, métal, fongique, vertical (étages), cubique ;
+X8 dévasté. **Reste** : les sortes qui demandent des formes ou des rendus nouveaux (planète étirée et `shape(dir)`,
+lunes en résonance, collision, océan sous la glace et crevasses, maelström, refroidissement, magma, volcan géant,
+glaces noire / transparente, tempête géante, supercellules, monde électrique, nébuleuse, trou noir, diamant,
+forêt géante, planète cassée / creuse, océan suspendu, géante habitable, ruines et vestiges de X8) ; les traits
+étiquettes ne sont pas encore tous reliés à un archétype (règle 20).
+
 | Phase | Contenu | Fini quand | Taille |
 |---|---|---|---|
 | **X0. Système d'archétypes** | `planetgen/archetypes.rs` (règles 20, 21, 23, 27), `Layer::Archetype`, tirage par rareté et conditions, effets en paramètres passés aux couches. Traits actuels reliés à leur archétype. Scanner : section « Anomalie » ; dex ; `/aller planete <archétype>` ; `/stats` ; **signal d'anomalie** visible de loin (cercle de couleur au zoom système). **Zone calme** des 50 systèmes. `PROTOCOL` +1. | Test : aucun tiré dans les 50 premiers systèmes ; parts dans la galaxie principale proches des raretés ; `bench_tiles` d'un astre ordinaire inchangé | L |

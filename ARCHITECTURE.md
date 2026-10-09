@@ -483,3 +483,14 @@ n'est pas charge automatiquement : le lire quand on travaille sur le systeme con
   avec les objets du jeu) ; fond propre a la graine du monde : nebuleuses de 3 couleurs tirees de `PALETTE` (bruit de
   gaz deforme, detail, veines de poussiere, demi-resolution lue en bilineaire), petites etoiles, brillantes a halo.
   ~24 % du ciel colore, 0,4 s (`bench_sky`).
+- 0.14.2 bloc X / X0 = mondes exceptionnels (`planetgen/archetypes.rs`) : `Archetype` (numeros figes, ajout a la fin),
+  `CATALOG` (rarete 0 naturel / 1-3 comme `traits::TIERS`, realisme, phase, mot de `/aller`, condition `allowed`),
+  `roll` (couche `Layer::Archetype`, apres toute la chaine physique, dans `system.rs::generate`) et `apply` (modifie
+  les couches par parametres). Zone calme : `StarSystemConfig::calm` = 50 systemes les plus proches du systeme 0
+  (`CALM_SYSTEMS`, `dense()`), passee par `OrbitLimits::calm` ; les naturels (oeil) restent possibles partout.
+  Effets : `Climate::eye` + `lat_of` / `sin_lat` (temperature selon l'angle au point sous l'etoile +X, partout ou
+  l'on lisait la latitude : terrain, maillage lointain, biomes, `LocalWeather`), `BiomeParams::force` (terres dans
+  deux biomes), `Relief::tier_step` / `cubic_step` + `landforms::sculpt_dir` / `sculpt_height` (meme code dans
+  `terrain.rs::raw_height_full` et `mesher.rs`, regle 16), mer, nuages, aurores, anneaux, rotation. Scanner : section
+  « ANOMALIE » ; `/stats` : « Mondes exceptionnels » ; `/aller planete <mot>` ; cercle magenta (`draw_body_markers`).
+  Tests `archetypes::tests` (zone calme, frequence, oeil, etages). `bench_tiles` inchange (1,85 ms). PROTOCOL 37.

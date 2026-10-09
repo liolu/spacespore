@@ -1022,6 +1022,14 @@ fn draw_body_markers(
         let depth = (*pos - eye).dot(fwd);
         if depth > 0.0 {
             gizmos.circle(Isometry3d::new(*pos, cam_gt.rotation()), r * px_at(*pos, depth) * if selected { 1.3 } else { 1.0 }, color);
+            // Signal d'anomalie (0.14 bloc X) : un monde exceptionnel tiré a un second cercle magenta qui pulse
+            if let TargetKind::Planet(id) = *kind {
+                let rolled = settings.systems.get(id / 1000).and_then(|s| s.planets().get(id % 1000).and_then(|p| p.archetype)).is_some_and(|a| a.kind().tier > 0);
+                if rolled {
+                    let pulse = 1.55 + 0.15 * (time.elapsed_secs() * 3.0).sin();
+                    gizmos.circle(Isometry3d::new(*pos, cam_gt.rotation()), r * px_at(*pos, depth) * pulse, Color::srgba(1.0, 0.25, 0.9, 0.8 * a));
+                }
+            }
         }
     }
 }

@@ -62,6 +62,12 @@ pub struct Relief {
     pub terraces: f32,
     /// Érosion (0 : relief vif, 1 : très adouci).
     pub erosion: f32,
+    /// Monde vertical (0.14 X6) : hauteur des étages (voxels ; 0 = aucun) séparés par des parois.
+    #[serde(default)]
+    pub tier_step: f32,
+    /// Monde cubique (0.14 X6) : arête des gros cubes du relief (voxels ; 0 = aucun).
+    #[serde(default)]
+    pub cubic_step: f32,
 }
 
 /// Géologie d'une planète (profil).
@@ -193,6 +199,8 @@ pub fn generate(input: &GeoInput, seed: u32, rng: &mut LayerRng) -> Geology {
         crater_depth: (0.04 + 0.04 * rng.unit()) as f32,
         terraces: if tectonics != Tectonics::Plates && rng.unit() < 0.35 { 0.4 + 0.5 * rng.unit() } else { 0.0 } as f32,
         erosion: erosion as f32,
+        tier_step: 0.0,
+        cubic_step: 0.0,
     };
 
     Geology {

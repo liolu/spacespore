@@ -579,7 +579,7 @@ impl Terrain {
     /// Tranche de grottes en plus à mailler (profondeurs sous la surface, unités).
     /// Hauteur du relief (unités) : des mers aux plus hauts sommets (horizon des tuiles, T4).
     pub fn relief_span(&self) -> f32 {
-        self.params.terrain_height + 2.0 * self.forms.max_height()
+        self.params.terrain_height + 2.0 * self.forms.max_height() + self.params.relief.tier_step.max(self.params.relief.cubic_step) * layout_for(self.params.radius).voxel
     }
 
     /// Décor sur les tuiles des `levels` niveaux les plus fins (0.13 T4 : plus loin en Ultra).
@@ -665,6 +665,9 @@ impl Terrain {
             let h = shape.radius_at(dir);
             return (h, ((h / p.radius.max(1e-3) - 0.6) / 0.8).clamp(0.0, 1.0), ReliefSample::default());
         }
+        // Monde cubique (0.14 X6) : le relief se lit au centre d'une case (règle 16, comme `mesher.rs`)
+        let voxel = layout_for(p.radius).voxel;
+        let dir = crate::planetgen::landforms::sculpt_dir(dir, &p.relief, p.radius, voxel);
         let s = dir * p.noise_scale;
         let continent = self.continent.get([s.x as f64, s.y as f64, s.z as f64]) as f32;
         let ds = p.detail_scale as f64;
@@ -679,7 +682,8 @@ impl Terrain {
         // bosses, vallées ; le même que vu de l'espace (règle 16)
         let land = crate::planetgen::landforms::land_mask(hv, p.sea_level);
         let forms = self.forms.offset(dir, land, sample.mountain, true);
-        let h = p.radius + (hv - p.sea_level) * p.terrain_height + forms;
+        let rel = crate::planetgen::landforms::sculpt_height((hv - p.sea_level) * p.terrain_height + forms, &p.relief, voxel);
+        let h = p.radius + rel;
         (h, hv, sample)
     }
 
@@ -696,7 +700,7 @@ impl Terrain {
             return None;
         }
         let (h, _) = self.raw_height(dir);
-        if h < p.radius && sea_material(&p.climate, &p.hydro, p.airless, dir.y).is_some() {
+        if h < p.radius && sea_material(&p.climate, &p.hydro, p.airless, p.climate.sin_lat(dir)).is_some() {
             return None;
         }
         Some(self.biomes.biome(&p.climate, &p.hydro, p.airless, p.atmosphere, (h - p.radius) / p.terrain_height.max(1.0), dir))
@@ -742,7 +746,7 @@ impl Terrain {
         // Marée (C4) : la mer monte ou descend de quelques voxels près du joueur
         let tide_q = if p.tide.is_calm() { 0.0 } else { (p.tide.at(dir) / quantum).round() };
         // Sous le niveau de la mer : eau, banquise, ou bassin à sec (trop chaud, ou sans air)
-        let sea = if rel < tide_q { sea_material(&p.climate, &p.hydro, p.airless, dir.y) } else { None };
+        let sea = if rel < tide_q { sea_material(&p.climate, &p.hydro, p.airless, p.climate.sin_lat(dir)) } else { None };
         let water = sea.is_some();
 
         // Taches de couleur sur plusieurs échelles (0.13 T3) : 200, 30 et 5 voxels, seulement
@@ -793,7 +797,7 @@ impl Terrain {
             // Hauteur réelle (collines comprises) : une colline au bord de l'eau n'est pas une plage
             let mut kind = self.surface_type((h - p.radius) / p.terrain_height.max(1.0), dir);
             // Marée basse : le fond découvert est une grève de sable
-            if rel < 0.0 && sea_material(&p.climate, &p.hydro, p.airless, dir.y).is_some() {
+            if rel < 0.0 && sea_material(&p.climate, &p.hydro, p.airless, p.climate.sin_lat(dir)).is_some() {
                 kind = VoxelType::Sand;
             }
             // Coulées de lave figées (basalte), éboulis au pied des pentes et des falaises (sauf
@@ -1002,7 +1006,7 @@ impl Terrain {
         if p.gaseous || p.asteroid.is_some() || !p.atmosphere {
             return None;
         }
-        sea_material(&p.climate, &p.hydro, p.airless, dir.y).filter(|k| k.is_clear_liquid())
+        sea_material(&p.climate, &p.hydro, p.airless, p.climate.sin_lat(dir)).filter(|k| k.is_clear_liquid())
     }
 
     /// Surface du liquide transparent au-dessus de `dir` : (rayon, matière), si la colonne en a.

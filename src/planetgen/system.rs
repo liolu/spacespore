@@ -106,11 +106,13 @@ pub struct OrbitLimits {
     pub max_au: f64,
     pub exclusion: f64,
     pub outer: f64,
+    /// Zone calme du départ (0.14) : pas de monde exceptionnel tiré.
+    pub calm: bool,
 }
 
 impl Default for OrbitLimits {
     fn default() -> Self {
-        Self { min_au: 0.0, max_au: f64::INFINITY, exclusion: 0.0, outer: f64::INFINITY }
+        Self { min_au: 0.0, max_au: f64::INFINITY, exclusion: 0.0, outer: f64::INFINITY, calm: false }
     }
 }
 
@@ -450,6 +452,13 @@ pub fn generate(genome: SystemGenome, star: &StarPhysics, scale: f32, star_radiu
         let rogue = planets.pop().filter(|p| p.rogue);
         planets.truncate(keep);
         planets.extend(rogue);
+    }
+    // Mondes exceptionnels (0.14 bloc X) : tirés après toutes les couches physiques, zone calme respectée
+    for p in planets.iter_mut() {
+        let mut rng = LayerRng::new(p.seed as u64, Layer::Archetype);
+        if let Some(a) = super::archetypes::roll(p, limits.calm, &mut rng) {
+            super::archetypes::apply(p, a);
+        }
     }
     // Étirement visuel (×5) : toute la disposition du système s'agrandit d'un bloc, après la
     // physique (marées, anneaux, espacement) calculée sur les distances d'origine

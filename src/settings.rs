@@ -185,6 +185,7 @@ impl MoonConfig {
             life: self.life.clone(),
             resources: self.resources.clone(),
             rogue: false,
+            archetype: None,
         }
     }
 }
@@ -264,6 +265,8 @@ pub struct PlanetConfig {
     #[serde(default)] pub resources:      crate::planetgen::resources::Resources,
     /// Planète errante (C2) : loin de toute étoile, elle ne tourne pas autour (dernière de la liste).
     #[serde(default)] pub rogue:          bool,
+    /// Monde exceptionnel (0.14 bloc X, `planetgen::archetypes`).
+    #[serde(default)] pub archetype:      Option<crate::planetgen::archetypes::Archetype>,
 }
 fn default_gravity() -> f32 { 1.0 }
 fn default_star_radius()    -> f32 { 250.0 }
@@ -282,7 +285,7 @@ impl Default for PlanetConfig {
             kind: PlanetKind::Rocky, hot: false, mass_earth: 0.0, radius_earth: 0.0,
             semi_major_au: 0.0, period_days: 0.0, rotation_h: 0.0, axial_tilt: 0.0,
             tidally_locked: false, gravity_g: 1.0, temperature_c: None, climate: None, air: Air::default(), hydrology: Hydrology::default(), geology: Geology::default(), biomes: BiomeParams::default(),
-            ring: None, aurora: None, habitability: Habitability::default(), traits: Vec::new(), life: Life::default(), resources: Default::default(), rogue: false,
+            ring: None, aurora: None, habitability: Habitability::default(), traits: Vec::new(), life: Life::default(), resources: Default::default(), rogue: false, archetype: None,
         }
     }
 }
@@ -516,6 +519,8 @@ pub struct StarSystemConfig {
     planets: OnceLock<Vec<PlanetConfig>>,
     /// Zone d'influence de l'étoile (monde) : moitié de la distance à l'étoile voisine ; 0 = sans limite (`set_influence`).
     pub influence: f32,
+    /// Zone calme du départ (0.14) : aucun monde exceptionnel tiré dans ce système.
+    pub calm: bool,
 }
 
 impl Default for StarSystemConfig {
@@ -529,6 +534,7 @@ impl Default for StarSystemConfig {
             genome: None,
             planets: OnceLock::from(default_planets()),
             influence: 0.0,
+            calm: false,
         }
     }
 }
@@ -543,14 +549,16 @@ impl StarSystemConfig {
         let mut stars = Vec::with_capacity(1 + st.companions.len());
         stars.push(primary);
         stars.extend(st.companions.iter().map(|c| StarConfig { orbit: Some(c.orbit), ..StarConfig::from_physics(&c.physics, g) }));
-        Self { name, position, galaxy_id, stars, asteroid_belts: Vec::new(), genome: Some(genome), planets: OnceLock::new(), influence: 0.0 }
+        Self { name, position, galaxy_id, stars, asteroid_belts: Vec::new(), genome: Some(genome), planets: OnceLock::new(), influence: 0.0, calm: false }
     }
 
     fn generate_planets(&self) -> Vec<PlanetConfig> {
         let (Some(genome), Some(star), Some(light), Some(st)) = (self.genome, self.stars.first(), self.lighting(), self.stellar()) else {
             return Vec::new();
         };
-        genome.planets(&light, star.scale(), star.radius, st.limits())
+        let mut limits = st.limits();
+        limits.calm = self.calm;
+        genome.planets(&light, star.scale(), star.radius, limits)
     }
 
     /// Étoiles du système (C3) : double, triple, et ce qu'elles imposent aux orbites.
@@ -1039,6 +1047,15 @@ impl SystemMaker {
         for r in &ranges {
             set_influence(systems[r.clone()].iter_mut());
         }
+        // Zone calme du départ (0.14, règle 23) : pas de monde exceptionnel tiré dans les 50 systèmes les plus
+        // proches du système 0 (lui compris) ; ne dépend que de la graine du monde
+        if let Some(home) = systems.first().map(|s| s.abs_center()) {
+            let mut near: Vec<(f32, usize)> = ranges.first().cloned().unwrap_or(0..0).map(|i| (systems[i].abs_center().distance(home), i)).collect();
+            near.sort_by(|a, b| a.0.total_cmp(&b.0));
+            for &(_, i) in near.iter().take(CALM_SYSTEMS) {
+                systems[i].calm = true;
+            }
+        }
         (systems, ranges)
     }
 
@@ -1074,6 +1091,9 @@ impl SystemMaker {
         list
     }
 }
+
+/// Nombre de systèmes de la zone calme du départ (0.14, Q4).
+pub const CALM_SYSTEMS: usize = 50;
 
 /// Zone d'influence d'une étoile (0.13.6) : `INFLUENCE_SHARE` de la distance à l'étoile d'un autre système la plus
 /// proche. Les planètes, ceintures et comètes d'un système restent dedans (`Stellar::outer_limit`) : aucune étoile

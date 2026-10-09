@@ -191,6 +191,10 @@ pub struct BiomeParams {
     /// Des plantes poussent (phase 7, `life.rs`) : sinon les biomes verts restent nus.
     #[serde(default)]
     pub flora: bool,
+    /// Monde exceptionnel (0.14 X6, X8) : toutes les terres émergées dans ces deux biomes (le second là où
+    /// l'humidité est faible) ; la glace et la haute montagne enneigée restent.
+    #[serde(default)]
+    pub force: Option<(Biome, Biome)>,
 }
 
 /// Données d'entrée.
@@ -246,6 +250,7 @@ pub fn generate(input: &BiomeInput) -> BiomeParams {
         regolith: input.pressure < 0.01 && input.surface_age > 1.0,
         salt: input.dried_water,
         flora: input.flora,
+        force: None,
     }
 }
 
@@ -308,10 +313,15 @@ impl BiomeField {
     /// au-dessus de la mer. Sans plantes (`flora`), les biomes verts laissent voir leur sol nu.
     pub fn biome(&self, climate: &Climate, hydro: &Hydro, airless: bool, atmosphere: bool, rh: f32, dir: Vec3) -> Biome {
         let b = self.environment(climate, hydro, airless, atmosphere, rh, dir);
+        if let Some((wet, dry)) = self.params.force {
+            if rh >= 0.0 && b != Biome::IceSheet {
+                return if self.humidity(dir) > 0.45 { wet } else { dry };
+            }
+        }
         if self.params.flora || !b.vegetated() {
             return b;
         }
-        let t = climate.temperature(dir.y.clamp(-1.0, 1.0).asin(), relative_altitude(rh), None);
+        let t = climate.temperature(climate.lat_of(dir), relative_altitude(rh), None);
         match self.soil(dir, climate, hydro, rh, t) {
             Soil::Volcanic => Biome::BasaltField,
             Soil::Metal => Biome::RustPlain,
@@ -329,7 +339,7 @@ impl BiomeField {
         if airless {
             return Biome::Regolith;
         }
-        let t = climate.temperature(dir.y.clamp(-1.0, 1.0).asin(), relative_altitude(rh), None);
+        let t = climate.temperature(climate.lat_of(dir), relative_altitude(rh), None);
         let barren = |soil: Soil| match soil {
             Soil::Volcanic => Biome::BasaltField,
             Soil::Metal => Biome::RustPlain,
@@ -424,7 +434,7 @@ impl BiomeField {
             return VoxelType::Snow;
         }
         if !self.params.defined {
-            return land_material(climate, hydro, airless, atmosphere, rh, dir.y);
+            return land_material(climate, hydro, airless, atmosphere, rh, climate.sin_lat(dir));
         }
         self.biome(climate, hydro, airless, atmosphere, rh, dir).voxel()
     }
@@ -444,7 +454,7 @@ mod tests {
     }
 
     fn earth_params(alien: bool) -> BiomeParams {
-        BiomeParams { defined: true, seed: 3, wetness: 0.8, radiation: 0.05, alien, volcanism: 0.2, metal: false, sulfur: false, regolith: false, salt: false, flora: true }
+        BiomeParams { defined: true, seed: 3, wetness: 0.8, radiation: 0.05, alien, volcanism: 0.2, metal: false, sulfur: false, regolith: false, salt: false, flora: true, force: None }
     }
 
     #[test]

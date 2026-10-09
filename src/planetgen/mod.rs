@@ -15,6 +15,7 @@
 // partir des phases suivantes.
 #![allow(dead_code)]
 
+pub mod archetypes;
 pub mod atmosphere;
 pub mod belts;
 pub mod biome;
