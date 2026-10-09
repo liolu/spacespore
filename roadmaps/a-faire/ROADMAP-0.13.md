@@ -211,6 +211,10 @@ Commandes de test : `/brouillard [oui\|non\|auto\|0-100]`, `/meteo [clair\|auto]
 
 ### Bloc L — Aliens et terraformation (A1, A2 des idées ; faune, végétation, son et lieux en 0.14)
 
+**Déplacé le 09/10/2026 dans la 0.18** (`roadmaps/a-faire/ROADMAP-0.18-capitales.md`, §9.1, versions 0.18.1 et
+0.18.2) : les capitales des races en ont besoin. Le texte ci-dessous reste pour mémoire ; la 0.13 se termine sans
+le bloc L.
+
 | Phase | Contenu | Taille |
 |---|---|---|
 | **L5. Aliens** | (A1) Espèce intelligente rare sur les mondes habitables, apparence avec les familles de l'éditeur, niveau (tribu → cités → spatial), **villages et bâtiments** voxel posés sur le relief de T1, habitants qui vivent selon le jour et la nuit, scanner (espèce, population, attitude), interaction de base (Q5). | XL |
@@ -235,8 +239,7 @@ v0.12.0 (éditeur + correctifs)
    C1 → C2                     brouillard, skybox
    V1 → V2 → V3                trous noirs (utilise C2), voyage, vue inclinée
    │                           ── release 0.13.1 « Ciel » ──
-   L5 → L6                     aliens, terraformation
-                               ── release 0.13.2 « Aliens » ──
+   (L5 → L6 aliens, terraformation : déplacés dans la 0.18, versions 0.18.1 et 0.18.2)
    │
    0.14 : le monde qui vit (bloc D) et les mondes exceptionnels
 ```
@@ -332,5 +335,4 @@ concession sur la qualité ; ne change ni les tailles de l'espace ni les décisi
   disque d'accrétion en shader, étoile aspirée) ; remplace les cubes. »
 - **V2** — « [contexte commun] Phase V2 : séquence de voyage entre galaxies (Q4). »
 - **V3** — « [contexte commun] Phase V3 : vue galaxie dans le plan de la galaxie. »
-- **L5** — « [contexte commun] Phase L5 : aliens (Q5). »
-- **L6** — « [contexte commun] Phase L6 : terraformation par deltas (Q6). »
+- **L5**, **L6** : déplacés dans la 0.18 (prompts dans `roadmaps/a-faire/ROADMAP-0.18-capitales.md`).
