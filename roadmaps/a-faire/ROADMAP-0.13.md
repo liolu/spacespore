@@ -201,7 +201,7 @@ Commandes de test : `/brouillard [oui\|non\|auto\|0-100]`, `/meteo [clair\|auto]
 
 ### Bloc V — Espace spectaculaire (V2, V3, V4 des idées)
 
-**État : V2 (animation « chute, tunnel d'étoiles, flash, éclosion », sans la lentille de V1) et V4 (tunnels du sub-espace, `tunnel.rs`, `cinematic.rs`, `cinematic.wgsl`) faits ; V1 et V3 restent à faire.**
+**État : V1 (trous noirs : lentille de Kerr, disque Doppler, jets, étoile aspirée, `black_hole_fx.rs`), V2 (saut entre galaxies sur le vrai ciel) et V4 (tunnels du sub-espace, `tunnel.rs`, `cinematic.rs`) faits ; seule V3 (vue de la galaxie inclinée) reste à faire.**
 
 | Phase | Contenu | Taille |
 |---|---|---|

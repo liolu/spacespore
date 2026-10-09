@@ -19,7 +19,7 @@ Les documents de suivi du projet, rangés en deux dossiers. Restent à la racine
 
 | Fichier | Contenu | État |
 |---|---|---|
-| `ROADMAP-0.13.md` | Mondes : E, T, O, P (approche planétaire, v0.13.4) et le dex **faits** ; C (brouillard, skybox) et V faits en partie ; L (aliens, terraformation) **déplacé dans la 0.18** | en cours |
+| `ROADMAP-0.13.md` | Mondes : E, T, O, P (approche planétaire, v0.13.4) et le dex **faits** ; C, V1, V2, V4 faits ; reste V3 (vue inclinée) ; L (aliens, terraformation) **déplacé dans la 0.18** | en cours |
 | `ROADMAP-0.13.5-correctifs.md` | 20 bugs et petites idées, phases F0 à F10 (releases 0.13.5 à 0.13.7) | à faire (prochaine) |
 | `ROADMAP-0.14.md` | Le monde qui vit (bloc D), mondes exceptionnels, événements | à faire |
 | `prompt0.14.md` | Banque d'idées de planètes (source de la 0.14) | source |
