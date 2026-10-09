@@ -1,10 +1,10 @@
 {
-  "version": "0.13.6",
-  "version_code": 1306,
-  "release_date": "2026-10-08",
-  "download_url": "https://github.com/liolu/spacespore/releases/download/v0.13.6/spacespore-v0.13.6-windows.zip",
-  "download_url_linux": "https://github.com/liolu/spacespore/releases/download/v0.13.6/spacespore-v0.13.6-linux.zip",
-  "download_url_macos": "https://github.com/liolu/spacespore/releases/download/v0.13.6/spacespore-v0.13.6-macos.zip",
-  "release_notes": "Version 0.13.6 : cinematiques sur le vrai ciel, skybox a tous les zooms + option, zone d'influence des etoiles, mode creatif, mode photo, fumee en cubes, crashs par session, couleurs des cercles, LOD etoiles / cometes / ceintures, Tab pour /tunnel",
+  "version": "0.14.0",
+  "version_code": 1400,
+  "release_date": "2026-10-09",
+  "download_url": "https://github.com/liolu/spacespore/releases/download/v0.14.0/spacespore-v0.14.0-windows.zip",
+  "download_url_linux": "https://github.com/liolu/spacespore/releases/download/v0.14.0/spacespore-v0.14.0-linux.zip",
+  "download_url_macos": "https://github.com/liolu/spacespore/releases/download/v0.14.0/spacespore-v0.14.0-macos.zip",
+  "release_notes": "Version 0.14.0 : V3 vue de la galaxie inclinee (camera dans le plan de la galaxie, passage en douceur) ; feuille de route 0.13 terminee",
   "min_updater_version": 1
 }
