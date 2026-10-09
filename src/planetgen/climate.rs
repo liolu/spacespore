@@ -91,17 +91,20 @@ impl Climate {
 
     /// « Latitude » climatique de la direction `dir` (repère de l'astre) : la vraie latitude, ou pour un œil
     /// la moitié de l'angle au point sous l'étoile (0 sous l'étoile, 45° au crépuscule, 90° à l'opposé).
+    ///
+    /// Bordures (0.14) : la latitude est un peu décalée par `border_jitter`, pour que les limites de biomes, de
+    /// neige et de banquise soient irrégulières et que les deux côtés se mélangent en dégradé.
     pub fn lat_of(&self, dir: Vec3) -> f32 {
-        if self.eye {
-            dir.normalize_or(Vec3::Y).x.clamp(-1.0, 1.0).acos() * 0.5
-        } else {
-            dir.normalize_or(Vec3::Y).y.clamp(-1.0, 1.0).asin()
-        }
+        let d = dir.normalize_or(Vec3::Y);
+        let lat = if self.eye { d.x.clamp(-1.0, 1.0).acos() * 0.5 } else { d.y.clamp(-1.0, 1.0).asin() };
+        let j = border_jitter(d, self.mean_c.to_bits() ^ self.span.to_bits().rotate_left(7));
+        // (le signe de la latitude est gardé : l'hémisphère ne change pas)
+        if lat >= 0.0 { (lat + j).clamp(0.0, std::f32::consts::FRAC_PI_2) } else { (lat - j).clamp(-std::f32::consts::FRAC_PI_2, 0.0) }
     }
 
     /// Sinus de `lat_of` (pour les fonctions qui prennent le sinus de la latitude).
     pub fn sin_lat(&self, dir: Vec3) -> f32 {
-        if self.eye { self.lat_of(dir).sin() } else { dir.normalize_or(Vec3::Y).y }
+        self.lat_of(dir).sin()
     }
 
     /// Le même climat à une saison donnée.
@@ -150,6 +153,38 @@ impl Climate {
     pub fn range(&self) -> (f32, f32) {
         (self.temperature(0.0, 0.0, None), self.temperature(std::f32::consts::FRAC_PI_2, 0.0, None))
     }
+}
+
+fn hash3(x: i32, y: i32, z: i32, salt: u32) -> f32 {
+    let mut h = (x as u32).wrapping_mul(0x8DA6_B343) ^ (y as u32).wrapping_mul(0xD816_3841) ^ (z as u32).wrapping_mul(0xCB1A_B31F) ^ salt.wrapping_mul(0x9E37_79B9);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x2C1B_3C6D);
+    h ^= h >> 12;
+    h = h.wrapping_mul(0x297A_2D39);
+    h ^= h >> 15;
+    (h >> 8) as f32 / (1u32 << 24) as f32
+}
+
+/// Bruit de valeur 3D lissé, de -1 à 1.
+fn value3(p: Vec3, salt: u32) -> f32 {
+    let (i, f) = (p.floor(), p - p.floor());
+    let u = f * f * (Vec3::splat(3.0) - 2.0 * f);
+    let (x, y, z) = (i.x as i32, i.y as i32, i.z as i32);
+    let c = |a: i32, b: i32, d: i32| hash3(x + a, y + b, z + d, salt);
+    let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
+    let x0 = lerp(lerp(c(0, 0, 0), c(1, 0, 0), u.x), lerp(c(0, 1, 0), c(1, 1, 0), u.x), u.y);
+    let x1 = lerp(lerp(c(0, 0, 1), c(1, 0, 1), u.x), lerp(c(0, 1, 1), c(1, 1, 1), u.x), u.y);
+    lerp(x0, x1, u.z) * 2.0 - 1.0
+}
+
+/// Décalage des bordures (radians de latitude, 0.14) : grandes ondulations (limites irrégulières, ~±3,5°) et
+/// tirage par petite case (~±1,4°), qui mêle les blocs des deux côtés sur une bande : un dégradé de blocs.
+/// Même fonction pour le sol proche et la vue de l'espace (règle 16).
+pub fn border_jitter(dir: Vec3, salt: u32) -> f32 {
+    let wave = value3(dir * 7.0, salt) * 0.65 + value3(dir * 23.0, salt ^ 0x5151) * 0.35;
+    let cell = dir * 900.0;
+    let dither = hash3(cell.x.floor() as i32, cell.y.floor() as i32, cell.z.floor() as i32, salt ^ 0xD1D1) * 2.0 - 1.0;
+    wave * 0.06 + dither * 0.025
 }
 
 /// Altitude relative (0..1) d'un point de hauteur relative `rh` (hauteur du bruit − niveau de la mer).

@@ -501,7 +501,8 @@ impl ReliefField {
                         let filled = kind != CraterKind::Simple && unit(hash.rotate_left(13)) < 0.35;
                         if x < 1.4 {
                             h += depth * kind.profile(x, filled);
-                            if filled && x < 0.85 {
+                            // Bord de la mer de lave irrégulier et mêlé en dégradé (0.14), pas un cercle net
+                            if filled && x < 0.85 + 1.5 * super::climate::border_jitter(p.normalize_or(Vec3::Y), hash) {
                                 out.flooded = true;
                             }
                         }

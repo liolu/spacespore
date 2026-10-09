@@ -82,7 +82,7 @@ pub const CATALOG: [Kind; 14] = [
     Kind { arch: Archetype::LowRings, tier: 2, realism: R, phase: "X4", key: "anneaux-bas", name: "anneaux bas", what: "un anneau juste au-dessus de l'atmosphere, arche immense dans le ciel", allowed: |p| !p.rogue },
     Kind { arch: Archetype::Crystal, tier: 2, realism: S, phase: "X6", key: "cristal", name: "monde cristallin", what: "croute et montagnes de cristal", allowed: solid },
     Kind { arch: Archetype::Metal, tier: 2, realism: S, phase: "X6", key: "metal", name: "monde metallique", what: "surface de fer et de rouille, noyau presque a nu", allowed: solid },
-    Kind { arch: Archetype::Fungal, tier: 2, realism: S, phase: "X6", key: "fongique", name: "monde fongique", what: "champignons et spores partout, ciel violet", allowed: |p| solid(p) && p.atmosphere },
+    Kind { arch: Archetype::Fungal, tier: 2, realism: S, phase: "X6", key: "fongique", name: "monde fongique", what: "champignons et spores partout, ciel violet", allowed: |p| solid(p) && p.atmosphere && p.climate.is_some_and(|c| (-15.0..55.0).contains(&c.mean_c)) },
     Kind { arch: Archetype::Vertical, tier: 2, realism: S, phase: "X6", key: "vertical", name: "monde vertical", what: "plateaux etages separes par des parois : on vit par niveaux", allowed: solid },
     Kind { arch: Archetype::Devastated, tier: 2, realism: F, phase: "X8", key: "devaste", name: "monde devaste", what: "deserts de verre et de cendres, radiation au sol", allowed: |p| solid(p) && p.atmosphere },
     Kind { arch: Archetype::Cubic, tier: 3, realism: F, phase: "X6", key: "cubique", name: "monde cubique", what: "relief en gros cubes, falaises a angle droit", allowed: solid },
@@ -161,9 +161,11 @@ pub fn apply(p: &mut PlanetConfig, a: Archetype) {
         }
         Archetype::Fungal => {
             p.biomes.force = Some((Biome::FungalJungle, Biome::SporePlain));
-            p.air.sky = [0.55, 0.36, 0.78];
-            p.air.haze = [0.62, 0.45, 0.8];
-            p.air.sunset = [0.85, 0.35, 0.6];
+            // Ciel teinté de spores, sans noyer le sol dans le violet : mélange léger avec le vrai ciel
+            let tint = |c: [f32; 3], t: [f32; 3], k: f32| [0, 1, 2].map(|i| c[i] + (t[i] - c[i]) * k);
+            p.air.sky = tint(p.air.sky, [0.62, 0.42, 0.78], 0.35);
+            p.air.haze = tint(p.air.haze, [0.7, 0.55, 0.8], 0.2);
+            p.air.sunset = tint(p.air.sunset, [0.9, 0.4, 0.6], 0.4);
         }
         Archetype::Vertical => {
             p.geology.relief.tier_step = 90.0;
@@ -205,7 +207,7 @@ mod tests {
         assert!(day > dusk && dusk > night && day - night > 100.0, "{day} {dusk} {night}");
         assert!((-10.0..45.0).contains(&dusk), "bande du crepuscule vivable : {dusk}");
         // Les pôles (géographiques) sont au crépuscule, comme toute la ligne jour / nuit
-        assert!((t(Vec3::Y) - dusk).abs() < 0.5);
+        assert!((t(Vec3::Y) - dusk).abs() < 15.0, "bordures irregulieres : a peu pres le meme climat");
     }
 
     #[test]

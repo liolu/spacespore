@@ -494,3 +494,8 @@ n'est pas charge automatiquement : le lire quand on travaille sur le systeme con
   `terrain.rs::raw_height_full` et `mesher.rs`, regle 16), mer, nuages, aurores, anneaux, rotation. Scanner : section
   « ANOMALIE » ; `/stats` : « Mondes exceptionnels » ; `/aller planete <mot>` ; cercle magenta (`draw_body_markers`).
   Tests `archetypes::tests` (zone calme, frequence, oeil, etages). `bench_tiles` inchange (1,85 ms). PROTOCOL 37.
+- 0.14.3 bordures : `climate::border_jitter(dir, salt)` (bruit de valeur a 2 echelles + tirage par petite case) decale
+  la latitude climatique (`Climate::lat_of` / `sin_lat`) et l'humidite (`BiomeField::humidity`) : limites de biomes,
+  de neige, de banquise et de la bande de l'oeil irregulieres, melangees en degrade de blocs sur une bande ; bord des
+  mers de lave des crateres pareil (`geology.rs`). Monde fongique : seulement tempere, biomes forces hors des reperes
+  (glace, montagne, plages, basalte, sel), regions seches gardees, ciel teinte au lieu de violet. PROTOCOL 38.

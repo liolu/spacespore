@@ -283,7 +283,9 @@ impl BiomeField {
     /// Humidité locale (0..1).
     pub fn humidity(&self, dir: Vec3) -> f32 {
         let n = self.moisture.get([dir.x as f64 * 2.5, dir.y as f64 * 2.5, dir.z as f64 * 2.5]) as f32;
-        (self.params.wetness * belt_humidity(dir.y.abs()) + 0.3 * n).clamp(0.0, 1.0)
+        // (bordures irrégulières et mêlées en dégradé, comme la température : `climate::border_jitter`)
+        let j = super::climate::border_jitter(dir.normalize_or(Vec3::Y), self.params.seed ^ 0x4855_4D49) * 1.6;
+        (self.params.wetness * belt_humidity(dir.y.abs()) + 0.3 * n + j).clamp(0.0, 1.0)
     }
 
     /// Sol d'une région sèche ou sans vie.
@@ -314,8 +316,16 @@ impl BiomeField {
     pub fn biome(&self, climate: &Climate, hydro: &Hydro, airless: bool, atmosphere: bool, rh: f32, dir: Vec3) -> Biome {
         let b = self.environment(climate, hydro, airless, atmosphere, rh, dir);
         if let Some((wet, dry)) = self.params.force {
-            if rh >= 0.0 && b != Biome::IceSheet {
-                return if self.humidity(dir) > 0.45 { wet } else { dry };
+            // Les repères du relief restent (glace, haute montagne, plages, basalte, sel) : le monde garde du relief
+            // et des couleurs variées ; ailleurs, les biomes du monde exceptionnel
+            let landmark = matches!(b, Biome::IceSheet | Biome::Alpine | Biome::Beach | Biome::BasaltField | Biome::SaltFlat);
+            if rh >= 0.0 && !landmark {
+                let h = self.humidity(dir);
+                // Monde fongique : les régions sèches gardent leur biome (steppes, déserts)
+                if wet == Biome::FungalJungle && h < 0.2 {
+                    return b;
+                }
+                return if h > 0.5 { wet } else { dry };
             }
         }
         if self.params.flora || !b.vegetated() {
@@ -474,7 +484,7 @@ mod tests {
             for rh in [0.004, 0.08, 0.2, 0.35, 0.44] {
                 let b = field.biome(&climate, &hydro, false, true, rh, dir);
                 seen.insert(b);
-                let t = climate.temperature(dir.y.abs().asin(), relative_altitude(rh), None);
+                let t = climate.temperature(climate.lat_of(dir), relative_altitude(rh), None);
                 // Invariants de la feuille de route
                 if matches!(b, Biome::Jungle | Biome::Savanna) {
                     assert!(t >= 22.0, "{b:?} a {t} C");
