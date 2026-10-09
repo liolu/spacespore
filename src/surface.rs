@@ -497,6 +497,14 @@ const CLIMB_AIR_VOXELS: f32 = 350.0;
 /// poser (Q9, voxels), pente maximale pour se poser (Q10, degrés).
 const ORBIT_CEILING: f32 = 4.0;
 const FLIGHT_ENTER_RADII: f32 = 8.0;
+
+/// Distance de caméra sous laquelle on entre en vol bas : 8 rayons, mais au moins 1 500 pour un petit corps
+/// (une comète de 8 km fait ~4 de rayon : 32, sous le zoom minimal de 40, on ne pouvait jamais s'y poser ;
+/// après `/comete` la caméra est à ~630).
+fn flight_enter_dist(p: &BodyParams) -> f32 {
+    let min = if p.asteroid.is_some() { 1_500.0 } else { 0.0 };
+    (FLIGHT_ENTER_RADII * p.radius).max(min)
+}
 pub const LAND_ALT_VOXELS: f32 = 200.0;
 pub const LAND_MAX_SLOPE: f32 = 25.0;
 /// La vitesse d'un vol ne dépasse pas cette part du rayon de l'astre par seconde (voxels).
@@ -1386,11 +1394,11 @@ fn surface_control(
                 .any(|c| ctx.keys.pressed(*c));
         // Tests : `SPACESPORE_TEST_FLYKEY=<s>` = la touche W est tenue à partir de <s> secondes
         let fly_key = fly_key || std::env::var("SPACESPORE_TEST_FLYKEY").ok().and_then(|v| v.parse::<f64>().ok()).is_some_and(|t| now > t);
-        let zoom_enter = body_params(&ctx.settings, &kind).is_some_and(|p| ctrl.distance < FLIGHT_ENTER_RADII * p.radius) && now < surface.zoom_in_until;
+        let zoom_enter = body_params(&ctx.settings, &kind).is_some_and(|p| ctrl.distance < flight_enter_dist(&p)) && now < surface.zoom_in_until;
         if zoom_enter || fly_key {
             if let (Some(params), Some(frame)) = (body_params(&ctx.settings, &kind), ctx.pose(&kind)) {
                 let local = frame.point(ship_tf.translation);
-                let near = zoom_enter || ctrl.distance < FLIGHT_ENTER_RADII * params.radius;
+                let near = zoom_enter || ctrl.distance < flight_enter_dist(&params);
                 if near && (local.length() - hover_radius(&params)).abs() < params.radius * 0.1 + 250.0 {
                     let up = local.normalize_or(Vec3::Y);
                     surface.terrain = Some(Terrain::new(params).with_voxels(crate::voxel::body_voxels(&ctx.settings, &kind)));

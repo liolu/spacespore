@@ -464,25 +464,35 @@ fn run_clock_commands(
             }
             ClockCommand::Hour => {
                 if weather.body.is_none() {
-                    net.notify("Ciblez une planete ou une lune (chargee) pour connaitre son heure.", now);
+                    net.notify(&format!("Temps de jeu : {}. Ciblez une planete ou une lune (chargee) pour connaitre son heure locale.", game_clock_text(clock.secs)), now);
                 } else {
-                    net.notify(&weather.long(), now);
+                    net.notify(&format!("{} Temps de jeu : {}.", weather.long(), game_clock_text(clock.secs)), now);
                 }
             }
         }
     }
 }
 
-/// « 24 min », « 1 h 30 ».
+/// « 24 min », « 1 h 30 », « 3 j 4 h ».
 pub fn duration_text(secs: f64) -> String {
     let m = (secs / 60.0).round() as i64;
     if m < 60 {
         format!("{m} min")
+    } else if m >= 48 * 60 {
+        let h = (m + 30) / 60;
+        if h % 24 == 0 { format!("{} j", h / 24) } else { format!("{} j {} h", h / 24, h % 24) }
     } else if m % 60 == 0 {
         format!("{} h", m / 60)
     } else {
         format!("{} h {:02}", m / 60, m % 60)
     }
+}
+
+/// Horloge du monde en temps de jeu : « jour 3, 14 h 05 » (jours de 24 h de jeu depuis la création du monde).
+/// La même pour tous les astres (étoiles comprises) ; l'heure locale d'une planète est à part.
+pub fn game_clock_text(secs: f64) -> String {
+    let m = (secs.max(0.0) / 60.0).floor() as i64;
+    format!("jour {}, {} h {:02}", m / (24 * 60) + 1, m / 60 % 24, m % 60)
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-# Feuille de route — Les capitales : villes-planètes et mondes-stations (0.18)
+# Feuille de route — Aliens, terraformation et capitales (0.18)
 
 Objectif : ajouter le monde le plus **impressionnant** du jeu : la **capitale**. Une planète entièrement
 couverte de ville (écuménopole), ou une station si grande qu'elle est devenue un monde. Ses formes vont de la
@@ -11,9 +11,10 @@ Source : planche d'inspiration du 07/10/2026 (`C:\Users\thomr\Desktop\Nouveau do
 15 images). Règle 28 de la 0.14 : **aucun nom ni forme reconnaissable d'une œuvre** dans le jeu ; on reprend des
 **principes** (verticalité, dômes, viaducs, trafic en files...), jamais un bâtiment précis.
 
-Point de départ : la 0.17 terminée (réglages, mesures, benchmark : la ville est le scénario K du benchmark).
-La 0.18 est découpée en **versions 0.18.1 à 0.18.9**, chacune jouable et publiée. Chaque phase = une branche
-`claude/roadmap-0-18-<phase>`, une PR non fusionnée : tu testes, puis tu dis « push main ». Chaque phase a son
+Point de départ : la 0.17 terminée (réglages, mesures, benchmark : la ville est le scénario K du benchmark). La 0.18
+commence par le **bloc L** (aliens et terraformation, venu de la 0.13 le 09/10/2026, §9.1) : les capitales en ont besoin.
+La 0.18 est découpée en **versions 0.18.1 à 0.18.11**, chacune jouable et publiée. Chaque phase = une branche
+`claude/roadmap-0-18-<phase>`, push sur `main` à la fin de chaque réponse (règle de `CLAUDE.md`). Chaque phase a son
 **prompt prêt à coller** (§12).
 
 ---
@@ -41,12 +42,12 @@ l'œil, **le mouvement** (trafic), et **le contraste** entre le haut lumineux et
 
 | # | Sujet | Décision |
 |---|---|---|
-| D1 | **Capitale de race** | **Une capitale par race extraterrestre**, sur la **planète d'origine** de cette race (son monde natal). Les races viennent des aliens de la 0.13 L5 ; seules celles qui ont atteint un niveau assez avancé (cités → spatial) ont une capitale. |
+| D1 | **Capitale de race** | **Une capitale par race extraterrestre**, sur la **planète d'origine** de cette race (son monde natal). Les races viennent des aliens de la L5 (§9.1) ; seules celles qui ont atteint un niveau assez avancé (cités → spatial) ont une capitale. |
 | D2 | **Capitale galactique** | Une **station capitale galactique** (le monde-station du §7), construite **par plusieurs races** pour le **commerce et la politique**. |
 | D3 | **Quartiers par race** | La capitale galactique a des **quartiers différents selon les races présentes** : chaque race y a son quartier dans **son style**, avec son air, sa gravité et sa lumière. |
 | D4 | **Croissance** | La ville **se construit avec une graine selon sa progression et ses ressources** (§6.3) : l'état de la ville (village → cité → métropole → écuménopole) et la place de chaque quartier viennent de **sa progression** et des **ressources** de sa planète (minerais, eau, énergie). |
 | D5 | **Destruction** | On peut **détruire** une capitale (ou une partie) **seulement si elle est ennemie du joueur** (relation de `combat.rs` : faction ou race en guerre avec lui). Sinon elle est intouchable. |
-| D6 | **Numéros** | Versions **0.18.1 à 0.18.9** ; la 0.20 (débogage, optimisation) devient la **0.17** et passe avant. |
+| D6 | **Numéros** | Versions **0.18.1 à 0.18.11** (0.18.1 et 0.18.2 = aliens et terraformation, bloc L venu de la 0.13 le 09/10/2026) ; la 0.20 (débogage, optimisation) devient la **0.17** et passe avant. |
 
 ### 2.2 Autres choix (propositions, §11)
 
@@ -140,7 +141,7 @@ son style principal (≈ 70 %) avec des quartiers d'autres styles (commerçants,
 | **S3 Aiguilles et dômes** | Aiguilles fines très hautes, dômes bas et larges, pyramides tronquées, plaine de blocs à l'infini | Gris clair, blanc, ocre | Blanche, millions de points, files de vaisseaux | Horizon infini, temple-pyramide |
 | **S4 Colonnes** | Colonnes-tours à plateaux en soucoupe, anneaux, **sol couvert** (dalle métallique gravée), puits vers le dessous | Métal pastel (lilas, gris bleu), céramique | Douce, diffuse, sous la dalle : néons | Le ciel n'est visible qu'au-dessus ; dessous, une autre ville |
 | **S5 Fonderie** | Blocs empilés, gradins, cheminées, passerelles sur le vide, canyons sans fond | Rouille, acier, suie | **Orange** qui monte du fond, étincelles | Les canyons et leur lueur |
-| **S6 Organique** | Coquilles, nervures, tours en spirale, membranes | Nacre, chitine, couleurs de la faune locale | **Bioluminescente** | Races organiques (0.13 L5) |
+| **S6 Organique** | Coquilles, nervures, tours en spirale, membranes | Nacre, chitine, couleurs de la faune locale | **Bioluminescente** | Races organiques (L5, §9.1) |
 | **S7 Cristallin** | Facettes, pyramides de verre, arcologies transparentes | Verre teinté, métaux clairs | Lumière qui traverse les façades | Mondes riches |
 | **S8 Bidonville vertical** | Ajouts de toutes sortes, câbles, bâches, antennes | Récupération, toutes couleurs | Néons désordonnés | Bas-fonds de toutes les capitales |
 
@@ -195,7 +196,7 @@ Une ville n'est pas posée d'un coup : elle **pousse** depuis un point de fondat
 **Fondation.** Le premier noyau est posé au meilleur endroit de la planète natale : eau douce, côte abritée,
 plaine fertile, gisement riche (le score vient des données de la planète : relief, biomes, mers, gisements).
 
-**Stades de progression** (le stade vient du niveau de la race, 0.13 L5, et de l'âge de sa civilisation) :
+**Stades de progression** (le stade vient du niveau de la race, L5 (§9.1), et de l'âge de sa civilisation) :
 
 | Stade | Ville | Ce qui apparaît |
 |---|---|---|
@@ -294,12 +295,30 @@ espèces se sont accrochées les unes aux autres pendant des siècles. Une par g
 
 ---
 
+## 9.1 Bloc L — Aliens et terraformation (venu de la 0.13 le 09/10/2026)
+
+Les capitales sont celles des races extraterrestres (D1) : il faut d'abord que ces races existent. Le bloc L de la
+0.13 (A1, A2 des idées) ouvre donc la 0.18. Décisions reprises de la 0.13 : **Q5** pas de combat au début, attitude
+tirée de la graine (amicale, méfiante, hostile = refuse le contact), commerce oui ; **Q6** le joueur et les aliens
+terraforment, plusieurs heures de jeu pour un changement net, plusieurs jours pour une planète entière.
+
+| Phase | Contenu | Taille |
+|---|---|---|
+| **L5. Aliens** | Espèce intelligente rare sur les mondes habitables, apparence avec les familles de l'éditeur (races de la 0.12), **niveau** (tribu → cités → spatial), **planète natale**, **culture** (style, palette : §5), **villages et bâtiments** voxel posés sur le relief, habitants qui vivent selon le jour et la nuit, scanner (espèce, population, attitude, niveau), interaction de base (Q5). Les races au stade cités ou spatial sont celles qui auront une **capitale** (CA1) ; leurs villages sont le stade 1 de la croissance (§6.3). | XL |
+| **L6. Terraformation** | Projets qui changent les **valeurs vivantes** (deltas) : réchauffer / refroidir, épaissir l'atmosphère, apporter de l'eau (comètes), semer la vie ; l'habitabilité, le climat, les biomes, l'eau et la couleur vue de l'espace suivent ; les aliens spatiaux terraforment aussi (Q6). Réseau par deltas. Mondes en cours de terraformation = traces visibles (lien 0.14 X8 « terraformation inachevée »). | XL |
+
+---
+
 ## 10. Les versions et leurs phases
 
-### 0.18.1 — « Fondations » : la capitale existe
+### 0.18.1 — « Aliens » (L5) et 0.18.2 — « Terraformation » (L6)
+
+Voir §9.1. Chaque phase = sa version + 0.0.1, poussée sur `main`.
+
+### 0.18.3 — « Fondations » : la capitale existe
 
 - **CA1. Qui et où** : `planetgen/capital.rs` (nouvelle sous-graine figée `Layer::Capital`) : une capitale par
-  **race extraterrestre avancée, sur sa planète natale** (D1, races de la 0.13 L5), stade de progression (§6.3),
+  **race extraterrestre avancée, sur sa planète natale** (D1, races de L5, §9.1), stade de progression (§6.3),
   forme (§4) et culture (§5) tirées ; une capitale galactique par galaxie générée au départ (D2) ; type d'astre
   `Capital` dans le profil, le scanner, le dex, `/stats` ; `/aller capitale [style|forme]`. PROTOCOL +1.
 - **CA2. Bible visuelle** : pour chaque style, une **planche** (palette, silhouettes, 10 modules d'essai faits
@@ -307,7 +326,7 @@ espèces se sont accrochées les unes aux autres pendant des siècles. Une par g
 - **CA3. Vue de l'espace minimale** : la planète couverte (couleur des toits par district), **carte de lumière**
   la nuit, nuages de pollution. Déjà belle de loin avant tout le reste.
 
-### 0.18.2 — « Formes » : silhouettes non sphériques
+### 0.18.4 — « Formes » : silhouettes non sphériques
 
 - **CA4. `BodyShape`** (règle V3) : sphère déformée et composition de formes ; terrain, collisions
   (`Terrain::floor` / `ceiling`), gravité (vers la surface proche), maillage lointain (nouveau mailleur de surface
@@ -315,7 +334,7 @@ espèces se sont accrochées les unes aux autres pendant des siècles. Une par g
 - **CA5. Les formes F1 à F9** (§4) : méga-tours, anneau soudé et ascenseurs, bourrelet, hémisphère creusé,
   pôles, excroissances, ville sur géante, lune-forteresse. Captures de l'espace pour chacune.
 
-### 0.18.3 — « Quartiers » : la ville vue en vol
+### 0.18.5 — « Quartiers » : la ville vue en vol
 
 - **CA6. Croissance et districts** (§6.3, §6.1, règle V13) : fondation au meilleur endroit, stades 1 à 6, quartiers
   placés sur les ressources (gisements, mers, volcans, sols fertiles), couches anciennes ; districts : Voronoï sur la sphère, types, artères, couloirs aériens ; la carte de lumière de CA3
@@ -325,7 +344,7 @@ espèces se sont accrochées les unes aux autres pendant des siècles. Une par g
 - **CA8. Niveaux** (§6.2) : cimes, ville haute, moyenne, bas-fonds, sous-ville ; **ouverture du ciel** par
   colonne (lumière qui descend), brume des profondeurs, lumières artificielles en bas.
 
-### 0.18.4 — « Monuments »
+### 0.18.6 — « Monuments »
 
 - **CA9. Monuments uniques** par capitale : palais, dôme du conseil, temple-pyramide, avenue des statues
   colossales, arche, spatioport principal, méga-tour emblème, puits vers la sous-ville. Chaque monument =
@@ -333,27 +352,27 @@ espèces se sont accrochées les unes aux autres pendant des siècles. Une par g
 - **CA10. Viaducs et ponts géants** entre tours et districts, arches de plusieurs centaines de voxels, aqueducs,
   ascenseurs spatiaux.
 
-### 0.18.5 — « Vie »
+### 0.18.7 — « Vie »
 
 - **CA11. Trafic** (§8) : couloirs, files instanciées, feux, décollages / atterrissages, f(graine, horloge).
 - **CA12. Lumières vivantes** : fenêtres par heure locale, néons, hologrammes, balises ; lumière émissive (règle V6).
 - **CA13. Ciel urbain** : brume teintée, fumées, chaleur, pluie sur les façades, éclairs sur les méga-tours ; orbite
   peuplée (satellites, chantiers, file d'attente).
 
-### 0.18.6 — « À pied »
+### 0.18.8 — « À pied »
 
 - **CA14. Rues praticables** : plateformes, rues hautes, escaliers, rambardes, collisions des modules, ascenseurs
   entre niveaux, quelques **intérieurs** (hall du spatioport, halle du marché, salle d'amarrage).
 - **CA15. Foule et PNJ** : silhouettes de loin, PNJ animés de près (races de l'éditeur), dialogue (`npc_ui.rs`).
 - **CA16. Détails** : enseignes, fenêtres, végétation des jardins, linge, câbles, déchets dans les bas-fonds ; sons.
 
-### 0.18.7 — « Capitale galactique »
+### 0.18.9 — « Capitale galactique »
 
 - **CA17. La capitale galactique** (§7, D2) : agrégat : forme générée par croissance, modules d'espèces, bras, épines, disque de débris.
 - **CA18. Quartiers des races** (D3) : un quartier par race présente, dans son style, avec son air, sa gravité, sa
   lumière ; taille selon la puissance de la race ; assemblée, grand marché interracial, ambassades, docks.
 
-### 0.18.8 — « Capitale vivante » : le jeu
+### 0.18.10 — « Capitale vivante » : le jeu
 
 - **CA19. Arriver** : contrôle du trafic, couloir d'approche, plateforme attribuée, avertissements, défense.
 - **CA20. Commerce et missions** : grand marché, réparations, missions de la race, diplomatie.
@@ -361,7 +380,7 @@ espèces se sont accrochées les unes aux autres pendant des siècles. Une par g
   **destruction seulement si ennemie** (D5, règle V14) : défenses, effondrements, incendies, ruines, reconstruction ;
   deltas partagés en réseau ; progression de la ville dans le temps de jeu (chantiers, §6.3).
 
-### 0.18.9 — « Finitions »
+### 0.18.11 — « Finitions »
 
 - **CA22. Diversité** : test d'empreinte (règle V7) sur toutes les capitales générées ; chaque style et chaque
   forme présents ; planche de toutes les capitales de la galaxie principale.
@@ -371,18 +390,20 @@ espèces se sont accrochées les unes aux autres pendant des siècles. Une par g
 ```
 0.17 terminée
    │
-   CA1 → CA2 → CA3         ── 0.18.1 Fondations ──
-   CA4 → CA5               ── 0.18.2 Formes ──
-   CA6 → CA7 → CA8         ── 0.18.3 Quartiers ──
-   CA9 → CA10              ── 0.18.4 Monuments ──
-   CA11 → CA12 → CA13      ── 0.18.5 Vie ──
-   CA14 → CA15 → CA16      ── 0.18.6 À pied ──
-   CA17 → CA18             ── 0.18.7 Capitale galactique ──
-   CA19 → CA20 → CA21      ── 0.18.8 Capitale vivante ──
-   CA22 → CA23 → CA24      ── 0.18.9 Finitions ──
+   L5                      ── 0.18.1 Aliens ──
+   L6                      ── 0.18.2 Terraformation ──
+   CA1 → CA2 → CA3         ── 0.18.3 Fondations ──
+   CA4 → CA5               ── 0.18.4 Formes ──
+   CA6 → CA7 → CA8         ── 0.18.5 Quartiers ──
+   CA9 → CA10              ── 0.18.6 Monuments ──
+   CA11 → CA12 → CA13      ── 0.18.7 Vie ──
+   CA14 → CA15 → CA16      ── 0.18.8 À pied ──
+   CA17 → CA18             ── 0.18.9 Capitale galactique ──
+   CA19 → CA20 → CA21      ── 0.18.10 Capitale vivante ──
+   CA22 → CA23 → CA24      ── 0.18.11 Finitions ──
 ```
 
-Dépendances : **CA1 a besoin des races de la 0.13 L5** (espèces, niveau, planète natale) ; CA6 des gisements (0.10 phase 8, 0.15) ; CA21 de la destruction de la 0.15 ; CA4 utilise la `shape(dir)` de la 0.14 X4 ; CA15 les races de l'éditeur (0.12) ; CA6-CA8 le relief
+Dépendances : **CA1 a besoin des races de L5** (§9.1, phase 0.18.1) (espèces, niveau, planète natale) ; CA6 des gisements (0.10 phase 8, 0.15) ; CA21 de la destruction de la 0.15 ; CA4 utilise la `shape(dir)` de la 0.14 X4 ; CA15 les races de l'éditeur (0.12) ; CA6-CA8 le relief
 des 0.13 T ; CA11 le son de la 0.13 P9 ; CA21 les événements de la 0.14 N ; CA23 les outils de la 0.17.
 
 ---
@@ -393,7 +414,7 @@ des 0.13 T ; CA11 le son de la 0.13 P9 ; CA21 les événements de la 0.14 N ; CA
 |---|---|---|
 | Q1 | Combien de capitales ? | **Décidé** (D1, D2) : une par race extraterrestre avancée sur sa planète natale + une capitale galactique par galaxie générée au départ (21) |
 | Q2 | Une capitale près du départ ? | Non (zone calme de la 0.14) ; la plus proche à quelques sauts, signalée sur la carte |
-| Q3 | Planète natale | **Décidé** (D1) : la capitale est sur la planète natale de la race (celle où elle est née, 0.13 L5) |
+| Q3 | Planète natale | **Décidé** (D1) : la capitale est sur la planète natale de la race (celle où elle est née, L5 (§9.1)) |
 | Q4 | Détruire ou construire ? | **Décidé** (D5) : détruire seulement si ennemie ; pas de construction du joueur en 0.18 |
 | Q5 | Gravité de la capitale galactique | Artificielle vers le plancher du module (fictif) |
 | Q6 | Taille de la capitale galactique | Celle d'une petite lune (rayon ~ un tiers de la Terre) |
@@ -408,9 +429,13 @@ Contexte commun : « Lis `roadmaps/a-faire/ROADMAP-0.18-capitales.md` (règles V
 niveaux §6, capitale galactique §7, croissance §6.3, décisions §2 et §11), `CLAUDE.md` et `TESTS-JEU.md`, et regarde la planche
 `C:\Users\thomr\Desktop\Nouveau dossier\doctravail\06-next maj\0.18`. `git pull origin main` avant de coder.
 Branche `claude/roadmap-0-18-<phase>`. Build release, tests, mesures (outils de la 0.17), captures de référence
-(jour, couchant, nuit, espace, vol bas, à pied). PR non fusionnée (je dirai « push main »). Aucune concession sur
+(jour, couchant, nuit, espace, vol bas, à pied). push sur `main` à la fin (règle de `CLAUDE.md`). Aucune concession sur
 la qualité ; aucun nom ni forme d'œuvre protégée. »
 
+- **L5** — « [contexte commun] Phase L5 (§9.1) : aliens : espèces sur les mondes habitables, niveau, planète natale,
+  culture, villages et bâtiments voxel, habitants jour / nuit, scanner, interaction de base (Q5) ; version 0.18.1. »
+- **L6** — « [contexte commun] Phase L6 (§9.1) : terraformation par deltas (joueur et aliens, Q6), climat, biomes,
+  eau et couleur vue de l'espace qui suivent ; version 0.18.2. »
 - **CA1** — « [contexte commun] Phase CA1 : `planetgen/capital.rs`, une capitale par race avancée sur sa planète natale (D1), une capitale galactique par galaxie (D2), stade, forme et
   culture tirées, type `Capital` partout (profil, scanner, dex, `/stats`), `/aller capitale` ; PROTOCOL +1. »
 - **CA2** — « [contexte commun] Phase CA2 : bible visuelle par style (palette, silhouettes, 10 modules d'essai,

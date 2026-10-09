@@ -261,7 +261,7 @@ Aucune pour l'instant : Q1 à Q8 sont tranchées (§1.2).
 
 ## 10. Prompts (à coller dans une nouvelle session, un par phase)
 
-Contexte commun : « Lis `roadmaps/a-faire/ROADMAP-0.14.md`, `roadmaps/a-faire/prompt0.14.md`, `roadmaps/a-faire/ROADMAP-0.13.md` et `CLAUDE.md` (règles 1 à
+Contexte commun : « Lis `roadmaps/a-faire/ROADMAP-0.14.md`, `roadmaps/a-faire/prompt0.14.md`, `roadmaps/fait/ROADMAP-0.13.md` et `CLAUDE.md` (règles 1 à
 28, décisions Q1 à Q8 du §1.2). `git pull origin main` avant de coder. Branche `claude/roadmap-0-14-<phase>`.
 Build release, tests, mesures avant / après et captures. PR non fusionnée (je dirai « push main »).
 Aucune concession sur la qualité ; ne change ni les tailles ni les décisions sans me demander. »

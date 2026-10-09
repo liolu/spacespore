@@ -201,15 +201,19 @@ Commandes de test : `/brouillard [oui\|non\|auto\|0-100]`, `/meteo [clair\|auto]
 
 ### Bloc V — Espace spectaculaire (V2, V3, V4 des idées)
 
-**État : V2 (animation « chute, tunnel d'étoiles, flash, éclosion », sans la lentille de V1) et V4 (tunnels du sub-espace, `tunnel.rs`, `cinematic.rs`, `cinematic.wgsl`) faits ; V1 et V3 restent à faire.**
+**État : V1 (trous noirs : lentille de Kerr, disque Doppler, jets, étoile aspirée, `black_hole_fx.rs`), V2 (saut entre galaxies sur le vrai ciel) et V4 (tunnels du sub-espace, `tunnel.rs`, `cinematic.rs`) faits ; V3 (vue de la galaxie inclinée, `main.rs::galaxy_frame`) faite en v0.14.0 : bloc V terminé.**
 
 | Phase | Contenu | Taille |
 |---|---|---|
-| **V1. Trous noirs** | **Horizon invisible** (seulement l'ombre et la déformation), **lentille gravitationnelle** en post-traitement plein écran (skybox de C2 et étoiles déformées, **anneau d'Einstein**, image dédoublée), **disque d'accrétion** en shader (plus chaud à l'intérieur, effet Doppler, arrière du disque visible au-dessus et en dessous de l'ombre), **étoile aspirée** en spirale qui trahit le trou noir. Remplace l'anneau photonique en cubes (`black_hole.rs`). | XL |
+| **V1. Trous noirs** | **Horizon invisible** (seulement l'ombre et la déformation), **lentille gravitationnelle** en post-traitement plein écran (skybox de C2 et étoiles déformées, **anneau d'Einstein**, image dédoublée), **disque d'accrétion** en shader (plus chaud à l'intérieur, effet Doppler, arrière du disque visible au-dessus et en dessous de l'ombre), **étoile aspirée** en spirale qui trahit le trou noir. Remplace l'anneau photonique en cubes (`black_hole.rs`).  **Fait** : `black_hole_fx.rs` + `black_hole.wgsl` (modèle de Kerr). | XL |
 | **V2. Voyage entre galaxies** | Séquence de ~10 s (Q4), passable avec Échap : plongée dans la lentille de V1, **tunnel** (étoiles étirées, couleurs du bleu au rouge, distorsion), **flash**, nouvelle galaxie qui grandit jusqu'à la vue d'arrivée ; chargement pendant le tunnel ; en multijoueur, éclair de départ et d'arrivée. Remplace le saut direct (`HYPERJUMP_DIST`, `main.rs`). | L |
 | **V3. Vue de la galaxie inclinée** | En vue galaxie, la caméra prend le **plan de la galaxie** (`tilt`, `settings.rs:708`) au lieu du haut du monde (`main.rs:1252`) ; orbite autour de l'axe de la galaxie, transition douce d'une galaxie à l'autre. | S |
 
 ### Bloc L — Aliens et terraformation (A1, A2 des idées ; faune, végétation, son et lieux en 0.14)
+
+**Déplacé le 09/10/2026 dans la 0.18** (`roadmaps/a-faire/ROADMAP-0.18-capitales.md`, §9.1, versions 0.18.1 et
+0.18.2) : les capitales des races en ont besoin. Le texte ci-dessous reste pour mémoire ; la 0.13 se termine sans
+le bloc L.
 
 | Phase | Contenu | Taille |
 |---|---|---|
@@ -235,8 +239,7 @@ v0.12.0 (éditeur + correctifs)
    C1 → C2                     brouillard, skybox
    V1 → V2 → V3                trous noirs (utilise C2), voyage, vue inclinée
    │                           ── release 0.13.1 « Ciel » ──
-   L5 → L6                     aliens, terraformation
-                               ── release 0.13.2 « Aliens » ──
+   (L5 → L6 aliens, terraformation : déplacés dans la 0.18, versions 0.18.1 et 0.18.2)
    │
    0.14 : le monde qui vit (bloc D) et les mondes exceptionnels
 ```
@@ -282,7 +285,7 @@ relief et de l'eau finis.
 
 ## 8. Prompts (à coller dans une nouvelle session, un par phase)
 
-Contexte commun : « Lis `roadmaps/a-faire/ROADMAP-0.13.md`, `roadmaps/fait/RAPPORT-generation-terrain.md` et `CLAUDE.md` (règles 1 à
+Contexte commun : « Lis `roadmaps/fait/ROADMAP-0.13.md`, `roadmaps/fait/RAPPORT-generation-terrain.md` et `CLAUDE.md` (règles 1 à
 19). `git pull origin main` avant de coder. Branche `claude/roadmap-0-13-<phase>`. Build release,
 tests, mesures avant / après (règle 18) et captures. PR non fusionnée (je dirai « push main »). Aucune
 concession sur la qualité ; ne change ni les tailles de l'espace ni les décisions sans me demander. »
@@ -332,5 +335,4 @@ concession sur la qualité ; ne change ni les tailles de l'espace ni les décisi
   disque d'accrétion en shader, étoile aspirée) ; remplace les cubes. »
 - **V2** — « [contexte commun] Phase V2 : séquence de voyage entre galaxies (Q4). »
 - **V3** — « [contexte commun] Phase V3 : vue galaxie dans le plan de la galaxie. »
-- **L5** — « [contexte commun] Phase L5 : aliens (Q5). »
-- **L6** — « [contexte commun] Phase L6 : terraformation par deltas (Q6). »
+- **L5**, **L6** : déplacés dans la 0.18 (prompts dans `roadmaps/a-faire/ROADMAP-0.18-capitales.md`).

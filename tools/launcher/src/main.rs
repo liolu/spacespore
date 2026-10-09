@@ -213,6 +213,27 @@ impl LauncherApp {
         });
     }
 
+    /// Tout revérifier tout de suite (bouton « Recharger ») : dernière version du canal et liste des versions.
+    fn reload(&mut self) {
+        self.auto_update_tried = false;
+        self.launch_error = None;
+        self.start_check();
+        self.load_releases();
+    }
+
+    /// Après une installation, le launcher redémarre sur sa nouvelle version : il sait alors quelle version est
+    /// installée (canal, numéro) et l'on peut en rechoisir une autre autant de fois qu'on veut.
+    fn restart_launcher(&mut self, ctx: &egui::Context) {
+        let exe = self.install_dir.join(exe_name(LAUNCHER_BIN));
+        match Command::new(&exe).current_dir(&self.install_dir).spawn() {
+            Ok(_) => {
+                self.launched = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            Err(e) => self.launch_error = Some(format!("Impossible de relancer le launcher : {e}")),
+        }
+    }
+
     /// Lance le jeu et ferme le launcher.
     fn launch_game(&mut self, ctx: &egui::Context) {
         if self.launched {
@@ -236,7 +257,13 @@ impl eframe::App for LauncherApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let ctx = ctx.clone();
         let stage = self.shared.stage.lock().unwrap().clone();
-        let busy = matches!(stage, Stage::Downloading | Stage::Extracting | Stage::Installed(_));
+        // (« Installed » ne bloque plus rien : le launcher redémarre aussitôt sur la version installée)
+        let busy = matches!(stage, Stage::Downloading | Stage::Extracting);
+        if let Stage::Installed(_) = stage {
+            if !self.launched {
+                self.restart_launcher(&ctx);
+            }
+        }
 
         egui::CentralPanel::default().show(&ctx, |ui| {
             ui.vertical_centered(|ui| {
@@ -254,7 +281,13 @@ impl eframe::App for LauncherApp {
                     ui.label(spacespore_common::installed_label());
                 });
                 ui.small("Nouvelle numerotation : AA.MM.JJ_HH:MM_vVERSION.REVISION (heure UTC)");
-                ui.add_space(8.0);
+                ui.add_space(4.0);
+                ui.add_enabled_ui(!busy, |ui| {
+                    if ui.button("Recharger").on_hover_text("Chercher une nouvelle version maintenant").clicked() {
+                        self.reload();
+                    }
+                });
+                ui.add_space(4.0);
 
                 // ── Choix du canal ──
                 ui.add_enabled_ui(!busy, |ui| {

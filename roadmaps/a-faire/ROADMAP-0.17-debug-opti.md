@@ -302,7 +302,39 @@ depuis elle) et on se promène avec une seconde caméra pour voir le monde « de
 | **T8. Optimiser la lumière** | À partir des résultats de T6. Pistes : **plus d'ombre cubemap** de l'étoile près d'une planète (6 rendus) : le soleil directionnel à cascades fait les ombres au sol, la lumière ponctuelle seulement l'éclairage lointain ; cascades réglées sur l'altitude ; une seule lumière avec ombres à la fois ; portée des phares et de la lampe limitée ; ambiante et brume continues entre espace, orbite et sol (plus de saut) ; exposition automatique douce. | L |
 | **T9. Préréglages finaux** | Bas / Moyen / Haut / Ultra / Patate recalculés depuis les mesures (chaque préréglage = un objectif de FPS sur la machine de test), proposés dans le menu Options. Benchmark rejoué : tableau avant / après 0.17 dans la PR. | S |
 
-Ordre : T1 → T2 → T3 → T4 → T5 → T6 → (T7 et T8 dans l'ordre que donnent les mesures) → T9.
+Ordre : **M1 → M2 → M3 → M4 → M5 (→ M6)** puis T1 → T2 → T3 → T4 → T5 → T6 → (T7 et T8 dans l'ordre que
+donnent les mesures) → T9. La migration passe en premier : les réglages, mesures et optimisations se font sur la
+version de Bevy qu'on garde.
+
+### 8.1 Bloc M — Migration vers la dernière version de Bevy (ajouté le 09/10/2026)
+
+Le jeu est sur **Bevy 0.15** depuis le premier commit (16/09/2026) ; la dernière version publiée est la **0.20**
+(`cargo search bevy`, 09/10/2026). Bevy casse son API à chaque version 0.x : on migre **une version à la fois**, et
+**chaque passage de Bevy = une version du jeu + 0.0.1**, poussée sur `main` (instable).
+
+| Phase | Passage | Version du jeu | Points à surveiller (guide de migration officiel de chaque version) |
+|---|---|---|---|
+| **M1** | Bevy 0.15 → **0.16** | 0.17.1 | Rendu piloté par le GPU, relations de l'ECS (`ChildOf`), changements des matériaux et des shaders |
+| **M2** | 0.16 → **0.17** | 0.17.2 | D'après le guide de migration 0.17 |
+| **M3** | 0.17 → **0.18** | 0.17.3 | D'après le guide de migration 0.18 |
+| **M4** | 0.18 → **0.19** | 0.17.4 | D'après le guide de migration 0.19 |
+| **M5** | 0.19 → **0.20** | 0.17.5 | D'après le guide de migration 0.20 |
+| M6 | Autres dépendances à jour (`rand` 0.8 → 0.10, `dirs` 5 → 7, `zip` 2 → dernière stable, `igd-next` 0.17 → 0.18...) | 0.17.6 | Le monde doit rester **identique au bit près** (`rand` sert aux tirages : test `the_world_is_reproducible`) |
+
+Si une nouvelle version de Bevy sort avant la fin du bloc, on ajoute une phase (M5b...) avec sa propre version + 0.0.1.
+Les phases T reprennent ensuite la numérotation à la version suivante.
+
+Règles de chaque étape :
+
+1. **Rien d'autre ne change** pendant une migration : pas de nouvelle fonction, pas de réglage ; seulement ce que le
+   guide de migration impose. Le monde reste le même (même graine, même `PROTOCOL` sauf si le format réseau change).
+2. **Avant / après** : `SPACESPORE_PERF` (vol bas, marche, rentrée, espace) et le benchmark rapide s'il existe ;
+   captures de référence au même endroit de **chaque effet maison** : eau et caustiques, nuages et brouillard,
+   ciel (skybox), trous noirs, cinématiques, liseré de l'atmosphère, plasma, éditeur, interface. Un shader qui
+   compile mais rend faux ne se voit qu'à l'écran (`TESTS-JEU.md`, règle 4).
+3. **Tous les tests passent** (`cargo test --release`) et le jeu démarre sur Windows ; la CI compile Linux et Mac.
+4. Multijoueur : deux instances se rejoignent et se voient (le format réseau ne doit pas changer par accident).
+5. La version du jeu (`[workspace.package] version`) passe à la valeur du tableau ; push sur `main`.
 
 ---
 
@@ -337,9 +369,15 @@ Ordre : T1 → T2 → T3 → T4 → T5 → T6 → (T7 et T8 dans l'ordre que don
 
 ## 11. Prompts (à coller dans une nouvelle session, une par phase)
 
-Chaque prompt suppose : « Lis `roadmaps/a-faire/ROADMAP-0.17-debug-opti.md` et `CLAUDE.md`. Crée la branche
-`claude/roadmap-0-17-tX` depuis `main`. Build release. Ouvre une PR non fusionnée avec mesures et
-captures. »
+Chaque prompt suppose : « Lis `roadmaps/a-faire/ROADMAP-0.17-debug-opti.md` et `CLAUDE.md`. `git pull origin main`.
+Build release, tests, mesures et captures. Push sur `main` à la fin (règle de `CLAUDE.md`). »
+
+- **M1 à M5** — « Phase Mx de `roadmaps/a-faire/ROADMAP-0.17-debug-opti.md` (§8.1) : migre Bevy vers la version
+  suivante (une seule) en suivant son guide de migration officiel, sans rien changer d'autre ; mesures
+  `SPACESPORE_PERF` et captures de chaque effet maison avant / après ; tous les tests ; deux instances en
+  multijoueur ; version du jeu + 0.0.1 (tableau du §8.1). »
+- **M6** — « Phase M6 : mets à jour les autres dépendances (`cargo search` pour chacune), le monde doit rester
+  identique au bit près (`the_world_is_reproducible`) ; version du jeu + 0.0.1. »
 
 - **T1** — « Phase T1 de `roadmaps/a-faire/ROADMAP-0.17-debug-opti.md` : crée `src/tuning.rs` avec la ressource `Tuning`
   rangée par groupes (règle 1). Remplace toutes les constantes listées au §2 (`lod.rs`, `terrain.rs`,

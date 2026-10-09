@@ -32,7 +32,7 @@ struct SmokeState {
 }
 
 #[derive(Component)]
-struct SmokeCube {
+pub(crate) struct SmokeCube {
     abs: DVec3,
     drift: Vec3,
     spin: Vec3,

@@ -4,7 +4,10 @@
 //!   chaud, cinéma. Le filtre reste appliqué à la photo.
 //! - Qualité maximale pendant le mode : MSAA x8 et ombres des étoiles, remis comme avant à la sortie.
 //! - La photo est enregistrée en PNG sans perte (« brut ») dans `photos/` (à côté de `world.json`), à la
-//!   résolution de la fenêtre, sans l'interface.
+//!   résolution de la fenêtre.
+//! - Il ne reste que les astres : interface (y compris ce qui apparaît pendant le mode), tous les gizmos
+//!   (orbites, cercles, indicateurs, traînées, portées), vaisseau et ses effets, autres joueurs, personnages,
+//!   fumée et vitre du cockpit sont cachés à chaque image (`hide_for_photo`), puis remis comme avant.
 
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
@@ -17,7 +20,10 @@ pub struct PhotoPlugin;
 
 impl Plugin for PhotoPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Photo>().add_systems(Startup, spawn_hint).add_systems(Update, (photo_keys, apply_photo).chain());
+        app.init_resource::<Photo>()
+            .add_systems(Startup, spawn_hint)
+            .add_systems(Update, (photo_keys, apply_photo).chain())
+            .add_systems(PostUpdate, hide_for_photo.before(bevy::render::view::VisibilitySystems::VisibilityPropagate));
     }
 }
 
@@ -40,7 +46,12 @@ pub struct Photo {
     saved_msaa: Option<u32>,
     shot_at: f64,
     saved_shadows: Option<bool>,
-    hidden: Vec<(Entity, Visibility)>,
+    /// Visibilité d'avant de chaque entité cachée, et gizmos actifs avant le mode.
+    hidden: std::collections::HashMap<Entity, Visibility>,
+    gizmos: Vec<(std::any::TypeId, bool)>,
+    restore: bool,
+    /// L'aide ne se montre que quelques secondes (entrée, changement de filtre).
+    hint_at: f64,
     dirty: bool,
 }
 
@@ -68,32 +79,25 @@ fn photo_keys(
     mut settings: ResMut<GameSettings>,
     panel: Res<crate::net_ui::NetPanel>,
     mut net: ResMut<Net>,
-    mut roots: Query<(Entity, &mut Visibility), (With<Node>, Without<Parent>, Without<PhotoHint>)>,
     mut hint: Query<(&mut Text, &mut Visibility), With<PhotoHint>>,
 ) {
     if panel.focus.is_some() {
         return;
     }
     let now = time.elapsed_secs_f64();
-    if keys.just_pressed(KeyCode::F9) {
+    // Test : `SPACESPORE_TEST_PHOTO=<s>` entre en mode photo à `<s>` s
+    let test = std::env::var("SPACESPORE_TEST_PHOTO").ok().and_then(|v| v.parse::<f64>().ok()).is_some_and(|s| now >= s && now - time.delta_secs_f64() < s);
+    if keys.just_pressed(KeyCode::F9) || test {
         photo.active = !photo.active;
         photo.dirty = true;
+        photo.hint_at = now;
         if photo.active {
-            // L'interface disparaît (on retient ce qui était visible)
-            photo.hidden = roots.iter().map(|(e, v)| (e, *v)).collect();
-            for (_, mut v) in &mut roots {
-                *v = Visibility::Hidden;
-            }
             photo.saved_msaa = Some(settings.msaa_samples);
             settings.msaa_samples = 8;
             photo.saved_shadows = Some(settings.shadows);
             settings.shadows = true;
         } else {
-            for (e, v) in std::mem::take(&mut photo.hidden) {
-                if let Ok((_, mut vis)) = roots.get_mut(e) {
-                    *vis = v;
-                }
-            }
+            photo.restore = true;
             if let Some(old) = photo.saved_msaa.take() {
                 settings.msaa_samples = old;
             }
@@ -106,6 +110,7 @@ fn photo_keys(
     if photo.active && keys.just_pressed(KeyCode::F10) {
         photo.filter = (photo.filter + 1) % FILTERS.len();
         photo.dirty = true;
+        photo.hint_at = now;
     }
     if keys.just_pressed(KeyCode::F11) {
         let dir = crate::settings::data_dir().join("photos");
@@ -126,8 +131,69 @@ fn photo_keys(
                 text.0 = line;
             }
             // L'aide se cache au moment de la photo pour ne pas y figurer, puis dit où elle est
-            *vis = if now - photo.shot_at < 0.5 { Visibility::Hidden } else { Visibility::Visible };
+            // Seulement 3 s après l'entrée ou un changement de filtre, jamais sur la photo
+            *vis = if now - photo.shot_at > 0.5 && now - photo.hint_at < 3.0 { Visibility::Visible } else { Visibility::Hidden };
         } else if *vis != Visibility::Hidden {
+            *vis = Visibility::Hidden;
+        }
+    }
+}
+
+/// Tout ce qui n'est pas un astre disparaît pendant le mode photo (à chaque image : ce qui apparaît ou que
+/// d'autres systèmes remontrent est recaché), puis tout est remis comme avant.
+#[allow(clippy::type_complexity)]
+fn hide_for_photo(
+    mut photo: ResMut<Photo>,
+    mut store: ResMut<GizmoConfigStore>,
+    mut q: Query<
+        (Entity, &mut Visibility),
+        (
+            Without<PhotoHint>,
+            Or<(
+                (With<Node>, Without<Parent>),
+                With<crate::ship::Ship>,
+                With<crate::net::RemoteShip>,
+                With<crate::models::LocalWalker>,
+                With<crate::models::RemoteWalker>,
+                With<crate::smoke::SmokeCube>,
+                With<crate::approche_ui::Glass>,
+                With<crate::approche_fx::BodyFx>,
+                With<crate::approche_fx::RemoteFx>,
+            )>,
+        ),
+    >,
+) {
+    let photo = &mut *photo;
+    if photo.restore {
+        photo.restore = false;
+        for (e, v) in photo.hidden.drain() {
+            if let Ok((_, mut vis)) = q.get_mut(e) {
+                *vis = v;
+            }
+        }
+        for (id, on) in photo.gizmos.drain(..) {
+            for (tid, config, _) in store.iter_mut() {
+                if *tid == id {
+                    config.enabled = on;
+                }
+            }
+        }
+        return;
+    }
+    if !photo.active {
+        return;
+    }
+    if photo.gizmos.is_empty() {
+        for (tid, config, _) in store.iter_mut() {
+            photo.gizmos.push((*tid, config.enabled));
+        }
+    }
+    for (_, config, _) in store.iter_mut() {
+        config.enabled = false;
+    }
+    for (e, mut vis) in &mut q {
+        if *vis != Visibility::Hidden {
+            photo.hidden.entry(e).or_insert(*vis);
             *vis = Visibility::Hidden;
         }
     }

@@ -6,7 +6,7 @@ Les phases s'appellent **REN-n**.
 Objectif : une **image cohérente et marquante** — lumière, matière, atmosphère, post-traitement — qui reste
 **jouable** (budgets de ms par image mesurés) et **lisible** (réglable, accessible), sans toucher à la génération.
 
-Cette feuille de route **complète** : `roadmaps/a-faire/ROADMAP-0.13.md` (C1 brouillard, C2 skybox, V1 trous noirs, O1 / O2 eau,
+Cette feuille de route **complète** : `roadmaps/fait/ROADMAP-0.13.md` (C1 brouillard, C2 skybox, V1 trous noirs, O1 / O2 eau,
 P3 rentrée, P4 nuages traversables, P5 poussière), `roadmaps/a-faire/ROADMAP-0.14.md` (D3 végétation, D4 faune) et `roadmaps/a-faire/ROADMAP-0.17-debug-opti.md`
 (LOD, lumière). Elle **ne refait pas** ce qui y figure : elle y ajoute l'**ambiance**, les **effets de caméra et de
 visière** et le **post-traitement**.
