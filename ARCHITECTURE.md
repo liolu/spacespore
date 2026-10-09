@@ -479,3 +479,7 @@ n'est pas charge automatiquement : le lire quand on travaille sur le systeme con
   (`galaxy_frame`, 2,5 /s) le plan de la galaxie de la cible (`GalaxyConfig::tilt`, `current_galaxy`) aux zooms Galaxie,
   Cosmos et Espace profond, et revient au monde en dessous ; `look_at` avec le haut de ce repere. Test
   `galaxy_view_follows_the_galaxy_plane`.
+- 0.14.1 skybox unique (`skybox.rs::render_cube`) : ne recopie plus les vraies etoiles ni les vraies galaxies (doublons
+  avec les objets du jeu) ; fond propre a la graine du monde : nebuleuses de 3 couleurs tirees de `PALETTE` (bruit de
+  gaz deforme, detail, veines de poussiere, demi-resolution lue en bilineaire), petites etoiles, brillantes a halo.
+  ~24 % du ciel colore, 0,4 s (`bench_sky`).

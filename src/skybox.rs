@@ -1,7 +1,7 @@
-//! Skybox générée (0.13 C2) : le ciel étoilé est celui de la vraie galaxie, vu du système où l'on
-//! est. Une cubemap de 1 024 x 1 024 par face est calculée en arrière-plan (étoiles voisines avec leur
-//! couleur et leur éclat, bande de la Voie lactée tirée de la forme réelle de la galaxie, voiles de
-//! gaz et poussière, autres galaxies) et refaite quand on change de système. Un dôme (`SkyMaterial`,
+//! Skybox générée (0.13 C2, unique depuis la 0.14) : un fond propre au monde (graine), qui ne recopie ni les
+//! vraies étoiles ni les vraies galaxies (elles sont dans le jeu) : nébuleuses de trois couleurs tirées de la
+//! graine, veines de poussière, petites étoiles et quelques brillantes à halo, en cubemap de 1 024 x 1 024 par
+//! face calculée une fois. Un dôme (`SkyMaterial`,
 //! `sky_dome.wgsl`) la dessine à l'arrière-plan, sans toucher à la profondeur : les étoiles proches
 //! restent de vrais objets cliquables, devant elle.
 //!
@@ -177,123 +177,88 @@ fn band_color(rel: f32, mix: f32) -> [f32; 3] {
 
 /// Cubemap RGBA8 (sRGB) du ciel décrit par `input` : 6 faces de `size` x `size`, les unes après les autres.
 pub fn render_cube(input: &SkyInput) -> Vec<u8> {
+    use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
     let size = input.size;
     let half = (size / 2).max(8);
-
-    // ── Bande de la galaxie : tirages de la forme réelle, vus de l'intérieur ──
-    let mut band = Faces::new(half);
-    let mut density = 0.0f32;
-    if let Some(g) = &input.galaxy {
-        let shape = g.shape();
-        let n_samples = (half * half) as f32 * 1.6;
-        let threads = 6usize;
-        let per = (n_samples as usize / threads).max(1);
-        let parts: Vec<Faces> = std::thread::scope(|sc| {
-            let handles: Vec<_> = (0..threads)
-                .map(|t| {
-                    let shape = &shape;
-                    sc.spawn(move || {
-                        let mut f = Faces::new(half);
-                        let mut rng = Rng::new(input.seed.wrapping_mul(2654435761).wrapping_add(t as u32 * 7919 + 1));
-                        for _ in 0..per {
-                            let p = if rng.f() < shape.structure_share { shape.sample_structure(&mut rng, 0.0) } else { shape.sample_background(&mut rng) };
-                            let rel_pos = g.abs_center + g.tilt * p - input.viewer;
-                            let d = rel_pos.length();
-                            // Trop près : ce sont les vraies étoiles, dessinées à part
-                            if d < 0.05 * g.radius {
-                                continue;
-                            }
-                            let u = rng.f();
-                            let lum = 0.35 + 2.2 * u * u * u;
-                            // (un tirage tout près ferait un bloc blanc : son éclat est plafonné)
-                            let k = (g.radius / d).powi(2).min(120.0) * lum * (BAND_STARS / (per * threads) as f32) * 4.0e-4;
-                            let color = band_color(p.length() / g.radius, rng.f());
-                            f.splat(rel_pos / d, [color[0] * k, color[1] * k, color[2] * k], 0.85);
-                        }
-                        f
-                    })
-                })
-                .collect();
-            handles.into_iter().map(|h| h.join().unwrap()).collect()
-        });
-        for part in &parts {
-            for (a, b) in band.px.iter_mut().zip(&part.px) {
-                a[0] += b[0];
-                a[1] += b[1];
-                a[2] += b[2];
-            }
-        }
-        density = 1.0;
-    }
-    let soft = blur(&band, 3, 2);
-
-    // Niveau de la bande : le 97e centile du fond diffus donne le réglage de l'exposition
-    let mut lum: Vec<f32> = soft.px.iter().map(|p| (p[0] + p[1] + p[2]) / 3.0).collect();
-    lum.sort_by(|a, b| a.total_cmp(b));
-    let p97 = lum.get(lum.len() * 999 / 1000).copied().unwrap_or(1.0).max(1e-9);
-    let gain = 0.55 / p97;
-    let p50 = lum.get(lum.len() / 2).copied().unwrap_or(0.0);
-
-    // ── Pixels : bande, poussière, nébuleuses, autres galaxies ──
-    let mut out = Faces::new(size);
     let seed = input.seed;
-    // Autres galaxies : direction, taille angulaire, axes de l'ellipse, couleur
-    struct Far {
-        dir: Vec3,
-        rho: f32,
-        minor: Vec3,
-        major: Vec3,
-        q: f32,
-        color: [f32; 3],
-        bright: f32,
-    }
-    let fars: Vec<Far> = input
-        .others
-        .iter()
-        .filter_map(|g| {
-            let rel = g.abs_center - input.viewer;
-            let d = rel.length();
-            if d < 1.0 {
-                return None;
-            }
-            let dir = rel / d;
-            let normal = g.tilt * Vec3::Y;
-            let q = dir.dot(normal).abs().max(0.18);
-            let minor = (normal - dir * normal.dot(dir)).normalize_or(Vec3::Y);
-            let major = dir.cross(minor).normalize_or(Vec3::X);
-            let rho = (g.radius / d).min(0.6);
-            let h = crate::settings::pseudo_rand(g.seed ^ 0x9E37);
-            let color = if h < 0.5 { [0.75, 0.82, 1.0] } else { [1.0, 0.88, 0.7] };
-            Some(Far { dir, rho: rho.max(0.0016), minor, major, q, color, bright: 1.0 / (1.0 + 18.0 * rho) })
-        })
-        .collect();
+
+    // Ciel unique (0.14) : ni copie des vraies étoiles ni des vraies galaxies (elles sont dans le jeu, devant),
+    // mais un fond propre au monde (`seed`) : nuages de gaz de couleur, voiles de poussière sombre, étoiles.
+    // Trois couleurs de nébuleuse tirées de la graine.
+    const PALETTE: [[f32; 3]; 8] = [
+        [0.95, 0.25, 0.6],
+        [0.2, 0.55, 1.0],
+        [1.0, 0.55, 0.2],
+        [0.3, 0.9, 0.7],
+        [0.6, 0.3, 1.0],
+        [1.0, 0.3, 0.25],
+        [0.25, 0.85, 1.0],
+        [1.0, 0.85, 0.35],
+    ];
+    let mut prng = Rng::new(seed ^ 0x0EB0_1A);
+    let mut pick = || PALETTE[(prng.f() * PALETTE.len() as f32) as usize % PALETTE.len()];
+    let colors = [pick(), pick(), pick()];
+    let warp: Fbm<Perlin> = Fbm::new(seed.wrapping_add(3)).set_octaves(3);
+    let gas: Fbm<Perlin> = Fbm::new(seed.wrapping_add(11)).set_octaves(5);
+    let detail: Fbm<Perlin> = Fbm::new(seed.wrapping_add(17)).set_octaves(4);
+    let dust: Fbm<Perlin> = Fbm::new(seed.wrapping_add(29)).set_octaves(4);
+    let hue: Fbm<Perlin> = Fbm::new(seed.wrapping_add(41)).set_octaves(2);
+
+    // Nébuleuses à demi-résolution (elles sont douces), puis lues en bilinéaire
+    let mut neb = Faces::new(half);
+    std::thread::scope(|sc| {
+        let chunks: Vec<(usize, &mut [[f32; 3]])> = neb.px.chunks_mut(half * half).enumerate().collect();
+        let (warp, gas, detail, dust, hue, colors) = (&warp, &gas, &detail, &dust, &hue, &colors);
+        for (face, buf) in chunks {
+            sc.spawn(move || {
+                for y in 0..half {
+                    for x in 0..half {
+                        let (a, b) = ((x as f32 + 0.5) / half as f32 * 2.0 - 1.0, (y as f32 + 0.5) / half as f32 * 2.0 - 1.0);
+                        let d = face_dir(face, a, b).normalize().as_dvec3();
+                        let w = [warp.get([d.x * 1.6, d.y * 1.6, d.z * 1.6]), warp.get([d.x * 1.6 + 5.2, d.y * 1.6, d.z * 1.6]), warp.get([d.x * 1.6, d.y * 1.6 + 9.1, d.z * 1.6])];
+                        let q = [d.x * 1.4 + 0.7 * w[0], d.y * 1.4 + 0.7 * w[1], d.z * 1.4 + 0.7 * w[2]];
+                        let g = (gas.get(q) as f32) * 0.5 + 0.5;
+                        let mut density = smoothstep(0.48, 0.85, g);
+                        let fine = (detail.get([q[0] * 4.0, q[1] * 4.0, q[2] * 4.0]) as f32) * 0.5 + 0.5;
+                        density *= 0.45 + 0.75 * fine;
+                        // Voiles de poussière : de fines veines sombres dans les nuages
+                        let lane = (dust.get([q[0] * 2.6, q[1] * 2.6, q[2] * 2.6]) as f32).abs();
+                        density *= 0.25 + 0.75 * smoothstep(0.02, 0.16, lane);
+                        // Couleur : mélange des trois teintes selon un bruit lent, cœurs plus clairs
+                        let h = (hue.get([d.x * 0.9, d.y * 0.9, d.z * 0.9]) as f32) * 0.5 + 0.5;
+                        let t0 = smoothstep(0.25, 0.55, h);
+                        let t1 = smoothstep(0.55, 0.8, h);
+                        let mut c = [0.0f32; 3];
+                        for k in 0..3 {
+                            let base = colors[0][k] + (colors[1][k] - colors[0][k]) * t0;
+                            let base = base + (colors[2][k] - base) * t1;
+                            let core = density * density;
+                            c[k] = (base * density * 0.32 + (0.9 - base * 0.3) * core * 0.12).max(0.0);
+                        }
+                        buf[y * half + x] = c;
+                    }
+                }
+            });
+        }
+    });
+
+    let mut out = Faces::new(size);
     let rows = size;
     std::thread::scope(|sc| {
         let chunks: Vec<(usize, &mut [[f32; 3]])> = out.px.chunks_mut(size * size).enumerate().collect();
-        let fars = &fars;
+        let neb = &neb;
         for (face, buf) in chunks {
             sc.spawn(move || {
                 for y in 0..rows {
                     for x in 0..size {
                         let (a, b) = ((x as f32 + 0.5) / size as f32 * 2.0 - 1.0, (y as f32 + 0.5) / size as f32 * 2.0 - 1.0);
-                        let dir = face_dir(face, a, b).normalize();
-                        // Pas de bande de galaxie dessinee (la ligne blanche est retiree) : seulement un tres leger voile
+                        let (hx, hy) = (((a + 1.0) * 0.5 * half as f32 - 0.5).clamp(0.0, half as f32 - 1.001), ((b + 1.0) * 0.5 * half as f32 - 0.5).clamp(0.0, half as f32 - 1.001));
+                        let (ix, iy) = (hx as usize, hy as usize);
+                        let (fx, fy) = (hx - ix as f32, hy - iy as f32);
+                        let (p00, p10, p01, p11) = (neb.at(face, ix, iy), neb.at(face, ix + 1, iy), neb.at(face, ix, iy + 1), neb.at(face, ix + 1, iy + 1));
                         let mut c = [0.002f32; 3];
-                        // Autres galaxies
-                        for f in fars {
-                            let cosv = dir.dot(f.dir);
-                            if cosv < 0.0 {
-                                continue;
-                            }
-                            let off = dir - f.dir * cosv;
-                            let (u, v) = (off.dot(f.major) / f.rho, off.dot(f.minor) / (f.rho * f.q));
-                            let r2 = u * u + v * v;
-                            if r2 < 16.0 {
-                                let s = f.bright * 0.9 * (1.0 + r2 * 2.0).powf(-1.5) * (1.0 / (1.0 + 4.0 * f.q.min(1.0).powi(0)));
-                                for k in 0..3 {
-                                    c[k] += f.color[k] * s;
-                                }
-                            }
+                        for k in 0..3 {
+                            c[k] += (p00[k] * (1.0 - fx) + p10[k] * fx) * (1.0 - fy) + (p01[k] * (1.0 - fx) + p11[k] * fx) * fy;
                         }
                         buf[y * size + x] = c;
                     }
@@ -323,24 +288,22 @@ pub fn render_cube(input: &SkyInput) -> Vec<u8> {
         }
     }
 
-    // ── Étoiles réelles : un point par étoile, éclat selon son flux ──
-    let (scale, mean_l) = match &input.galaxy {
-        Some(g) if !input.stars.is_empty() => (g.radius, input.stars.iter().map(|s| s.2).sum::<f32>() / input.stars.len() as f32),
-        _ => (1.0, 1.0),
-    };
-    for (pos, color, lumens) in &input.stars {
-        let rel = *pos - input.viewer;
-        let d = rel.length();
-        if d < 1.0 {
-            continue;
+    // ── Quelques étoiles brillantes avec un halo ──
+    {
+        let mut rng = Rng::new(seed ^ 0xB16A);
+        for _ in 0..(size / 2) {
+            let d = Vec3::new(rng.f() * 2.0 - 1.0, rng.f() * 2.0 - 1.0, rng.f() * 2.0 - 1.0);
+            let l = d.length();
+            if !(0.05..=1.0).contains(&l) {
+                continue;
+            }
+            let t = rng.f();
+            let color = if t < 0.55 { [0.75, 0.85, 1.0] } else if t < 0.85 { [1.0, 0.95, 0.85] } else { [1.0, 0.75, 0.5] };
+            let k = 1.5 + 4.0 * rng.f();
+            out.splat(d / l, [color[0] * k, color[1] * k, color[2] * k], 0.9);
+            out.splat(d / l, [color[0] * 0.25, color[1] * 0.25, color[2] * 0.25], 3.5);
         }
-        let flux = (lumens / mean_l.max(1.0)) * (scale / d).powi(2) * 4.0e-4 * gain * (BAND_STARS / 1.0e5);
-        // Éclat -> taille du point (les brillantes débordent un peu) et intensité
-        let sigma = 0.8 + 0.35 * (1.0 + flux).ln().min(4.0);
-        let k = flux.min(40.0) + 0.05;
-        out.splat(rel / d, [color[0] * k, color[1] * k, color[2] * k], sigma);
     }
-    let _ = (density, p50);
 
     // ── Tons : exposition douce, gamma, un grain contre les bandes ──
     let mut rng = Rng::new(seed ^ 0xA5A5);
@@ -652,8 +615,11 @@ mod tests {
         other.viewer += Vec3::new(0.0, 0.0, other.galaxy.as_ref().unwrap().radius * 0.3);
         let b = render_cube(&other);
         let diff = a.iter().zip(&b).filter(|(x, y)| x != y).count();
-        // Plus de bande de galaxie : seules les etoiles reelles et les galaxies lointaines changent avec le lieu
-        assert!(diff > 0, "le ciel change avec le lieu : {diff}");
+        // Ciel unique (0.14) : le meme partout dans un monde ; un autre monde (graine) a un autre ciel
+        assert_eq!(diff, 0, "le meme ciel partout : {diff}");
+        other.seed ^= 0x55;
+        let c = render_cube(&other);
+        assert!(a.iter().zip(&c).filter(|(x, y)| x != y).count() > a.len() / 4, "autre graine, autre ciel");
     }
 
     /// Mesure (règle 18) : `cargo test --release bench_sky -- --ignored --nocapture`.
@@ -663,5 +629,10 @@ mod tests {
         let t = std::time::Instant::now();
         let bytes = render_cube(&input(SKY_SIZE));
         println!("ciel {SKY_SIZE}x6 : {:.2} s, {} Mo", t.elapsed().as_secs_f32(), bytes.len() >> 20);
+        // Part du ciel couverte de nébuleuses colorées (pixel nettement coloré et assez clair)
+        let px: Vec<[u8; 4]> = bytes.chunks(4).map(|c| [c[0], c[1], c[2], c[3]]).collect();
+        let colored = px.iter().filter(|p| { let (mx, mn) = (p[0].max(p[1]).max(p[2]), p[0].min(p[1]).min(p[2])); mx > 25 && mx - mn > 12 }).count();
+        let mean = px.iter().map(|p| (p[0] as f32 + p[1] as f32 + p[2] as f32) / 3.0).sum::<f32>() / px.len() as f32;
+        println!("nebuleuses : {:.0} % du ciel, luminosite moyenne {mean:.1}/255", 100.0 * colored as f32 / px.len() as f32);
     }
 }
