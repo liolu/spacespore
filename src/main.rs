@@ -494,6 +494,7 @@ fn setup_scene(
             distance: 200.0,
             last_target_pos: Vec3::ZERO,
             zoom_goal: None,
+            frame: Quat::IDENTITY,
         },
     ));
 }
@@ -1083,6 +1084,22 @@ pub struct CameraController {
     last_target_pos: Vec3,
     /// Zoom automatique en cours (ex. clic sur une galaxie depuis l'espace profond).
     zoom_goal: Option<f32>,
+    /// Repère de l'orbite de la caméra (0.13 V3) : en vue galaxie, le plan de la galaxie (`GalaxyConfig::tilt`),
+    /// sinon le haut du monde ; on y passe en douceur (`galaxy_frame`).
+    frame: Quat,
+}
+
+/// Repère voulu pour la caméra : le plan de la galaxie de la cible dès la vue galaxie (et au-delà), sinon le
+/// monde. Le passage se fait en douceur (aussi d'une galaxie inclinée à une autre).
+fn galaxy_frame(ctrl: &mut CameraController, zoom: ZoomLevel, gid: u32, settings: &GameSettings, dt: f32) -> Quat {
+    let want = if matches!(zoom, ZoomLevel::Galaxy | ZoomLevel::Cosmos | ZoomLevel::DeepSpace) {
+        settings.galaxies.get(gid as usize).map_or(Quat::IDENTITY, |g| g.tilt)
+    } else {
+        Quat::IDENTITY
+    };
+    let k = 1.0 - (-2.5 * dt).exp();
+    ctrl.frame = ctrl.frame.slerp(want, k).normalize();
+    ctrl.frame
 }
 
 /// Limite du zoom 1 : en dessous, on reste verrouillé dans le système courant.
@@ -1525,7 +1542,11 @@ fn camera_controller(
 
     *zoom_level = ZoomLevel::from_distance(ctrl.distance);
 
-    let cam_rotation = Quat::from_euler(EulerRot::YXZ, ctrl.yaw, ctrl.pitch, 0.0);
+    // V3 : l'orbite de la caméra se fait dans le plan de la galaxie en vue galaxie (axe = celui de la galaxie)
+    let gid = current_galaxy(&camera_target.0, &queries, &settings);
+    let frame = galaxy_frame(&mut ctrl, *zoom_level, gid, &settings, time.delta_secs());
+    let up = frame * Vec3::Y;
+    let cam_rotation = frame * Quat::from_euler(EulerRot::YXZ, ctrl.yaw, ctrl.pitch, 0.0);
 
     // ── Vaisseau : croisière puis posé au-dessus de l'astre ────────
     let ship_pos = if let Ok((mut ship_tf, mut ship_vis, mut thrust)) = ship_q.get_single_mut() {
@@ -1537,7 +1558,7 @@ fn camera_controller(
         if hide_ship {
             *ship_vis = Visibility::Hidden;
             cam_tf.translation = target_pos + cam_rotation * Vec3::new(0.0, 0.0, ctrl.distance);
-            cam_tf.look_at(target_pos, Vec3::Y);
+            cam_tf.look_at(target_pos, up);
             cinematic::steer_camera(&mut cine, &mut cam_tf, ship_tf.translation);
             return;
         }
@@ -1556,7 +1577,7 @@ fn camera_controller(
     if let Some(params) = surface::body_params(&settings, &camera_target.0) {
         cam_tf.translation = surface::keep_outside(cam_tf.translation, target_pos, &params);
     }
-    cam_tf.look_at(ship_pos, Vec3::Y);
+    cam_tf.look_at(ship_pos, up);
     cinematic::steer_camera(&mut cine, &mut cam_tf, ship_pos);
 }
 
@@ -2994,6 +3015,25 @@ fn draw_orbits(
 #[cfg(test)]
 mod range_tests {
     use super::*;
+
+    /// V3 : en vue galaxie la caméra prend le plan de la galaxie (en douceur), et revient au monde en zoomant.
+    #[test]
+    fn galaxy_view_follows_the_galaxy_plane() {
+        let settings = GameSettings::default();
+        let gid = (1..settings.galaxies.len()).find(|&g| settings.galaxies[g].tilt.angle_between(Quat::IDENTITY) > 0.3).unwrap();
+        let tilt = settings.galaxies[gid].tilt;
+        let mut ctrl = CameraController { yaw: 0.0, pitch: 0.0, distance: 1.0, last_target_pos: Vec3::ZERO, zoom_goal: None, frame: Quat::IDENTITY };
+        let first = galaxy_frame(&mut ctrl, ZoomLevel::Galaxy, gid as u32, &settings, 1.0 / 60.0);
+        assert!(first.angle_between(Quat::IDENTITY) < 0.1, "pas de saut d'un coup");
+        for _ in 0..300 {
+            galaxy_frame(&mut ctrl, ZoomLevel::Galaxy, gid as u32, &settings, 1.0 / 60.0);
+        }
+        assert!(ctrl.frame.angle_between(tilt) < 0.01);
+        for _ in 0..300 {
+            galaxy_frame(&mut ctrl, ZoomLevel::System, gid as u32, &settings, 1.0 / 60.0);
+        }
+        assert!(ctrl.frame.angle_between(Quat::IDENTITY) < 0.01);
+    }
 
     /// La portée d'un saut = 5 tailles de galaxie depuis son centre.
     #[test]

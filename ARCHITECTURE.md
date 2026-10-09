@@ -340,7 +340,7 @@ n'est pas charge automatiquement : le lire quand on travaille sur le systeme con
   (`galaxy_jump_range`, sphere dessinee face a la camera en vue d'ensemble par `draw_travel_range`). Toutes les
   etoiles visibles a portee ont leur cercle (pas les cachees par l'eclaircissement) ; cercles de taille fixe dans
   l'espace (celui d'un trou noir galactique = son disque), 6 px pour un point.
-- 0.13 (`roadmaps/a-faire/ROADMAP-0.13.md`) : E1 = etude d'echelle (`roadmaps/fait/RAPPORT-echelle-E1.md`) : `terrain::set_voxel_scale(k)` /
+- 0.13 (`roadmaps/fait/ROADMAP-0.13.md`) : E1 = etude d'echelle (`roadmaps/fait/RAPPORT-echelle-E1.md`) : `terrain::set_voxel_scale(k)` /
   `layout_scaled`, `/echelle k`, `SPACESPORE_SCALE=k` ; banc `cargo test --release bench_scale -- --ignored
   --nocapture --test-threads=1` ; mesures en jeu `SPACESPORE_PERF=<fichier>` (+ `_FROM` / `_TO` en s :
   images/s medianes, 1 % bas, > 33 ms), `SPACESPORE_TEST_WALK=1` (marche tout droit). Choix : k = 16.
@@ -407,7 +407,7 @@ n'est pas charge automatiquement : le lire quand on travaille sur le systeme con
   `SurfaceControl`, poussiere, message. Chat : `/geologie [geyser|fumerolle|cryovolcan|lave|seisme]` (evente
   actif le plus proche ; seisme = force, tests). Tests : `SPACESPORE_TEST_CMD2` (+ `_SECS`, 30 s) = seconde
   commande apres l'atterrissage. PROTOCOL inchange (rien de nouveau dans le monde partage).
-- 0.13 bloc P (v0.13.4, `roadmaps/a-faire/ROADMAP-0.13.md`) = approche planetaire, un seul vol continu de l'orbite au sol :
+- 0.13 bloc P (v0.13.4, `roadmaps/fait/ROADMAP-0.13.md`) = approche planetaire, un seul vol continu de l'orbite au sol :
   `surface.rs::Flying` (ceiling `ORBIT_CEILING` 4 rayons, vitesse ∝ altitude plafonnee a `ORBIT_SPEED_FRAC` du rayon / s,
   freinage de l'air `approche::DRAG_Q0`, vaisseau qui grossit avec l'altitude (`stretch`, jamais moins de 1/30 de
   l'altitude), camera `cam_dist` qui recule et se penche, entree par ZQSD depuis la vue espace a moins de
@@ -427,7 +427,7 @@ n'est pas charge automatiquement : le lire quand on travaille sur le systeme con
   `sound.rs` = premier son du jeu, synthetise en WAV en memoire (feature bevy `wav`), boucles pilotees par la vitesse et la
   densite (`air_gain` : silence dans le vide), bang, tonnerre retarde, `/volume` (`GameSettings::sound_volume`). Tests :
   `/essai mer`, `/nuage`, `SPACESPORE_TEST_FLY=reentry` (voir `TESTS-JEU.md`), `cargo test --release approche sound`.
-- 0.13 bloc C (`roadmaps/a-faire/ROADMAP-0.13.md`) : C1 brouillard = `fog.rs` : un `FogVolume` (banc plat aligne sur la
+- 0.13 bloc C (`roadmaps/fait/ROADMAP-0.13.md`) : C1 brouillard = `fog.rs` : un `FogVolume` (banc plat aligne sur la
   verticale du lieu, pose sur le sol sous le joueur, texture de densite 3D, largeur = portee des ombres du soleil) + `VolumetricFog`
   sur la camera + `VolumetricLight` sur les `SurfaceSun` et les phares (les ombres sont forcees quand le banc existe : sans
   ombres le brouillard n'est pas eclaire et assombrit tout) ; densite = `fog_density(matin, temperature, matiere, vallee,
@@ -435,7 +435,7 @@ n'est pas charge automatiquement : le lire quand on travaille sur le systeme con
   (pur, testable : tirages de `galaxy_shape::Shape` + etoiles reelles + galaxies voisines, 6 x 1 024^2, threads ; plus de bande de galaxie dessinee, premier ciel calcule avant la 1re image par `first_sky`) lance en tache
   de fond par `watch_system` quand le systeme le plus proche change, `SkyMaterial` + `sky_dome.wgsl` (sphere sans profondeur,
   `z = 0`) qui dessine aussi `ClearColor` (le jour efface les etoiles). Tests : `/meteo clair`, `bench_sky`.
-- 0.13 bloc V (`roadmaps/a-faire/ROADMAP-0.13.md`) : `cinematic.rs` + `cinematic.wgsl` = sequences plein ecran (noeud d'interface
+- 0.13 bloc V (`roadmaps/fait/ROADMAP-0.13.md`) : `cinematic.rs` + `cinematic.wgsl` = sequences plein ecran (noeud d'interface
   `UiMaterial`, tout en shader) : `Dig` (foreuse a vise, dezoom, grille 2D puis 3D, espace qui tourne comme un trou noir, zoom, elle
   avance et le tunnel se forme ; `dig_params` = le scenario, 34 s), `Ride` (interieur d'un tunnel), `Galaxy` (saut entre galaxies,
   10 s, lance par `watch_jumps` quand le vaisseau saute de plus de 5 portees). Echap passe (`skip_with_escape`, `Last`).
@@ -475,3 +475,7 @@ n'est pas charge automatiquement : le lire quand on travaille sur le systeme con
   Profondeur ecrite = celle du centre (derriere : cache et vu devie ; devant : reste devant). Plus d'ancienne
   sphere + anneaux. Stationnement a `CORE_HOVER_RADII` (9) rayons, hors du disque. Test : `SPACESPORE_TEST_ZOOM=
   <s>:<distance>[:<lacet>:<tangage>]` avec `/tp 0`. L'animation de saut ne part plus pour un saut dans la meme galaxie.
+- 0.14.0 V3 = vue de la galaxie inclinee : `CameraController::frame` (repere de l'orbite de la camera) suit en douceur
+  (`galaxy_frame`, 2,5 /s) le plan de la galaxie de la cible (`GalaxyConfig::tilt`, `current_galaxy`) aux zooms Galaxie,
+  Cosmos et Espace profond, et revient au monde en dessous ; `look_at` avec le haut de ce repere. Test
+  `galaxy_view_follows_the_galaxy_plane`.

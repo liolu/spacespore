@@ -201,7 +201,7 @@ Commandes de test : `/brouillard [oui\|non\|auto\|0-100]`, `/meteo [clair\|auto]
 
 ### Bloc V — Espace spectaculaire (V2, V3, V4 des idées)
 
-**État : V1 (trous noirs : lentille de Kerr, disque Doppler, jets, étoile aspirée, `black_hole_fx.rs`), V2 (saut entre galaxies sur le vrai ciel) et V4 (tunnels du sub-espace, `tunnel.rs`, `cinematic.rs`) faits ; seule V3 (vue de la galaxie inclinée) reste à faire.**
+**État : V1 (trous noirs : lentille de Kerr, disque Doppler, jets, étoile aspirée, `black_hole_fx.rs`), V2 (saut entre galaxies sur le vrai ciel) et V4 (tunnels du sub-espace, `tunnel.rs`, `cinematic.rs`) faits ; V3 (vue de la galaxie inclinée, `main.rs::galaxy_frame`) faite en v0.14.0 : bloc V terminé.**
 
 | Phase | Contenu | Taille |
 |---|---|---|
@@ -285,7 +285,7 @@ relief et de l'eau finis.
 
 ## 8. Prompts (à coller dans une nouvelle session, un par phase)
 
-Contexte commun : « Lis `roadmaps/a-faire/ROADMAP-0.13.md`, `roadmaps/fait/RAPPORT-generation-terrain.md` et `CLAUDE.md` (règles 1 à
+Contexte commun : « Lis `roadmaps/fait/ROADMAP-0.13.md`, `roadmaps/fait/RAPPORT-generation-terrain.md` et `CLAUDE.md` (règles 1 à
 19). `git pull origin main` avant de coder. Branche `claude/roadmap-0-13-<phase>`. Build release,
 tests, mesures avant / après (règle 18) et captures. PR non fusionnée (je dirai « push main »). Aucune
 concession sur la qualité ; ne change ni les tailles de l'espace ni les décisions sans me demander. »

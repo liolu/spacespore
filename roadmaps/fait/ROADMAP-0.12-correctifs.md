@@ -4,7 +4,7 @@ Objectif : corriger ce qui ne va pas après les tests de la v0.11.3 (éditeur, v
 interface, chargement des systèmes, comètes). Publiés avec l'éditeur en **v0.12.0** (04/10/2026).
 
 Les idées plus grosses (rendu au sol, ciel, trous noirs, voyage entre galaxies, aliens) sont dans
-`roadmaps/a-faire/ROADMAP-0.13.md`.
+`roadmaps/fait/ROADMAP-0.13.md`.
 
 Chaque phase = une branche `claude/correctifs-<phase>`, une PR non fusionnée : tu testes, puis tu dis
 « push main ». Chaque phase a son **prompt prêt à coller** (section « Prompts »).
@@ -123,7 +123,7 @@ Message à l'écran pendant le chargement. Les étoiles des systèmes non charg�
 | # | Cause | Correction |
 |---|---|---|
 | 21 | 🔍 Pistes : la caméra se place **avant** la mise à jour de la comète (une image de retard, `asteroids.rs:55`), précision `f32` loin de l'origine (aphélie lointaine), queue recalculée à chaque image. Les captures ne montrent rien : il faut **mesurer**. | Journal des écarts image par image (comète, caméra, vaisseau) avec `/aller comete`. Ordre des systèmes : comète → vaisseau → caméra. Position calculée en `f64` relative à l'origine. Test : écart de position lissé sous 0,1 % de la taille à l'écran. |
-| 22 | 🔍 Les anneaux du trou noir (`astre/Remnant_stellaire/black_hole.rs`, 180 cubes de l'anneau photonique) sont dessinés sans tenir compte de la planète devant eux ni de l'atmosphère, et leur position ne suit pas l'origine flottante. | Au sol : cachés par la planète et par la brume de jour ; position recalculée depuis l'absolu (règle de l'origine flottante). Repris complètement par la phase V1 de `roadmaps/a-faire/ROADMAP-0.13.md`. |
+| 22 | 🔍 Les anneaux du trou noir (`astre/Remnant_stellaire/black_hole.rs`, 180 cubes de l'anneau photonique) sont dessinés sans tenir compte de la planète devant eux ni de l'atmosphère, et leur position ne suit pas l'origine flottante. | Au sol : cachés par la planète et par la brume de jour ; position recalculée depuis l'absolu (règle de l'origine flottante). Repris complètement par la phase V1 de `roadmaps/fait/ROADMAP-0.13.md`. |
 
 ---
 
