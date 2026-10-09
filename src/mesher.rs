@@ -322,6 +322,8 @@ pub fn build_chunk_mesh(
     let mut surface_types = vec![vec![VoxelType::Air; res]; res];
     // Ce qui remplit les bassins : eau, banquise ou rien (mer à sec)
     let mut seas = vec![vec![None; res]; res];
+    // Niveau de la mer de chaque case (il baisse là où elle s'évapore, comme le sol proche)
+    let mut sea_tops = vec![vec![radius; res]; res];
     let mut cell_dirs = vec![vec![Vec3::ZERO; res]; res];
     let mut cell_color_var = vec![vec![0.0f32; res]; res];
 
@@ -358,6 +360,7 @@ pub fn build_chunk_mesh(
             let rh = height_val - sl;
             surface_types[ix][iy] = biomes.material(&climate, &hydro, false, atmosphere, rh, dir.normalize());
             seas[ix][iy] = sea_material(&climate, &hydro, false, climate.sin_lat(dir));
+            sea_tops[ix][iy] = radius - crate::planetgen::climate::sea_drop(&climate, &hydro, false, climate.sin_lat(dir)) * sl * th;
         }
     }
 
@@ -383,7 +386,7 @@ pub fn build_chunk_mesh(
                 let terrain_h = terrain_heights[ix][iy];
                 voxels[layer][ix][iy] = if r_mid > terrain_h {
                     match seas[ix][iy] {
-                        Some(sea) if r_mid <= radius => sea,
+                        Some(sea) if r_mid <= sea_tops[ix][iy] => sea,
                         _ => VoxelType::Air,
                     }
                 } else {

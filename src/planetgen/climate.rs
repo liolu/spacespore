@@ -177,14 +177,12 @@ fn value3(p: Vec3, salt: u32) -> f32 {
     lerp(x0, x1, u.z) * 2.0 - 1.0
 }
 
-/// Décalage des bordures (radians de latitude, 0.14) : grandes ondulations (limites irrégulières, ~±3,5°) et
-/// tirage par petite case (~±1,4°), qui mêle les blocs des deux côtés sur une bande : un dégradé de blocs.
+/// Décalage des bordures (radians de latitude, 0.14) : ondulations douces à deux échelles (~±3,5°), pour des
+/// limites irrégulières. (Le tirage par petite case de la 0.14.3 mouchetait les côtes de blocs isolés : retiré.)
 /// Même fonction pour le sol proche et la vue de l'espace (règle 16).
 pub fn border_jitter(dir: Vec3, salt: u32) -> f32 {
     let wave = value3(dir * 7.0, salt) * 0.65 + value3(dir * 23.0, salt ^ 0x5151) * 0.35;
-    let cell = dir * 900.0;
-    let dither = hash3(cell.x.floor() as i32, cell.y.floor() as i32, cell.z.floor() as i32, salt ^ 0xD1D1) * 2.0 - 1.0;
-    wave * 0.06 + dither * 0.025
+    wave * 0.06
 }
 
 /// Altitude relative (0..1) d'un point de hauteur relative `rh` (hauteur du bruit − niveau de la mer).
@@ -251,9 +249,31 @@ pub fn sea_material(climate: &Climate, hydro: &Hydro, airless: bool, sin_lat: f3
     }
 }
 
+/// Mer qui s'évapore (0.14) : en approchant de la limite où elle bout, le niveau de la mer baisse peu à peu
+/// (sur 30 °C) jusqu'au fond des bassins. La côte suit alors le relief : plus de mur d'eau debout au-dessus d'un
+/// bassin à sec. Fraction (0..1) de la profondeur la plus grande (`niveau de la mer x hauteur du relief`).
+pub fn sea_drop(climate: &Climate, hydro: &Hydro, airless: bool, sin_lat: f32) -> f32 {
+    if airless || hydro.liquid == Liquid::None {
+        return 0.0;
+    }
+    let t = climate.temperature(sin_lat.clamp(-1.0, 1.0).asin(), 0.0, None);
+    ((t - (hydro.boil_c - 30.0)) / 30.0).clamp(0.0, 1.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 0.14 : la mer baisse jusqu'au fond en approchant de l'ébullition (pas de mur d'eau), rien ailleurs.
+    #[test]
+    fn the_sea_sinks_before_it_boils() {
+        let water = Hydro::default();
+        let drop = |mean: f32| sea_drop(&Climate { mean_c: mean, span: 0.0, ..Default::default() }, &water, false, 0.0);
+        assert_eq!(drop(20.0), 0.0);
+        assert!(drop(water.boil_c - 15.0) > 0.3 && drop(water.boil_c - 15.0) < 0.7);
+        assert_eq!(drop(water.boil_c + 1.0), 1.0);
+        assert_eq!(sea_drop(&Climate::default(), &Hydro::DRY, false, 0.0), 0.0);
+    }
 
     fn earth() -> Climate {
         Climate { mean_c: 15.0, span: 50.0, lapse: 50.0, diurnal: 10.0, tilt: 23.4, ..Default::default() }

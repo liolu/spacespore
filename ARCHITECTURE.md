@@ -499,3 +499,8 @@ n'est pas charge automatiquement : le lire quand on travaille sur le systeme con
   de neige, de banquise et de la bande de l'oeil irregulieres, melangees en degrade de blocs sur une bande ; bord des
   mers de lave des crateres pareil (`geology.rs`). Monde fongique : seulement tempere, biomes forces hors des reperes
   (glace, montagne, plages, basalte, sel), regions seches gardees, ciel teinte au lieu de violet. PROTOCOL 38.
+- 0.14.4 : `border_jitter` sans tirage par case (le moucheté de blocs isolés est retire, restent les ondulations).
+  `climate::sea_drop` : pres de l'ebullition la mer baisse sur 30 C jusqu'au fond (terrain `base_column`, maillage
+  lointain `sea_tops`) : plus de mur d'eau au-dessus d'un bassin a sec. Banc de brouillard (`fog.rs`) cache quand
+  le vaisseau est au-dessus (c'etait une boite autour du vaisseau). Ocean profond : niveau 0,84, grands volcans en
+  iles, canyons. PROTOCOL 39.

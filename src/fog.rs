@@ -215,15 +215,17 @@ fn update_volume(
         }
         return;
     };
-    if !on {
-        *vis = Visibility::Hidden;
-        return;
-    }
-    *vis = Visibility::Inherited;
     let v = t.voxel();
     let dir = p.normalize_or(Vec3::Y);
     let ground = t.ground(dir).top;
     let h = state.height_vox * v;
+    // Au-dessus du banc (vol), on ne le montre pas : vu d'en haut, c'était une boîte posée autour du vaisseau
+    let inside = p.length() - ground < h * 1.2;
+    if !on || !inside {
+        *vis = Visibility::Hidden;
+        return;
+    }
+    *vis = Visibility::Inherited;
     // Le banc ne dépasse pas la portée des ombres du soleil (sinon le brouillard lointain n'est pas éclairé)
     let width = if relief_shadows { 1800.0 * v } else { 400.0 * v };
     let d = state.density.clamp(0.0, 1.4);

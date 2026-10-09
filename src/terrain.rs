@@ -745,6 +745,10 @@ impl Terrain {
         let rel = ((h - p.radius) / quantum).round();
         // Marée (C4) : la mer monte ou descend de quelques voxels près du joueur
         let tide_q = if p.tide.is_calm() { 0.0 } else { (p.tide.at(dir) / quantum).round() };
+        // Mer qui s'évapore près de la limite où elle bout : son niveau baisse, la côte suit le relief (0.14)
+        // (seulement sous le niveau de la mer : les terres émergées ne paient rien)
+        let drop = if rel < tide_q { crate::planetgen::climate::sea_drop(&p.climate, &p.hydro, p.airless, p.climate.sin_lat(dir)) } else { 0.0 };
+        let tide_q = tide_q - (drop * p.sea_level * p.terrain_height / quantum).round();
         // Sous le niveau de la mer : eau, banquise, ou bassin à sec (trop chaud, ou sans air)
         let sea = if rel < tide_q { sea_material(&p.climate, &p.hydro, p.airless, p.climate.sin_lat(dir)) } else { None };
         let water = sea.is_some();

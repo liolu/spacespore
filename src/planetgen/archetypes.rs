@@ -126,9 +126,14 @@ pub fn apply(p: &mut PlanetConfig, a: Archetype) {
             }
         }
         Archetype::DeepOcean => {
+            // Mer partout au-dessus des continents ; seuls les grands volcans percent : îles volcaniques rares,
+            // fond varié (dorsales, canyons, monts sous-marins)
             p.hydrology.ocean_fraction = 1.0;
-            p.sea_level = 0.93;
-            p.terrain_height *= 0.8;
+            p.sea_level = 0.84;
+            let r = &mut p.geology.relief;
+            r.volcanoes = r.volcanoes.max(6).saturating_add(6);
+            r.volcano_height = r.volcano_height.max(0.12) * 1.8;
+            r.canyons = r.canyons.max(0.08);
         }
         Archetype::ShallowOcean => {
             p.hydrology.ocean_fraction = 1.0;
