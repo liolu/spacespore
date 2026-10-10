@@ -1187,6 +1187,9 @@ pub struct Live {
 /// l'écran (~2 pixels par quad), par paliers pour ne pas remailler sans cesse ; jamais moins que ~4 unités par
 /// quad (10 à 40 par face). Avant : par rayons de distance, et une comète (2 à 25 de rayon) vue du point de
 /// stationnement (150 au-dessus) restait toujours à la version de loin.
+/// Maillages fins (96 quads par côté et plus) gardés en même temps (mémoire vidéo).
+const MAX_FINE_MESHES: usize = 6;
+
 fn wanted_detail(radius: f32, dist: f32) -> usize {
     const STEPS: [usize; 6] = [16, 32, 64, 96, 160, 200];
     let base = ((radius / 4.0) as usize).clamp(10, 40);
@@ -1479,11 +1482,22 @@ fn stream_asteroids(
     }
 
     // Maillages des gros (hors du fil principal), les plus proches d'abord
+    // Seuls les `MAX_FINE_MESHES` plus proches ont droit aux maillages fins
+    let mut by_dist: Vec<(f32, AsteroidKey)> = field.live.values().filter(|l| l.ast.variant.is_none()).map(|l| (l.pose.translation.distance(cam.translation), l.ast.key)).collect();
+    by_dist.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let near: std::collections::HashSet<AsteroidKey> = by_dist.iter().take(MAX_FINE_MESHES).map(|(_, k)| *k).collect();
+    let capped = |key: &AsteroidKey, n: usize| if near.contains(key) { n } else { n.min(64) };
     let mut todo: Vec<(f32, AsteroidKey, AsteroidShape)> = field
         .live
         .values()
         .filter(|l| l.ast.variant.is_none() && !field.tasks.contains_key(&l.ast.key))
-        .filter(|l| !l.meshed || wanted_detail(l.ast.shape.radius, l.pose.translation.distance(cam.translation)) > l.detail)
+        .filter(|l| {
+            // Plus fin en s'approchant, et de nouveau plus grossier en s'éloignant : un maillage fin (jusqu'à
+            // ~1 million de sommets) gardé pour chaque astéroïde croisé finissait par remplir la mémoire vidéo
+            // (« Not enough memory left », 0.14.6)
+            let want = capped(&l.ast.key, wanted_detail(l.ast.shape.radius, l.pose.translation.distance(cam.translation)));
+            !l.meshed || want > l.detail || want * 2 <= l.detail
+        })
         .map(|l| (l.pose.translation.distance(cam.translation), l.ast.key, l.ast.shape))
         .collect();
     todo.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -1494,7 +1508,7 @@ fn stream_asteroids(
         }
         // Finesse selon la taille et la distance (`wanted_detail`)
         let dist = field.live.get(&key).map_or(f32::MAX, |l| l.pose.translation.distance(cam.translation));
-        let n = wanted_detail(shape.radius, dist);
+        let n = capped(&key, wanted_detail(shape.radius, dist));
         field.tasks.insert(key, pool.spawn(async move { (n, build_mesh(&shape, n)) }));
     }
 }

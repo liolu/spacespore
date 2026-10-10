@@ -508,3 +508,7 @@ n'est pas charge automatiquement : le lire quand on travaille sur le systeme con
   double, et de 3 directions a 120 deg a `terrain::TRANSITION_VOXELS` = 60 voxels) : couleurs intermediaires bloc
   apres bloc pres des limites de biomes, rien ailleurs ; terrain `base_column` (sol du biome lui-meme, pas sable /
   basalte / eboulis) et maillage lointain `mesher.rs` (`blends`). Cout mesure : `bench_tiles` 1,87 -> 2,09 ms.
+- 0.14.6 memoire video : les maillages des gros asteroides / cometes (`asteroids.rs::wanted_detail`, jusqu'a 200 quads
+  par cote ~ 1 million de sommets) etaient refaits plus fins en s'approchant mais jamais plus grossiers : chaque corps
+  croise gardait son maillage fin jusqu'au crash « Not enough memory left ». Maintenant : refait plus grossier quand
+  la finesse voulue tombe a la moitie, et seuls les `MAX_FINE_MESHES` (6) plus proches ont plus de 64.
