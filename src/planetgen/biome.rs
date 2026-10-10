@@ -437,6 +437,34 @@ impl BiomeField {
         }
     }
 
+    /// Camaïeu de transition (0.14.5) : couleur du sol émergé dans la direction `dir`, moyenne des couleurs des
+    /// biomes autour (3 directions à 120° à `reach` radians, la case elle-même comptant double). Loin d'une limite rien ne
+    /// change ; près d'une limite, la teinte passe d'un biome à l'autre bloc après bloc. Même fonction pour le sol
+    /// proche et la vue de l'espace (règle 16).
+    #[allow(clippy::too_many_arguments)]
+    pub fn blended_color(&self, climate: &Climate, hydro: &Hydro, airless: bool, atmosphere: bool, rh: f32, dir: Vec3, reach: f32, center: VoxelType) -> [f32; 4] {
+        let base = center.color();
+        let d = dir.normalize_or(Vec3::Y);
+        let (u, v) = d.any_orthonormal_pair();
+        let mut sum = [base[0] * 2.0, base[1] * 2.0, base[2] * 2.0];
+        let mut same = true;
+        let (s, c) = (0.866_025_4, 0.5);
+        for o in [u, -u * c + v * s, -u * c - v * s] {
+            // (sans le givre du matin : il ne fait pas de limite de biome)
+            let p = (d + o * reach).normalize();
+            let k = if self.params.defined { self.biome(climate, hydro, airless, atmosphere, rh, p).voxel() } else { self.material(climate, hydro, airless, atmosphere, rh, p) };
+            same &= k == center;
+            let c = k.color();
+            for i in 0..3 {
+                sum[i] += c[i];
+            }
+        }
+        if same {
+            return base;
+        }
+        [sum[0] / 5.0, sum[1] / 5.0, sum[2] / 5.0, base[3]]
+    }
+
     /// Matière voxel du sol émergé.
     pub fn material(&self, climate: &Climate, hydro: &Hydro, airless: bool, atmosphere: bool, rh: f32, dir: Vec3) -> VoxelType {
         // Givre du matin (0.11) : il blanchit le sol là où il y a de l'eau et de l'air
@@ -465,6 +493,24 @@ mod tests {
 
     fn earth_params(alien: bool) -> BiomeParams {
         BiomeParams { defined: true, seed: 3, wetness: 0.8, radiation: 0.05, alien, volcanism: 0.2, metal: false, sulfur: false, regolith: false, salt: false, flora: true, force: None }
+    }
+
+    /// 0.14.5 : camaïeu — loin des limites la couleur du biome, près d'une limite des teintes intermédiaires.
+    #[test]
+    fn transitions_blend_colors_near_borders_only() {
+        let field = BiomeField::new(earth_params(false));
+        let climate = Climate { mean_c: 25.0, span: 50.0, lapse: 50.0, diurnal: 10.0, tilt: 23.0, ..Default::default() };
+        let hydro = Hydro::default();
+        let (mut mixed, mut pure) = (0, 0);
+        for dir in sphere(4000) {
+            let k = field.material(&climate, &hydro, false, true, 0.08, dir);
+            let c = field.blended_color(&climate, &hydro, false, true, 0.08, dir, 0.01, k);
+            if c == k.color() { pure += 1 } else { mixed += 1 }
+            for i in 0..3 {
+                assert!((0.0..=1.0).contains(&c[i]));
+            }
+        }
+        assert!(mixed > 20 && pure > mixed * 3, "{mixed} melanges, {pure} purs");
     }
 
     #[test]

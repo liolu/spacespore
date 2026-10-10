@@ -459,6 +459,9 @@ const MOSS: [f32; 4] = [0.16, 0.34, 0.12, 1.0];
 /// paroi qui la domine (`wall`, voxels) (0.13 T3) : roche nue sur les pentes fortes (la neige
 /// tient plus longtemps, le sable des plages seulement en pente douce), mousse au pied des parois
 /// sur un monde humide. Mêmes règles pour les tuiles et le maillage vu de l'espace (règle 16).
+/// Largeur (voxels) du camaïeu de transition entre deux biomes, de part et d'autre de la limite (0.14.5).
+pub const TRANSITION_VOXELS: f32 = 60.0;
+
 pub fn ground_tint(kind: VoxelType, color: [f32; 4], slope: f32, wall: f32, wet: bool) -> [f32; 4] {
     if kind.is_liquid() {
         return color;
@@ -799,7 +802,8 @@ impl Terrain {
             (p.radius + tide_q * quantum, kind, color)
         } else {
             // Hauteur réelle (collines comprises) : une colline au bord de l'eau n'est pas une plage
-            let mut kind = self.surface_type((h - p.radius) / p.terrain_height.max(1.0), dir);
+            let natural = self.surface_type((h - p.radius) / p.terrain_height.max(1.0), dir);
+            let mut kind = natural;
             // Marée basse : le fond découvert est une grève de sable
             if rel < 0.0 && sea_material(&p.climate, &p.hydro, p.airless, p.climate.sin_lat(dir)).is_some() {
                 kind = VoxelType::Sand;
@@ -826,7 +830,15 @@ impl Terrain {
                     1.0,
                 ]
             } else {
-                let base = kind.color();
+                // Camaïeu de transition entre biomes (0.14.5) : seulement pour le sol du biome lui-même
+                // (pas sur les tuiles lointaines dont une colonne est plus large que la moitié du dégradé)
+                let surface = natural == kind && p.biomes.defined && !kind.is_liquid() && quantum < TRANSITION_VOXELS * 0.5 * self.layout.voxel;
+                let base = if surface {
+                    let reach = TRANSITION_VOXELS * self.layout.voxel / p.radius.max(1.0);
+                    self.biomes.blended_color(&p.climate, &p.hydro, p.airless, p.atmosphere, (h - p.radius) / p.terrain_height.max(1.0), dir, reach, kind)
+                } else {
+                    kind.color()
+                };
                 [
                     (base[0] + var * 0.7 + jitter).clamp(0.03, 1.0),
                     (base[1] + var * 0.9 + jitter).clamp(0.03, 1.0),

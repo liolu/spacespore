@@ -504,3 +504,7 @@ n'est pas charge automatiquement : le lire quand on travaille sur le systeme con
   lointain `sea_tops`) : plus de mur d'eau au-dessus d'un bassin a sec. Banc de brouillard (`fog.rs`) cache quand
   le vaisseau est au-dessus (c'etait une boite autour du vaisseau). Ocean profond : niveau 0,84, grands volcans en
   iles, canyons. PROTOCOL 39.
+- 0.14.5 camaieu de transition : `BiomeField::blended_color` (couleur du sol = moyenne du biome de la case, compte
+  double, et de 3 directions a 120 deg a `terrain::TRANSITION_VOXELS` = 60 voxels) : couleurs intermediaires bloc
+  apres bloc pres des limites de biomes, rien ailleurs ; terrain `base_column` (sol du biome lui-meme, pas sable /
+  basalte / eboulis) et maillage lointain `mesher.rs` (`blends`). Cout mesure : `bench_tiles` 1,87 -> 2,09 ms.

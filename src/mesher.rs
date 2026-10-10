@@ -316,7 +316,9 @@ pub fn build_chunk_mesh(
     // Même relief géologique que le terrain voxel
     let relief = ReliefField::new(relief).with_sea(sea_level);
     // Mêmes biomes que le terrain voxel : la couleur vue de l'espace est celle du sol
+    let biomes_defined = biomes.defined;
     let biomes = BiomeField::new(biomes);
+    let mut blends: Vec<Vec<Option<[f32; 4]>>> = vec![vec![None; res]; res];
 
     let mut terrain_heights = vec![vec![0.0f32; res]; res];
     let mut surface_types = vec![vec![VoxelType::Air; res]; res];
@@ -359,6 +361,10 @@ pub fn build_chunk_mesh(
             // Même climat que le terrain voxel (`planetgen::climate`) : la vue de l'espace et le sol concordent
             let rh = height_val - sl;
             surface_types[ix][iy] = biomes.material(&climate, &hydro, false, atmosphere, rh, dir.normalize());
+            // Camaïeu de transition entre biomes (0.14.5), comme le sol proche (règle 16)
+            if biomes_defined && !surface_types[ix][iy].is_liquid() {
+                blends[ix][iy] = Some(biomes.blended_color(&climate, &hydro, false, atmosphere, rh, dir.normalize(), crate::terrain::TRANSITION_VOXELS * voxel / radius.max(1.0), surface_types[ix][iy]));
+            }
             seas[ix][iy] = sea_material(&climate, &hydro, false, climate.sin_lat(dir));
             sea_tops[ix][iy] = radius - crate::planetgen::climate::sea_drop(&climate, &hydro, false, climate.sin_lat(dir)) * sl * th;
         }
@@ -424,7 +430,11 @@ pub fn build_chunk_mesh(
 
     // Compute per-cell color with noise variation + water depth
     let cell_color = |vtype: VoxelType, ix: usize, iy: usize, r_hi: f32| -> [f32; 4] {
-        let base = vtype.color();
+        let (cx, cy) = (ix.min(res - 1), iy.min(res - 1));
+        let base = match blends[cx][cy] {
+            Some(c) if vtype == surface_types[cx][cy] => c,
+            _ => vtype.color(),
+        };
         let var = cell_color_var[ix.min(res - 1)][iy.min(res - 1)];
 
         // Water depth darkening
