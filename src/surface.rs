@@ -128,6 +128,8 @@ impl Plugin for SurfacePlugin {
             .add_systems(Update, go_sea.before(SurfaceControl))
             .add_event::<RiverCommand>()
             .add_systems(Update, go_river.before(SurfaceControl))
+            .add_event::<BiomeCommand>()
+            .add_systems(Update, go_biome.before(SurfaceControl))
             .init_resource::<NearestCave>()
             .add_systems(Update, (go_cave.before(SurfaceControl), find_nearest_cave))
             .add_systems(Startup, (setup_hud, spawn_lamps, spawn_suns))
@@ -2581,6 +2583,66 @@ fn go_river(time: Res<Time>, mut events: EventReader<RiverCommand>, mut surface:
                 surface.fpos = dir * (top + 14.0 * v);
                 surface.fdescend = false;
                 net.notify(&format!("Au-dessus d'une riviere large de {wide:.0} voxels ({dist:.0} unites plus loin)."), now);
+            }
+            _ => net.notify("Attendez la fin de l'atterrissage.", now),
+        }
+    }
+}
+
+/// `/biome <mot>` (0.14 D3, tests) : aller au biome le plus proche dont le nom contient le mot (forêt, taiga...).
+#[derive(Event)]
+pub struct BiomeCommand(pub String);
+
+fn go_biome(time: Res<Time>, mut events: EventReader<BiomeCommand>, mut surface: ResMut<Surface>, mut net: ResMut<Net>) {
+    use crate::planetgen::biome::Biome;
+    let now = time.elapsed_secs_f64();
+    for BiomeCommand(arg) in events.read() {
+        let word = arg.trim().to_lowercase();
+        let wanted: Vec<Biome> = Biome::ALL.iter().copied().filter(|b| !word.is_empty() && b.name().contains(&word)).collect();
+        if wanted.is_empty() {
+            let names: Vec<&str> = Biome::ALL.iter().map(|b| b.name()).collect();
+            net.notify(&format!("/biome <mot> : {}", names.join(", ")), now);
+            continue;
+        }
+        let (Some(t), Some(p)) = (surface.terrain.as_ref(), surface.local_point()) else {
+            net.notify("Pas de biome trouve : posez-vous ou volez bas sur un astre solide (zoom sous 1000).", now);
+            continue;
+        };
+        let (v, radius) = (t.voxel(), t.params.radius);
+        let up0 = p.normalize_or(Vec3::Y);
+        let east = Vec3::Y.cross(up0).normalize_or(Vec3::X);
+        let north = up0.cross(east);
+        let hit = |d: Vec3| t.biome_at(d).is_some_and(|b| wanted.contains(&b));
+        let mut found = hit(up0).then_some(up0);
+        let mut ring = 0;
+        while found.is_none() && ring < 80 {
+            let ang = 60.0 * v * 1.2f32.powi(ring) / radius;
+            if ang > 3.0 {
+                break;
+            }
+            found = (0..32).find_map(|k| {
+                let az = k as f32 * std::f32::consts::TAU / 32.0;
+                let d = (up0 * ang.cos() + (east * az.cos() + north * az.sin()) * ang.sin()).normalize();
+                hit(d).then_some(d)
+            });
+            ring += 1;
+        }
+        let Some(dir) = found else {
+            net.notify("Ce biome n'existe pas sur cet astre (ou trop loin).", now);
+            continue;
+        };
+        let name = t.biome_at(dir).map_or("?", |b| b.name());
+        let dist = (dir - up0).length() * radius;
+        match surface.phase {
+            Phase::Walking => {
+                let w = Walker::spawn(t, dir, east - dir * east.dot(dir));
+                surface.walker = w;
+                net.notify(&format!("Biome : {name} ({dist:.0} unites plus loin)."), now);
+            }
+            Phase::Flying => {
+                surface.fpos = dir * (t.ground(dir).top + 14.0 * v);
+                surface.fdescend = false;
+                net.notify(&format!("Au-dessus du biome : {name} ({dist:.0} unites plus loin)."), now);
             }
             _ => net.notify("Attendez la fin de l'atterrissage.", now),
         }

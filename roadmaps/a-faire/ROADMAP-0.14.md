@@ -111,7 +111,10 @@ selon le vent, fonte saisonnière des glaciers, deltas à plusieurs bras.
 **D2 fait (v0.14.8)** : les évents façonnent le sol (cônes à bouche, sinter, soufre, glace, cendres), sources chaudes
 turquoise autour des geysers, champs de geysers (jusqu'à 4 par cellule), coulées figées en basalte, lave qui luit la
 nuit au sol et de l'orbite, traits « geysers géants » et « lacs de lave actifs » réels, éboulis pendant les séismes.
-Suite : D3 → D6.
+**D3 fait pour l'essentiel (v0.14.9)** : plantes qui ondulent au vent de la météo (rafales comprises), feuillage caduc
+roux puis nu quand la saison se refroidit, champignons géants et cosses qui luisent la nuit, forêts plus denses, trait
+« forêt pétrifiée » réel (arbres de pierre, même sans vie). Reste : plantes qui s'ouvrent le jour, instances GPU.
+Suite : D4 → D6.
 
 | Phase | Contenu | Fini quand | Taille |
 |---|---|---|---|

@@ -554,3 +554,23 @@ n'est pas charge automatiquement : le lire quand on travaille sur le systeme con
   `bench_tiles` 3,5 ms avec / 3,7 ms sans (`SPACESPORE_NO_GEO=1`). Capture : Vega 3 (`/aller planete volcans`,
   `/jour`, `/vol`, `/geologie lave`) : cone sombre sur la glace, cratere rougeoyant, coulee.
   PROTOCOL 41. Pas encore : fumee des fumerolles au loin, chaleur des sources (degats), sons (D5).
+- 0.14.9 bloc D / D3 vegetation vivante (`decor.rs`, `decor.wgsl`) : les plantes ont leur materiau `DecorMaterial`
+  (`ExtendedMaterial<StandardMaterial, Sway>`, uniforme `SwayParams` : vent, teinte, nuit) avec un sommet de shader
+  qui deplace chaque sommet selon sa hauteur dans la plante au carre (alpha du sommet = hauteur 0..0,5, +0,5 pour le
+  feuillage caduc : `DecorKind::mesh`), phase par plante (sa position monde), deux sinus (le second module par la
+  rafale). `animate_decor` (apres `SurfaceControl`) lit `WeatherNow` au point du joueur (est, nord, rafale) -> vecteur
+  monde (rotation de l'astre), amplitude 0,12 a 0,5 voxel ; saison : temperature a la latitude du joueur avec la
+  saison en cours contre la moyenne de l'annee (`Climate::at(Season::default())`) -> roux (`AUTUMN`) de 2 a 10 K sous la
+  moyenne, brun nu (`BARE`) sous 2 C, feuillage caduc seulement (`deciduous` : feuillu, jungle, acacia, buisson ;
+  pas le conifere) ; nuit = 1 - `Surface::daylight` -> lueur (`night_glow` : champignon geant, cosse de spores ; les
+  cristaux, le soufre et les champignons des grottes gardent leur materiau emissif permanent). Trois instances :
+  `living`, `living_glow`, `stone` (sans vent ni saison, gris par luminance : arbres de pierre). Trait « foret
+  petrifiee » reel (regle 20) : `BiomeParams::petrified` (pose dans `BodyParams::planet` d'apres `traits`) -> les
+  arbres (`DecorKind::tree`) poussent meme sans vie, `DecorInstance::petrified`, materiau `stone`. Forets plus
+  denses : feuillus 7,2 %, coniferes 8,5 %, jungle 7,8 % des colonnes (somme <= `MAX_DENSITY`). La passe de
+  profondeur garde les positions sans vent (ombres fixes). Tests `plant_vertices_code_their_height_and_their_leaves`,
+  `petrified_worlds_grow_stone_trees_without_life`. `/biome <mot>` (`surface.rs::go_biome`, tests) : va au biome le
+  plus proche dont le nom contient le mot. Mesure (`SPACESPORE_PERF`, vol bas, foret de cristal 6 % des colonnes et
+  plantes du rivage) : mediane 177-180 images/s, 1 % bas 81-104, aucune image > 33 ms (build GNU). PROTOCOL inchange
+  (decor local, f(graine)). Pas encore : plantes
+  qui s'ouvrent le jour, foret en instances GPU et LOD propre (les niveaux grossiers ont deja moins d'objets).

@@ -140,7 +140,7 @@ impl BodyParams {
             pressure: if p.air.present() { p.air.pressure_bar } else if p.atmosphere { 1.0 } else { 0.0 },
             hydro: if p.gaseous() { Hydro::DRY } else { p.hydrology.hydro },
             relief: p.geology.relief,
-            biomes: p.biomes,
+            biomes: BiomeParams { petrified: p.traits.iter().any(|t| t.name == "foret petrifiee"), ..p.biomes },
             asteroid: None,
             tide: Default::default(),
             geo: crate::geoactive::GeoActivity {
@@ -739,6 +739,11 @@ impl Terrain {
 
     /// Biome dans la direction `dir` (`None` : sous la mer, ou planète sans biomes calculés).
     pub fn biome_at(&self, dir: Vec3) -> Option<Biome> {
+        self.biome_at_with(dir, &self.biomes)
+    }
+
+    /// Comme `biome_at`, avec un autre champ de biomes (0.14 D3 : les biomes « avec plantes » d'une forêt pétrifiée).
+    pub fn biome_at_with(&self, dir: Vec3, field: &BiomeField) -> Option<Biome> {
         let p = &self.params;
         if !p.biomes.defined || p.gaseous {
             return None;
@@ -747,7 +752,7 @@ impl Terrain {
         if h < p.radius && sea_material(&p.climate, &p.hydro, p.airless, p.climate.sin_lat(dir)).is_some() {
             return None;
         }
-        Some(self.biomes.biome(&p.climate, &p.hydro, p.airless, p.atmosphere, (h - p.radius) / p.terrain_height.max(1.0), dir))
+        Some(field.biome(&p.climate, &p.hydro, p.airless, p.atmosphere, (h - p.radius) / p.terrain_height.max(1.0), dir))
     }
 
     /// Colonne vue de dessus dans la direction `dir` (champ de hauteur des tuiles lointaines et
