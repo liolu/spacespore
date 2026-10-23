@@ -1,9 +1,17 @@
-//! Géologie active (0.13 T5) : geysers, fumerolles, cryovolcans, coulées de lave lumineuses et
+//! Géologie active (0.13 T5, 0.14 D2) : geysers, fumerolles, cryovolcans, coulées de lave lumineuses et
 //! petits séismes, d'après l'activité de `planetgen::geology` (volcanisme, séismes) et l'eau.
 //!
 //! Tout est f(graine, horloge) (règle 12) : les évents sont hachés par cellule d'environ 400
-//! voxels sur la sphère-cube, leur force à un instant ne dépend que de leur graine et de
-//! `WorldClock::secs` ; deux joueurs voient le même geyser jaillir au même moment.
+//! voxels sur la sphère-cube (un principal, et jusqu'à trois secondaires pour les champs de geysers et de
+//! fumerolles), leur force à un instant ne dépend que de leur graine et de `WorldClock::secs` ; deux joueurs
+//! voient le même geyser jaillir au même moment.
+//!
+//! 0.14 D2 : les évents **façonnent le sol** (`GeoForms`, par les colonnes de `terrain.rs`, règle 16) : cône
+//! de sinter blanc à bouche pour un geyser (géant avec le trait « geysers géants ») entouré de bassins d'eau
+//! chaude turquoise, tache de soufre pour une fumerolle, cône de glace pour un cryovolcan, cône de cendres
+//! à cratère pour un évent de lave avec sa coulée figée en basalte (lac de lave permanent avec le trait
+//! « lacs de lave actifs »). La lave luit la nuit (sommets marqués `terrain::GLOW_ALPHA`, sol et orbite).
+//! Les séismes font tomber des éboulis sur les pentes.
 
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
@@ -12,6 +20,7 @@ use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::view::NoFrustumCulling;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crate::planet::{MoonId, MoonRoot, PlanetId, PlanetRoot, VoxelType};
 use crate::planetgen::seeds::splitmix64;
@@ -29,6 +38,10 @@ pub struct GeoActivity {
     pub quakes: f32,
     /// Océan sous la glace chauffé par les marées (Encelade) : cryovolcans.
     pub cryo: bool,
+    /// Trait « geysers géants » (0.14 D2) : geysers quatre fois plus hauts, cônes plus larges.
+    pub giant_geysers: bool,
+    /// Trait « lacs de lave actifs » : un lac de lave permanent dans chaque cratère d'évent de lave.
+    pub lava_lakes: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -133,6 +146,36 @@ pub fn cell_vent(p: &BodyParams, (face, x, y): (u8, i64, i64), ground: &dyn Fn(V
     Some(Vent { kind, dir, seed: splitmix64(h) })
 }
 
+/// Tous les évents de la cellule (0.14 D2) : le principal, et pour un geyser ou une fumerolle jusqu'à trois
+/// secondaires de la même sorte à moins de 60 voxels (champ de geysers), jamais dans l'eau.
+pub fn cell_vents(p: &BodyParams, cell: (u8, i64, i64), ground: &dyn Fn(Vec3) -> VoxelType) -> Vec<Vent> {
+    let Some(main) = cell_vent(p, cell, ground) else { return Vec::new() };
+    let mut out = vec![main];
+    if !matches!(main.kind, VentKind::Geyser | VentKind::Fumarole) {
+        return out;
+    }
+    let voxel = p.layout().voxel;
+    let mut h = main.seed ^ 0xF1E1D;
+    let mut next = || {
+        h = splitmix64(h);
+        unit(h)
+    };
+    let extra = (next() * 4.0) as usize;
+    let up = main.dir;
+    let e1 = up.any_orthonormal_vector();
+    let e2 = up.cross(e1);
+    for k in 0..extra {
+        let az = next() * std::f32::consts::TAU;
+        let dist = (18.0 + 42.0 * next()) * voxel / p.radius.max(1.0);
+        let dir = (up * dist.cos() + (e1 * az.cos() + e2 * az.sin()) * dist.sin()).normalize();
+        if ground(dir).is_liquid() {
+            continue;
+        }
+        out.push(Vent { kind: main.kind, dir, seed: splitmix64(main.seed ^ (k as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15)) });
+    }
+    out
+}
+
 /// Évents dans un carré de (2 `reach` + 1)² cellules autour de `dir` (même face).
 pub fn vents_near(p: &BodyParams, dir: Vec3, reach: i64, ground: &dyn Fn(Vec3) -> VoxelType) -> Vec<Vent> {
     let n = cells(p);
@@ -140,7 +183,7 @@ pub fn vents_near(p: &BodyParams, dir: Vec3, reach: i64, ground: &dyn Fn(Vec3) -
     let mut out = Vec::new();
     for cy in (y - reach).max(0)..=(y + reach).min(n - 1) {
         for cx in (x - reach).max(0)..=(x + reach).min(n - 1) {
-            out.extend(cell_vent(p, (face, cx, cy), ground));
+            out.extend(cell_vents(p, (face, cx, cy), ground));
         }
     }
     out
@@ -150,11 +193,18 @@ pub fn vents_near(p: &BodyParams, dir: Vec3, reach: i64, ground: &dyn Fn(Vec3) -
 /// dizaines de secondes toutes les quelques minutes, la fumerolle fume toujours, le cryovolcan
 /// enfle et faiblit avec les heures, la lave coule pendant des éruptions de quelques heures.
 pub fn strength(v: &Vent, t: f64) -> f32 {
+    strength_in(v, t, &GeoActivity::default())
+}
+
+/// Comme `strength`, avec les traits de l'astre : un geyser géant jaillit plus longtemps et moins souvent, un lac
+/// de lave actif ne refroidit jamais tout à fait.
+pub fn strength_in(v: &Vent, t: f64, g: &GeoActivity) -> f32 {
     let r = |k: u64| unit(splitmix64(v.seed ^ k)) as f64;
     match v.kind {
         VentKind::Geyser => {
-            let period = 90.0 + 420.0 * r(1);
-            let length = 8.0 + 22.0 * r(2);
+            let big = if g.giant_geysers { 2.0 } else { 1.0 };
+            let period = (90.0 + 420.0 * r(1)) * big;
+            let length = (8.0 + 22.0 * r(2)) * big;
             let x = (t + period * r(3)).rem_euclid(period);
             if x < length {
                 let u = x / length;
@@ -173,8 +223,8 @@ pub fn strength(v: &Vent, t: f64) -> f32 {
             if x < length {
                 1.0
             } else {
-                // Refroidissement : la coulée s'assombrit en une demi-heure
-                (1.0 - (x - length) / 1800.0).max(0.0) as f32 * 0.8
+                // Refroidissement : la coulée s'assombrit en une demi-heure (jamais tout à fait sur un lac de lave actif)
+                ((1.0 - (x - length) / 1800.0).max(0.0) as f32 * 0.8).max(if g.lava_lakes { 0.5 } else { 0.0 })
             }
         }
     }
@@ -229,12 +279,13 @@ fn forced_quake(t: f64) -> f32 {
 type Particle = (Vec3, f32, [f32; 4]);
 
 /// Particules d'un évent de force `s` dont la bouche est en `base` (sur le sol).
-fn vent_particles(v: &Vent, base: Vec3, s: f32, t: f64, voxel: f32, out: &mut Vec<Particle>) {
+fn vent_particles(v: &Vent, base: Vec3, s: f32, t: f64, voxel: f32, giant: bool, out: &mut Vec<Particle>) {
     let up = base.normalize();
     let e1 = up.any_orthonormal_vector();
     let e2 = up.cross(e1);
     // (hauteur, nombre, durée de vie, rayon de base, évasement, taille, couleur)
     let (height, count, life, r0, spread, size, color) = match v.kind {
+        VentKind::Geyser if giant => (180.0, 300, 5.0, 2.5, 0.1, 1.6, [0.95, 0.97, 1.0, 0.75]),
         VentKind::Geyser => (45.0, 160, 3.0, 0.8, 0.12, 0.7, [0.95, 0.97, 1.0, 0.75]),
         VentKind::Fumarole => (16.0, 50, 6.0, 1.5, 0.35, 1.0, [0.86, 0.84, 0.72, 0.35]),
         VentKind::Cryovolcano => (320.0, 240, 12.0, 3.0, 0.25, 3.0, [0.86, 0.93, 1.0, 0.5]),
@@ -256,11 +307,13 @@ fn vent_particles(v: &Vent, base: Vec3, s: f32, t: f64, voxel: f32, out: &mut Ve
     }
 }
 
-/// Lit d'une coulée de lave : le chemin de la plus grande pente depuis l'évent (pas de 2,5 voxels).
-fn lava_path(t: &Terrain, v: &Vent, steps: usize) -> Vec<Vec3> {
+/// Lit d'une coulée de lave : le chemin de la plus grande pente depuis l'évent (pas de `step` voxels), sur le
+/// relief naturel (le même que les formes du sol, règle 16) ; directions unitaires.
+fn lava_path_dirs(t: &Terrain, v: &Vent, steps: usize, step: f32) -> Vec<Vec3> {
     let voxel = t.voxel();
     let mut dir = v.dir;
-    let mut out = vec![dir * t.ground(dir).top];
+    let mut h = t.ground_radius(dir);
+    let mut out = vec![dir];
     for _ in 0..steps {
         let up = dir;
         let e1 = up.any_orthonormal_vector();
@@ -268,17 +321,261 @@ fn lava_path(t: &Terrain, v: &Vent, steps: usize) -> Vec<Vec3> {
         let mut best: Option<(f32, Vec3)> = None;
         for k in 0..8 {
             let a = k as f32 * std::f32::consts::FRAC_PI_4;
-            let d = (up * t.params.radius + (e1 * a.cos() + e2 * a.sin()) * 2.5 * voxel).normalize();
-            let g = t.ground(d).top;
+            let d = (up * t.params.radius + (e1 * a.cos() + e2 * a.sin()) * step * voxel).normalize();
+            let g = t.ground_radius(d);
             if best.is_none_or(|b| g < b.0) {
                 best = Some((g, d));
             }
         }
         let Some((g, d)) = best else { break };
+        if g >= h {
+            break;
+        }
         dir = d;
-        out.push(d * g);
+        h = g;
+        out.push(d);
     }
     out
+}
+
+/// Lit d'une coulée de lave en points (rayon du sol réel, formes comprises), pour la lave qui luit.
+fn lava_path(t: &Terrain, v: &Vent, steps: usize) -> Vec<Vec3> {
+    lava_path_dirs(t, v, steps, 2.5).into_iter().map(|d| d * t.ground(d).top).collect()
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Formes au sol (0.14 D2)
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Un évent et la forme qu'il donne au sol (unités).
+#[derive(Clone, Debug)]
+pub struct Shaped {
+    pub vent: Vent,
+    /// Cône : rayon et hauteur ; bouche : rayon et profondeur.
+    cone_r: f32,
+    cone_h: f32,
+    hole_r: f32,
+    hole_d: f32,
+    /// Matière du cône.
+    kind: VoxelType,
+    /// Bassins d'eau chaude : direction, rayon, rayon du sol naturel au centre.
+    pools: Vec<(Vec3, f32, f32)>,
+    /// Coulée figée : directions des points du lit.
+    flow: Vec<Vec3>,
+    /// Portée angulaire de tout cela.
+    reach: f32,
+}
+
+/// Ce qu'un évent fait à une colonne : nouveau rayon du sol, matière, liquide (surface, matière, couleur).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Form {
+    pub ground: f32,
+    pub kind: Option<VoxelType>,
+    pub water: Option<(f32, VoxelType, [f32; 4])>,
+}
+
+/// Formes des évents d'un astre, par cellule : partagées par toutes les tuiles et tous les `Terrain` du même astre
+/// (`of`, cache global comme `rivers.rs`), générées une fois par cellule.
+pub struct GeoForms {
+    /// Les évents d'une cellule, façonnés.
+    own: Mutex<HashMap<(u8, i64, i64), Arc<Vec<Shaped>>>>,
+    /// Ceux dont la forme touche une cellule (les siens et ceux des voisines).
+    near: Mutex<HashMap<(u8, i64, i64), Arc<Vec<Shaped>>>>,
+}
+
+type GeoKey = (u32, u32, u32, u32, u32, u32, u32, bool, bool);
+
+static FORMS: Mutex<Vec<(GeoKey, Arc<GeoForms>)>> = Mutex::new(Vec::new());
+
+/// Couleur de l'eau chaude des bassins (turquoise laiteux).
+pub const HOT_SPRING_COLOR: [f32; 4] = [0.36, 0.78, 0.76, 1.0];
+
+impl GeoForms {
+    pub fn wanted(p: &BodyParams) -> bool {
+        !p.gaseous && p.asteroid.is_none()
+    }
+
+    pub fn new() -> Self {
+        Self { own: Mutex::new(HashMap::new()), near: Mutex::new(HashMap::new()) }
+    }
+
+    /// Les formes de cet astre, partagées (8 astres gardés).
+    pub fn of(p: &BodyParams, voxel: f32) -> Option<Arc<GeoForms>> {
+        // (`SPACESPORE_NO_GEO=1` : mesures avant / après, `bench_tiles`)
+        if !Self::wanted(p) || std::env::var_os("SPACESPORE_NO_GEO").is_some() {
+            return None;
+        }
+        let key: GeoKey = (p.seed, p.radius.to_bits(), voxel.to_bits(), p.terrain_height.to_bits(), p.sea_level.to_bits(), p.geo.volcanism.to_bits(), p.temperature.to_bits(), p.geo.giant_geysers, p.geo.lava_lakes);
+        let mut all = FORMS.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, g)) = all.iter().find(|(k, _)| *k == key) {
+            return Some(g.clone());
+        }
+        let g = Arc::new(Self::new());
+        all.push((key, g.clone()));
+        if all.len() > 8 {
+            all.remove(0);
+        }
+        Some(g)
+    }
+
+    /// La forme d'un évent, d'après le relief naturel.
+    fn shaped(t: &Terrain, v: Vent) -> Shaped {
+        let p = &t.params;
+        let vx = t.voxel();
+        let mut h = v.seed ^ 0x5A4D;
+        let mut next = || {
+            h = splitmix64(h);
+            unit(h)
+        };
+        let (cone_r, cone_h, hole_r, hole_d, kind) = match v.kind {
+            VentKind::Geyser if p.geo.giant_geysers => (30.0, 10.0, 4.0, 8.0, VoxelType::Salt),
+            VentKind::Geyser => (10.0, 3.5, 1.6, 3.0, VoxelType::Salt),
+            VentKind::Fumarole => (5.0, 1.0, 1.0, 2.0, VoxelType::Sulfur),
+            VentKind::Cryovolcano => (36.0, 14.0, 3.0, 6.0, VoxelType::Ice),
+            VentKind::Lava => (45.0, 20.0, 9.0, 7.0, VoxelType::Basalt),
+        };
+        let mut reach = cone_r + 2.0;
+        let mut pools = Vec::new();
+        let up = v.dir;
+        let e1 = up.any_orthonormal_vector();
+        let e2 = up.cross(e1);
+        if v.kind == VentKind::Geyser {
+            let big = if p.geo.giant_geysers { 2.0 } else { 1.0 };
+            let n = 2 + (next() * 2.0) as usize;
+            for _ in 0..n {
+                let az = next() * std::f32::consts::TAU;
+                let dist = (cone_r + 2.0 + 14.0 * next()) * big;
+                let r = (3.0 + 2.5 * next()) * big;
+                let ang = dist * vx / p.radius.max(1.0);
+                let dir = (up * ang.cos() + (e1 * az.cos() + e2 * az.sin()) * ang.sin()).normalize();
+                let g = t.ground_radius(dir);
+                if g < p.radius + 2.0 * vx {
+                    continue;
+                }
+                pools.push((dir, r * vx, g));
+                reach = reach.max(dist + r + 3.0);
+            }
+        }
+        let mut flow = Vec::new();
+        if v.kind == VentKind::Lava {
+            flow = lava_path_dirs(t, &v, 60, 3.0);
+            for d in &flow {
+                reach = reach.max((*d - up).length() * p.radius / vx + 4.0);
+            }
+        }
+        Shaped { vent: v, cone_r: cone_r * vx, cone_h: cone_h * vx, hole_r: hole_r * vx, hole_d: hole_d * vx, kind, pools, flow, reach: reach * vx / p.radius.max(1.0) }
+    }
+
+    /// Les évents de la cellule `key`, façonnés (une fois).
+    fn own(&self, t: &Terrain, key: (u8, i64, i64)) -> Arc<Vec<Shaped>> {
+        if let Some(c) = self.own.lock().ok().and_then(|c| c.get(&key).cloned()) {
+            return c;
+        }
+        let ground = |d: Vec3| t.vent_ground(d);
+        let out = Arc::new(cell_vents(&t.params, key, &ground).into_iter().map(|v| Self::shaped(t, v)).collect::<Vec<_>>());
+        if let Ok(mut c) = self.own.lock() {
+            if c.len() > 4096 {
+                c.clear();
+            }
+            c.insert(key, out.clone());
+        }
+        out
+    }
+
+    /// Les évents dont la forme touche la cellule `key` (les siens et ceux des voisines), générés une fois.
+    fn cell(&self, t: &Terrain, key: (u8, i64, i64)) -> Arc<Vec<Shaped>> {
+        if let Some(c) = self.near.lock().ok().and_then(|c| c.get(&key).cloned()) {
+            return c;
+        }
+        let p = &t.params;
+        let n = cells(p);
+        let (face, x, y) = key;
+        let center = face_dir(face, -1.0 + 2.0 * (x as f32 + 0.5) / n as f32, -1.0 + 2.0 * (y as f32 + 0.5) / n as f32);
+        let half = std::f32::consts::FRAC_PI_2 / n as f32 * 0.75;
+        let mut out = Vec::new();
+        for cy in (y - 1).max(0)..=(y + 1).min(n - 1) {
+            for cx in (x - 1).max(0)..=(x + 1).min(n - 1) {
+                for s in self.own(t, (face, cx, cy)).iter() {
+                    if (s.vent.dir - center).length() < half + s.reach {
+                        out.push(s.clone());
+                    }
+                }
+            }
+        }
+        let out = Arc::new(out);
+        if let Ok(mut c) = self.near.lock() {
+            if c.len() > 4096 {
+                c.clear();
+            }
+            c.insert(key, out.clone());
+        }
+        out
+    }
+
+    /// Ce que les évents font à la colonne `dir` dont le sol naturel est au rayon `h`.
+    pub fn at(&self, t: &Terrain, dir: Vec3, h: f32) -> Option<Form> {
+        let p = &t.params;
+        let list = self.cell(t, cell_of(p, dir));
+        if list.is_empty() {
+            return None;
+        }
+        let vx = t.voxel();
+        let radius = p.radius.max(1.0);
+        let mut f = Form { ground: h, kind: None, water: None };
+        let mut hit = false;
+        for s in list.iter() {
+            let ang = (dir - s.vent.dir).length();
+            if ang > s.reach {
+                continue;
+            }
+            let d = ang * radius;
+            let cone = if d < s.cone_r { s.cone_h * (1.0 - (d / s.cone_r).powi(2)).powf(1.5) } else { 0.0 };
+            let hole = if d < s.hole_r { s.hole_d * (1.0 - (d / s.hole_r).powi(2)) } else { 0.0 };
+            if cone > 0.0 || hole > 0.0 {
+                hit = true;
+                f.ground = f.ground.max(h + cone - hole);
+                if d < s.cone_r * 0.8 {
+                    f.kind = Some(s.kind);
+                }
+                // Lac de lave permanent au fond du cratère
+                if s.vent.kind == VentKind::Lava && p.geo.lava_lakes && d < s.hole_r * 0.85 {
+                    f.water = Some((h + s.cone_h - s.hole_d * 0.4, VoxelType::Lava, VoxelType::Lava.color()));
+                }
+            }
+            for (pd, pr, pg) in &s.pools {
+                let dd = (dir - *pd).length() * radius;
+                if dd < pr + 2.0 * vx {
+                    hit = true;
+                    f.kind = Some(VoxelType::Salt);
+                    if dd < *pr {
+                        f.ground = f.ground.min(pg - 1.5 * vx - vx * (1.0 - (dd / pr).powi(2)));
+                        f.water = Some((pg - 0.3 * vx, VoxelType::Water, HOT_SPRING_COLOR));
+                    }
+                }
+            }
+            if s.flow.len() > 1 && d >= s.cone_r * 0.8 {
+                let mut best = f32::INFINITY;
+                for w in s.flow.windows(2) {
+                    let ab = w[1] - w[0];
+                    let len2 = ab.length_squared().max(1e-12);
+                    let tt = ((dir - w[0]).dot(ab) / len2).clamp(0.0, 1.0);
+                    best = best.min((dir - (w[0] + ab * tt)).length() * radius);
+                }
+                if best < 2.5 * vx {
+                    hit = true;
+                    f.ground = f.ground.max(h + 0.8 * vx * (1.0 - best / (2.5 * vx)));
+                    f.kind = Some(VoxelType::Basalt);
+                }
+            }
+        }
+        hit.then_some(f)
+    }
+}
+
+impl Default for GeoForms {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -306,7 +603,7 @@ struct GeoLight;
 #[derive(Resource, Default)]
 pub struct GeoState {
     body: Option<TargetKind>,
-    cells: HashMap<(u8, i64, i64), Option<Vent>>,
+    cells: HashMap<(u8, i64, i64), Vec<Vent>>,
     /// Coulée calculée (graine de l'évent, chemin).
     lava: Option<(u64, Vec<Vec3>)>,
     announced: f64,
@@ -395,8 +692,8 @@ fn geo_fx(
     for cy in (y - reach).max(0)..=(y + reach).min(n - 1) {
         for cx in (x - reach).max(0)..=(x + reach).min(n - 1) {
             let key = (face, cx, cy);
-            let v = *state.cells.entry(key).or_insert_with(|| cell_vent(p, key, &|d| t.base_column(d, voxel).kind));
-            if let Some(v) = v {
+            let list = state.cells.entry(key).or_insert_with(|| cell_vents(p, key, &|d| t.vent_ground(d))).clone();
+            for v in list {
                 let base = v.dir * t.ground(v.dir).top;
                 if base.distance(cam_local) < SHOW_VOXELS * voxel {
                     vents.push((v, base));
@@ -424,17 +721,49 @@ fn geo_fx(
 
     // Particules
     let mut parts: Vec<Particle> = Vec::new();
-    for (v, base) in vents.iter().take(8) {
-        let s = strength(v, now);
+    for (v, base) in vents.iter().take(12) {
+        let s = strength_in(v, now, &p.geo);
         if s > 0.01 {
-            vent_particles(v, *base, s, now, voxel, &mut parts);
+            vent_particles(v, *base, s, now, voxel, p.geo.giant_geysers, &mut parts);
+        }
+    }
+    // Éboulis (0.14 D2) : pendant un séisme, des pierres dévalent les pentes autour du joueur
+    if shake > 0.2 {
+        let bin = (now / 8.0).floor() as u64;
+        let up = here;
+        let e1 = up.any_orthonormal_vector();
+        let e2 = up.cross(e1);
+        for i in 0..40u64 {
+            let h = splitmix64((p.seed as u64) ^ 0xEB0_0115 ^ bin.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ i.wrapping_mul(0xC2B2_AE3D_27D4_EB4F));
+            let az = unit(h) * std::f32::consts::TAU;
+            let dist = (8.0 + 50.0 * unit(splitmix64(h ^ 1))) * voxel / p.radius.max(1.0);
+            let d = (up * dist.cos() + (e1 * az.cos() + e2 * az.sin()) * dist.sin()).normalize();
+            let g = t.ground(d).top;
+            // Seulement sur une pente : le sol descend d'au moins un demi-voxel en 3 voxels
+            let step = 3.0 * voxel / p.radius.max(1.0);
+            let (ga, gb) = (t.ground((d + e1 * step).normalize()).top, t.ground((d + e2 * step).normalize()).top);
+            let grad = Vec3::new(ga - g, gb - g, 0.0);
+            if grad.length() < 0.5 * voxel {
+                continue;
+            }
+            let down = -(e1 * grad.x + e2 * grad.y).normalize_or_zero();
+            let start = bin as f64 * 8.0 + 2.0 * unit(splitmix64(h ^ 2)) as f64;
+            let age = (now - start) as f32;
+            if !(0.0..3.0).contains(&age) {
+                continue;
+            }
+            let bounce = (age * 7.0).sin().abs() * (1.0 - age / 3.0) * 2.5 * voxel;
+            let slide = down * age * 2.0 * voxel;
+            let pos = d * (g + 0.6 * voxel + bounce) + slide;
+            let grey = 0.28 + 0.12 * unit(splitmix64(h ^ 3));
+            parts.push((pos, (0.35 + 0.3 * unit(splitmix64(h ^ 4))) * voxel, [grey, grey * 0.95, grey * 0.9, 1.0]));
         }
     }
     if shake > 0.05 && p.atmosphere {
         let ground = here * t.ground(here).top;
         let dust = Vent { kind: VentKind::Fumarole, dir: here, seed: 0xD057 };
         let mut d = Vec::new();
-        vent_particles(&dust, ground, shake, now * 0.5, voxel * 1.5, &mut d);
+        vent_particles(&dust, ground, shake, now * 0.5, voxel * 1.5, false, &mut d);
         parts.extend(d.into_iter().map(|(q, sz, c)| (q, sz, [0.62, 0.52, 0.4, c[3] * 0.8])));
     }
     parts.truncate(MAX_PARTICLES);
@@ -443,7 +772,7 @@ fn geo_fx(
     let (right, upv) = (cam_rot * Vec3::X, cam_rot * Vec3::Y);
 
     // Coulée de lave de l'évent de lave le plus proche
-    let lava_vent = vents.iter().find(|(v, _)| v.kind == VentKind::Lava && strength(v, now) > 0.01).map(|(v, _)| *v);
+    let lava_vent = vents.iter().find(|(v, _)| v.kind == VentKind::Lava && strength_in(v, now, &p.geo) > 0.01).map(|(v, _)| *v);
     if let Some(v) = lava_vent {
         if state.lava.as_ref().is_none_or(|(s, _)| *s != v.seed) {
             state.lava = Some((v.seed, lava_path(t, &v, 40)));
@@ -458,7 +787,7 @@ fn geo_fx(
         if is_lava {
             if let (Some(v), Some((_, path))) = (lava_vent, state.lava.as_ref()) {
                 // La coulée s'allonge et rougeoie avec l'éruption, puis s'assombrit
-                let s = strength(&v, now);
+                let s = strength_in(&v, now, &p.geo);
                 let len = ((path.len() as f32 * s.min(1.0)).ceil() as usize).clamp(2, path.len());
                 let glow = [2.2 * s, 0.75 * s * s, 0.12 * s, 1.0];
                 // Bassin à la bouche de l'évent
@@ -501,7 +830,7 @@ fn geo_fx(
         if parent.map(|p| p.get()) != Some(root_e) {
             commands.entity(root_e).add_child(e);
         }
-        let s = lava_vent.map_or(0.0, |v| strength(&v, now));
+        let s = lava_vent.map_or(0.0, |v| strength_in(&v, now, &p.geo));
         let wanted = if s > 0.01 { Visibility::Inherited } else { Visibility::Hidden };
         if *vis != wanted {
             *vis = wanted;
@@ -517,9 +846,8 @@ fn geo_fx(
 /// L'évent de cette sorte le plus proche de `dir` (dans un carré de `reach` cellules), en activité
 /// à l'instant `now` si possible (une coulée en éruption plutôt qu'une coulée froide).
 pub fn nearest_vent(t: &Terrain, dir: Vec3, kind: VentKind, reach: i64, now: f64) -> Option<Vent> {
-    let voxel = t.voxel();
-    let all: Vec<Vent> = vents_near(&t.params, dir, reach, &|d| t.base_column(d, voxel).kind).into_iter().filter(|v| v.kind == kind).collect();
-    let active: Vec<Vent> = all.iter().copied().filter(|v| kind == VentKind::Geyser || strength(v, now) > 0.3).collect();
+    let all: Vec<Vent> = vents_near(&t.params, dir, reach, &|d| t.vent_ground(d)).into_iter().filter(|v| v.kind == kind).collect();
+    let active: Vec<Vent> = all.iter().copied().filter(|v| kind == VentKind::Geyser || strength_in(v, now, &t.params.geo) > 0.3).collect();
     if active.is_empty() { all } else { active }
         .into_iter()
         .min_by(|a, b| a.dir.distance_squared(dir).total_cmp(&b.dir.distance_squared(dir)))
@@ -570,7 +898,7 @@ mod tests {
             (0..n.min(60)).flat_map(|x| (0..n.min(60)).map(move |y| (x, y))).filter(|&(x, y)| cell_vent(p, (2, x, y), &|_| VoxelType::Grass).is_some_and(|v| v.kind == kind)).count()
         };
         assert_eq!(count(&p, VentKind::Lava), 0);
-        p.geo = GeoActivity { volcanism: 0.9, quakes: 0.5, cryo: false };
+        p.geo = GeoActivity { volcanism: 0.9, quakes: 0.5, cryo: false, giant_geysers: false, lava_lakes: false };
         let lava = count(&p, VentKind::Lava);
         let geysers = count(&p, VentKind::Geyser);
         assert!(lava > 10 && geysers > 10, "{lava} {geysers}");
@@ -579,11 +907,64 @@ mod tests {
         assert_eq!(lava, again);
         // Encelade : froid, sans air, océan sous la glace
         let mut moon = p;
-        moon.geo = GeoActivity { volcanism: 0.0, quakes: 0.2, cryo: true };
+        moon.geo = GeoActivity { volcanism: 0.0, quakes: 0.2, cryo: true, giant_geysers: false, lava_lakes: false };
         moon.temperature = -190.0;
         moon.atmosphere = false;
         moon.airless = true;
         assert!(count(&moon, VentKind::Cryovolcano) > 10);
         assert_eq!(count(&moon, VentKind::Geyser) + count(&moon, VentKind::Fumarole), 0);
+    }
+
+    /// 0.14 D2 : un évent de lave fait un cône de basalte à cratère ; un geyser, un cône de sinter avec des
+    /// bassins d'eau chaude ; le sol d'une colonne ordinaire ne change pas.
+    #[test]
+    fn vents_shape_the_ground() {
+        let mut p = crate::terrain::tests::earth_like();
+        p.geo = GeoActivity { volcanism: 0.9, quakes: 0.5, cryo: false, giant_geysers: false, lava_lakes: true };
+        let t = Terrain::new(p);
+        let v = t.voxel();
+        let n = cells(&p);
+        let mut lava = None;
+        let mut geyser = None;
+        'outer: for x in 0..n {
+            for y in 0..n {
+                for vent in cell_vents(&p, (2, x, y), &|d| t.vent_ground(d)) {
+                    match vent.kind {
+                        VentKind::Lava if lava.is_none() => lava = Some(vent),
+                        VentKind::Geyser if geyser.is_none() => geyser = Some(vent),
+                        _ => {}
+                    }
+                    if lava.is_some() && geyser.is_some() {
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        let (lava, geyser) = (lava.expect("un évent de lave"), geyser.expect("un geyser"));
+        // Flanc du cône de lave : plus haut que le relief naturel, en basalte
+        let up = lava.dir;
+        let e = up.any_orthonormal_vector();
+        let flank = (up + e * (25.0 * v / p.radius)).normalize();
+        let c = t.base_column(flank, v);
+        assert!(c.top > t.ground_radius(flank) + 3.0 * v, "pas de cône : {} vs {}", c.top, t.ground_radius(flank));
+        assert_eq!(c.kind, VoxelType::Basalt);
+        // Le cratère : un lac de lave (trait « lacs de lave actifs ») sous le bord du cratère (à 10 voxels)
+        let crater = t.base_column(lava.dir, v);
+        assert_eq!(crater.kind, VoxelType::Lava);
+        let rim = t.base_column((up + e * (10.0 * v / p.radius)).normalize(), v);
+        assert!(crater.top < rim.top, "le lac ({}) est sous le bord du cratère ({})", crater.top, rim.top);
+        // Geyser : sinter blanc, bassins d'eau chaude autour
+        let rim = (geyser.dir + geyser.dir.any_orthonormal_vector() * (4.0 * v / p.radius)).normalize();
+        assert_eq!(t.base_column(rim, v).kind, VoxelType::Salt);
+        let forms = t.geo.as_ref().unwrap();
+        let shaped = forms.cell(&t, cell_of(&p, geyser.dir));
+        let s = shaped.iter().find(|s| s.vent.seed == geyser.seed).unwrap();
+        assert!(!s.pools.is_empty());
+        let pool = t.base_column(s.pools[0].0, v);
+        assert_eq!(pool.kind, VoxelType::Water);
+        assert!((0..3).all(|k| (pool.color[k] - HOT_SPRING_COLOR[k]).abs() < 0.12), "{:?}", pool.color);
+        // Loin de tout évent : rien ne change
+        let far = (geyser.dir + e * (150.0 * v / p.radius)).normalize();
+        assert!(forms.at(&t, far, t.ground_radius(far)).is_none_or(|f| f.ground == t.ground_radius(far)));
     }
 }

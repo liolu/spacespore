@@ -66,12 +66,18 @@ fn fragment(
     var out: FragmentOutput;
     out.color = apply_pbr_lighting(pbr_input);
 
-    // Fond marin (alpha de sommet 0,5) sous le niveau de la mer
+    // Fond marin (alpha de sommet 0,5) sous le niveau de la mer ; lave qui luit (alpha 0,9, 0.14 D2)
 #ifdef VERTEX_COLORS
     let under = in.color.a < 0.75;
+    let glow = in.color.a > 0.85 && in.color.a < 0.95;
 #else
     let under = false;
+    let glow = false;
 #endif
+    if (glow) {
+        let c = pbr_input.material.base_color.rgb;
+        out.color = vec4<f32>(out.color.rgb + c * 2.4 + vec3<f32>(0.25, 0.05, 0.0), out.color.a);
+    }
     if (under && caustics.sea.x > 0.0) {
         let rel = in.world_position.xyz - vec3<f32>(caustics.to0.w, caustics.to1.w, caustics.to2.w);
         let lp = vec3<f32>(dot(caustics.to0.xyz, rel), dot(caustics.to1.xyz, rel), dot(caustics.to2.xyz, rel));

@@ -533,3 +533,24 @@ n'est pas charge automatiquement : le lire quand on travaille sur le systeme con
   sans, build GNU). Avant de declarer un lac, la riviere cherche un sol plus bas jusqu'a 16 pas (les bosses du relief
   sont traversees en gorge) ; 20 lacs au plus par riviere. PROTOCOL 40. Pas encore : vagues des lacs selon le vent,
   fonte saisonniere des glaciers (A3 : le gel suit deja la saison par `sea_material`), deltas a plusieurs bras.
+- 0.14.8 bloc D / D2 geologie active au sol (`geoactive.rs`) : `cell_vents` = l'event principal de la cellule plus 0 a 3
+  secondaires de la meme sorte (champs de geysers et de fumerolles, a moins de 60 voxels). `GeoForms` (cache global par
+  astre `GeoForms::of`, comme les rivieres, et par cellule ; `Terrain::geo`) : chaque event faconne le sol dans `Terrain::base_column`
+  (apres les rivieres, regle 16) : cone (hauteur x (1 - (d/R)^2)^1,5) a bouche creusee, matiere du cone (sinter
+  `Salt` pour un geyser, `Sulfur` pour une fumerolle, `Ice` pour un cryovolcan, `Basalt` pour la lave), bassins d'eau
+  chaude turquoise (`HOT_SPRING_COLOR`, toujours liquides) autour des geysers, coulee figee en basalte le long de
+  `lava_path_dirs` (plus grande pente sur le relief naturel, 60 pas de 3 voxels), lac de lave permanent dans le cratere
+  avec le trait « lacs de lave actifs ». Traits reels (regle 20) : `GeoActivity::giant_geysers` (« geysers geants » :
+  cone 30 x 10 voxels, jets de 180 voxels, deux fois plus longs et rares, `strength_in`) et `lava_lakes` (la lave ne
+  refroidit jamais sous 0,5). Le placement des events lit `Terrain::vent_ground` (relief naturel : liquide sous la mer,
+  roche ailleurs) partout (tuiles, affichage, `/geologie`). Lave qui luit la nuit : sommets a l'alpha `GLOW_ALPHA`
+  (0,9, `terrain::flagged`) sur les colonnes de lave des tuiles et du maillage lointain, ajoutes en emission dans
+  `caustics.wgsl` ; les morceaux lointains des planetes et des lunes utilisent desormais le materiau des tuiles
+  (`water::FarRockMaterial`, `TerrainMaterial`) pour que ca se voie de l'orbite. Seismes : eboulis (40 pierres qui
+  devalent les pentes autour du joueur pendant 3 s, f(graine, tranche de 8 s)). Test `vents_shape_the_ground`.
+  Cout : les formes ne s'appliquent qu'aux colonnes fines (`Terrain::column_w` / `base_column_w` : largeur de colonne
+  < 6 voxels ; les tuiles grossieres couvrent des milliers de cellules d'events et les marches sont plafonnees a 4
+  voxels, donc `quantum` ne suffit pas a les reconnaitre) et `Overhang::find` lit d'abord une colonne grossiere ;
+  `bench_tiles` 3,5 ms avec / 3,7 ms sans (`SPACESPORE_NO_GEO=1`). Capture : Vega 3 (`/aller planete volcans`,
+  `/jour`, `/vol`, `/geologie lave`) : cone sombre sur la glace, cratere rougeoyant, coulee.
+  PROTOCOL 41. Pas encore : fumee des fumerolles au loin, chaleur des sources (degats), sons (D5).

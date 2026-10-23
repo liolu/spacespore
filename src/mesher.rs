@@ -490,7 +490,8 @@ pub fn build_chunk_mesh(
             (base[0] * (1.0 - depth_darken) + var * 0.7).clamp(0.03, 1.0),
             (base[1] * (1.0 - depth_darken * 0.4) + var * 0.9).clamp(0.03, 1.0),
             (base[2] * (1.0 - depth_darken * 0.2) + var * 0.4).clamp(0.03, 1.0),
-            base[3],
+            // La lave luit la nuit, vue de l'orbite aussi (0.14 D2)
+            if vtype == VoxelType::Lava { crate::terrain::GLOW_ALPHA } else { base[3] },
         ];
         crate::terrain::ground_tint(vtype, color, slopes[ix.min(res - 1)][iy.min(res - 1)], 0.0, false)
     };

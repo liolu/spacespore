@@ -147,6 +147,9 @@ impl BodyParams {
                 volcanism: p.geology.volcanism,
                 quakes: p.geology.quakes,
                 cryo: p.hydrology.subsurface_ocean && p.geology.activity > 0.05,
+                // Traits qui deviennent réels (0.14 D2, règle 20)
+                giant_geysers: p.traits.iter().any(|t| t.name == "geysers geants"),
+                lava_lakes: p.traits.iter().any(|t| t.name == "lacs de lave actifs"),
             },
             plasma: if p.air.present() { crate::approche::plasma_color(&p.air.gases) } else { crate::approche::PLASMA_DEFAULT },
         }
@@ -423,6 +426,14 @@ pub fn submerged(color: [f32; 4], under: bool) -> [f32; 4] {
 /// Alpha des sommets sous l'eau (voir `submerged`).
 pub const SUBMERGED_ALPHA: f32 = 0.5;
 
+/// Alpha des sommets qui luisent d'eux-mêmes (0.14 D2 : la lave, visible la nuit ; `caustics.wgsl`).
+pub const GLOW_ALPHA: f32 = 0.9;
+
+/// Couleur d'un sommet avec ses drapeaux : lave qui luit, ou fond immergé (voir `submerged`).
+pub fn flagged(color: [f32; 4], under: bool, glow: bool) -> [f32; 4] {
+    [color[0], color[1], color[2], if glow { GLOW_ALPHA } else if under { SUBMERGED_ALPHA } else { 1.0 }]
+}
+
 /// Teinte de la roche nue d'un sol de couleur `color` : la pierre, un peu de la couleur du lieu.
 pub fn rock_of(color: [f32; 4]) -> [f32; 4] {
     let s = VoxelType::Stone.color();
@@ -533,6 +544,8 @@ pub struct Terrain {
     pub rocks: Option<Arc<Rocks>>,
     /// Rivières et lacs (0.14 D1), tracés une fois par astre et partagés (`rivers.rs`).
     pub rivers: Option<Arc<crate::rivers::RiverNet>>,
+    /// Formes des évents géologiques (0.14 D2 : cônes, bouches, bassins chauds, coulées figées ; `geoactive.rs`).
+    pub geo: Option<Arc<crate::geoactive::GeoForms>>,
     /// Plus petit cratère calculé (rayon angulaire, bits d'un f32) : plus grand pendant la
     /// construction d'une tuile lointaine (chaque tâche a son propre terrain).
     min_crater: std::sync::atomic::AtomicU32,
@@ -576,6 +589,7 @@ impl Terrain {
                 Arc::new(Rocks::new(params.seed, params.radius, params.layout().voxel, air, wet))
             }),
             rivers: None,
+            geo: crate::geoactive::GeoForms::of(&params, params.layout().voxel),
             cave_window: None,
             decor_levels: 2,
         };
@@ -587,6 +601,18 @@ impl Terrain {
     /// Rayon du sol naturel (sans les rivières) dans la direction `dir` : le relief que les rivières descendent.
     pub(crate) fn ground_radius(&self, dir: Vec3) -> f32 {
         self.raw_height(dir).0
+    }
+
+    /// Matière du sol naturel pour placer les évents (`geoactive`) : liquide sous le niveau de la mer (là où il y en
+    /// a), roche ailleurs. Sans les formes des évents (règle 16 : la même réponse pour les tuiles et l'affichage).
+    pub(crate) fn vent_ground(&self, dir: Vec3) -> VoxelType {
+        let p = &self.params;
+        if self.ground_radius(dir) < p.radius {
+            if let Some(k) = sea_material(&p.climate, &p.hydro, p.airless, p.climate.sin_lat(dir)) {
+                return k;
+            }
+        }
+        VoxelType::Stone
     }
 
     /// Humidité locale (0 aride, 1 détrempé) : où naissent les rivières.
@@ -727,7 +753,13 @@ impl Terrain {
     /// Colonne vue de dessus dans la direction `dir` (champ de hauteur des tuiles lointaines et
     /// du décor) : le sol, ou le dessus d'une forme 3D (surplomb) s'il y en a une.
     pub fn column(&self, dir: Vec3, quantum: f32) -> Column {
-        let mut c = self.base_column(dir, quantum);
+        self.column_w(dir, quantum, self.layout.voxel)
+    }
+
+    /// Comme `column`, pour une colonne de `width` unités de large (tuile grossière : les formes des évents, plus
+    /// petites qu'une colonne et coûteuses à générer sur des milliers de cellules, ne s'appliquent pas).
+    pub fn column_w(&self, dir: Vec3, quantum: f32, width: f32) -> Column {
+        let mut c = self.base_column_w(dir, quantum, width);
         if let Some(top) = self.overhang.as_ref().and_then(|o| o.top(dir)) {
             if top > c.top {
                 c.top = self.params.radius + ((top - self.params.radius) / quantum).round() * quantum;
@@ -741,6 +773,11 @@ impl Terrain {
     /// Colonne du champ de hauteur seul (sans les formes 3D), hauteur arrondie au multiple de
     /// `quantum` au-dessus du niveau de la mer.
     pub fn base_column(&self, dir: Vec3, quantum: f32) -> Column {
+        self.base_column_w(dir, quantum, self.layout.voxel)
+    }
+
+    /// Comme `base_column`, pour une colonne de `width` unités de large (voir `column_w`).
+    pub fn base_column_w(&self, dir: Vec3, quantum: f32, width: f32) -> Column {
         let p = &self.params;
         // Géante gazeuse : pas de relief, seulement le cœur où le vol s'arrête
         if p.gaseous {
@@ -765,7 +802,10 @@ impl Terrain {
             Some(net) => net.carve(dir, h0),
             None => crate::rivers::Carve { ground: h0, water: None, width: 0.0 },
         };
-        let h = carve.ground;
+        // Évents géologiques (0.14 D2) : cône, bouche, bassins d'eau chaude, coulée figée, lac de lave (seulement sur
+        // les tuiles assez fines pour les montrer : une tuile grossière couvre des milliers de cellules d'évents)
+        let form = if width < 6.0 * self.layout.voxel { self.geo.as_ref().and_then(|g| g.at(self, dir, carve.ground)) } else { None };
+        let h = form.map_or(carve.ground, |f| f.ground);
         let rel = ((h - p.radius) / quantum).round();
         // Marée (C4) : la mer monte ou descend de quelques voxels près du joueur
         let tide_q = if p.tide.is_calm() { 0.0 } else { (p.tide.at(dir) / quantum).round() };
@@ -778,6 +818,7 @@ impl Terrain {
         // Eau douce d'une rivière ou d'un lac au-dessus de la mer : le même liquide que les mers (gelé où il
         // gèle, à sec où il bout) ; une rivière plus étroite qu'une colonne n'apparaît pas sur les tuiles lointaines
         let mut surface_q = tide_q;
+        let mut fresh_color = None;
         let fresh = if sea.is_none() && carve.width >= quantum {
             carve.water.and_then(|w| {
                 surface_q = ((w - p.radius) / quantum).round().max(rel + 1.0);
@@ -785,6 +826,15 @@ impl Terrain {
             })
         } else {
             None
+        };
+        // Bassin d'eau chaude ou lac de lave d'un évent (toujours liquide : il est chauffé par le sol)
+        let fresh = match form.and_then(|f| f.water) {
+            Some((w, k, c)) if sea.is_none() => {
+                surface_q = ((w - p.radius) / quantum).round().max(rel + 1.0);
+                fresh_color = Some(c);
+                Some(k)
+            }
+            _ => fresh,
         };
         let liquid_kind = sea.or(fresh);
         let water = liquid_kind.is_some();
@@ -807,7 +857,7 @@ impl Terrain {
         let (top, kind, color) = if water {
             let kind = liquid_kind.unwrap_or(VoxelType::Water);
             let surf = p.radius + surface_q * quantum;
-            let base = kind.color();
+            let base = fresh_color.unwrap_or_else(|| kind.color());
             let depth = ((surf - h) / (p.terrain_height * 0.5)).clamp(0.0, 0.45);
             let color = [
                 (base[0] * (1.0 - depth) + var * 0.7 + jitter).clamp(0.03, 1.0),
@@ -841,6 +891,10 @@ impl Terrain {
             // Lit de rivière à sec (le liquide bout à cette latitude, ou rivière trop fine pour la tuile) : du sable
             if carve.water.is_some() && !kind.is_liquid() {
                 kind = VoxelType::Sand;
+            }
+            // Cône, sinter, soufre ou coulée figée d'un évent
+            if let Some(k) = form.and_then(|f| f.kind) {
+                kind = k;
             }
             // Marée basse : le fond découvert est une grève de sable
             if rel < 0.0 && sea_material(&p.climate, &p.hydro, p.airless, p.climate.sin_lat(dir)).is_some() {
@@ -1179,6 +1233,11 @@ impl Overhang {
             let a = std::f32::consts::TAU * next();
             let r = (1.0 - z * z).sqrt();
             let dir = Vec3::new(r * a.cos(), z, r * a.sin());
+            // (colonne grossière d'abord : les formes des évents, coûteuses à générer sur 48 cellules au hasard, ne
+            // s'appliquent qu'aux colonnes fines ; la hauteur exacte vient ensuite d'une seule colonne fine)
+            if t.base_column(dir, 8.0 * v).kind.is_liquid() {
+                continue;
+            }
             let c = t.base_column(dir, v);
             if c.kind.is_liquid() {
                 continue;
@@ -1346,7 +1405,7 @@ fn build_height_tile_inner(terrain: &Terrain, key: TileKey) -> (Mesh, Option<Mes
     let mut cols = Vec::with_capacity(nc * nc);
     for cj in -1..=TILE_CELLS as i64 {
         for ci in -1..=TILE_CELLS as i64 {
-            cols.push(terrain.column(face_dir(key.face, mid(i0 + ci), mid(j0 + cj)), quantum));
+            cols.push(terrain.column_w(face_dir(key.face, mid(i0 + ci), mid(j0 + cj)), quantum, std::f32::consts::FRAC_PI_2 * terrain.params.radius / lattice as f32));
         }
     }
     tint_columns(terrain, &mut cols, nc, |c| c, |c| c);
@@ -1370,7 +1429,7 @@ fn build_height_tile_inner(terrain: &Terrain, key: TileKey) -> (Mesh, Option<Mes
                     corner(u, v + 1) * c.top,
                 ],
                 c.dir,
-                submerged(c.color, c0.is_sea()),
+                flagged(c.color, c0.is_sea(), c0.kind == VoxelType::Lava),
             );
 
             // (voisin, extrémités de l'arête partagée)
@@ -1400,7 +1459,7 @@ fn build_height_tile_inner(terrain: &Terrain, key: TileKey) -> (Mesh, Option<Mes
                 }
                 // Parois : la roche nue (le sol seulement au bord des marches)
                 let wall = if c.top - lo > 1.5 * quantum && !c.kind.is_liquid() { rock_of(c.color) } else { c.color };
-                let shade = submerged([wall[0] * 0.82, wall[1] * 0.82, wall[2] * 0.82, 1.0], c0.is_sea() || nb0.is_sea());
+                let shade = flagged([wall[0] * 0.82, wall[1] * 0.82, wall[2] * 0.82, 1.0], c0.is_sea() || nb0.is_sea(), c0.kind == VoxelType::Lava);
                 buf.quad([a * lo, b * lo, b * hi, a * hi], n, shade);
             }
         }
@@ -1720,7 +1779,7 @@ pub fn build_voxel_tile_mesh(t: &Terrain, key: TileKey) -> (Mesh, Option<Mesh>) 
                 if open(ci, cj, k) {
                     continue;
                 }
-                let color = submerged(cell_color(here, k, c), c.base.is_sea());
+                let color = flagged(cell_color(here, k, c), c.base.is_sea(), here == VoxelType::Lava);
                 let (r0, r1) = (t.layer_radius(k), t.layer_radius(k + 1));
                 if open(ci, cj, k + 1) {
                     buf.quad([corner(u, w) * r1, corner(u + 1, w) * r1, corner(u + 1, w + 1) * r1, corner(u, w + 1) * r1], up, color);
@@ -1751,7 +1810,7 @@ pub fn build_voxel_tile_mesh(t: &Terrain, key: TileKey) -> (Mesh, Option<Mesh>) 
                     } else {
                         color
                     };
-                    buf.quad([a * r0, b * r0, b * r1, a * r1], nrm, shade(submerged(side, c.base.is_sea() || nb.base.is_sea()), 0.82));
+                    buf.quad([a * r0, b * r0, b * r1, a * r1], nrm, shade(flagged(side, c.base.is_sea() || nb.base.is_sea(), here == VoxelType::Lava), 0.82));
                 }
             }
             // Jupes au bord de la tuile (raccord avec une voisine plus grossière)

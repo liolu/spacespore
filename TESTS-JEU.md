@@ -83,6 +83,7 @@ test reutilisable vaut mieux qu'un essai de plus.
 | `/heure` | heure locale, soleil, saison de l'astre cible |
 | `/temps <facteur>` | accelere l'horloge du monde (hote) |
 | `/grotte`, `/relief <forme>`, `/geologie <evenement>`, `/surplomb` | va a une grotte / forme du relief / evenement geologique |
+| `/geologie lave` de nuit (`/nuit` apres) | 0.14 D2 : cone de cendres a cratere, coulee figee, lave qui luit ; `/geologie geyser` : cone de sinter blanc et bassins turquoise (chercher une planete `volcanique` ou `mer`) |
 | `/ceinture`, `/comete`, `/eclipse [lune]` | va a une ceinture, comete, eclipse |
 | `/impact` | meteorite qui s'ecrase pres du joueur |
 | `/echelle <k>` | taille des voxels (tests d'echelle) |

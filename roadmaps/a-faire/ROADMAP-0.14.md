@@ -107,7 +107,11 @@ Les règles 1 à 19 (0.10, 0.11, 0.13) restent valables. La 0.14 en ajoute :
 terres humides, descente de la pente la plus forte, confluents, estuaires), lacs dans les cuvettes (trop-plein par le
 col), cascades là où le relief tombe, lit creusé et berges, eau gelée où il gèle (saison comprise), grandes rivières
 et lacs vus de l'espace, `/riviere`, scanner. Test : le lit ne remonte jamais. **Reste de D1** : vagues des lacs
-selon le vent, fonte saisonnière des glaciers, deltas à plusieurs bras ; puis D2 → D6.
+selon le vent, fonte saisonnière des glaciers, deltas à plusieurs bras.
+**D2 fait (v0.14.8)** : les évents façonnent le sol (cônes à bouche, sinter, soufre, glace, cendres), sources chaudes
+turquoise autour des geysers, champs de geysers (jusqu'à 4 par cellule), coulées figées en basalte, lave qui luit la
+nuit au sol et de l'orbite, traits « geysers géants » et « lacs de lave actifs » réels, éboulis pendant les séismes.
+Suite : D3 → D6.
 
 | Phase | Contenu | Fini quand | Taille |
 |---|---|---|---|

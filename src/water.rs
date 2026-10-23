@@ -92,6 +92,10 @@ impl Material for WaterMaterial {
 }
 
 /// Le matériau d'eau, partagé par toutes les tuiles (ses paramètres changent à chaque image).
+/// Matériau des morceaux lointains des planètes et des lunes (`planet.rs`).
+#[derive(Resource, Clone)]
+pub struct FarRockMaterial(pub Handle<TerrainMaterial>);
+
 #[derive(Resource)]
 pub struct WaterAssets {
     pub material: Handle<WaterMaterial>,
@@ -125,6 +129,12 @@ impl Plugin for WaterPlugin {
         app.add_plugins(MaterialPlugin::<WaterMaterial>::default());
         app.add_plugins(MaterialPlugin::<TerrainMaterial>::default());
         let material = app.world_mut().resource_mut::<Assets<WaterMaterial>>().add(WaterMaterial::default());
+        // Roche des astres vus de loin : le même matériau que les tuiles (la lave y luit la nuit, 0.14 D2)
+        let far_rock = app.world_mut().resource_mut::<Assets<TerrainMaterial>>().add(TerrainMaterial {
+            base: StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.9, ..default() },
+            extension: default(),
+        });
+        app.insert_resource(FarRockMaterial(far_rock));
         app.insert_resource(WaterAssets { material })
             .init_resource::<Underwater>()
             .add_systems(Update, underwater_fog.after(crate::gas::gas_atmosphere).after(update_water));

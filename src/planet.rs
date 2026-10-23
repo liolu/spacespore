@@ -666,6 +666,7 @@ fn generate_all(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut spawned: ResMut<SpawnedSystems>,
+    far_rock: Res<crate::water::FarRockMaterial>,
 ) {
     let atlas = create_star_atlas(&mut images);
 
@@ -721,7 +722,7 @@ fn generate_all(
         let sys_cam = center + Vec3::new(0.0, 80.0, 200.0);
         spawn_system_bodies(
             &mut commands, sys, &settings, 0,
-            &mut meshes, &mut materials, sys_cam, center,
+            &mut meshes, &mut materials, &far_rock, sys_cam, center,
         );
         spawned.0.insert(0);
     }
@@ -1338,7 +1339,7 @@ fn spawn_planet_meshes(
     planet_world_pos: Vec3,
     cam_local: Vec3,
     divs: usize,
-    rock_material: &Handle<StandardMaterial>,
+    rock_material: &Handle<crate::water::TerrainMaterial>,
 ) {
     spawn_ring_and_aurora(commands, meshes, materials, pcfg, planet_id, root);
     if pcfg.gaseous() {
@@ -1444,6 +1445,7 @@ fn spawn_system_bodies(
     sys_idx: usize,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
+    far_rock: &crate::water::FarRockMaterial,
     cam_pos: Vec3,
     center: Vec3,
 ) {
@@ -1540,11 +1542,7 @@ fn spawn_system_bodies(
         spawn_flare_mesh(commands, meshes, materials, id_base + i, (r, g, b), pos);
     }
 
-    let planet_material = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 0.9,
-        ..default()
-    });
+    let planet_material = far_rock.0.clone();
     let divs = settings.planet_chunk_divisions;
 
     for (i, pcfg) in sys.planets().iter().enumerate() {
@@ -1906,6 +1904,7 @@ fn regenerate_all(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     spawned: Res<SpawnedSystems>,
+    far_rock: Res<crate::water::FarRockMaterial>,
 ) {
     let mut fired = false;
     for _ in events.read() {
@@ -1941,6 +1940,7 @@ fn regenerate_all(
             si,
             &mut meshes,
             &mut materials,
+            &far_rock,
             cam_pos,
             sys.center(),
         );
@@ -2185,6 +2185,7 @@ fn reload_planets(
     camera_q: Query<&Transform, With<Camera3d>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    far_rock: Res<crate::water::FarRockMaterial>,
 ) {
     for ev in events.read() {
         let Ok((entity, pid, si, gt)) = roots.get(ev.0) else { continue };
@@ -2192,11 +2193,7 @@ fn reload_planets(
         let Some(sys) = settings.systems.get(si.0) else { continue };
         let Some(pcfg) = sys.planets().get(local_i) else { continue };
 
-        let planet_material = materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            perceptual_roughness: 0.9,
-            ..default()
-        });
+        let planet_material = far_rock.0.clone();
 
         let planet_world_pos = gt.translation();
         let cam_pos = camera_q.single().translation;
@@ -2212,7 +2209,7 @@ fn reload_moons(
     settings: Res<GameSettings>,
     roots: Query<(Entity, &MoonId, &SystemIdx), With<MoonRoot>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    far_rock: Res<crate::water::FarRockMaterial>,
 ) {
     for ev in events.read() {
         let Ok((entity, mid, si)) = roots.get(ev.0) else { continue };
@@ -2221,11 +2218,7 @@ fn reload_moons(
         let Some(pcfg) = sys.planets().get(local_planet) else { continue };
         let Some(mcfg) = pcfg.moons.get(mid.moon_idx) else { continue };
 
-        let planet_material = materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            perceptual_roughness: 0.9,
-            ..default()
-        });
+        let planet_material = far_rock.0.clone();
         let moon_view = mcfg.generated().then(|| mcfg.as_planet(pcfg));
 
         for mesh in build_moon_chunks(mcfg, moon_view.as_ref()) {
@@ -2428,6 +2421,7 @@ pub(crate) fn stream_system_bodies(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut spawned: ResMut<SpawnedSystems>,
     mut net: ResMut<crate::net::Net>,
+    far_rock: Res<crate::water::FarRockMaterial>,
     star_q: Query<(Entity, &SystemIdx), With<StarRoot>>,
     planet_q: Query<(Entity, &SystemIdx), With<PlanetRoot>>,
     moon_q: Query<(Entity, &SystemIdx), With<MoonRoot>>,
@@ -2488,7 +2482,7 @@ pub(crate) fn stream_system_bodies(
                 let center = sys.center();
                 spawn_system_bodies(
                     &mut commands, sys, &settings, si,
-                    &mut meshes, &mut materials, cam_pos, center,
+                    &mut meshes, &mut materials, &far_rock, cam_pos, center,
                 );
                 spawned.0.insert(si);
                 net.notify(&format!("Systeme {} charge.", sys.name), time.elapsed_secs_f64());
