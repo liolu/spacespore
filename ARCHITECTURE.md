@@ -183,6 +183,14 @@ n'est pas charge automatiquement : le lire quand on travaille sur le systeme con
   autour de la camera (`particle_positions`), vent qui pousse le vaisseau en vol bas (`Surface::drift`), scanner.
   Banc : `cargo test --release bench_cloud_layer -- --ignored --nocapture`.
   Particules : `NoFrustumCulling` (sommets reecrits a chaque image) ; `SPACESPORE_TEST_PRECIP=<0..1>` force la pluie.
+- 0.14.8 : menu principal (`menu.rs`), etat `AppState::Menu` au lancement : Jouer / Editeur / Benchmark devant la
+  galaxie principale du jeu (la vraie, rendue par le jeu) que la camera contourne (`orbit_galaxy`, vue galaxie :
+  `CameraController` regle comme au zoom galaxie). Interface du jeu cachee (`HiddenUi`), camera rendue en sortant
+  (`SavedCam`) ; Jouer redescend jusqu'au vaisseau (`zoom_goal`), premier lancement = creation du personnage d'abord.
+  L'editeur ouvert du menu y revient (`Editor::return_to`). `AppState::Benchmark` : `camera_controller` tourne sans
+  entrees (`editeur::camera_driven`), 3 etapes (galaxie, systeme, planete : 3 s de mise en route + 10 s mesurees),
+  FPS moyen / 1 % les plus lentes / pire image, au menu et dans `benchmark.txt` (dossier des sauvegardes). Les
+  systemes du monde sans entrees (`astre_lod_cull`...) tournent aussi au menu (`editeur::world_shown`).
 - 0.12 (`roadmaps/fait/ROADMAP-0.12-editeur.md`) : editeur de modeles voxel, module `src/editeur/`. E0 = fondations : etat
   `AppState` (Jeu / Editeur, `editeur::in_game` coupe le clavier et la souris du jeu), ouvert au premier lancement
   (`GameSettings::first_launch`, creation du personnage), par le bouton du menu (`EditorMenuButton`) et `/editeur`.

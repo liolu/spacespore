@@ -36,12 +36,14 @@ use edit::{Brush, Clip, ClipTransform, Doc, Shape, Tool};
 use mesh::Cut;
 use format::{Model, ModelKind, PaletteEntry, ShipCategory};
 
-/// Le jeu ou l'éditeur.
+/// Le menu principal (au lancement, `menu.rs`), le jeu, l'éditeur ou le benchmark.
 #[derive(States, Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum AppState {
     #[default]
+    Menu,
     Jeu,
     Editeur,
+    Benchmark,
 }
 
 pub struct EditeurPlugin;
@@ -53,7 +55,7 @@ impl Plugin for EditeurPlugin {
             .add_event::<OpenEditor>()
             .init_gizmo_group::<view::EditorGizmos>()
             .init_resource::<view::ChunkMeshes>()
-            .add_systems(Startup, (open_on_first_launch, view::setup_gizmos))
+            .add_systems(Startup, view::setup_gizmos)
             .add_systems(Update, (open_editor, menu_button))
             .add_systems(OnEnter(AppState::Editeur), (view::enter_scene, on_enter).chain())
             .add_systems(OnExit(AppState::Editeur), (view::exit_scene, panels::show_game_ui))
@@ -69,9 +71,20 @@ impl Plugin for EditeurPlugin {
     }
 }
 
-/// Le jeu tourne (pas l'éditeur) : condition des systèmes qui lisent le clavier et la souris.
+/// Le jeu tourne (pas le menu, l'éditeur ni le benchmark) : condition des systèmes qui lisent le
+/// clavier et la souris.
 pub fn in_game(state: Option<Res<State<AppState>>>) -> bool {
     state.is_none_or(|s| *s.get() == AppState::Jeu)
+}
+
+/// La caméra du jeu suit son vaisseau : en jeu, et pendant le benchmark (sans clavier ni souris).
+pub fn camera_driven(state: Option<Res<State<AppState>>>) -> bool {
+    state.is_none_or(|s| matches!(s.get(), AppState::Jeu | AppState::Benchmark))
+}
+
+/// Le monde est affiché (tout sauf l'éditeur) : systèmes du monde qui ne lisent pas les entrées.
+pub fn world_shown(state: Option<Res<State<AppState>>>) -> bool {
+    state.is_none_or(|s| *s.get() != AppState::Editeur)
 }
 
 /// Ouvrir l'éditeur sur un type de modèle.
@@ -199,6 +212,8 @@ pub struct Editor {
     pub message: String,
     /// Ouvert pour la création du personnage (premier lancement).
     pub welcome: bool,
+    /// Où revenir en quittant l'éditeur : le jeu, ou le menu principal s'il a été ouvert de là.
+    pub return_to: AppState,
     pub library: Vec<LibraryEntry>,
     pub pending_delete: Option<usize>,
     pub new_kind: ModelKind,
@@ -273,6 +288,7 @@ impl Default for Editor {
             overlay: None,
             message: String::new(),
             welcome: false,
+            return_to: AppState::Jeu,
             library: Vec::new(),
             pending_delete: None,
             new_kind: ModelKind::Personnage,
@@ -926,15 +942,24 @@ pub fn import_folder(from: &Path, to: &Path) -> Result<import::ImportReport, Str
 //  Ouverture et fermeture
 // ─────────────────────────────────────────────────────────────────────────
 
-fn open_on_first_launch(settings: Res<crate::settings::GameSettings>, mut open: EventWriter<OpenEditor>, mut editor: ResMut<Editor>) {
+/// Premier lancement : la création du personnage s'ouvre (depuis « Jouer » du menu principal).
+pub fn open_on_first_launch(settings: &crate::settings::GameSettings, open: &mut EventWriter<OpenEditor>, editor: &mut Editor) {
     if settings.first_launch {
         editor.welcome = true;
+        editor.return_to = AppState::Jeu;
         open.send(OpenEditor(ModelKind::Personnage));
     }
 }
 
-fn open_editor(mut events: EventReader<OpenEditor>, mut editor: ResMut<Editor>, mut next: ResMut<NextState<AppState>>, mut menu: ResMut<crate::ui::MenuState>) {
+fn open_editor(mut events: EventReader<OpenEditor>, mut editor: ResMut<Editor>, mut next: ResMut<NextState<AppState>>, mut menu: ResMut<crate::ui::MenuState>, state: Res<State<AppState>>) {
     for OpenEditor(kind) in events.read() {
+        // Ouvert par « Editeur » du menu principal : on y revient en quittant (la création du
+        // personnage, ouverte par « Jouer », mène au jeu)
+        match *state.get() {
+            AppState::Menu if !editor.welcome => editor.return_to = AppState::Menu,
+            AppState::Jeu => editor.return_to = AppState::Jeu,
+            _ => {}
+        }
         editor.new_kind = *kind;
         menu.open = false;
         info!("Editeur de modeles ouvert ({})", kind.name());

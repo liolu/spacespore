@@ -64,6 +64,7 @@ test reutilisable vaut mieux qu'un essai de plus.
 | `SPACESPORE_TEST_TUNNEL=<u>` | `/tunnel creuser` creuse droit devant sur `<u>` unites, sans cible |
 | `SPACESPORE_TEST_PHOTO=<s>` | entre en mode photo a `<s>` s (tout est cache sauf les astres) |
 | `NOTIFY` dans le log | tous les messages systeme (actif si `SPACESPORE_TEST_CMD` est defini) |
+| `SPACESPORE_MENU=1` | garde le menu principal (sinon `SPACESPORE_TEST_*`, `_CAPTURE`, `_EDITOR_DEMO`, `_PERF`, `_QUIT_SECS` lancent directement le jeu) |
 
 ## Commandes du chat pour les tests
 

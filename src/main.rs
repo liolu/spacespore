@@ -37,6 +37,7 @@ mod rivers;
 mod sky;
 mod weather;
 mod editeur;
+mod menu;
 mod ship;
 mod stats;
 mod suit;
@@ -326,6 +327,7 @@ fn main() {
         .add_plugins(sky::SkyPlugin)
         .add_plugins(weather::WeatherPlugin)
         .add_plugins(editeur::EditeurPlugin)
+        .add_plugins(menu::MenuPlugin)
 
         // ── UI ──────────────────────────────────────────────────────────
         .add_plugins(UiPlugin)
@@ -357,8 +359,6 @@ fn main() {
                 select_next_moon,
                 select_next_planet,
                 draw_body_markers,
-                camera_controller,
-                update_sun_direction,
                 update_fps_display,
                 update_system_hud,
                 update_zoom_hud,
@@ -369,13 +369,15 @@ fn main() {
                 close_game_when_primary_window_closes,
                 toggle_profiling,
                 profiling_snapshot,
-                astre_lod_cull,
-                process_pending_reloads,
                 (promote_star_target, test_zoom),
             )
-                // Pendant l'éditeur (0.12), le jeu ne lit plus le clavier ni la souris
+                // Pendant l'éditeur (0.12) et le menu principal, le jeu ne lit plus le clavier ni la souris
                 .run_if(editeur::in_game),
         )
+        // La caméra suit le vaisseau en jeu et pendant le benchmark ; au menu principal, `menu.rs` la pilote
+        .add_systems(Update, camera_controller.run_if(editeur::camera_driven))
+        // Le monde reste à jour derrière le menu principal (galaxie du fond)
+        .add_systems(Update, (update_sun_direction, astre_lod_cull, process_pending_reloads).run_if(editeur::world_shown))
 
         .run();
 }
@@ -1373,10 +1375,12 @@ fn camera_controller(
 
     net_panel: Res<NetPanel>,
     net: Res<Net>,
-    (travel, mut cine): (Res<wormhole::WormholeTravel>, ResMut<cinematic::Cinematic>),
+    (travel, mut cine, app_state): (Res<wormhole::WormholeTravel>, ResMut<cinematic::Cinematic>, Res<State<editeur::AppState>>),
 ) {
     // Saisie de texte en cours (panneau multijoueur) : clavier réservé au champ
     let menu_open = menu_state.open || net_panel.focus.is_some();
+    // Benchmark (`menu.rs`) : il pilote la caméra seul, le clavier et la souris ne comptent pas
+    let auto = *app_state.get() == editeur::AppState::Benchmark;
 
     let Ok((mut cam_tf, mut ctrl)) =
         cam_q.get_single_mut()
@@ -1490,7 +1494,11 @@ fn camera_controller(
     }
 
     // ── Controles caméra orbitale ──────────────────────────────────
-    let rotate_speed = settings.keyboard_speed * time.delta_secs();
+    if auto {
+        mouse_motion.clear();
+        mouse_wheel.clear();
+    }
+    let rotate_speed = if auto { 0.0 } else { settings.keyboard_speed * time.delta_secs() };
     let mouse_sens = settings.mouse_sensitivity * 0.01;
     let y_mult = if settings.invert_y { -1.0 } else { 1.0 };
 

@@ -947,7 +947,7 @@ pub fn escape(keys: Res<ButtonInput<KeyCode>>, mut editor: ResMut<Editor>, mut n
         editor.overlay = None;
         editor.ui_dirty = true;
     } else {
-        next.set(AppState::Jeu);
+        next.set(editor.return_to);
     }
 }
 
@@ -1192,7 +1192,7 @@ pub fn actions(
                 ed.overlay = Some(Overlay::Library);
             }
             Act::Save => ed.save(),
-            Act::Quit => next.set(AppState::Jeu),
+            Act::Quit => next.set(ed.return_to),
             Act::Rename => {
                 let name = ed.doc().map(|d| d.model.name.clone()).unwrap_or_default();
                 ed.overlay = Some(Overlay::Rename(name));
