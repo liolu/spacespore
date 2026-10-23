@@ -531,6 +531,8 @@ pub struct Terrain {
     pub caves: Option<Arc<Caves>>,
     /// Arches et cheminées de fée (B3), partagées de même.
     pub rocks: Option<Arc<Rocks>>,
+    /// Rivières et lacs (0.14 D1), tracés une fois par astre et partagés (`rivers.rs`).
+    pub rivers: Option<Arc<crate::rivers::RiverNet>>,
     /// Plus petit cratère calculé (rayon angulaire, bits d'un f32) : plus grand pendant la
     /// construction d'une tuile lointaine (chaque tâche a son propre terrain).
     min_crater: std::sync::atomic::AtomicU32,
@@ -553,7 +555,7 @@ impl Terrain {
         continent.octaves = 6;
         let mut detail: Fbm<Perlin> = Fbm::new(params.seed.wrapping_add(81));
         detail.octaves = 4;
-        Self {
+        let mut t = Self {
             params,
             layout: params.layout(),
             continent,
@@ -573,10 +575,23 @@ impl Terrain {
                 let wet = air && params.hydro.liquid == crate::planetgen::hydrology::Liquid::Water;
                 Arc::new(Rocks::new(params.seed, params.radius, params.layout().voxel, air, wet))
             }),
+            rivers: None,
             cave_window: None,
             decor_levels: 2,
-        }
-        .with_overhang()
+        };
+        // Les rivières se tracent sur le relief seul (sans elles), puis creusent les colonnes
+        t.rivers = crate::rivers::RiverNet::of(&t);
+        t.with_overhang()
+    }
+
+    /// Rayon du sol naturel (sans les rivières) dans la direction `dir` : le relief que les rivières descendent.
+    pub(crate) fn ground_radius(&self, dir: Vec3) -> f32 {
+        self.raw_height(dir).0
+    }
+
+    /// Humidité locale (0 aride, 1 détrempé) : où naissent les rivières.
+    pub(crate) fn humidity(&self, dir: Vec3) -> f32 {
+        if self.params.biomes.defined { self.biomes.humidity(dir) } else { 0.5 }
     }
 
     /// Tranche de grottes en plus à mailler (profondeurs sous la surface, unités).
@@ -744,7 +759,13 @@ impl Terrain {
             };
             return Column::solid(dir, top, kind, shape.color_at(dir), h);
         }
-        let (h, hv, relief) = self.raw_height_full(dir);
+        let (h0, hv, relief) = self.raw_height_full(dir);
+        // Rivières et lacs (0.14 D1) : le lit creuse le sol, l'eau est à la surface du lit (ou du lac)
+        let carve = match &self.rivers {
+            Some(net) => net.carve(dir, h0),
+            None => crate::rivers::Carve { ground: h0, water: None, width: 0.0 },
+        };
+        let h = carve.ground;
         let rel = ((h - p.radius) / quantum).round();
         // Marée (C4) : la mer monte ou descend de quelques voxels près du joueur
         let tide_q = if p.tide.is_calm() { 0.0 } else { (p.tide.at(dir) / quantum).round() };
@@ -754,7 +775,19 @@ impl Terrain {
         let tide_q = tide_q - (drop * p.sea_level * p.terrain_height / quantum).round();
         // Sous le niveau de la mer : eau, banquise, ou bassin à sec (trop chaud, ou sans air)
         let sea = if rel < tide_q { sea_material(&p.climate, &p.hydro, p.airless, p.climate.sin_lat(dir)) } else { None };
-        let water = sea.is_some();
+        // Eau douce d'une rivière ou d'un lac au-dessus de la mer : le même liquide que les mers (gelé où il
+        // gèle, à sec où il bout) ; une rivière plus étroite qu'une colonne n'apparaît pas sur les tuiles lointaines
+        let mut surface_q = tide_q;
+        let fresh = if sea.is_none() && carve.width >= quantum {
+            carve.water.and_then(|w| {
+                surface_q = ((w - p.radius) / quantum).round().max(rel + 1.0);
+                sea_material(&p.climate, &p.hydro, p.airless, p.climate.sin_lat(dir))
+            })
+        } else {
+            None
+        };
+        let liquid_kind = sea.or(fresh);
+        let water = liquid_kind.is_some();
 
         // Taches de couleur sur plusieurs échelles (0.13 T3) : 200, 30 et 5 voxels, seulement
         // celles que la tuile peut montrer (pas de moiré sur les tuiles lointaines)
@@ -772,9 +805,10 @@ impl Terrain {
 
         let mut bed = None;
         let (top, kind, color) = if water {
-            let kind = sea.unwrap_or(VoxelType::Water);
+            let kind = liquid_kind.unwrap_or(VoxelType::Water);
+            let surf = p.radius + surface_q * quantum;
             let base = kind.color();
-            let depth = ((p.radius - h) / (p.terrain_height * 0.5)).clamp(0.0, 0.45);
+            let depth = ((surf - h) / (p.terrain_height * 0.5)).clamp(0.0, 0.45);
             let color = [
                 (base[0] * (1.0 - depth) + var * 0.7 + jitter).clamp(0.03, 1.0),
                 (base[1] * (1.0 - depth * 0.4) + var * 0.9 + jitter).clamp(0.03, 1.0),
@@ -785,8 +819,8 @@ impl Terrain {
             // et roche sombre vers le large
             if kind.is_clear_liquid() {
                 let bed_top = p.radius + rel * quantum;
-                let deep = ((p.radius + tide_q * quantum - bed_top) / (self.layout.voxel * 300.0)).clamp(0.0, 1.0);
-                let shore = ((p.radius + tide_q * quantum - bed_top) / (self.layout.voxel * 24.0)).clamp(0.0, 1.0);
+                let deep = ((surf - bed_top) / (self.layout.voxel * 300.0)).clamp(0.0, 1.0);
+                let shore = ((surf - bed_top) / (self.layout.voxel * 24.0)).clamp(0.0, 1.0);
                 let bed_kind = if shore < 0.85 { VoxelType::Sand } else { VoxelType::Stone };
                 let sand = VoxelType::Sand.color();
                 let floor = [0.34, 0.33, 0.34, 1.0];
@@ -799,11 +833,15 @@ impl Terrain {
                 ];
                 bed = Some((bed_top, bed_kind, bed_color));
             }
-            (p.radius + tide_q * quantum, kind, color)
+            (surf, kind, color)
         } else {
             // Hauteur réelle (collines comprises) : une colline au bord de l'eau n'est pas une plage
             let natural = self.surface_type((h - p.radius) / p.terrain_height.max(1.0), dir);
             let mut kind = natural;
+            // Lit de rivière à sec (le liquide bout à cette latitude, ou rivière trop fine pour la tuile) : du sable
+            if carve.water.is_some() && !kind.is_liquid() {
+                kind = VoxelType::Sand;
+            }
             // Marée basse : le fond découvert est une grève de sable
             if rel < 0.0 && sea_material(&p.climate, &p.hydro, p.airless, p.climate.sin_lat(dir)).is_some() {
                 kind = VoxelType::Sand;
@@ -2359,6 +2397,10 @@ mod bench {
                     bodies.push(BodyParams::planet(p));
                 }
             }
+        }
+        // (les rivières se tracent une fois par astre, hors du chrono : `SPACESPORE_NO_RIVERS=1` pour comparer)
+        for p in bodies.iter().take(30) {
+            std::hint::black_box(Terrain::new(*p));
         }
         let start = std::time::Instant::now();
         let mut tiles = 0;

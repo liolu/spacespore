@@ -307,6 +307,39 @@ pub fn build_chunk_mesh(
     let step = (relief_params.tier_step.max(relief_params.cubic_step)) * voxel;
     let r_min = radius - sl * th - 2.0 - forms.max_height() - step;
     let r_max = radius + (1.0 - sl) * th + 2.0 + forms.max_height() + step;
+    // Rivières et lacs (0.14 D1) : les grandes se voient de l'espace, quand les cases du morceau sont assez
+    // fines (le réseau est celui des tuiles du sol, partagé : `rivers.rs`)
+    let cell_units = std::f32::consts::FRAC_PI_2 * radius * chunk_size / res as f32;
+    let rivers = (cell_units <= 400.0 * voxel)
+        .then(|| {
+            crate::terrain::Terrain::new(crate::terrain::BodyParams {
+                airless: false,
+                atmosphere,
+                radius,
+                sea_level,
+                terrain_height,
+                seed,
+                noise_scale,
+                detail_scale,
+                temperature: climate.mean_c,
+                gravity: 1.0,
+                gaseous: false,
+                climate,
+                sky: crate::terrain::EARTH_SKY,
+                sunset: crate::terrain::EARTH_SUNSET,
+                haze: crate::terrain::EARTH_SKY,
+                pressure: if atmosphere { 1.0 } else { 0.0 },
+                hydro,
+                relief: relief_params,
+                biomes,
+                asteroid: None,
+                tide: Default::default(),
+                geo: Default::default(),
+                plasma: crate::approche::PLASMA_DEFAULT,
+            })
+            .rivers
+        })
+        .flatten();
 
     let mut fbm: Fbm<Perlin> = Fbm::new(seed);
     fbm.octaves = 6;
@@ -367,6 +400,15 @@ pub fn build_chunk_mesh(
             }
             seas[ix][iy] = sea_material(&climate, &hydro, false, climate.sin_lat(dir));
             sea_tops[ix][iy] = radius - crate::planetgen::climate::sea_drop(&climate, &hydro, false, climate.sin_lat(dir)) * sl * th;
+            // Une grande rivière ou un lac au-dessus de la mer colore la case du liquide des mers (gelé où il gèle)
+            if let Some(net) = &rivers {
+                if terrain_heights[ix][iy] >= sea_tops[ix][iy] && net.from_space(dir.normalize(), terrain_heights[ix][iy], cell_units).is_some() {
+                    if let Some(k) = seas[ix][iy] {
+                        surface_types[ix][iy] = k;
+                        blends[ix][iy] = None;
+                    }
+                }
+            }
         }
     }
 

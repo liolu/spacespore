@@ -74,6 +74,7 @@ test reutilisable vaut mieux qu'un essai de plus.
 | `/jour`, `/nuit`, `/heure <h>` | regle l'heure locale de l'astre cible (hote) ; refuse en rotation synchrone et le dit |
 | `/vol` | descend en vol bas sur l'astre cible (remplace `SPACESPORE_TEST_FLY`) |
 | `/mer` | rivage de la mer la plus proche (en vol bas ou a pied) |
+| `/riviere [lac \| petite]` | la grande riviere la plus proche (12 voxels et plus, sinon la plus proche), le lac le plus proche, ou la riviere la plus proche quelle que soit sa taille (0.14 D1 : berge a pied, au-dessus du lit en vol bas) ; le reseau se trace a l'arrivee sur l'astre (~0,2 s) |
 | `/nuage [dedans\|dessus\|dessous]` | en vol bas : va dans la couche de nuages (ou au-dessus : mer de nuages, ombre du vaisseau) |
 | `/brouillard [oui\|non\|auto\|0-100]` | brouillard volumetrique : option, ou densite forcee en % (tests) |
 | `/meteo [clair\|auto]` | ciel clair force (ni nuages, ni pluie, ni brouillard) : indispensable pour voir les etoiles ou le ciel |
@@ -116,6 +117,10 @@ Commandes d'essai a ajouter quand le besoin apparait (pas encore faites) : `/met
 - Verifier dans le scanner de la capture : Eau liquide, Pression > 0, Jour (pas « synchrone » pour le jour).
 - `/mer` : va au rivage de la mer la plus proche (en vol bas ou a pied). Demande d'etre deja en vol bas
   (`FLY`) : le mettre en `CMD2` apres `FLY_SECS`.
+- `/riviere` : pareil pour la grande riviere la plus proche (le message donne sa largeur en voxels) ; `/jour` APRES,
+  car le saut change l'heure locale. Pour voir une
+  grande riviere, chercher une planete tempere humide (`/aller planete mer`), en vol bas suivre le lit vers
+  l'aval : il s'elargit, finit en estuaire dans la mer ou dans un lac.
 - Temps : `/temps <facteur>` accelere l'horloge ; `/heure` donne l'heure et la hauteur du soleil.
   Toujours regarder « soleil a N deg » : positif = jour.
 

@@ -512,3 +512,24 @@ n'est pas charge automatiquement : le lire quand on travaille sur le systeme con
   par cote ~ 1 million de sommets) etaient refaits plus fins en s'approchant mais jamais plus grossiers : chaque corps
   croise gardait son maillage fin jusqu'au crash « Not enough memory left ». Maintenant : refait plus grossier quand
   la finesse voulue tombe a la moitie, et seuls les `MAX_FINE_MESHES` (6) plus proches ont plus de 64.
+- 0.14.7 bloc D / D1 rivieres et lacs (`rivers.rs`) : le reseau d'un astre (`RiverNet`) est trace une fois depuis le
+  relief seul (`Terrain::ground_radius`, sans les rivieres) et partage par un cache global (`RiverNet::of`, 8 reseaux,
+  `OnceLock` : les taches de tuiles et le maillage lointain attendent le meme calcul). Sources : spirale de Fibonacci
+  decalee par la graine (~700 tentatives pour 9 000 unites de rayon, x surface, x humidite), gardees sur une terre
+  humide (`Terrain::humidity`) plutot en altitude ; descente de la pente la plus forte par pas de `STEP_VOXELS` (12)
+  parmi 8 directions avec un peu d'elan ; fin dans la mer (estuaire : 8 derniers pas elargis), dans le lit d'une
+  riviere deja tracee (confluent : `join_point` par la grille) ou dans une cuvette : lac (`Lake` : centre, niveau =
+  col le plus bas trouve sur 16 rayons de 40 pas, portee) et la riviere repart du col (nouveau troncon `River`, lie par
+  `next`). Le lit (`Node::bed`, surface de l'eau) ne remonte jamais (test `rivers_only_go_down`) : une falaise fait une
+  cascade. Debit = pas en amont, affluents compris (propagation par `next`, ordre indifferent) ; largeur =
+  3 + sqrt(debit) voxels (3 a 60). Grille 3D de la sphere unite (cellules de 2,5 x portee) -> segments et lacs.
+  `carve(dir, h)` dans `Terrain::base_column` : auge (profondeur 8 % de la largeur, 1 a 5 voxels) sous le lit,
+  berges en pente 0,6 jusqu'a `REACH_VOXELS` (90), eau = `sea_material` a cette latitude (gelee ou il gele, lit de
+  sable ou il bout) ; une riviere plus etroite que la colonne n'apparait pas (tuiles lointaines). Maillage lointain
+  (`mesher.rs`) : `from_space` colore la case des rivieres larges d'au moins 20 voxels (et 15 % de la case) et des lacs
+  quand la case fait moins de 400 voxels. `/riviere` (`surface.rs::go_river`), scanner EAU « rivieres et lacs ».
+  Mesures (`bench_rivers`, planete de test 9 000 unites) : 210 ms, 5 900 noeuds, 98 sources, 297 lacs, 26 embouchures,
+  61 800 unites de rivieres ; `bench_tiles` (reseau en cache, hors chrono) inchange au bruit pres (3,0 ms avec, 3,6 ms
+  sans, build GNU). Avant de declarer un lac, la riviere cherche un sol plus bas jusqu'a 16 pas (les bosses du relief
+  sont traversees en gorge) ; 20 lacs au plus par riviere. PROTOCOL 40. Pas encore : vagues des lacs selon le vent,
+  fonte saisonniere des glaciers (A3 : le gel suit deja la saison par `sea_material`), deltas a plusieurs bras.

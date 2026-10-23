@@ -291,6 +291,10 @@ fn body_sections(p: &PlanetProfile) -> (String, Vec<Section>, u8) {
     if p.gameplay.subsurface_ocean {
         w += ", ocean sous la glace";
     }
+    // Rivières et lacs (0.14 D1) : de l'air et un liquide suffisent (le réseau se trace à l'arrivée)
+    if p.gameplay.walkable && h.ocean_liquid.as_deref().is_some_and(|l| l != "aucun") && p.atmosphere.present && p.atmosphere.surface_pressure_bar.is_some_and(|b| b >= 0.05) {
+        w += ", rivieres et lacs (/riviere)";
+    }
     water.row("Eau", w);
 
     let mut life = Section::new("VIE");

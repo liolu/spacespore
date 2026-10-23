@@ -103,6 +103,12 @@ Les règles 1 à 19 (0.10, 0.11, 0.13) restent valables. La 0.14 en ajoute :
 
 ## 4. Bloc D — Le monde qui vit (bloc D de la 0.11, à l'échelle de la 0.13)
 
+**État (v0.14.7)** : **D1 en grande partie fait** (`rivers.rs`) : rivières tracées depuis le relief (sources sur les
+terres humides, descente de la pente la plus forte, confluents, estuaires), lacs dans les cuvettes (trop-plein par le
+col), cascades là où le relief tombe, lit creusé et berges, eau gelée où il gèle (saison comprise), grandes rivières
+et lacs vus de l'espace, `/riviere`, scanner. Test : le lit ne remonte jamais. **Reste de D1** : vagues des lacs
+selon le vent, fonte saisonnière des glaciers, deltas à plusieurs bras ; puis D2 → D6.
+
 | Phase | Contenu | Fini quand | Taille |
 |---|---|---|---|
 | **D1. Eau vivante** | **Rivières** calculées depuis le relief (écoulement vers la mer, bassins hachés, largeur selon le débit), **lacs** dans les cuvettes, **cascades** sur les falaises, deltas et estuaires, glace qui fond et gèle selon la saison (A3), **banquise**, vagues sur les lacs selon le vent. Passent par `kind_at` (règle 16) ; les grandes rivières se voient de l'espace. `PROTOCOL` +1. | Une rivière descend toujours (test), rejoint la mer ou un lac ; pas de rivière coupée entre deux tuiles ; `bench_tiles` mesuré | XL |

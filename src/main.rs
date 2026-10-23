@@ -33,6 +33,7 @@ mod settings;
 mod systems;
 mod asteroids;
 mod rings;
+mod rivers;
 mod sky;
 mod weather;
 mod editeur;

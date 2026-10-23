@@ -126,6 +126,8 @@ impl Plugin for SurfacePlugin {
             .add_event::<CaveCommand>()
             .add_event::<SeaCommand>()
             .add_systems(Update, go_sea.before(SurfaceControl))
+            .add_event::<RiverCommand>()
+            .add_systems(Update, go_river.before(SurfaceControl))
             .init_resource::<NearestCave>()
             .add_systems(Update, (go_cave.before(SurfaceControl), find_nearest_cave))
             .add_systems(Startup, (setup_hud, spawn_lamps, spawn_suns))
@@ -2530,6 +2532,58 @@ fn go_cave(time: Res<Time>, mut events: EventReader<CaveCommand>, mut surface: R
             _ => net.notify("Attendez la fin de l'atterrissage.", now),
         }
         nearest.last = 0.0;
+    }
+}
+
+/// `/riviere` (0.14 D1) : aller à la rivière la plus proche (à pied : sur la berge ; en vol bas : au-dessus
+/// du lit).
+#[derive(Event)]
+pub struct RiverCommand(pub String);
+
+fn go_river(time: Res<Time>, mut events: EventReader<RiverCommand>, mut surface: ResMut<Surface>, mut net: ResMut<Net>) {
+    let now = time.elapsed_secs_f64();
+    for RiverCommand(arg) in events.read() {
+        let (Some(t), Some(p)) = (surface.terrain.as_ref(), surface.local_point()) else {
+            net.notify("Pas de riviere trouvee : posez-vous ou volez bas sur un astre solide (zoom sous 1000).", now);
+            continue;
+        };
+        let Some(rivers) = t.rivers.as_ref() else {
+            net.notify("Pas de riviere sur cet astre (ni air, ni liquide).", now);
+            continue;
+        };
+        let up0 = p.normalize_or(Vec3::Y);
+        let (v, radius) = (t.voxel(), t.params.radius);
+        // `/riviere lac` : le lac le plus proche ; `/riviere petite` : la plus proche quelle que soit sa largeur ;
+        // sinon la plus proche des grandes (12 voxels et plus), ou la plus proche s'il n'y en a pas
+        let found = match arg.trim() {
+            "lac" => rivers.nearest_lake(up0).map(|l| (l.center, l.width)),
+            "petite" => rivers.nearest(up0, 0.0),
+            _ => rivers.nearest(up0, 12.0 * v).or_else(|| rivers.nearest(up0, 0.0)),
+        };
+        let Some((dir, width)) = found else {
+            net.notify("Pas de riviere (ni de lac) sur cet astre.", now);
+            continue;
+        };
+        let dist = (dir - up0).length() * radius;
+        let east = Vec3::Y.cross(dir).normalize_or(Vec3::X);
+        let wide = width / v;
+        match surface.phase {
+            Phase::Walking => {
+                // Sur la berge, juste à côté du lit, le regard vers l'eau
+                let side = (dir + east * ((width * 0.5 + 6.0 * v) / radius)).normalize();
+                let heading = -east;
+                let w = Walker::spawn(t, side, (heading - side * heading.dot(side)).normalize_or(east));
+                surface.walker = w;
+                net.notify(&format!("Au bord d'une riviere large de {wide:.0} voxels ({dist:.0} unites plus loin)."), now);
+            }
+            Phase::Flying => {
+                let top = t.sea_surface(dir).map_or(t.ground(dir).top, |(r, _)| r);
+                surface.fpos = dir * (top + 14.0 * v);
+                surface.fdescend = false;
+                net.notify(&format!("Au-dessus d'une riviere large de {wide:.0} voxels ({dist:.0} unites plus loin)."), now);
+            }
+            _ => net.notify("Attendez la fin de l'atterrissage.", now),
+        }
     }
 }
 
