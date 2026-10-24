@@ -146,6 +146,12 @@ pub struct WeatherParams {
     pub radius_m: f32,
     /// Température moyenne (°C).
     pub mean_c: f32,
+    /// Tempête géante (0.14 X5, et trait « super-tempete permanente ») : centre (repère fixe) et rayon (angle).
+    pub storm_eye: Option<(Vec3, f32)>,
+    /// Supercellules : orages partout où il y a des nuages (0..1).
+    pub stormy: f32,
+    /// Monde électrique : éclairs même par ciel clair.
+    pub electric: bool,
 }
 
 impl WeatherParams {
@@ -165,6 +171,15 @@ impl WeatherParams {
             water,
             radius_m: (p.radius_earth.max(0.05) * 6.371e6) as f32,
             mean_c: p.climate.map_or(15.0, |c| c.mean_c),
+            storm_eye: (p.archetype == Some(crate::planetgen::archetypes::Archetype::GiantStorm) || p.traits.iter().any(|t| t.name == "super-tempete permanente")).then(|| {
+                // Centre tiré de la graine, aux latitudes moyennes ; rayon : un tiers du globe (~55°)
+                let h = crate::planetgen::seeds::splitmix64(p.seed as u64 ^ 0x5702);
+                let a = (h >> 40) as f32 / (1u64 << 24) as f32 * std::f32::consts::TAU;
+                let lat = (0.15 + 0.35 * ((h >> 16) & 0xFFFF) as f32 / 65536.0) * if h & 1 == 0 { 1.0 } else { -1.0 };
+                (Vec3::new(lat.cos() * a.cos(), lat.sin(), lat.cos() * a.sin()).normalize(), 0.95)
+            }),
+            stormy: if p.archetype == Some(crate::planetgen::archetypes::Archetype::Supercells) { 0.85 } else { 0.0 },
+            electric: p.archetype == Some(crate::planetgen::archetypes::Archetype::Electric),
         })
     }
 }
@@ -267,12 +282,43 @@ pub fn wind(w: &WeatherParams, dir: Vec3, t: f64, storm: f32) -> (f32, f32, f32)
 /// La météo complète au point `dir` (repère fixe de l'astre), à l'instant `t`, pour une
 /// température locale `temp_c` (°C) et une heure locale `hour`.
 pub fn sample(w: &WeatherParams, dir: Vec3, t: f64, temp_c: f32, hour: f32) -> Sample {
-    let (cloud, thick) = cloud_field(w, dir, t);
+    let (mut cloud, mut thick) = cloud_field(w, dir, t);
     let humid = if w.water { 0.5 + 0.5 * w.ocean } else { 0.35 };
-    let precip = thick * humid;
-    // Orages : précipitations fortes dans un air chaud et humide
-    let storm = precip * smooth(8.0, 26.0, temp_c) * if w.water { 1.0 } else { 0.4 };
-    let (east, north, gust) = wind(w, dir, t, storm);
+    // Tempête géante (0.14 X5) : dans le cyclone, nuages et pluie partout sauf dans l'œil
+    let cyclone = w.storm_eye.map_or(0.0, |(c, r)| {
+        let d = dir.angle_between(c) / r;
+        if d < 0.08 { -1.0 } else { (1.0 - ((d - 0.08) / 0.92).clamp(0.0, 1.0).powi(3)).clamp(0.0, 1.0) }
+    });
+    if cyclone < 0.0 {
+        cloud *= 0.15;
+        thick *= 0.1;
+    } else if cyclone > 0.0 {
+        cloud = cloud.max(cyclone);
+        thick = thick.max(0.9 * cyclone);
+    }
+    // (dans le cyclone, il pleut à verse même sans mer)
+    let precip = (thick * humid).max(0.8 * cyclone.max(0.0));
+    // Orages : précipitations fortes dans un air chaud et humide ; partout avec les supercellules ou le monde électrique
+    let mut storm = precip * smooth(8.0, 26.0, temp_c) * if w.water { 1.0 } else { 0.4 };
+    storm = storm.max(w.stormy * cloud).max(cyclone * 0.95);
+    if w.electric {
+        storm = storm.max(0.7);
+    }
+    let (mut east, mut north, gust) = wind(w, dir, t, storm);
+    if cyclone > 0.0 {
+        // Le vent tourne autour de l'œil, de plus en plus fort vers le mur
+        if let Some((c, _)) = w.storm_eye {
+            let tang = c.cross(dir).normalize_or_zero();
+            let e = Vec3::Y.cross(dir).normalize_or(Vec3::X);
+            let n = dir.cross(e);
+            let speed = 45.0 * cyclone;
+            east += tang.dot(e) * speed;
+            north += tang.dot(n) * speed;
+        }
+    } else if cyclone < 0.0 {
+        east *= 0.1;
+        north *= 0.1;
+    }
     let speed = (east * east + north * north).sqrt();
     let kind = if precip < 0.02 {
         Precip::None
@@ -329,7 +375,8 @@ pub fn lightning(w: &WeatherParams, dir: Vec3, storm: f32, t: f64, spread: f32) 
     let hit = (dir + (e1 * a.cos() + e2 * a.sin()) * r).normalize();
     let stormy = |d: Vec3| {
         let (c, thick) = cloud_field(w, d, t);
-        c > 0.6 && thick > 0.25
+        // Monde électrique : la foudre n'a pas besoin de nuage
+        w.electric || w.stormy > 0.5 || (c > 0.6 && thick > 0.25)
     };
     (stormy(dir) && stormy(hit)).then_some(hit)
 }
@@ -858,7 +905,7 @@ mod tests {
     use super::*;
 
     fn earth_like() -> WeatherParams {
-        WeatherParams { seed: 42, cover: 0.6, wind: 12.0, pressure: 1.0, clouds: CloudKind::Water, ocean: 0.7, water: true, radius_m: 6.371e6, mean_c: 15.0 }
+        WeatherParams { seed: 42, cover: 0.6, wind: 12.0, pressure: 1.0, clouds: CloudKind::Water, ocean: 0.7, water: true, radius_m: 6.371e6, mean_c: 15.0, storm_eye: None, stormy: 0.0, electric: false }
     }
 
     /// C3 : le vent n'est pas toujours dans le même sens, il a des rafales de quelques secondes,

@@ -84,6 +84,7 @@ test reutilisable vaut mieux qu'un essai de plus.
 | `/temps <facteur>` | accelere l'horloge du monde (hote) |
 | `/grotte`, `/relief <forme>`, `/geologie <evenement>`, `/surplomb` | va a une grotte / forme du relief / evenement geologique |
 | `/biome <mot>` | va au biome le plus proche dont le nom contient le mot (foret, taiga, jungle, prairie, marais, desert...) ; pose ou en vol bas |
+| `/aller planete tempete-geante` (ou `glace-noire`, `magma`, `foret-geante`, `volcan-geant`...) | 0.14.13 bloc X : les mots sont ceux du catalogue (`/stats` les liste) ; la tempete : chercher l'oeil au scanner (« vent 0 ») |
 | `/lieu <sorte>`, `/marqueur <nom>` | 0.14 D6 : va au lieu remarquable le plus proche (le scanner en liste jusqu'a 6 a 2 500 voxels) ; pose une balise lumineuse vue par tous les joueurs |
 | `/volume [monde \| vaisseau \| meteo] [0-100]` | 0.14 D5 : volume general ou par categorie ; le son ne se voit pas : `cargo test --release sound` puis ecouter (`/riviere`, `/mer`, `/geologie lave`, plongee, grotte, nuit) |
 | `/aller planete complexe` + `/vol` + `/faune` | 0.14 D4 : va au troupeau le plus proche (le message donne l'espece, le nombre, la taille) ; nocturnes : `/nuit` ; nageurs : au-dessus de la mer |

@@ -199,6 +199,11 @@ inversé** (X5, aurores ; N3), **arches** (déjà réelles). Aucun ne reste une 
 
 ### 5.2 Les phases du bloc X
 
+**État (v0.14.13)** : neuf sortes de plus (volcan géant, glace noire, continents sur magma, tempête géante,
+supercellules, monde électrique, diamant, forêt géante, océan sous la glace) ; les traits « super-tempête permanente »
+et « glace superionique » sont réels. Restent les sortes à formes ou rendus nouveaux (étirée, cassée, creuse, glace
+transparente, refroidissement, maelström, nébuleuse, trou noir, X8).
+
 **État (v0.14.2)** : **X0 fait** (`planetgen/archetypes.rs`, `Layer::Archetype` = 15, zone calme `CALM_SYSTEMS` = 50,
 scanner « ANOMALIE », dex, `/aller planete <mot>` et `anomalie`, `/stats`, cercle magenta qui pulse, test de
 fréquence : ~1,2 % des planètes de la galaxie principale). Premières sortes réelles : X1 œil (climat selon l'angle

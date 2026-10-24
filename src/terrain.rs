@@ -141,6 +141,7 @@ impl BodyParams {
             hydro: if p.gaseous() { Hydro::DRY } else { p.hydrology.hydro },
             relief: p.geology.relief,
             biomes: BiomeParams {
+                black_ice: p.biomes.black_ice || p.traits.iter().any(|t| t.name == "glace superionique"),
                 petrified: p.traits.iter().any(|t| t.name == "foret petrifiee"),
                 ruins: p.traits.iter().any(|t| t.name == "ruines d'une civilisation disparue"),
                 monolith: p.traits.iter().any(|t| t.name == "monolithe parfait"),
@@ -947,6 +948,14 @@ impl Terrain {
                     (base[2] + var * 0.4 + jitter).clamp(0.03, 1.0),
                     1.0,
                 ]
+            };
+            // Glace noire (0.14 X3) : glace et neige sombres et brillantes, veinées de fissures claires
+            let color = if p.biomes.black_ice && matches!(kind, VoxelType::Ice | VoxelType::Snow) {
+                let n = self.color.get([dir.x as f64 * 90.0, dir.y as f64 * 90.0, dir.z as f64 * 90.0]) as f32;
+                let crack = (1.0 - (n.abs() / 0.06)).clamp(0.0, 1.0);
+                [0.05 + 0.55 * crack + var * 0.2, 0.06 + 0.8 * crack + var * 0.2, 0.1 + 0.9 * crack + var * 0.2, 1.0]
+            } else {
+                color
             };
             // Éjectas et rayons clairs des cratères récents ; mers de lave des bassins remplis
             let b = relief.bright;

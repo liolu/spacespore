@@ -624,5 +624,21 @@ n'est pas charge automatiquement : le lire quand on travaille sur le systeme con
   l'hote garde et relaie aux autres (comme `Share`), `Net::marker_out` / `markers_in` ; cle d'astre `body_key`
   (`p<id>`, `m<id>.<lune>`). PROTOCOL 42. Tests `landmarks_follow_the_traits`, `kinds_parse_and_directions_read`,
   `nearby_finds_the_landmark_next_to_it`. Pas encore : cratere geant comme lieu, lieux dans le dex (la ligne du
-  scanner n'y entre pas), marqueurs sauves entre deux parties, `/aller lieu <sorte>` entre astres. Pas encore : plantes
+  scanner n'y entre pas), marqueurs sauves entre deux parties, `/aller lieu <sorte>` entre astres.
+- 0.14.13 bloc X, neuf sortes de plus (`planetgen/archetypes.rs`, numeros ajoutes a la fin) : X3 volcan geant (P :
+  `volcano_height` x3, `terrain_height` x1,6 jusqu'a 5,9 % du rayon), glace noire (R : `BiomeParams::black_ice` ->
+  `base_column` colore glace et neige en sombre avec des veines claires lues dans `self.color` a 90 ; biomes forces
+  inlandsis ; moyenne <= -35 C ; le trait « glace superionique » donne le meme reglage), continents sur magma (R :
+  `hydro.liquid = Lava`, jamais fige ni bouillant, mers >= 55 %, volcanisme 0,8 : la mer de lave luit la nuit par
+  `GLOW_ALPHA`) ; X5 tempete geante (P : `WeatherParams::storm_eye` = centre tire de la graine aux latitudes moyennes
+  et rayon 0,95 rad ; dans `sample` : nuages et pluie partout dans le cyclone sauf l'oeil (8 % du rayon, calme), orage
+  0,95, vent tangentiel jusqu'a 45 m/s ; le trait « super-tempete permanente » donne le meme cyclone), supercellules
+  (R : `stormy` 0,85 -> orage partout ou il y a des nuages, foudre sans nuage epais), monde electrique (R :
+  `electric` -> orage plancher 0,7 et foudre meme par ciel clair, ciel violace) ; X6 diamant (R : cristaux sur
+  basalte), foret geante (R : `BiomeParams::giant_trees` -> `tile_decor` un arbre sur quatre, six fois plus grand) ;
+  X2 ocean sous la glace (N : `hydrology.subsurface_ocean` -> inlandsis force, canyons >= 0,5 = crevasses,
+  cryovolcans deja par `geo.cryo`). `/aller planete <mot>`, scanner et `/stats` suivent le catalogue. Test
+  `storms_forests_and_black_ice_change_their_layers`. Pas encore : la tempete vue de l'espace (couche de nuages
+  lointaine sans spirale), glace transparente, refroidissement, planete etiree / cassee / creuse, lunes en resonance,
+  X8 (ruines, machine, vivante...). Pas encore : plantes
   qui s'ouvrent le jour, foret en instances GPU et LOD propre (les niveaux grossiers ont deja moins d'objets).

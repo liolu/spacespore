@@ -416,7 +416,12 @@ pub fn tile_decor(terrain: &Terrain, key: TileKey) -> Vec<DecorInstance> {
             if kind.plant() && !terrain.params.biomes.flora && !petrified {
                 continue;
             }
-            let size = voxel * (0.8 + 0.5 * unit(h.rotate_left(21)));
+            // Forêt géante (0.14 X6) : un arbre sur quatre, six fois plus grand
+            let giant = terrain.params.biomes.giant_trees && kind.tree();
+            if giant && unit(h.rotate_left(27)) > 0.25 {
+                continue;
+            }
+            let size = voxel * (0.8 + 0.5 * unit(h.rotate_left(21))) * if giant { 6.0 } else { 1.0 };
             let yaw = unit(h.rotate_left(3)) * std::f32::consts::TAU;
             let rotation = Quat::from_rotation_arc(Vec3::Y, dir) * Quat::from_rotation_y(yaw);
             out.push(DecorInstance {

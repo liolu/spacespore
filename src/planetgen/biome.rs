@@ -199,6 +199,11 @@ pub struct BiomeParams {
     pub ruins: bool,
     #[serde(default)]
     pub monolith: bool,
+    /// Glace noire (0.14 X3) : glace et neige sombres, veines claires ; forêt géante (X6) : arbres énormes.
+    #[serde(default)]
+    pub black_ice: bool,
+    #[serde(default)]
+    pub giant_trees: bool,
     /// Monde exceptionnel (0.14 X6, X8) : toutes les terres émergées dans ces deux biomes (le second là où
     /// l'humidité est faible) ; la glace et la haute montagne enneigée restent.
     #[serde(default)]
@@ -261,6 +266,8 @@ pub fn generate(input: &BiomeInput) -> BiomeParams {
         petrified: false,
         ruins: false,
         monolith: false,
+        black_ice: false,
+        giant_trees: false,
         force: None,
     }
 }
@@ -503,7 +510,7 @@ mod tests {
     }
 
     fn earth_params(alien: bool) -> BiomeParams {
-        BiomeParams { defined: true, seed: 3, wetness: 0.8, radiation: 0.05, alien, volcanism: 0.2, metal: false, sulfur: false, regolith: false, salt: false, flora: true, petrified: false, ruins: false, monolith: false, force: None }
+        BiomeParams { defined: true, seed: 3, wetness: 0.8, radiation: 0.05, alien, volcanism: 0.2, metal: false, sulfur: false, regolith: false, salt: false, flora: true, petrified: false, ruins: false, monolith: false, black_ice: false, giant_trees: false, force: None }
     }
 
     /// 0.14.5 : camaïeu — loin des limites la couleur du biome, près d'une limite des teintes intermédiaires.

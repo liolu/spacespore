@@ -12,10 +12,13 @@
 //! - Scanner (section « ANOMALIE »), dex, `/aller planete <archetype>`, `/stats`, signal de loin
 //!   (cercle magenta), test de fréquence.
 //!
-//! Faits : X1 (œil, crépuscule étroit, jour sans fin), X2 (océan profond, peu profond, monde-pluie), X4
-//! (anneaux bas), X5 (aurores géantes), X6 (cristal, métal, fongique, vertical, cubique), X8 (dévasté).
-//! Les autres sortes du catalogue (planète étirée, creuse, cassée, refroidissement, ruines...) demandent des
-//! formes ou des rendus nouveaux : elles s'ajouteront ici, une par une, sans changer les numéros existants.
+//! Faits : X1 (œil, crépuscule étroit, jour sans fin), X2 (océan profond, peu profond, monde-pluie, océan sous
+//! la glace), X3 (volcan géant, glace noire, continents sur magma), X4 (anneaux bas), X5 (aurores géantes,
+//! tempête géante, supercellules, monde électrique), X6 (cristal, diamant, métal, fongique, vertical, forêt
+//! géante, cubique), X8 (dévasté). Les traits « super-tempête permanente » et « glace superionique » sont réels
+//! par les mêmes réglages (`weather::WeatherParams::of`, `terrain::BodyParams::planet`). Les autres sortes du
+//! catalogue (planète étirée, creuse, cassée, refroidissement, ruines...) demandent des formes ou des rendus
+//! nouveaux : elles s'ajouteront ici, une par une, sans changer les numéros existants.
 
 use serde::{Deserialize, Serialize};
 
@@ -44,6 +47,16 @@ pub enum Archetype {
     Vertical,
     Devastated,
     Cubic,
+    /// 0.14.13 : X3, X5, X6, X2 (ajout à la fin, numéros figés).
+    GiantVolcano,
+    BlackIce,
+    MagmaContinents,
+    GiantStorm,
+    Supercells,
+    Electric,
+    Diamond,
+    GiantForest,
+    IceShell,
 }
 
 const R: Realism = Realism::Realistic;
@@ -71,7 +84,7 @@ fn liquid_water(p: &PlanetConfig) -> bool {
     p.hydrology.hydro.liquid == Liquid::Water && p.hydrology.water_state == WaterState::Liquid
 }
 
-pub const CATALOG: [Kind; 14] = [
+pub const CATALOG: [Kind; 23] = [
     Kind { arch: Archetype::Eye, tier: 0, realism: R, phase: "X1", key: "oeil", name: "oeil (rotation synchrone)", what: "face jour brulee, face nuit gelee, bande crepusculaire au coucher de soleil eternel", allowed: |p| solid(p) && p.tidally_locked && p.atmosphere },
     Kind { arch: Archetype::NarrowTwilight, tier: 1, realism: R, phase: "X1", key: "crepuscule", name: "crepuscule etroit", what: "une bande habitable etroite entre une face brulante et une face glacee", allowed: |p| solid(p) && p.tidally_locked && p.atmosphere },
     Kind { arch: Archetype::EndlessDay, tier: 2, realism: R, phase: "X1", key: "jour-sans-fin", name: "jour sans fin", what: "rotation tres lente : le coucher de soleil avance au pas, on peut le suivre", allowed: |p| solid(p) && !p.tidally_locked && p.atmosphere },
@@ -86,6 +99,15 @@ pub const CATALOG: [Kind; 14] = [
     Kind { arch: Archetype::Vertical, tier: 2, realism: S, phase: "X6", key: "vertical", name: "monde vertical", what: "plateaux etages separes par des parois : on vit par niveaux", allowed: solid },
     Kind { arch: Archetype::Devastated, tier: 2, realism: F, phase: "X8", key: "devaste", name: "monde devaste", what: "deserts de verre et de cendres, radiation au sol", allowed: |p| solid(p) && p.atmosphere },
     Kind { arch: Archetype::Cubic, tier: 3, realism: F, phase: "X6", key: "cubique", name: "monde cubique", what: "relief en gros cubes, falaises a angle droit", allowed: solid },
+    Kind { arch: Archetype::GiantVolcano, tier: 1, realism: R, phase: "X3", key: "volcan-geant", name: "volcan geant", what: "un bouclier qui monte jusqu'a la limite de l'atmosphere : ciel noir au sommet", allowed: |p| solid(p) && p.atmosphere && p.geology.relief.volcanoes > 0 },
+    Kind { arch: Archetype::BlackIce, tier: 2, realism: S, phase: "X3", key: "glace-noire", name: "glace noire", what: "un monde de glace sombre et brillante, fissuree de veines claires", allowed: |p| solid(p) && p.hydrology.hydro.snow && p.climate.is_some_and(|c| c.mean_c < 5.0) },
+    Kind { arch: Archetype::MagmaContinents, tier: 2, realism: S, phase: "X3", key: "magma", name: "continents sur magma", what: "des plaques de croute sur un ocean de magma qui luit la nuit", allowed: |p| solid(p) && p.geology.volcanism > 0.2 },
+    Kind { arch: Archetype::GiantStorm, tier: 1, realism: R, phase: "X5", key: "tempete-geante", name: "tempete geante", what: "un cyclone fixe qui couvre un tiers du globe : murs de nuages, oeil calme", allowed: |p| solid(p) && p.atmosphere && p.air.pressure_bar > 0.2 },
+    Kind { arch: Archetype::Supercells, tier: 2, realism: R, phase: "X5", key: "supercellules", name: "supercellules", what: "orages partout, grele et eclairs sans repit", allowed: |p| solid(p) && p.atmosphere && p.air.pressure_bar > 0.3 && p.hydrology.ocean_fraction > 0.1 },
+    Kind { arch: Archetype::Electric, tier: 2, realism: S, phase: "X5", key: "electrique", name: "monde electrique", what: "des arcs entre les nuages, les montagnes et la mer, meme par ciel clair", allowed: |p| solid(p) && p.atmosphere && p.air.pressure_bar > 0.1 },
+    Kind { arch: Archetype::Diamond, tier: 2, realism: S, phase: "X6", key: "diamant", name: "monde de diamant", what: "croute de carbone : cristaux clairs sur une roche noire", allowed: solid },
+    Kind { arch: Archetype::GiantForest, tier: 2, realism: S, phase: "X6", key: "foret-geante", name: "foret geante", what: "des arbres de dizaines de voxels : sol sombre, troncs, canopee", allowed: |p| solid(p) && p.atmosphere && p.biomes.flora && liquid_water(p) },
+    Kind { arch: Archetype::IceShell, tier: 0, realism: R, phase: "X2", key: "ocean-sous-glace", name: "ocean sous la glace", what: "une croute de glace crevassee sur un ocean liquide chauffe par les marees", allowed: |p| solid(p) && p.hydrology.subsurface_ocean },
 ];
 
 impl Archetype {
@@ -181,6 +203,56 @@ pub fn apply(p: &mut PlanetConfig, a: Archetype) {
             p.biomes.radiation = p.biomes.radiation.max(0.9);
         }
         Archetype::Cubic => p.geology.relief.cubic_step = 32.0,
+        Archetype::GiantVolcano => {
+            // Un seul bouclier, mais haut comme toute l'atmosphère (le relief T1 monte avec `terrain_height`)
+            let r = &mut p.geology.relief;
+            r.volcanoes = r.volcanoes.max(1);
+            r.volcano_height = r.volcano_height.max(0.4) * 3.0;
+            p.terrain_height = (p.terrain_height * 1.6).min(p.radius * 0.059);
+        }
+        Archetype::BlackIce => {
+            p.biomes.force = Some((Biome::IceSheet, Biome::IceSheet));
+            p.biomes.black_ice = true;
+            p.hydrology.hydro.snow = true;
+            if let Some(c) = p.climate.as_mut() {
+                c.mean_c = c.mean_c.min(-35.0);
+            }
+        }
+        Archetype::MagmaContinents => {
+            // Les mers sont de magma (jamais figé, jamais bouillant) ; volcans partout
+            p.hydrology.hydro.liquid = Liquid::Lava;
+            p.hydrology.hydro.freeze_c = -300.0;
+            p.hydrology.hydro.boil_c = 9000.0;
+            p.hydrology.ocean_fraction = p.hydrology.ocean_fraction.max(0.55);
+            p.sea_level = p.sea_level.max(0.5);
+            p.geology.volcanism = p.geology.volcanism.max(0.8);
+            p.biomes.force = Some((Biome::BasaltField, Biome::BasaltField));
+        }
+        Archetype::GiantStorm => {
+            p.air.cloud_cover = p.air.cloud_cover.max(0.7);
+            p.air.wind_ms = p.air.wind_ms.max(12.0) * 2.0;
+        }
+        Archetype::Supercells => {
+            p.air.cloud_cover = p.air.cloud_cover.max(0.8);
+            p.biomes.wetness = p.biomes.wetness.max(0.8);
+        }
+        Archetype::Electric => {
+            let tint = |c: [f32; 3], t: [f32; 3], k: f32| [0, 1, 2].map(|i| c[i] + (t[i] - c[i]) * k);
+            p.air.sky = tint(p.air.sky, [0.45, 0.4, 0.75], 0.4);
+            p.air.cloud_cover = p.air.cloud_cover.max(0.5);
+        }
+        Archetype::Diamond => p.biomes.force = Some((Biome::CrystalForest, Biome::BasaltField)),
+        Archetype::GiantForest => {
+            p.biomes.force = Some((Biome::Jungle, Biome::Forest));
+            p.biomes.giant_trees = true;
+            p.biomes.wetness = p.biomes.wetness.max(0.8);
+        }
+        Archetype::IceShell => {
+            p.biomes.force = Some((Biome::IceSheet, Biome::IceSheet));
+            p.hydrology.hydro.snow = true;
+            // Crevasses : les canyons du relief, profonds
+            p.geology.relief.canyons = p.geology.relief.canyons.max(0.5);
+        }
     }
 }
 
@@ -235,6 +307,40 @@ mod tests {
         // Un monde ordinaire ne change rien
         assert_eq!(sculpt_dir(d1, &Relief::default(), 10_000.0, 1.0), d1);
         assert_eq!(sculpt_height(123.4, &Relief::default(), 1.0), 123.4);
+    }
+
+    /// 0.14.13 : la tempête géante a un œil calme et un mur venteux ; les supercellules et le monde électrique
+    /// orageux partout ; la glace noire et la forêt géante marquent leurs réglages.
+    #[test]
+    fn storms_forests_and_black_ice_change_their_layers() {
+        use bevy::math::Vec3;
+        let mut base = PlanetConfig { atmosphere: true, climate: Some(super::super::climate::Climate { mean_c: 12.0, ..Default::default() }), ..Default::default() };
+        base.air.gases = vec![("N2".into(), 0.8), ("O2".into(), 0.2)];
+        base.air.pressure_bar = 1.0;
+        let mut storm = PlanetConfig { ..base.clone() };
+        storm.air.pressure_bar = 1.0;
+        storm.air.cloud_cover = 0.4;
+        storm.air.wind_ms = 8.0;
+        apply(&mut storm, Archetype::GiantStorm);
+        let w = crate::weather::WeatherParams::of(&storm).expect("de l'air");
+        let (center, reach) = w.storm_eye.expect("un cyclone");
+        let eye = crate::weather::sample(&w, center, 100.0, 20.0, 12.0);
+        let e1 = center.any_orthonormal_vector();
+        let wall = crate::weather::sample(&w, (center * (reach * 0.5).cos() + e1 * (reach * 0.5).sin()).normalize(), 100.0, 20.0, 12.0);
+        assert!(eye.storm < 0.2 && eye.wind_speed() < 8.0, "{eye:?}");
+        assert!(wall.storm > 0.8 && wall.wind_speed() > 30.0 && wall.precip > 0.6, "{wall:?}");
+        let mut cells = base.clone();
+        cells.air.pressure_bar = 1.0;
+        apply(&mut cells, Archetype::Supercells);
+        let w = crate::weather::WeatherParams::of(&cells).unwrap();
+        assert!(w.stormy > 0.5);
+        assert!(crate::weather::sample(&w, Vec3::Y, 50.0, 20.0, 12.0).storm > 0.5);
+        let mut ice = base.clone();
+        apply(&mut ice, Archetype::BlackIce);
+        assert!(ice.biomes.black_ice && ice.climate.unwrap().mean_c <= -35.0);
+        let mut forest = base.clone();
+        apply(&mut forest, Archetype::GiantForest);
+        assert!(forest.biomes.giant_trees);
     }
 
     /// Zone calme, raretés et fréquence dans la galaxie principale (règles 23 et 27).
