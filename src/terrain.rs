@@ -140,7 +140,12 @@ impl BodyParams {
             pressure: if p.air.present() { p.air.pressure_bar } else if p.atmosphere { 1.0 } else { 0.0 },
             hydro: if p.gaseous() { Hydro::DRY } else { p.hydrology.hydro },
             relief: p.geology.relief,
-            biomes: BiomeParams { petrified: p.traits.iter().any(|t| t.name == "foret petrifiee"), ..p.biomes },
+            biomes: BiomeParams {
+                petrified: p.traits.iter().any(|t| t.name == "foret petrifiee"),
+                ruins: p.traits.iter().any(|t| t.name == "ruines d'une civilisation disparue"),
+                monolith: p.traits.iter().any(|t| t.name == "monolithe parfait"),
+                ..p.biomes
+            },
             asteroid: None,
             tide: Default::default(),
             geo: crate::geoactive::GeoActivity {

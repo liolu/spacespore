@@ -352,7 +352,7 @@ fn sections_text(title: &str, sections: &[Section]) -> String {
 
 /// Lignes « Ici et maintenant » (heure, saison, températures, météo, lunes, grotte), arrondies et
 /// à largeur fixe.
-fn live_rows(clock_secs: f64, weather: &crate::world_clock::LocalWeather, now: Option<&str>, phases: Option<&str>, cave: Option<&str>, landing: Option<&str>) -> Vec<(String, String)> {
+fn live_rows(clock_secs: f64, weather: &crate::world_clock::LocalWeather, now: Option<&str>, phases: Option<&str>, cave: Option<&str>, landing: Option<&str>, pois: Option<&str>) -> Vec<(String, String)> {
     let mut s = Section::new("");
     // L'horloge du monde, la même pour tous les astres (étoiles comprises)
     s.row("Temps de jeu", game_clock_text(clock_secs));
@@ -364,7 +364,7 @@ fn live_rows(clock_secs: f64, weather: &crate::world_clock::LocalWeather, now: O
         s.row("Aujourd'hui", format!("{:>4.0} a {:>4.0} C", weather.day.0, weather.day.1));
         s.row("Cette annee", format!("{:>4.0} a {:>4.0} C", weather.year.0, weather.year.1));
     }
-    for t in [now, phases, cave, landing].into_iter().flatten() {
+    for t in [now, phases, cave, pois, landing].into_iter().flatten() {
         s.lines(t);
     }
     s.rows
@@ -411,7 +411,7 @@ fn update_scanner(
     cache: Res<ProfileCache>,
     target: Res<CameraTarget>,
     weather: Res<crate::world_clock::LocalWeather>,
-    (cave, phases, weather_now, approach, clock): (Res<crate::surface::NearestCave>, Res<crate::sky::MoonPhases>, Res<crate::weather::WeatherNow>, Res<crate::approche_ui::Approach>, Res<crate::world_clock::WorldClock>),
+    (cave, phases, weather_now, approach, clock, pois): (Res<crate::surface::NearestCave>, Res<crate::sky::MoonPhases>, Res<crate::weather::WeatherNow>, Res<crate::approche_ui::Approach>, Res<crate::world_clock::WorldClock>, Res<crate::poi::NearbyPois>),
     (field, mut last, dex, dex_ui): (Res<crate::asteroids::AsteroidField>, ResMut<crate::dex::LastScan>, Res<crate::dex::Dex>, Res<crate::dex::DexUi>),
     star_q: Query<&StarId, With<StarRoot>>,
     mut scanner: ResMut<Scanner>,
@@ -537,7 +537,8 @@ fn update_scanner(
         let cave_text = (here && !cave.text.is_empty()).then_some(cave.text.as_str());
         let empty = crate::world_clock::LocalWeather::default();
         let landing_text = (here && !approach.landing_text.is_empty()).then_some(approach.landing_text.as_str());
-        let rows = live_rows(clock.secs, if here { &weather } else { &empty }, now_text, phase_text, cave_text, landing_text);
+        let pois_text = (here && !pois.text.is_empty()).then_some(pois.text.as_str());
+        let rows = live_rows(clock.secs, if here { &weather } else { &empty }, now_text, phase_text, cave_text, landing_text, pois_text);
         // Mêmes libellés : seules les valeurs changent (pas de reconstruction)
         let same = rows.len() == scanner.live.len() && rows.iter().zip(&scanner.live).all(|(a, b)| a.0 == b.0);
         if !same {
@@ -619,10 +620,10 @@ mod tests {
     #[test]
     fn live_rows_keep_their_labels() {
         let mut w = crate::world_clock::LocalWeather { body: Some(crate::ui::TargetKind::Planet(0)), hour: 9.5, temp: 12.3, ..Default::default() };
-        let a = live_rows(0.0, &w, Some("Ciel : clair"), None, None, None);
+        let a = live_rows(0.0, &w, Some("Ciel : clair"), None, None, None, None);
         w.hour = 10.25;
         w.temp = -3.0;
-        let b = live_rows(0.0, &w, Some("Ciel : pluie"), None, None, None);
+        let b = live_rows(0.0, &w, Some("Ciel : pluie"), None, None, None, None);
         assert_eq!(a.iter().map(|x| &x.0).collect::<Vec<_>>(), b.iter().map(|x| &x.0).collect::<Vec<_>>());
         assert_eq!(a[0].1.len(), b[0].1.len(), "{} / {}", a[0].1, b[0].1);
         assert_eq!(a[2].1.len(), b[2].1.len());

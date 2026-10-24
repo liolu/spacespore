@@ -52,7 +52,7 @@ pub const MAX_NAME_LEN: usize = 16;
 pub const MAX_TAG_LEN: usize = 5;
 /// Étoiles revendiquées au plus par joueur.
 pub const MAX_CLAIMS: usize = 5;
-const PROTOCOL: u32 = 41;
+const PROTOCOL: u32 = 42;
 /// Modifications de voxels gardées en attente au plus (protection contre un flot).
 const VOXEL_EDITS_MAX: usize = 512;
 pub const MAX_CHAT_LEN: usize = 120;
@@ -277,6 +277,8 @@ enum Msg {
     ModelPart { fp: u64, index: u32, total: u32, data: String },
     /// Un joueur partage un modèle (E8) : chacun le reçoit par son empreinte, dans sa bibliothèque.
     Share { fp: u64, name: String, from: String },
+    /// Un joueur pose un marqueur (0.14 D6) sur un astre : relayé à tous.
+    Marker { body: String, dir: [f32; 3], name: String, from: String },
     Bye,
 }
 
@@ -988,6 +990,9 @@ pub struct Net {
     pub dock: Option<crate::net_models::DockState>,
     /// Modèles que je partage (empreinte, nom), à envoyer (E8).
     pub share_out: Vec<(u64, String)>,
+    /// Marqueurs à envoyer (astre, direction, nom) et reçus (astre, direction, nom, auteur) (0.14 D6).
+    pub marker_out: Vec<(String, [f32; 3], String)>,
+    pub markers_in: Vec<(String, [f32; 3], String, String)>,
     /// Modèles partagés par les autres, en route : (empreinte, nom, auteur, depuis).
     shares_in: Vec<(u64, String, String, f64)>,
     /// Hôte : qui a partagé quel fichier (pour le lui demander).
@@ -1033,6 +1038,8 @@ impl Default for Net {
             guild_outbox: Vec::new(),
             guild_inbox: Vec::new(),
             voxel_outbox: Vec::new(),
+            marker_out: Vec::new(),
+            markers_in: Vec::new(),
             voxel_inbox: Vec::new(),
             voxel_relay: Vec::new(),
             transfers: Default::default(),
@@ -1637,6 +1644,19 @@ pub(crate) fn net_update(
                             }
                         }
                     }
+                    // Un client pose un marqueur : je le garde et le relaie aux autres
+                    Msg::Marker { body, dir, name, from } => {
+                        if clients.contains_key(&addr) {
+                            let (name, from) = (sanitize_chat(&name).unwrap_or_default(), sanitize_name(&from));
+                            if net.markers_in.len() < 64 {
+                                net.markers_in.push((body.clone(), dir, name.clone(), from.clone()));
+                            }
+                            let msg = Msg::Marker { body, dir, name, from };
+                            for (a, _) in clients.iter().filter(|(a, _)| **a != addr) {
+                                send(socket, *a, &msg);
+                            }
+                        }
+                    }
                     // Un client a modifié des voxels : on les applique et on les relaie à tous
                     Msg::Voxels { edits } => {
                         if clients.contains_key(&addr) {
@@ -1682,6 +1702,13 @@ pub(crate) fn net_update(
             // Mes partages : à tous les clients
             for (fp, name) in std::mem::take(&mut net.share_out) {
                 let msg = Msg::Share { fp, name, from: my_name.clone() };
+                for addr in clients.keys() {
+                    send(socket, *addr, &msg);
+                }
+            }
+            // Mes marqueurs : à tous les clients
+            for (body, dir, name) in std::mem::take(&mut net.marker_out) {
+                let msg = Msg::Marker { body, dir, name, from: my_name.clone() };
                 for addr in clients.keys() {
                     send(socket, *addr, &msg);
                 }
@@ -1900,6 +1927,11 @@ pub(crate) fn net_update(
                             net.shares_in.push((fp, sanitize_chat(&name).unwrap_or_default(), sanitize_name(&from), now));
                         }
                     }
+                    Msg::Marker { body, dir, name, from } => {
+                        if net.markers_in.len() < 64 {
+                            net.markers_in.push((body, dir, sanitize_chat(&name).unwrap_or_default(), sanitize_name(&from)));
+                        }
+                    }
                     Msg::Bye => {
                         next = Some((Session::Offline, "L'hote a quitte la partie.".into(), false, None));
                         break;
@@ -1914,6 +1946,9 @@ pub(crate) fn net_update(
             if next.is_none() {
                 for (fp, name) in std::mem::take(&mut net.share_out) {
                     send(socket, *host, &Msg::Share { fp, name, from: my_name.clone() });
+                }
+                for (body, dir, name) in std::mem::take(&mut net.marker_out) {
+                    send(socket, *host, &Msg::Marker { body, dir, name, from: my_name.clone() });
                 }
                 for (fp, parts) in net.transfers.asks(now) {
                     send(socket, *host, &Msg::ModelWant { fp, parts });

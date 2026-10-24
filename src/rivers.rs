@@ -563,6 +563,22 @@ impl RiverNet {
         self.nodes.iter().filter(|n| n.width >= min_width).min_by(|a, b| (a.dir - dir).length_squared().total_cmp(&(b.dir - dir).length_squared())).map(|n| (n.dir, n.width))
     }
 
+    /// Les cascades (un pas du lit qui tombe d'au moins 3 voxels) à moins de `reach` (angle) de `dir` : direction et
+    /// hauteur de la chute (unités).
+    pub fn waterfalls(&self, dir: Vec3, reach: f32) -> Vec<(Vec3, f32)> {
+        let mut out = Vec::new();
+        for r in &self.rivers {
+            for i in r.start..r.end.saturating_sub(1) {
+                let (a, b) = (self.nodes[i as usize], self.nodes[i as usize + 1]);
+                let drop = a.bed - b.bed;
+                if drop >= 3.0 * self.voxel && (a.dir - dir).length() < reach {
+                    out.push((a.dir, drop));
+                }
+            }
+        }
+        out
+    }
+
     /// Le lac le plus proche de `dir`.
     pub fn nearest_lake(&self, dir: Vec3) -> Option<&Lake> {
         self.lakes.iter().min_by(|a, b| (a.center - dir).length_squared().total_cmp(&(b.center - dir).length_squared()))

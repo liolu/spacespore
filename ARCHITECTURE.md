@@ -608,5 +608,21 @@ n'est pas charge automatiquement : le lire quand on travaille sur le systeme con
   hauteur selon la taille). Categories `GameSettings::sound_world` / `sound_ship` / `sound_weather` (1,0 par
   defaut), `/volume [monde|vaisseau|meteo] <0-100>`. Tests : boucles sans saut, signal de chaque son,
   `the_world_mix_follows_the_place`. Pas encore : reverberation vraie des grottes, cascades, curseurs dans le panneau
-  Options (le chat suffit), sons des geysers geants plus forts. Pas encore : plantes
+  Options (le chat suffit), sons des geysers geants plus forts.
+- 0.14.12 bloc D / D6 points d'interet (`poi.rs`) : `PoiKind` (grotte, arche, cascade, source chaude, geyser, lave,
+  epave, ruines, monolithe, marqueur) ; `nearby(t, here, marqueurs, astre, horloge, portee)` = le plus proche de
+  chaque sorte a 2 500 voxels, en agregeant les finders existants (`Caves::nearest_entrance`, `Rocks::nearest(Arch)`,
+  `RiverNet::waterfalls` = pas du lit qui tombe d'au moins 3 voxels, `GeoForms::pools_near`, `vents_near`). Lieux
+  rares haches par cellule de `LANDMARK_VOXELS` (2 500) : `landmark_of` : epave (fictif, 1 cellule sur 25, astre a
+  air), ruines (fictif, 1 sur 6, trait « ruines d'une civilisation disparue » -> `BiomeParams::ruins`), monolithe
+  (fictif, 1 sur 8, trait « monolithe parfait » -> `BiomeParams::monolith` : le trait devient reel, regle 20) ; jamais
+  en mer ; poses par le decor (`tile_decor` : `DecorKind::Wreck` / `Ruin` / `Monolith`, echelle 3 / 3 / 2 voxels par
+  case, dans la tuile fine qui contient le point). Scanner : ligne « Lieux : ... (N vox NE) » dans ICI ET
+  MAINTENANT (`NearbyPois`, toutes les 2 s, `where_text`) ; `/lieu <sorte>` (`go_poi`, `Surface::teleport`, un peu a
+  cote et le regard vers le lieu). Marqueurs des joueurs : `/marqueur <nom>` -> `Markers` (200 au plus) + pilier
+  lumineux (`Beacon`, enfant de l'astre, 60 voxels) + `net::Msg::Marker { body, dir, name, from }` : client -> hote,
+  l'hote garde et relaie aux autres (comme `Share`), `Net::marker_out` / `markers_in` ; cle d'astre `body_key`
+  (`p<id>`, `m<id>.<lune>`). PROTOCOL 42. Tests `landmarks_follow_the_traits`, `kinds_parse_and_directions_read`,
+  `nearby_finds_the_landmark_next_to_it`. Pas encore : cratere geant comme lieu, lieux dans le dex (la ligne du
+  scanner n'y entre pas), marqueurs sauves entre deux parties, `/aller lieu <sorte>` entre astres. Pas encore : plantes
   qui s'ouvrent le jour, foret en instances GPU et LOD propre (les niveaux grossiers ont deja moins d'objets).

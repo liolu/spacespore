@@ -37,7 +37,7 @@ impl Plugin for ChatCmdPlugin {
 #[derive(Event)]
 pub struct ChatCommand(pub String);
 
-const COMMANDS: [&str; 40] = ["/tunnel", "/meteo", "/brouillard", "/vent", "/bouclier", "/nuage", "/volume", "/mer", "/riviere", "/biome", "/faune","/jour", "/nuit", "/vol", "/essai", "/geologie", "/relief", "/echelle", "/impact", "/ceinture", "/comete", "/eclipse", "/editeur", "/grotte", "/surplomb", "/tp", "/galaxie", "/profil", "/profile", "/graine", "/seed", "/aller", "/go", "/stats", "/aide", "/help", "/heure", "/time", "/temps", "/speed"];
+const COMMANDS: [&str; 42] = ["/tunnel", "/meteo", "/brouillard", "/vent", "/bouclier", "/nuage", "/volume", "/mer", "/riviere", "/biome", "/faune", "/lieu", "/marqueur","/jour", "/nuit", "/vol", "/essai", "/geologie", "/relief", "/echelle", "/impact", "/ceinture", "/comete", "/eclipse", "/editeur", "/grotte", "/surplomb", "/tp", "/galaxie", "/profil", "/profile", "/graine", "/seed", "/aller", "/go", "/stats", "/aide", "/help", "/heure", "/time", "/temps", "/speed"];
 
 /// La ligne est une commande du jeu (et non un message à envoyer).
 pub fn is_local(line: &str) -> bool {
@@ -96,7 +96,7 @@ fn find_galaxy(arg: &str, settings: &GameSettings, current: usize) -> Result<usi
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Commandes : (nom, arguments, description). Ordre d'affichage des propositions.
-pub const COMMAND_HELP: [(&str, &str, &str); 34] = [
+pub const COMMAND_HELP: [(&str, &str, &str); 36] = [
     ("/tunnel", "[creuser <1|2|3|c> [voies] | liste | entrer [n] | sortir]", "tunnels du sub-espace : 1 cellule de carburant = 1 u, foreuses I 100 u, II 500 u, III 5000 u, c clandestine 250 u"),
     ("/aide", "[commande]", "la liste des commandes, ou l'aide d'une commande"),
     ("/aller", "etoile|planete|lune <type> | suivant", "tests : aller a un type d'etoile, de planete ou de lune"),
@@ -114,6 +114,8 @@ pub const COMMAND_HELP: [(&str, &str, &str); 34] = [
     ("/riviere", "[lac | petite]", "aller a la grande riviere la plus proche (ou au lac, ou a la riviere la plus proche quelle que soit sa taille) ; pose ou en vol bas"),
     ("/biome", "<mot>", "tests : aller au biome le plus proche dont le nom contient le mot (foret, taiga, jungle, prairie, marais...) ; pose ou en vol bas"),
     ("/faune", "", "aller au troupeau le plus proche (planete a vie complexe ; pose ou en vol bas)"),
+    ("/lieu", "[grotte | arche | cascade | source | geyser | lave | epave | ruines | monolithe | marqueur]", "aller au lieu remarquable le plus proche de cette sorte (scanner : Lieux ; pose ou en vol bas)"),
+    ("/marqueur", "<nom>", "poser une balise ici, visible par tous les joueurs (scanner : Lieux, /lieu marqueur)"),
     ("/volume", "[monde | vaisseau | meteo] [0-100]", "volume du son (0 = muet) : general, ou par categorie (sons du monde, vaisseau, meteo)"),
     ("/meteo", "[clair | auto]", "tests : ciel clair (ni nuages, ni pluie, ni brouillard) ou la meteo du monde"),
     ("/brouillard", "[oui | non | auto | 0-100]", "brouillard volumetrique : option, ou densite forcee en % (tests)"),
@@ -327,7 +329,7 @@ fn run_chat_commands(
     mut overhang: EventWriter<crate::surface::OverhangCommand>,
     mut cave: EventWriter<crate::surface::CaveCommand>,
     mut impact: EventWriter<crate::meteors::ImpactCommand>,
-    mut small: (EventWriter<crate::asteroids::BeltCommand>, EventWriter<crate::asteroids::CometCommand>, EventWriter<crate::sky::EclipseCommand>, EventWriter<crate::editeur::OpenEditor>, EventWriter<crate::surface::SeaCommand>, EventWriter<crate::test_cmd::DescendCommand>, EventWriter<crate::approche_fx::CloudCommand>, EventWriter<crate::fog::FogCommand>, EventWriter<crate::weather::WeatherCommand>, EventWriter<crate::tunnel::TunnelCommand>, EventWriter<crate::surface::RiverCommand>, EventWriter<crate::surface::BiomeCommand>, EventWriter<crate::fauna::FaunaCommand>),
+    mut small: (EventWriter<crate::asteroids::BeltCommand>, EventWriter<crate::asteroids::CometCommand>, EventWriter<crate::sky::EclipseCommand>, EventWriter<crate::editeur::OpenEditor>, EventWriter<crate::surface::SeaCommand>, EventWriter<crate::test_cmd::DescendCommand>, EventWriter<crate::approche_fx::CloudCommand>, EventWriter<crate::fog::FogCommand>, EventWriter<crate::weather::WeatherCommand>, EventWriter<crate::tunnel::TunnelCommand>, EventWriter<crate::surface::RiverCommand>, EventWriter<crate::surface::BiomeCommand>, EventWriter<crate::fauna::FaunaCommand>, EventWriter<crate::poi::PoiCommand>, EventWriter<crate::poi::MarkerCommand>),
     profiles: Res<ProfileCache>,
     star_q: Query<&StarId, With<StarRoot>>,
 ) {
@@ -477,6 +479,12 @@ fn run_chat_commands(
             }
             "/faune" => {
                 small.12.send(crate::fauna::FaunaCommand);
+            }
+            "/lieu" => {
+                small.13.send(crate::poi::PoiCommand(arg.to_string()));
+            }
+            "/marqueur" => {
+                small.14.send(crate::poi::MarkerCommand(arg.to_string()));
             }
             "/impact" => {
                 impact.send(crate::meteors::ImpactCommand);

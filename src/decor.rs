@@ -84,10 +84,14 @@ pub enum DecorKind {
     IceSpike,
     /// Champignon lumineux des grottes (B2, s'il y a de la vie).
     GlowShroom,
+    /// Lieux rares (0.14 D6, `poi.rs`) : épave de vaisseau, ruines, monolithe.
+    Wreck,
+    Ruin,
+    Monolith,
 }
 
 impl DecorKind {
-    pub const ALL: [DecorKind; 18] = [
+    pub const ALL: [DecorKind; 21] = [
         DecorKind::Conifer,
         DecorKind::Broadleaf,
         DecorKind::JungleTree,
@@ -106,6 +110,9 @@ impl DecorKind {
         DecorKind::SporePod,
         DecorKind::IceSpike,
         DecorKind::GlowShroom,
+        DecorKind::Wreck,
+        DecorKind::Ruin,
+        DecorKind::Monolith,
     ];
 
     /// Plante (n'apparaît qu'avec de la vie).
@@ -212,6 +219,24 @@ impl DecorKind {
                 ([-0.5, 0.35, -0.4], [0.3, 0.35, 0.3], [0.62, 0.3, 0.7]),
             ],
             DecorKind::IceSpike => vec![([0.0, 1.5, 0.0], [0.35, 1.5, 0.35], [0.78, 0.9, 1.0]), ([0.4, 0.8, 0.2], [0.25, 0.8, 0.25], [0.85, 0.94, 1.0])],
+            // Épave : une coque brisée en deux, de guingois, une aile plantée
+            DecorKind::Wreck => vec![
+                ([0.0, 1.2, 0.0], [4.0, 1.2, 1.6], [0.42, 0.44, 0.48]),
+                ([5.5, 0.8, 0.8], [2.0, 0.8, 1.2], [0.38, 0.4, 0.44]),
+                ([-2.0, 2.6, 0.0], [1.5, 0.4, 3.5], [0.35, 0.36, 0.4]),
+                ([1.5, 2.9, 0.3], [0.8, 0.6, 0.8], [0.2, 0.5, 0.7]),
+                ([3.0, 0.4, -2.5], [1.0, 0.4, 0.5], [0.55, 0.3, 0.2]),
+            ],
+            // Ruines : des pans de mur et deux colonnes
+            DecorKind::Ruin => vec![
+                ([0.0, 1.5, -3.0], [4.0, 1.5, 0.4], [0.62, 0.58, 0.5]),
+                ([-3.6, 1.0, 0.0], [0.4, 1.0, 3.0], [0.6, 0.56, 0.48]),
+                ([3.0, 2.5, 1.5], [0.5, 2.5, 0.5], [0.66, 0.62, 0.54]),
+                ([1.0, 2.0, 2.5], [0.5, 2.0, 0.5], [0.66, 0.62, 0.54]),
+                ([0.5, 0.3, 0.0], [3.5, 0.3, 3.0], [0.5, 0.47, 0.42]),
+            ],
+            // Monolithe : une dalle noire parfaite, haute
+            DecorKind::Monolith => vec![([0.0, 4.5, 0.0], [0.5, 4.5, 2.0], [0.03, 0.03, 0.04])],
         }
     }
 
@@ -325,6 +350,31 @@ pub fn tile_decor(terrain: &Terrain, key: TileKey) -> Vec<DecorInstance> {
     }
     let mut out = cave_decor(terrain, key);
     let quantum = tile_quantum(layout, depth);
+    // Lieux rares (0.14 D6) : l'épave, les ruines ou le monolithe dont le point tombe dans la tuile
+    {
+        let p = &terrain.params;
+        let n_tiles = (TILE_CELLS as u32) << depth;
+        let center = key.center_dir();
+        for lm in crate::poi::landmarks_near(p, center, 1, &|d| terrain.vent_ground(d)) {
+            let (face, s, t) = crate::terrain::dir_to_face(lm.dir);
+            let (tx, ty) = ((((s + 1.0) * 0.5) as f64 * n_tiles as f64 / TILE_CELLS as f64).floor() as u32, (((t + 1.0) * 0.5) as f64 * n_tiles as f64 / TILE_CELLS as f64).floor() as u32);
+            if face != key.face || tx != key.x || ty != key.y {
+                continue;
+            }
+            let column = terrain.column(lm.dir, quantum);
+            if column.kind.is_liquid() {
+                continue;
+            }
+            let kind = match lm.kind {
+                crate::poi::PoiKind::Epave => DecorKind::Wreck,
+                crate::poi::PoiKind::Ruines => DecorKind::Ruin,
+                _ => DecorKind::Monolith,
+            };
+            let yaw = (lm.seed % 628) as f32 / 100.0;
+            let size = terrain.voxel() * if kind == DecorKind::Monolith { 2.0 } else { 3.0 };
+            out.push(DecorInstance { kind, transform: Transform { translation: lm.dir * column.top, rotation: Quat::from_rotation_arc(Vec3::Y, lm.dir) * Quat::from_rotation_y(yaw), scale: Vec3::splat(size) }, petrified: false });
+        }
+    }
     let voxel = terrain.voxel();
     let lattice = (TILE_CELLS as u32) << depth;
     let seed = terrain.params.seed ^ ((key.face as u32) << 28);

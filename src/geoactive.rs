@@ -512,6 +512,22 @@ impl GeoForms {
         out
     }
 
+    /// Les bassins d'eau chaude des cellules autour de `dir` (0.14 D6 : lieux).
+    pub fn pools_near(&self, t: &Terrain, dir: Vec3, reach: i64) -> Vec<Vec3> {
+        let p = &t.params;
+        let n = cells(p);
+        let (face, x, y) = cell_of(p, dir);
+        let mut out = Vec::new();
+        for cy in (y - reach).max(0)..=(y + reach).min(n - 1) {
+            for cx in (x - reach).max(0)..=(x + reach).min(n - 1) {
+                for s in self.own(t, (face, cx, cy)).iter() {
+                    out.extend(s.pools.iter().map(|(d, _, _)| *d));
+                }
+            }
+        }
+        out
+    }
+
     /// Ce que les évents font à la colonne `dir` dont le sol naturel est au rayon `h`.
     pub fn at(&self, t: &Terrain, dir: Vec3, h: f32) -> Option<Form> {
         let p = &t.params;

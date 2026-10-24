@@ -120,7 +120,12 @@ volants en l'air, diurnes / nocturnes, fuite devant le joueur, méduses lumineus
 `/faune`. Reste : fouisseurs (terriers), plancton lumineux, familles de faune dédiées. **D5 fait pour l'essentiel (v0.14.11)** : sons du monde synthétisés (pluie, vagues, rivière, lave, geysers, bulles
 sous l'eau, grottes, insectes la nuit, cris des bêtes), silence dans le vide, étouffement sous l'eau et sous terre,
 transitions lissées, trois catégories de volume par `/volume`. Reste : réverbération vraie, cascades, curseurs dans
-Options. Suite : D6.
+Options.
+**D6 fait pour l'essentiel (v0.14.12)** : lieux au scanner (grotte, arche, cascade, source chaude, geyser, lave,
+épave, ruines, monolithe, marqueurs), `/lieu <sorte>`, lieux rares hachés (épaves ; ruines et monolithe réels par
+leurs traits), marqueurs des joueurs en réseau (`/marqueur <nom>`, pilier lumineux vu par tous). Reste : cratère
+géant, lieux dans le dex, marqueurs sauvés. **Le bloc D est terminé pour l'essentiel** : suite = les sortes X1-X8
+restantes, puis N1-N4.
 
 | Phase | Contenu | Fini quand | Taille |
 |---|---|---|---|

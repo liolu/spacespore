@@ -194,6 +194,11 @@ pub struct BiomeParams {
     /// Trait « forêt pétrifiée » (0.14 D3) : des arbres de pierre, même sans vie.
     #[serde(default)]
     pub petrified: bool,
+    /// Traits « ruines d'une civilisation disparue » et « monolithe parfait » (0.14 D6, `poi.rs`).
+    #[serde(default)]
+    pub ruins: bool,
+    #[serde(default)]
+    pub monolith: bool,
     /// Monde exceptionnel (0.14 X6, X8) : toutes les terres émergées dans ces deux biomes (le second là où
     /// l'humidité est faible) ; la glace et la haute montagne enneigée restent.
     #[serde(default)]
@@ -254,6 +259,8 @@ pub fn generate(input: &BiomeInput) -> BiomeParams {
         salt: input.dried_water,
         flora: input.flora,
         petrified: false,
+        ruins: false,
+        monolith: false,
         force: None,
     }
 }
@@ -496,7 +503,7 @@ mod tests {
     }
 
     fn earth_params(alien: bool) -> BiomeParams {
-        BiomeParams { defined: true, seed: 3, wetness: 0.8, radiation: 0.05, alien, volcanism: 0.2, metal: false, sulfur: false, regolith: false, salt: false, flora: true, petrified: false, force: None }
+        BiomeParams { defined: true, seed: 3, wetness: 0.8, radiation: 0.05, alien, volcanism: 0.2, metal: false, sulfur: false, regolith: false, salt: false, flora: true, petrified: false, ruins: false, monolith: false, force: None }
     }
 
     /// 0.14.5 : camaïeu — loin des limites la couleur du biome, près d'une limite des teintes intermédiaires.

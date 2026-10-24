@@ -84,6 +84,7 @@ test reutilisable vaut mieux qu'un essai de plus.
 | `/temps <facteur>` | accelere l'horloge du monde (hote) |
 | `/grotte`, `/relief <forme>`, `/geologie <evenement>`, `/surplomb` | va a une grotte / forme du relief / evenement geologique |
 | `/biome <mot>` | va au biome le plus proche dont le nom contient le mot (foret, taiga, jungle, prairie, marais, desert...) ; pose ou en vol bas |
+| `/lieu <sorte>`, `/marqueur <nom>` | 0.14 D6 : va au lieu remarquable le plus proche (le scanner en liste jusqu'a 6 a 2 500 voxels) ; pose une balise lumineuse vue par tous les joueurs |
 | `/volume [monde \| vaisseau \| meteo] [0-100]` | 0.14 D5 : volume general ou par categorie ; le son ne se voit pas : `cargo test --release sound` puis ecouter (`/riviere`, `/mer`, `/geologie lave`, plongee, grotte, nuit) |
 | `/aller planete complexe` + `/vol` + `/faune` | 0.14 D4 : va au troupeau le plus proche (le message donne l'espece, le nombre, la taille) ; nocturnes : `/nuit` ; nageurs : au-dessus de la mer |
 | `/aller planete complexe` + `/vol` + `/biome foret` | 0.14 D3 : arbres qui ondulent (regarder le HUD « Vent » : plus il souffle, plus ca bouge), feuillage roux en automne (saison au scanner), champignons lumineux de nuit sur un monde fongique |

@@ -33,6 +33,7 @@ mod settings;
 mod systems;
 mod asteroids;
 mod fauna;
+mod poi;
 mod rings;
 mod rivers;
 mod sky;
@@ -275,6 +276,7 @@ fn main() {
         .add_plugins(dex::DexPlugin)
         .add_plugins(decor::DecorPlugin)
         .add_plugins(fauna::FaunaPlugin)
+        .add_plugins(poi::PoiPlugin)
         .add_plugins(test_cmd::TestCmdPlugin)
         .add_plugins(stats::StatsPlugin)
         .add_plugins(zones::ZonesPlugin)
