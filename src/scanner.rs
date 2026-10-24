@@ -305,7 +305,7 @@ fn body_sections(p: &PlanetProfile) -> (String, Vec<Section>, u8) {
         }
         life.row("Vie", v);
         if let Some(f) = &p.biology.fauna {
-            life.row("Faune", format!("~{} especes, jusqu'a {:.0} m ({})", f.species, f.max_size_m, f.locomotion.join(", ")));
+            life.row("Faune", format!("~{} especes, jusqu'a {:.0} m ({}) (/faune)", f.species, f.max_size_m, f.locomotion.join(", ")));
         }
     }
     if !p.biology.biomes.is_empty() {

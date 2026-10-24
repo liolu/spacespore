@@ -114,7 +114,10 @@ nuit au sol et de l'orbite, traits « geysers géants » et « lacs de lave acti
 **D3 fait pour l'essentiel (v0.14.9)** : plantes qui ondulent au vent de la météo (rafales comprises), feuillage caduc
 roux puis nu quand la saison se refroidit, champignons géants et cosses qui luisent la nuit, forêts plus denses, trait
 « forêt pétrifiée » réel (arbres de pierre, même sans vie). Reste : plantes qui s'ouvrent le jour, instances GPU.
-Suite : D4 → D6.
+**D4 fait pour l'essentiel (v0.14.10)** : espèces f(graine) construites avec les familles de l'éditeur, troupeaux
+hachés par cellule, positions f(graine, horloge) (les mêmes pour tous), marcheurs au sol, nageurs sous la mer,
+volants en l'air, diurnes / nocturnes, fuite devant le joueur, méduses lumineuses du trait « océan bioluminescent »,
+`/faune`. Reste : fouisseurs (terriers), plancton lumineux, familles de faune dédiées. Suite : D5 → D6.
 
 | Phase | Contenu | Fini quand | Taille |
 |---|---|---|---|

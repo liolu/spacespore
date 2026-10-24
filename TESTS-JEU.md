@@ -84,6 +84,7 @@ test reutilisable vaut mieux qu'un essai de plus.
 | `/temps <facteur>` | accelere l'horloge du monde (hote) |
 | `/grotte`, `/relief <forme>`, `/geologie <evenement>`, `/surplomb` | va a une grotte / forme du relief / evenement geologique |
 | `/biome <mot>` | va au biome le plus proche dont le nom contient le mot (foret, taiga, jungle, prairie, marais, desert...) ; pose ou en vol bas |
+| `/aller planete complexe` + `/vol` + `/faune` | 0.14 D4 : va au troupeau le plus proche (le message donne l'espece, le nombre, la taille) ; nocturnes : `/nuit` ; nageurs : au-dessus de la mer |
 | `/aller planete complexe` + `/vol` + `/biome foret` | 0.14 D3 : arbres qui ondulent (regarder le HUD « Vent » : plus il souffle, plus ca bouge), feuillage roux en automne (saison au scanner), champignons lumineux de nuit sur un monde fongique |
 | `/geologie lave` de nuit (`/nuit` apres) | 0.14 D2 : cone de cendres a cratere, coulee figee, lave qui luit ; `/geologie geyser` : cone de sinter blanc et bassins turquoise (chercher une planete `volcanique` ou `mer`) |
 | `/ceinture`, `/comete`, `/eclipse [lune]` | va a une ceinture, comete, eclipse |

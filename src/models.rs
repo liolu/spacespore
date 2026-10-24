@@ -40,6 +40,8 @@ impl Plugin for ModelsPlugin {
 pub enum ModelKey {
     Default(String),
     Print(u64),
+    /// Créature de la faune (0.14 D4) : code d'espèce (`fauna::build_model`), jamais envoyé en réseau.
+    Fauna(u64),
 }
 
 impl Default for ModelKey {
@@ -221,6 +223,10 @@ fn load_models(mut models: ResMut<GameModels>, mut meshes: ResMut<Assets<Mesh>>)
                     None
                 }
             },
+            ModelKey::Fauna(code) => {
+                let (code, lib) = (*code, models.lib.clone());
+                Some(Box::new(move || crate::fauna::build_model(code, &lib)))
+            }
         };
         let Some(source) = source else { continue };
         models.tasks.insert(

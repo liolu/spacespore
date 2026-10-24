@@ -850,6 +850,25 @@ impl Surface {
         self.body.filter(|_| self.active())
     }
 
+    /// Téléporte le joueur (tests, `/faune`) : à pied en `walk_dir` avec le cap `heading`, en vol bas en `fly_pos`
+    /// (repère fixe de l'astre). `false` pendant un atterrissage ou un décollage.
+    pub fn teleport(&mut self, walk_dir: Vec3, heading: Vec3, fly_pos: Vec3) -> bool {
+        match self.phase {
+            Phase::Walking => {
+                let Some(t) = self.terrain.as_ref() else { return false };
+                let w = Walker::spawn(t, walk_dir, (heading - walk_dir * heading.dot(walk_dir)).normalize_or(Vec3::X));
+                self.walker = w;
+                true
+            }
+            Phase::Flying => {
+                self.fpos = fly_pos;
+                self.fdescend = false;
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Point survolé ou foulé, dans le repère fixe de l'astre (règle 10).
     pub fn local_point(&self) -> Option<Vec3> {
         match self.phase {

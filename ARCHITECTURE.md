@@ -572,5 +572,27 @@ n'est pas charge automatiquement : le lire quand on travaille sur le systeme con
   `petrified_worlds_grow_stone_trees_without_life`. `/biome <mot>` (`surface.rs::go_biome`, tests) : va au biome le
   plus proche dont le nom contient le mot. Mesure (`SPACESPORE_PERF`, vol bas, foret de cristal 6 % des colonnes et
   plantes du rivage) : mediane 177-180 images/s, 1 % bas 81-104, aucune image > 33 ms (build GNU). PROTOCOL inchange
-  (decor local, f(graine)). Pas encore : plantes
+  (decor local, f(graine)).
+- 0.14.10 bloc D / D4 faune visible (`fauna.rs`) : `FaunaParams::of(PlanetConfig)` (taille max, vol, nage, nocturne,
+  trait « ocean bioluminescent ») ; `species(seed, params)` = 3 a 7 especes f(graine) (famille de l'editeur parmi
+  `FAMILIES` selon le deplacement : quadrupede / insectoide / reptilien / slime a pied, harpie / aile_celeste en
+  vol, sirene / cephalopode en mer ; animations trot, marche_araignee, marcher, bond, voler / planer, ondulation,
+  nager / flotter ; taille 8 a 100 % de `max_size_m` ; deux couleurs ; nocturne pour une sur trois, toutes si
+  `Fauna::nocturnal`) + une meduse lumineuse (Lumineuse) avec le trait. Modele : `ModelKey::Fauna(code)` (famille,
+  deux couleurs, lumineux emballes dans un u64 : `model_code` / `build_model`, rig de la race peint par os comme
+  `defaults::character`, options selon les couleurs), charge par `models::load_models` comme les autres, jamais
+  envoye en reseau. Troupeaux : cellules de `CELL_VOXELS` (600) hachees (`cell_herd` : une cellule sur deux, espece
+  qui peut vivre la : marcheurs a terre, nageurs en mer d'apres `Terrain::vent_ground`, volants partout ; 1 a 12
+  betes). Position d'une bete = f(graine du troupeau, horloge) (`Herd::member` : derive de Lissajous du troupeau dans
+  `drift`, ronde de chaque bete sur `ring`, a la vitesse de l'espece ; cap = derivee) : identique pour tous les
+  joueurs. `drive_fauna` (apres `SurfaceControl`) : troupeaux a moins de 1 400 voxels, 64 betes au plus, entites
+  enfants de l'astre avec un `models::Rig` enfant (`Fit::Character`, hauteur = taille x 2/1,8 voxel) ; `place` :
+  marcheur sur `ground` (jamais en mer), nageur sous `sea_surface` et au-dessus du fond (jamais a terre), volant
+  25 a 60 voxels au-dessus ; diurnes si `daylight` > 0,2, nocturnes si < 0,35 ; repos par moments (f(horloge)) ;
+  fuite locale (`Creature::flee` : ecart tangent qui grandit a moins de 40 voxels du joueur, s'efface ensuite ;
+  pas les nageurs, qui s'arretent). `/faune` (`go_fauna`, `Surface::teleport`), scanner VIE « (/faune) ». Tests
+  `species_and_models_follow_the_seed` (toutes les familles se construisent), `herds_are_deterministic_and_stay_in_
+  their_element`, `creatures_stand_on_the_ground_or_swim_in_the_sea`. PROTOCOL inchange (rien d'echange : meme
+  horloge = memes betes). Pas encore : terriers (fouisseurs), plancton lumineux sur l'eau, LOD des rigs au loin,
+  familles de la faune dediees (les races de personnages servent de corps). Pas encore : plantes
   qui s'ouvrent le jour, foret en instances GPU et LOD propre (les niveaux grossiers ont deja moins d'objets).
