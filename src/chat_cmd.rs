@@ -114,7 +114,7 @@ pub const COMMAND_HELP: [(&str, &str, &str); 34] = [
     ("/riviere", "[lac | petite]", "aller a la grande riviere la plus proche (ou au lac, ou a la riviere la plus proche quelle que soit sa taille) ; pose ou en vol bas"),
     ("/biome", "<mot>", "tests : aller au biome le plus proche dont le nom contient le mot (foret, taiga, jungle, prairie, marais...) ; pose ou en vol bas"),
     ("/faune", "", "aller au troupeau le plus proche (planete a vie complexe ; pose ou en vol bas)"),
-    ("/volume", "[0-100]", "volume du son (0 = muet)"),
+    ("/volume", "[monde | vaisseau | meteo] [0-100]", "volume du son (0 = muet) : general, ou par categorie (sons du monde, vaisseau, meteo)"),
     ("/meteo", "[clair | auto]", "tests : ciel clair (ni nuages, ni pluie, ni brouillard) ou la meteo du monde"),
     ("/brouillard", "[oui | non | auto | 0-100]", "brouillard volumetrique : option, ou densite forcee en % (tests)"),
     ("/vent", "[oui | non]", "stabilisateur de vent : le vent ne deplace plus le vaisseau en vol (actif par defaut)"),
@@ -440,14 +440,32 @@ fn run_chat_commands(
             "/nuage" => {
                 small.6.send(crate::approche_fx::CloudCommand(arg.to_string()));
             }
-            "/volume" => match arg.trim().trim_end_matches('%').parse::<f32>() {
-                Ok(v) if (0.0..=100.0).contains(&v) => {
-                    settings.sound_volume = v / 100.0;
-                    settings.save();
-                    net.notify(&format!("Volume du son : {v:.0} %."), now);
+            "/volume" => {
+                // `/volume 50` : général ; `/volume monde|vaisseau|meteo 50` : une catégorie (0.14 D5)
+                let words: Vec<&str> = arg.split_whitespace().collect();
+                let (cat, value) = match words.as_slice() {
+                    [c, v] => (Some(*c), v.trim_end_matches('%').parse::<f32>().ok()),
+                    [v] => (None, v.trim_end_matches('%').parse::<f32>().ok()),
+                    _ => (None, None),
+                };
+                match (cat, value) {
+                    (None, Some(v)) if (0.0..=100.0).contains(&v) => {
+                        settings.sound_volume = v / 100.0;
+                        settings.save();
+                        net.notify(&format!("Volume du son : {v:.0} %."), now);
+                    }
+                    (Some(c), Some(v)) if (0.0..=100.0).contains(&v) && matches!(c, "monde" | "vaisseau" | "meteo") => {
+                        match c {
+                            "monde" => settings.sound_world = v / 100.0,
+                            "vaisseau" => settings.sound_ship = v / 100.0,
+                            _ => settings.sound_weather = v / 100.0,
+                        }
+                        settings.save();
+                        net.notify(&format!("Volume {c} : {v:.0} %."), now);
+                    }
+                    _ => net.notify(&format!("Volume du son : {:.0} % (monde {:.0} %, vaisseau {:.0} %, meteo {:.0} %). /volume [monde|vaisseau|meteo] <0-100>.", settings.sound_volume * 100.0, settings.sound_world * 100.0, settings.sound_ship * 100.0, settings.sound_weather * 100.0), now),
                 }
-                _ => net.notify(&format!("Volume du son : {:.0} %. /volume <0-100> pour le changer.", settings.sound_volume * 100.0), now),
-            },
+            }
             "/mer" => {
                 small.4.send(crate::surface::SeaCommand);
             }
@@ -567,7 +585,9 @@ mod tests {
         assert_eq!(suggestions("/tunnel cr", &kinds, 21), vec!["/tunnel creuser"]);
         assert!(suggestions("/tunnel creuser ", &kinds, 21).contains(&"/tunnel creuser c".to_string()));
         assert_eq!(suggestions("/meteo c", &kinds, 21), vec!["/meteo clair"]);
-        assert!(suggestions("/volume ", &kinds, 21).is_empty());
+        // 0.14 D5 : les catégories de volume, pas le nombre
+        assert!(suggestions("/volume ", &kinds, 21).contains(&"/volume monde".to_string()));
+        assert!(suggestions("/volume monde ", &kinds, 21).is_empty());
         assert!(usage("/stats 3").unwrap().starts_with("/stats [n | tout]"));
         assert!(usage("/go").unwrap().starts_with("/aller"));
         assert_eq!(closest_command("/stat"), Some("/stats"));

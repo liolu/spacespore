@@ -117,7 +117,10 @@ roux puis nu quand la saison se refroidit, champignons géants et cosses qui lui
 **D4 fait pour l'essentiel (v0.14.10)** : espèces f(graine) construites avec les familles de l'éditeur, troupeaux
 hachés par cellule, positions f(graine, horloge) (les mêmes pour tous), marcheurs au sol, nageurs sous la mer,
 volants en l'air, diurnes / nocturnes, fuite devant le joueur, méduses lumineuses du trait « océan bioluminescent »,
-`/faune`. Reste : fouisseurs (terriers), plancton lumineux, familles de faune dédiées. Suite : D5 → D6.
+`/faune`. Reste : fouisseurs (terriers), plancton lumineux, familles de faune dédiées. **D5 fait pour l'essentiel (v0.14.11)** : sons du monde synthétisés (pluie, vagues, rivière, lave, geysers, bulles
+sous l'eau, grottes, insectes la nuit, cris des bêtes), silence dans le vide, étouffement sous l'eau et sous terre,
+transitions lissées, trois catégories de volume par `/volume`. Reste : réverbération vraie, cascades, curseurs dans
+Options. Suite : D6.
 
 | Phase | Contenu | Fini quand | Taille |
 |---|---|---|---|

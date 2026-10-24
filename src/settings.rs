@@ -1163,6 +1163,7 @@ fn default_lod_quality() -> f32  { 1.0 }
 fn default_terrain_detail() -> u8 { 3 }
 fn default_render_scale() -> f32 { 1.0 }
 fn default_sound_volume() -> f32 { 0.6 }
+fn default_one() -> f32 { 1.0 }
 
 #[derive(Resource, Serialize, Deserialize, Clone, Debug)]
 pub struct GameSettings {
@@ -1176,6 +1177,10 @@ pub struct GameSettings {
     #[serde(default)] pub heat_shield: bool,
     /// Volume du son (0.13 P9), 0 à 1.
     #[serde(default = "default_sound_volume")] pub sound_volume: f32,
+    /// Volumes par catégorie (0.14 D5) : sons du monde, vaisseau, météo (0 à 1).
+    #[serde(default = "default_one")] pub sound_world: f32,
+    #[serde(default = "default_one")] pub sound_ship: f32,
+    #[serde(default = "default_one")] pub sound_weather: f32,
 
     pub mouse_sensitivity:      f32,
     pub scroll_speed:           f32,
@@ -1281,6 +1286,9 @@ impl Default for GameSettings {
         Self {
             save_version: SAVE_VERSION,
             sound_volume: 0.6,
+            sound_world: 1.0,
+            sound_ship: 1.0,
+            sound_weather: 1.0,
             heat_shield: false,
             wind_stabilizer: true,
             volumetric_fog: true,

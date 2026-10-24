@@ -594,5 +594,19 @@ n'est pas charge automatiquement : le lire quand on travaille sur le systeme con
   `species_and_models_follow_the_seed` (toutes les familles se construisent), `herds_are_deterministic_and_stay_in_
   their_element`, `creatures_stand_on_the_ground_or_swim_in_the_sea`. PROTOCOL inchange (rien d'echange : meme
   horloge = memes betes). Pas encore : terriers (fouisseurs), plancton lumineux sur l'eau, LOD des rigs au loin,
-  familles de la faune dediees (les races de personnages servent de corps). Pas encore : plantes
+  familles de la faune dediees (les races de personnages servent de corps).
+- 0.14.11 bloc D / D5 sons du monde (`sound.rs`, toujours synthetises, pas de musique : Q8) : huit boucles de plus
+  (pluie = bruit sans grave + gouttes, vagues = souffle grave qui enfle toutes les 6 s, riviere = clapotis module,
+  lave = brun 90 Hz + crepitements, geyser = sifflement de vapeur, bulles sous l'eau, grotte = bourdon 45 / 67,5 Hz +
+  gouttes, insectes = stridulations) et trois cris (hurlement, pepiement, coassement). `WorldMix` / `world_mix(t,
+  here, alt, sample, sous_l_eau, souterrain, nuit, horloge)` dix fois par seconde : vagues = mer a moins de 200
+  voxels (3 anneaux de 8 `sea_surface`) x vent ; riviere = lit a moins de 40 + largeur voxels (`RiverNet::nearest`)
+  ; lave / geysers = `vents_near` x `strength_in` a moins de 300 / 150 voxels ; insectes = nuit x plantes ; tout x
+  `low` (altitude < 150 voxels) et x (1 - 0,9 x `Surface::underground`) ; sous l'eau : bulles, le reste a 10 % ;
+  `air_gain` partout (silence dans le vide). Lissage exponentiel (6/s) de 11 boucles : jamais de coupure.
+  `creature_calls` : toutes les 3 a 12 s, la bete la plus proche a moins de 250 voxels crie (famille -> cri,
+  hauteur selon la taille). Categories `GameSettings::sound_world` / `sound_ship` / `sound_weather` (1,0 par
+  defaut), `/volume [monde|vaisseau|meteo] <0-100>`. Tests : boucles sans saut, signal de chaque son,
+  `the_world_mix_follows_the_place`. Pas encore : reverberation vraie des grottes, cascades, curseurs dans le panneau
+  Options (le chat suffit), sons des geysers geants plus forts. Pas encore : plantes
   qui s'ouvrent le jour, foret en instances GPU et LOD propre (les niveaux grossiers ont deja moins d'objets).

@@ -346,6 +346,7 @@ impl Plugin for FaunaPlugin {
 pub struct Creature {
     pub cell: (u8, i64, i64),
     pub index: u32,
+    pub species: usize,
     /// Écart de fuite (repère de l'astre, unités), local.
     flee: Vec3,
 }
@@ -506,7 +507,7 @@ fn drive_fauna(
                 let size_m = sp.size_m * (0.7 + 0.3 * unit(splitmix64(h.seed ^ (i as u64 + 7))));
                 let height = size_m * VOXELS_PER_M * voxel;
                 let e = commands
-                    .spawn((Transform::IDENTITY, Visibility::Hidden, Creature { cell: key, index: i, flee: Vec3::ZERO }))
+                    .spawn((Transform::IDENTITY, Visibility::Hidden, Creature { cell: key, index: i, species: h.species, flee: Vec3::ZERO }))
                     .with_child((Rig::new(ModelKey::Fauna(model_code(sp)), Fit::Character { height }, sp.anim), Transform::IDENTITY, Visibility::default()))
                     .id();
                 commands.entity(root_e).add_child(e);
